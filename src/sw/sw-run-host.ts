@@ -19,6 +19,7 @@ import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
 import { grantableOrigin, originOf } from "../site-access";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
+import type { MlConfig } from "../contract/contract-config";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
@@ -84,27 +85,52 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     // sender.tab.id is the delegation + debug-fanout target.
     const tabId = sender.tab?.id;
     if (tabId == null) { sendResponse({ error: `${message.type} must come from a tab (content script).` }); return; }
-    hostRun(message.type === "START_RUN" ? { ...message, payload: pageStartPayload(message.payload, sender) } : message, tabId, sendResponse);
+    if (message.type !== "START_RUN") { hostRun(message, tabId, sendResponse); return; }
+    getConfig().then((cfg) => {
+        // A run id another tab holds (running, or settled and resumable) is that tab's: starting a turn under it from
+        // here would take over its abort, its inbox and its stored history. Checked after the config read, so a run
+        // the other tab started meanwhile counts.
+        const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
+        const owner = typeof runId === "string" ? runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId : undefined;
+        if (owner != null && owner !== tabId) { sendResponse({ error: `Run "${String(runId)}" belongs to another tab.` }); return; }
+        hostRun({ ...message, payload: pageStartPayload(message.payload, sender, cfg) }, tabId, sendResponse);
+    }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
 }
 
+/** The builtin tools whose factories set `requiresApproval`: the worker mints grants or consents for their calls, or
+ *  acts for them with privileges (a debugger click), so a page's descriptor cannot take them off the gate. */
+const GATED_TOOL_NAMES: ReadonlySet<string> = new Set(["exec", "python_exec", "fetch_url", "navigate", "click", "type"]);
+
 /**
- * A page's START_RUN payload as the worker may trust it. The fields only the worker sets are removed: `builtBy`,
- * `rebuild.builtBy` and `display`; only the worker's own `hostRun` call (sw-run-start.ts) marks a run worker-built, and
- * `makeWorkerRun` hands one over, since a page's claim would give its run the worker's tool routing, grants, vision and
- * answer, and lock the run as the person's. `pageOrigin` and `pageUrl` are the sender's, as the browser stamped it (the
- * origin the origin gate read): the origin seeds the run's consented origins and the URL is "the page you are on", so a
- * page naming another would get that site's navigations and reads without a gate. Absent when the sender has none.
+ * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
+ * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy` and `display`. Only the worker's own `hostRun` call
+ *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
+ *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
+ * - Replaced by the sender's, as the browser stamped it (what the origin gate read): `pageOrigin` seeds the run's
+ *   consented origins and `pageUrl` is "the page you are on", so a page naming another site would get navigations and
+ *   reads there without a gate. Absent when the sender has none.
+ * - Bounded by the worker's config: `autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`,
+ *   `autoApproveSelfSource` and `selfIntrospection` hold only when the config allows them too; and a tool named in
+ *   `GATED_TOOL_NAMES`, or a server tool (`remote`), always `requiresApproval`.
  * @param payload what the page sent
  * @param sender the message's sender
+ * @param cfg the worker's config, read as the worker-built path reads it
  * @returns a copy; anything that is not an object, as it came
  */
-export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender): unknown {
+export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
     const { builtBy: _b, display: _d, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
     if (rest.rebuild && typeof rest.rebuild === "object") {
         const { builtBy: _rb, ...rebuild } = rest.rebuild;
         rest.rebuild = rebuild;
     }
+    rest.autoApprovePython = !!rest.autoApprovePython && !!cfg.autoApprovePython;
+    rest.autoApproveReadonly = !!rest.autoApproveReadonly && !!cfg.autoApproveReadonly;
+    rest.autoApproveSameOriginAuth = !!rest.autoApproveSameOriginAuth && !!cfg.autoApproveSameOriginAuth;
+    rest.autoApproveSelfSource = !!rest.autoApproveSelfSource && !!cfg.autoApproveSelfSource;
+    // Absent is on, for the page's payload as for the config (an older stored config).
+    rest.selfIntrospection = rest.selfIntrospection !== false && cfg.selfIntrospection !== false;
+    if (Array.isArray(rest.tools)) rest.tools = rest.tools.map((t) => (t && typeof t === "object" && (GATED_TOOL_NAMES.has(t.name) || t.remote) ? { ...t, requiresApproval: true } : t));
     const url = sender.url ?? sender.tab?.url;
     const g = grantableOrigin({ origin: sender.origin, url, frameId: sender.frameId });
     if (!("origin" in g)) return rest;

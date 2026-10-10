@@ -1,6 +1,7 @@
 // redteam-page-run-builtby.test.mjs — what a page's own START_RUN may say about its run (src/sw/sw-run-host.ts
 // `startBackgroundRun`): `builtBy`, `rebuild.builtBy` and `display` are the worker's to set, and only its own `hostRun`
-// call (sw-run-start.ts) sets them; `pageOrigin`/`pageUrl` are the browser's (the sender), never the payload's; and
+// call (sw-run-start.ts) sets them; `pageOrigin`/`pageUrl` are the browser's (the sender), never the payload's;
+// the auto-approve flags and `requiresApproval` may ask for more gating, never less; a run id is its own tab's; and
 // `approvalRouting` changes only where the run's gates are shown, never whether they block.
 //
 // The worker runs in the real background bundle (node:vm); the page is played by `onTabMessage` (what reaches its tab)
@@ -30,11 +31,11 @@ const TOOLS = [
  * (every gate the UI shows approved, unless `approve` is false), then answers. Returns what reached the page, what the
  * worker fetched itself, each gate the run raised (`{ tool, url, ui }`), and the worker.
  */
-async function pageRun(extra, calls, { approve = true } = {}) {
+async function pageRun(extra, calls, { approve = true, cfg = {} } = {}) {
     let turns = 0, bg;
     const gates = [];
     bg = loadBackground({
-        config, openTabs: [{ id: 7, url: SITE, title: "Site" }],
+        config: { ...config, ...cfg }, openTabs: [{ id: 7, url: SITE, title: "Site" }],
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => "<h1>OTHER</h1>", arrayBuffer: async () => new TextEncoder().encode("<h1>OTHER</h1>").buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -51,7 +52,7 @@ async function pageRun(extra, calls, { approve = true } = {}) {
             if (approve && ev?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } });
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
-            return { result: "FROM THE PAGE" };
+            return msg.payload.readonlyTry ? { readonly: false } : { result: "FROM THE PAGE" };
         },
     });
     const done = bg.send({ type: "START_RUN", payload: {
@@ -178,4 +179,98 @@ test("approvalRouting from a page: \"both\" and an unknown value still show and 
         assert.equal(r.bg.tabMessages.some(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "navigate" && !m.payload.renderOnly && !m.payload.precheck), false, `${approvalRouting}: a page message resolved it`);
         assert.equal(r.bg.context.__mlApprovals.list().length, approvalRouting === "both" ? 1 : 0, `${approvalRouting}: on the external channel only when opted in`);
     }
+});
+
+// --- auto-approve flags: a page may ask for more gating, never less ---
+
+const PY = { name: "python_exec", description: "py", parameters: { type: "object", properties: { code: { type: "string" } } }, requiresApproval: true, capabilities: [] };
+const EXEC = { name: "exec", description: "js", parameters: { type: "object", properties: { js: { type: "string" } } }, requiresApproval: true, capabilities: [] };
+const SELF_SRC = "https://raw.githubusercontent.com/parawanderer/window-ml/main/README.md";
+/** Each flag, the call it would let through without the person, and the config that turns it off. */
+const FLAGS = [
+    { flag: "autoApprovePython", call: { name: "python_exec", args: { code: "print(1)" } }, off: { autoApprovePython: false } },
+    { flag: "autoApproveReadonly", call: { name: "exec", args: { js: "1 + 1" } }, off: { autoApproveReadonly: false } },
+    { flag: "autoApproveSameOriginAuth", call: { name: "fetch_url", args: { url: "https://site.example/account", credentials: true } }, off: { autoApproveSameOriginAuth: false } },
+    { flag: "autoApproveSelfSource", call: { name: "fetch_url", args: { url: SELF_SRC } }, off: { autoApproveSelfSource: false } },
+];
+const flagRun = (payloadValue, cfgValue, f) => pageRun({ tools: [...TOOLS, PY, EXEC], [f.flag]: payloadValue }, [f.call], { cfg: { ...f.off, [f.flag]: cfgValue } });
+/** Whether the call ran with no gate (auto-approved), from its finished step's approval. */
+const ranUngated = (r) => r.gates.length === 0;
+
+for (const f of FLAGS) {
+    test(`${f.flag}: a page's true does not beat the worker's config false; with config true, the page may still ask for the gate`, T, async () => {
+        assert.equal(ranUngated(await flagRun(true, true, f)), true, "positive control: both on, no gate");
+        assert.equal(ranUngated(await flagRun(false, true, f)), false, "the page asked for the gate: it stands");
+        assert.equal(ranUngated(await flagRun(true, false, f)), false, `the page's ${f.flag}: true skipped a gate the person's config keeps`);
+    });
+}
+
+test("selfIntrospection: a page's true does not give its surveys ml.current when the worker's config turns it off", T, async () => {
+    const survey = { name: "exec", args: { js: "ml.current.task" } };
+    const run = (cfgValue) => pageRun({ tools: [...TOOLS, EXEC], autoApproveReadonly: true, selfIntrospection: true }, [survey], { cfg: { autoApproveReadonly: true, selfIntrospection: cfgValue } });
+    const answeredInWorker = (r) => !r.toPage.some((p) => p.name === "exec");
+    assert.equal(answeredInWorker(await run(true)), true, "positive control: config on, the worker answers the survey from ml.current");
+    assert.equal(answeredInWorker(await run(false)), false, "the page's selfIntrospection: true gave its survey ml.current against the config");
+});
+
+// --- a page's tool descriptors: requiresApproval cannot take a privileged tool off the gate ---
+
+test("a page cannot take python_exec, exec or a server tool off the gate by sending requiresApproval: false", T, async () => {
+    const off = (t) => ({ ...t, requiresApproval: false });
+    const REMOTE = { name: "srv_tool", description: "server", parameters: { type: "object", properties: {} }, requiresApproval: true, capabilities: [], remote: { via: "openwebui", toolId: "bundle", fn: "srv_tool" } };
+    const cases = [
+        { tool: PY, call: { name: "python_exec", args: { code: "import js", mode: "full" } } },
+        { tool: EXEC, call: { name: "exec", args: { js: "ml.fetch('https://bank.example/x')" } } },
+        { tool: REMOTE, call: { name: "srv_tool", args: {} } },
+    ];
+    // All auto-approve flags off, so only requiresApproval decides.
+    const cfg = { autoApprovePython: false, autoApproveReadonly: false };
+    for (const c of cases) {
+        const control = await pageRun({ tools: [c.tool] }, [c.call], { cfg });
+        assert.equal(control.gates.length, 1, `positive control: ${c.tool.name} is gated`);
+        const r = await pageRun({ tools: [off(c.tool)] }, [c.call], { cfg });
+        assert.equal(r.gates.length, 1, `${c.tool.name} with requiresApproval: false ran with no gate`);
+    }
+});
+
+test("a page's own tool named nothing privileged keeps the requiresApproval it sent", T, async () => {
+    const mine = { name: "my_tool", description: "mine", parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: [] };
+    const r = await pageRun({ tools: [mine] }, [{ name: "my_tool", args: {} }]);
+    assert.equal(r.gates.length, 0);
+    assert.ok(r.toPage.some((p) => p.name === "my_tool"), "it ran in the page");
+});
+
+// --- a page cannot start its run under another tab's run id ---
+
+test("a page cannot start a run under the id of another tab's run, live or settled", T, async () => {
+    let release;
+    let held = new Promise((r) => { release = r; });
+    let holding = true;
+    const bg = loadBackground({
+        config, openTabs: [{ id: 7, url: SITE, title: "Site" }, { id: 8, url: "https://other.example/", title: "Other" }],
+        onFetch: async (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (holding && call.body.messages?.some((m) => m.content === "tab 7's task")) await held;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    const start = (tab, url, task) => bg.send({ type: "START_RUN", payload: {
+        runId: "shared1", task, systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: tab, url }, url, origin: new URL(url).origin, frameId: 0 });
+    void start(7, SITE, "tab 7's task");
+    await flush(20);
+    // Live: tab 8 names tab 7's running run.
+    const live = await Promise.race([start(8, "https://other.example/", "tab 8 live"), flush(40).then(() => ({ pending: true }))]);
+    assert.match(live?.error || "", /another tab/, `a live run of tab 7 was taken over from tab 8; got ${JSON.stringify(live)}`);
+    holding = false; release();
+    await flush(40);
+    // Settled: tab 8 names it again; tab 7 can still continue its own run.
+    const settled = await Promise.race([start(8, "https://other.example/", "tab 8 settled"), flush(40).then(() => ({ pending: true }))]);
+    assert.match(settled?.error || "", /another tab/, `a settled run of tab 7 was taken over from tab 8; got ${JSON.stringify(settled)}`);
+    await flush(20);
+    const resume = await Promise.race([bg.send({ type: "RESUME_RUN", payload: { runId: "shared1", task: "more" } }, fromPage), flush(40).then(() => ({ pending: true }))]);
+    assert.doesNotMatch(resume?.error || "", /another tab/, "tab 7 lost its own run");
+    assert.ok(!JSON.stringify(bg.calls).includes("tab 8"), "a model call carried tab 8's task under tab 7's run");
 });

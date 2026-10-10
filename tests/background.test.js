@@ -2148,6 +2148,7 @@ test("delegated tool: a mid-call navigation (channel closed) yields an ACTIONABL
             return jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });   // the gate a privileged builtin always gets
             if (msg && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload && msg.payload.name === "type") {
                 // The page navigates out from under the call: schedule the re-adopt (pageInfo), then close the channel.
                 setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navt", pageInfo: "URL: https://example.test/results\nTitle: Results" } }, { tab: { id: 3 } }); }, 0);
@@ -2158,7 +2159,7 @@ test("delegated tool: a mid-call navigation (channel closed) yields an ACTIONABL
     });
     await bg.send({ type: "START_RUN", payload: {
         runId: "navt", task: "type it", systemPrompt: "sys",
-        tools: [{ name: "type", description: "type text", parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" }, submit: { type: "boolean" } }, required: ["selector", "text"] }, requiresApproval: false, capabilities: [] }],
+        tools: [{ name: "type", description: "type text", parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" }, submit: { type: "boolean" } }, required: ["selector", "text"] }, requiresApproval: true, capabilities: [] }],
         model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
     } }, { tab: { id: 3 } });
 
@@ -3323,7 +3324,7 @@ test("OLLAMA_INFO returns the machine's capacity, and null when the route isn't 
 // deref resolver. A model hitting it was told "Nothing has been captured in this run yet" about a tool it had
 // just watched itself run, and concluded pointers were per-turn.
 test("tool pointers persist ACROSS a session's turns, and a tool name still means its latest call", async () => {
-    const PY_TOOL = { name: "python_exec", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
+    const PY_TOOL = { name: "python_exec", requiresApproval: true, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
     const DEREF_TOOL = { name: "dereference", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
     const script = [];          // one entry per model call, in order
     const toolResults = [];     // every tool result the MODEL was handed
@@ -3338,6 +3339,7 @@ test("tool pointers persist ACROSS a session's turns, and a tool name still mean
             return jsonResponse({ choices: [{ message: next }] });
         },
         onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });   // the gate a privileged builtin always gets
             if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "python_exec" && !msg.payload?.renderOnly) {
                 return { result: `ROWS-FROM-CALL-${++pyRun}` };
             }
