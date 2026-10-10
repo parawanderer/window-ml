@@ -23,7 +23,8 @@
 //                         on talking to (`failures`: only a run that errored or was wrong). The sweep still exits; the
 //                         attach lines are printed above BENCH DONE (bench/hold.mjs lists and releases them).
 //                         `--hold-idle 60` releases one after that many minutes with no message (default 30). A held
-//                         run's browser is a minimised window (`hold.mjs --show` brings it up); `--hold-headless` not
+//                         run's browser is headless, as every bench browser is; `--hold-window` makes it a minimised real
+//                         window instead (`hold.mjs --show` brings it up), at the cost of one window popping up per held cell
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
 //                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
 //                         Browser" to dock the page as an editor tab)
@@ -53,7 +54,7 @@ import { fileURLToPath } from "node:url";
 import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
 import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
-import { holdMode, loadSpec, startHeld, canShow, HOLD_IDLE_MIN } from "./hold.mjs";
+import { holdMode, loadSpec, startHeld, heldWindow, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
 import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
@@ -89,7 +90,8 @@ function parseArgv(argv) {
         else if (a === "--skip") args.skip.push(argv[++i]);
         else if (a === "--hold") args.hold.push(argv[++i]);
         else if (a === "--hold-idle") args.holdIdle = Number(argv[++i]) || undefined;
-        else if (a === "--hold-headless") args.holdHeadless = true;
+        else if (a === "--hold-window") args.holdWindow = true;
+        else if (a === "--hold-headless") args.holdWindow = false;   // the default now; kept so an old command line still parses
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
         else if (a === "--dry") args.dry = true;
         else if (a === "--no-cache") args.cache = false;
@@ -434,8 +436,9 @@ const main = async () => {
         holdCli: args.hold,
         held: { job: { specPath: path.resolve(args.specPath), load: { models: args.models, surface: args.surface, turnMinutes: args.turnMinutes }, select: { only: parseSelector(args.only), skip: parseSelector(args.skip), repeats: args.repeats } },
             idleMin: args.holdIdle, runs: [],
-            // A minimised real window, so a person can bring it up later (hold.mjs --show); headless where there is no screen.
-            window: args.holdHeadless || !canShow() ? null : "minimized" },
+            // Headless, as every bench browser is. A real window only when asked (`--hold-window`): each one is opened, takes
+            // the screen and is minimised after, and with `--hold failures` that is every cell of the sweep.
+            window: heldWindow(!!args.holdWindow) },
         // CLI beats the spec: a sweep you are debugging wants `--capture always` without editing the file.
         capture: args.capture || spec.capture || "failure",
         log: (s) => console.log(s),

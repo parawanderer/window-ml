@@ -15,7 +15,7 @@ import { checkMarks, readContinued, followContinued } from "../tests/e2e/intervi
 
 // hold.mjs reads its list's path once, on import: a test's own, never the real one.
 process.env.BENCH_HELD_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "held-")), "held.json");
-const { holdMode, heldRuns, canShow, HELD_FILE } = await import("../tests/e2e/bench/hold.mjs");
+const { holdMode, heldRuns, canShow, heldWindow, HELD_FILE } = await import("../tests/e2e/bench/hold.mjs");
 
 const ev = (kind, t, until, extra = {}) => ({ kind, t, until, label: kind, model: "m", ...extra });
 
@@ -169,7 +169,10 @@ test("hold: held.json lists only runs whose process is alive, and BENCH DONE cou
     assert.match(doneLine(doneSummary("pb", [], { report: "r.md" })), / held=0 /);
 });
 
-test("hold: a held run's browser is a window to show later wherever there is a screen; a Linux box without one runs headless", () => {
+test("hold: a held run's browser is headless unless a window is asked for, and a window only where there is a screen", () => {
+    assert.equal(heldWindow(false, true), null, "the default: no window takes the screen, whatever the machine");
+    assert.equal(heldWindow(true, true), "minimized");
+    assert.equal(heldWindow(true, false), null, "asked for, but no screen");
     assert.equal(canShow({}, "darwin"), true);
     assert.equal(canShow({}, "win32"), true);
     assert.equal(canShow({}, "linux"), false);
