@@ -119,3 +119,22 @@ test("keepBench moves sweeps, merges scoreboard rows without doubling one, and l
     assert.deepEqual(rows, ["a", "b", "c"]);
     assert.ok(!existsSync(path.join(wt, B, "scores.sqlite")), "a merged scoreboard leaves the worktree, so it no longer blocks the merge");
 });
+
+test("keepBench adds a column the main clone's older scoreboard lacks, keeping the new rows' value", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const wt = mkdtempSync(path.join(os.tmpdir(), "mwg-wt-")), main = mkdtempSync(path.join(os.tmpdir(), "mwg-main-"));
+    const B = "tests/e2e/artifacts/bench";
+    for (const d of [wt, main]) mkdirSync(path.join(d, B), { recursive: true });
+    const old = new DatabaseSync(path.join(main, B, "scores.sqlite"));
+    old.exec("CREATE TABLE runs (id INTEGER PRIMARY KEY, run TEXT NOT NULL UNIQUE, model TEXT)");
+    old.prepare("INSERT INTO runs (run, model) VALUES ('a', 'm')").run();
+    old.close();
+    const nu = new DatabaseSync(path.join(wt, B, "scores.sqlite"));
+    nu.exec("CREATE TABLE runs (id INTEGER PRIMARY KEY, run TEXT NOT NULL UNIQUE, model TEXT, shown TEXT)");
+    nu.prepare("INSERT INTO runs (run, model, shown) VALUES ('b', 'm', 'h1')").run();
+    nu.close();
+
+    await keepBench(wt, main, diskOnly(wt, ""));
+    const rows = new DatabaseSync(path.join(main, B, "scores.sqlite")).prepare("SELECT run, shown FROM runs ORDER BY run").all().map((r) => ({ ...r }));
+    assert.deepEqual(rows, [{ run: "a", shown: null }, { run: "b", shown: "h1" }]);
+});
