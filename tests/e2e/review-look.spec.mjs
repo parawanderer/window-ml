@@ -2,7 +2,8 @@
 // worker's shot of a run's tab (src/sw/worker-vision.ts `workerShot`) paints the extension's own UI out of the capture
 // at the rects the shell reports (src/sidebar/shell-shot.ts `extensionRects`, masked by src/sw/shot-mask.ts). Here the
 // page's CSS and script do what a hostile page can to OUR elements and their ancestors (the shadow hosts are styled
-// `all: initial` inline, which a page's `!important` beats, and their shadow roots are open), and each test asks whether
+// `all: initial !important` inline, which no page stylesheet beats, but their shadow roots are open and `<html>` is the
+// page's), and each test asks whether
 // the pixels the extension paints still fall inside what was masked, or the shot is refused with a fixed sentence: what
 // the shell cannot bound (a stylesheet of the page's in our root, a reflection, a filter, a host moved into a frame) is
 // refused as TAMPERED, never under-covered.
@@ -98,6 +99,8 @@ test("control: the open sidebar paints into a bare capture, and the worker's sho
 });
 
 // --- the page's CSS on our hosts and their ancestors: what getBoundingClientRect already follows ---
+// The three rules on our host no longer apply (its inline `all: initial !important` holds; the section on that is
+// below); they stay as a check that the shot is still clean with them in place.
 
 for (const [what, rule] of [
     ["an ancestor transform (html translated and rotated)", "html{transform:translateX(-160px) rotate(4deg) !important}"],
@@ -152,15 +155,31 @@ test("filter: drop-shadow on an ancestor (html): the extension's pixels stay ins
     });
 });
 
+// Our host's inline `all: initial !important` holds against the page's reflection rule, so the shot is taken and clean.
+// A reflection set where the page's rule does win (inside our root) is refused below.
 for (const side of ["left", "right"]) {
-    test(`-webkit-box-reflect ${side} on our host: the shot is refused, not under-covered`, async () => {
+    test(`-webkit-box-reflect ${side} on our host by a page stylesheet is held off by the host's inline style: the shot is taken and clean`, async () => {
         await withShell(async (s) => {
             await s.css(`#ml-sb-root{-webkit-box-reflect:${side} 0px !important}`);
+            expect(await s.page.evaluate(() => getComputedStyle(document.getElementById("ml-sb-root")).webkitBoxReflect)).toBe("none");
             expect(await offGreen(s.page, (await s.bare()).dataUrl), "the UI still paints somewhere").toBeGreaterThan(500);
-            expect((await s.shoot()).error).toBe(TAMPERED);
+            const shot = await s.shoot();
+            expect(shot.error).toBeUndefined();
+            expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
         });
     });
 }
+
+// A `:host` rule in a stylesheet inside our open root is the one page rule that beats the host's inline `!important`
+// (for `!important`, the inner context wins), so the host checks stay: it is refused, for the stylesheet and for the paint.
+test("a :host reflection rule the page puts in a stylesheet inside our root (it beats the host's inline !important): the shot is refused", async () => {
+    await withShell(async (s) => {
+        await shadowCss(s.page, ":host{-webkit-box-reflect:left 0px !important;translate:-300px 0 !important;display:block !important}");
+        await s.page.waitForTimeout(150);
+        expect(await s.page.evaluate(() => getComputedStyle(document.getElementById("ml-sb-root")).webkitBoxReflect), "the inner rule wins").not.toBe("none");
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
 
 // The panel inside the shadow root is the page's to style too (the root is open), and there a filter or a reflection
 // paints copies of it past its box. Our own styles use neither, so the shell reports either as `tampered`, whether a
@@ -380,6 +399,167 @@ test("our panel moved by the page after every frame read and put back before the
     });
 });
 
+// --- our hosts pinned against the page's own `!important` rules ---
+// Each shadow host carries `all: initial !important` inline (`HOST_STYLE`, shell-shot.ts). An inline `!important` declaration beats
+// every author stylesheet `!important` rule, layered or not, so no page rule moves, scales, filters, reflects, hides or
+// repaints a host. Without it the rects still follow a persistent rule (getBoundingClientRect), but a rule the page
+// inserts through the CSSOM after one of the shell's reads and deletes before the next is a change no read sees and no
+// MutationObserver reports. The oracle is where the UI paints in a bare capture: before and after the rule, the same place.
+
+/** The bounding box, in CSS px, of every pixel of a capture that is neither the page's green nor the mask's grey. */
+const paintBox = (page, dataUrl) => page.evaluate(async (src) => {
+    const img = new Image();
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = src; });
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    const s = c.width / window.innerWidth;
+    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+    for (let i = 0; i < d.length; i += 4) {
+        const green = d[i] < 8 && d[i + 1] > 247 && d[i + 2] < 8, grey = d[i] === 128 && d[i + 1] === 128 && d[i + 2] === 128;
+        if (green || grey) continue;
+        const x = (i / 4) % c.width, y = Math.floor(i / 4 / c.width);
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    return x1 < 0 ? null : { left: x0 / s, top: y0 / s, width: (x1 + 1 - x0) / s, height: (y1 + 1 - y0) / s };
+}, dataUrl);
+/** The sidebar panel's viewport rect inside our open shadow root. */
+const panelRect = (page) => page.evaluate(() => { const r = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+
+// The page's rule targets our host by id. The host is an inline box, which ignores a transform, so most rules also set
+// `display:block`. Each one moved, copied, refused or hid the UI on 771cb650.
+for (const [what, rule] of [
+    ["translate, scale and rotate", "display:block !important;translate:-400px 30px !important;scale:1.3 !important;rotate:6deg !important"],
+    ["display:block and a transform (also makes the host the panel's containing block)", "display:block !important;transform:translateX(-400px) !important"],
+    ["zoom", "zoom:1.5 !important"],
+    ["a drop-shadow filter (a copy of the UI 400 px to its left)", "display:block !important;filter:drop-shadow(-400px 0 0 #f0f) !important"],
+    ["a reflection across the viewport (position:fixed, inset:0, -webkit-box-reflect)", "position:fixed !important;inset:0 !important;-webkit-box-reflect:left -1280px !important"],
+    ["position, inset, margin and perspective with a 3D transform", "display:block !important;position:fixed !important;left:-300px !important;top:40px !important;margin:20px !important;perspective:300px !important;transform:rotateY(20deg) !important"],
+    ["will-change, contain and an offset path", "display:block !important;will-change:transform !important;contain:paint !important;offset-path:path('M0 0 L-500 0') !important;offset-distance:100% !important"],
+]) {
+    test(`a page stylesheet's !important ${what} on our host does not move it: the UI paints where it did, and the shot is clean`, async () => {
+        await withShell(async (s) => {
+            const before = await paintBox(s.page, (await s.bare()).dataUrl);
+            const rect = await panelRect(s.page);
+            expect(before, "the UI paints").not.toBeNull();
+            await s.css(`#ml-sb-root{${rule}}`);
+            expect(await panelRect(s.page), "the panel did not move").toEqual(rect);
+            expect(await offGreen(s.page, (await s.bare()).dataUrl, before), "UI pixels outside where it painted before the rule").toBe(0);
+            const shot = await s.shoot();
+            expect(shot.error).toBeUndefined();
+            expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+        });
+    });
+}
+
+// Hiding or recolouring our host is not a leak, but the approval card lives in such a host, and a page that can hide or
+// blend it away can hide what the person is asked to approve.
+for (const [what, rule] of [
+    ["display:none", "display:none !important"],
+    ["visibility:hidden", "visibility:hidden !important"],
+    ["opacity:0", "opacity:0 !important"],
+    ["content-visibility:hidden", "display:block !important;content-visibility:hidden !important"],
+    ["clip-path", "clip-path:inset(50%) !important"],
+    ["a mask", "mask:linear-gradient(transparent,transparent) !important;-webkit-mask:linear-gradient(transparent,transparent) !important"],
+    ["mix-blend-mode", "mix-blend-mode:difference !important"],
+    ["backdrop-filter and filter", "backdrop-filter:invert(1) !important;filter:invert(1) !important"],
+]) {
+    test(`a page stylesheet's !important ${what} on our host does not hide or repaint the UI`, async () => {
+        await withShell(async (s) => {
+            const before = await offGreen(s.page, (await s.bare()).dataUrl);
+            const box = await paintBox(s.page, (await s.bare()).dataUrl);
+            await s.css(`#ml-sb-root{${rule}}`);
+            const after = await s.bare();
+            expect(await paintBox(s.page, after.dataUrl), "the UI paints in the same box").toEqual(box);
+            expect(Math.abs(await offGreen(s.page, after.dataUrl) - before), "the same pixels paint").toBeLessThan(before * 0.02);
+        });
+    });
+}
+
+// The page-hosted shot's hide handshake writes the host's visibility, which a plain inline value would lose to the host's
+// own `all: initial !important`: the hide is `!important` too, and the show takes it off again.
+test("the page's own hide handshake still hides our pinned host, and its show brings the UI back where it was", async () => {
+    await withShell(async (s) => {
+        const before = await paintBox(s.page, (await s.bare()).dataUrl);
+        await s.page.evaluate(() => new Promise((ok) => {
+            addEventListener("message", (e) => { if (e.data?.__mlSidebarShot === "hidden") ok(); });
+            postMessage({ __mlSidebarShot: "hide" }, "*");
+        }));
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the hide hid the UI").toBe(0);
+        await s.page.evaluate(() => postMessage({ __mlSidebarShot: "show" }, "*"));
+        await s.page.waitForTimeout(200);
+        expect(await paintBox(s.page, (await s.bare()).dataUrl), "the show brought it back").toEqual(before);
+        expect(await s.page.evaluate(() => document.getElementById("ml-sb-root").style.cssText), "the hide left nothing behind").toBe("all: initial !important;");
+    });
+});
+
+// The timed form: the rule is inserted into the page's own stylesheet through the CSSOM (no DOM mutation, so no
+// MutationObserver record) and deleted again before the shell's next frame read. A decoy page element matches the same
+// rule, so the test shows the edit really applied in the frames it painted: the decoy moved, our panel did not.
+/** Start the timed edit: `#ml-sb-root, #decoy {display:block !important;translate:-600px 0 !important}` (an inline
+ *  host ignores a translate, hence the display) applied at `when` and deleted after it. */
+const timedEdit = (page, when) => page.evaluate((when) => {
+    const st = document.createElement("style");
+    document.head.append(st);
+    const decoy = document.createElement("div");
+    decoy.id = "decoy";
+    decoy.style.cssText = "position:fixed;left:900px;top:10px;width:10px;height:10px";
+    document.body.append(decoy);
+    const panel = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+    const stats = (window.__atk = { applied: 0, decoyMoved: 0, panelMoved: 0, panelX: panel.getBoundingClientRect().x });
+    const apply = () => {
+        if (st.sheet.cssRules.length) return;
+        st.sheet.insertRule("#ml-sb-root, #decoy {display:block !important;translate:-600px 0 !important}", 0);
+        stats.applied++;
+        if (decoy.getBoundingClientRect().x !== 900) stats.decoyMoved++;
+        if (panel.getBoundingClientRect().x !== stats.panelX) stats.panelMoved++;
+    };
+    const undo = () => { if (st.sheet.cssRules.length) st.sheet.deleteRule(0); };
+    if (when === "raf") {
+        // Applied in one frame's callback, deleted in the next one's.
+        let on = false;
+        const tick = () => { (on = !on) ? apply() : undo(); requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+    } else {
+        // Applied in a ResizeObserver callback (after every frame callback and layout, just before the paint), deleted by
+        // a task before the next frame's callbacks: painted every frame, present at no frame read.
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:absolute;left:0;top:0;height:1px;width:1px";
+        document.body.append(probe);
+        let w = 1;
+        new ResizeObserver(() => { apply(); setTimeout(undo, 0); }).observe(probe);
+        const tick = () => { probe.style.width = `${(w = 3 - w)}px`; requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+    }
+}, when);
+
+for (const when of ["raf", "resize-observer"]) {
+    test(`a page's !important translate on our host, inserted through the CSSOM ${when === "raf" ? "in one animation frame and deleted in the next" : "after every frame read and deleted before the next"}, never moves our panel, and every shot is clean`, async () => {
+        await withShell(async (s) => {
+            const before = await paintBox(s.page, (await s.bare()).dataUrl);
+            await timedEdit(s.page, when);
+            await s.page.waitForTimeout(300);
+            let leaked = 0, taken = 0, stray = 0;
+            for (let k = 0; k < 6; k++) {
+                stray = Math.max(stray, await offGreen(s.page, (await s.bare()).dataUrl, before));
+                const shot = await s.shoot();
+                if (shot.error) continue;
+                taken++;
+                leaked = Math.max(leaked, await offGreen(s.page, shot.dataUrl));
+            }
+            const stats = await s.page.evaluate(() => window.__atk);
+            expect(stats.applied, "the edit ran").toBeGreaterThan(10);
+            expect(stats.decoyMoved, "the rule applied: the decoy it also matches moved").toBe(stats.applied);
+            expect(stats.panelMoved, "our panel never moved").toBe(0);
+            expect(stray, "UI pixels outside where it painted before the edit, in a bare capture").toBe(0);
+            expect(taken, "the shots are taken").toBe(6);
+            expect(leaked).toBe(0);
+        });
+    });
+}
+
 // --- extension frames the page embeds itself ---
 
 // sidebar.html is web-accessible to every site, and a page can frame it where the shell's search for extension frames
@@ -436,11 +616,12 @@ test("a page that holds its main thread past the shell's bound gets a refusal th
     });
 });
 
-// `zoom:4 !important` on our host (the page's rule beats the inline `all: initial`): the refusal names the page's styles,
-// not a sidebar the person never widened.
+// `zoom:4` on our panel through the open shadow root (a page stylesheet's zoom on the host no longer applies): the
+// refusal names the page's styles, not a sidebar the person never widened.
 test("a page that enlarges our sidebar past the refusal share gets a refusal that does not tell the person to narrow a sidebar they never widened", async () => {
     await withShell(async (s) => {
-        await s.css("#ml-sb-root{zoom:4 !important}");
+        await inlineCss(s.page, "ml-sb-host", { zoom: "4" });
+        await s.page.waitForTimeout(150);
         const shot = await s.shoot();
         expect(shot.error, "the shot is refused").toBeDefined();
         expect(shot.error).not.toMatch(/narrow or collapse it/);

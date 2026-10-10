@@ -45,9 +45,14 @@ the worker, and the page answers geometry only):
 
 ## Known open
 
-- [ ] Stylesheet timing: a page can move our host or `<html>` through a CSSOM edit made after one frame read and
-      undone before the next. Proposed: inline `!important` on our hosts' geometry and paint properties, then hosts
-      in the top layer; closed shadow roots stay a documented gap. Owner decision pending.
+- [ ] Stylesheet timing: a page can move our host or `<html>` through a CSSOM edit made after one frame read and undone
+      before the next. Closed for the HOSTS by their inline `all: initial !important` (`HOST_STYLE`, shell-shot.ts),
+      which beats every page stylesheet `!important` rule, layered or not, and animations: no page rule moves, zooms,
+      filters, reflects, clips, blends or hides a host, timed or not (review-look.spec.mjs, "our hosts pinned"). Still
+      open: `<html>` (the page's own element), and a `:host` rule the page puts inside our open root, whose `!important`
+      beats the host's inline one (inner context wins): edited into our own sheet through the CSSOM or set as an adopted
+      sheet, neither is a DOM mutation, so the watch refuses it only when a frame read sees it. Next: hosts in the top
+      layer; closed shadow roots stay a documented gap.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
