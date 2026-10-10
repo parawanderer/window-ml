@@ -10,8 +10,9 @@ import {
 // A hung turn would otherwise hang the runner rather than fail the test.
 const T = { timeout: 5000 };
 
-/** A worker whose model call, storage and clock are scriptable. `answer` may resolve, reject, or wait. */
-function world({ answer } = {}) {
+/** A worker whose model call, storage and clock are scriptable. `answer` may resolve, reject, or wait. `stream`, when
+ *  given, is the worker's streamed call (a turn then takes it instead of `call`), and `clock` the worker's clock. */
+function world({ answer, stream, clock } = {}) {
     const events = [];
     const stored = new Map();
     let pending = null;
@@ -21,9 +22,10 @@ function world({ answer } = {}) {
             if (answer) return answer(req, signal);
             return Promise.resolve({ content: `re: ${req.messages.at(-1).content}`, model: "m1" });
         },
+        ...(stream ? { stream } : {}),
         load: async (hash) => stored.get(hash) ?? null,
         save: async (hash, session) => { stored.set(hash, session); },
-        now: () => 1000,
+        now: clock ?? (() => 1000),
     };
     configureBackgroundChats(deps);
     for (const hash of backgroundChats()) forgetBackgroundChat(hash);   // the module's map is worker-wide
@@ -162,6 +164,66 @@ test("the map stays under its cap, dropping the chat idle longest", T, async () 
     for (let i = 0; i < MAX_BG_CHATS; i++) await startBackgroundChat({ text: `n${i}`, ephemeral: true });
     assert.ok(backgroundChats().length <= MAX_BG_CHATS, `${backgroundChats().length} chats held`);
     assert.equal(isBackgroundChat(first), false, "the oldest idle chat is the one dropped");
+});
+
+// --- a streamed turn: live chat-stream previews, superseded by the result ---
+
+test("a streamed turn previews its reply as it is written, throttled, and the result follows", T, async () => {
+    let t = 1000;
+    const w = world({
+        clock: () => t,
+        stream: async (_req, onDelta) => {
+            onDelta({ reasoning: "hmm " });
+            t += 100; onDelta({ content: "Hel" });
+            t += 10; onDelta({ content: "lo" });          // inside the window: held, and folded into the next preview
+            t += 100; onDelta({ content: " there" });
+            return { content: "Hello there", reasoning: "hmm ", model: "m1" };
+        },
+    });
+    const hash = await startBackgroundChat({ text: "hi" });
+    await until(() => w.of("chat-result").length === 1, "the turn to finish");
+
+    assert.deepEqual(w.kinds(), ["chat", "chat-stream", "chat-stream", "chat-stream", "chat-result"]);
+    const [start] = w.events;
+    assert.equal(start.streaming, true, "the turn says it streams");
+    const previews = w.of("chat-stream");
+    // Every preview is the turn's (one id, so the index can supersede them) and transient.
+    for (const p of previews) { assert.equal(p.id, start.id); assert.equal(p.save, false); assert.equal(p.session.hash, hash); }
+    // ACCUMULATED, not deltas: each carries everything so far, so a reader that missed one is not behind.
+    assert.deepEqual(previews.map((p) => [p.reasoning ?? null, p.content ?? null]), [["hmm ", null], ["hmm ", "Hel"], ["hmm ", "Hello there"]]);
+    assert.equal(w.of("chat-result")[0].content, "Hello there");
+    assert.deepEqual(w.stored.get(hash).messages.map((m) => m.content), ["hi", "Hello there"]);
+});
+
+test("a turn with no streamed call falls back to the one-shot call and says it does not stream", T, async () => {
+    const w = world();
+    await startBackgroundChat({ text: "hi" });
+    await until(() => w.of("chat-result").length === 1, "the turn to finish");
+    assert.equal(w.of("chat")[0].streaming, false);
+    assert.equal(w.of("chat-stream").length, 0);
+});
+
+test("cancelling mid-stream aborts the call, stops the previews and ends the turn as an error", T, async () => {
+    let t = 1000, push = null, aborted = null;
+    const w = world({
+        clock: () => t,
+        stream: (_req, onDelta, signal) => {
+            push = onDelta; aborted = signal;
+            onDelta({ content: "partial" });
+            return w.hold();
+        },
+    });
+    const hash = await startBackgroundChat({ text: "long one" });
+    await until(() => w.of("chat-stream").length === 1, "the first preview");
+
+    assert.equal(cancelBackgroundChat(hash), true);
+    assert.equal(aborted.aborted, true, "the streamed fetch's signal is aborted");
+    // Pieces already in flight still arrive; none of them may reach the transcript of a turn the person stopped.
+    t += 1000; push({ content: " and more" });
+    w.release({ content: "partial and more" });
+    await until(() => w.of("chat-error").length === 1, "the cancel to land");
+    assert.equal(w.of("chat-stream").length, 1);
+    assert.equal(w.of("chat-result").length, 0);
 });
 
 // The session hash itself (contract-run.ts). It names a session in the index, keys its stored record, and names it

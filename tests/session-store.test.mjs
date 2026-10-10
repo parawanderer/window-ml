@@ -361,3 +361,13 @@ test("a step or a result is written on the next tick; only streamed deltas wait 
     await new Promise((r) => setTimeout(r, 20));
     assert.ok(be._rows.get("aaaa0001").history, "a history too: without it the chat cannot be continued");
 });
+
+test("a chat turn's live previews wait for the batch, as an agent's do", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const preview = (n) => ({ kind: "chat-stream", id: "aaaa0001-1", ts: n, save: false, session: { hash: "aaaa0001", turn: 1 }, content: `d${n}` });
+    store.put(summary("aaaa0001"), preview(1));
+    store.put(summary("aaaa0001"), preview(2));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(be.calls.append ?? 0, 0, "a streaming chat does not write a transaction per preview");
+});

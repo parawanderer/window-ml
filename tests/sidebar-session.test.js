@@ -163,6 +163,35 @@ test("a result arriving while the detail view is OPEN re-renders it live (no sta
     assert.match(w.shadow.querySelector(".msg.asst .md").innerHTML, /the answer/);
 });
 
+test("a streamed chat turn draws its reply SO FAR in a streaming bubble, and the result replaces it", async () => {
+    const w = await loadSidebarWorld();
+    const preview = (over) => ({ kind: "chat-stream", id: "str-0", ts: Date.now(), save: false, session: { hash: "str", turn: 0 }, ...over });
+    await w.dispatch(chatStart("str", 0, "q"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    // Thinking first: the disclosure is OPEN while it is all there is, so the live text is on screen.
+    await w.dispatch(preview({ reasoning: "weighing it up" }));
+    let live = w.shadow.querySelector(".msg.asst.streaming");
+    assert.ok(live, "a streaming bubble while the turn runs");
+    assert.ok(!w.shadow.querySelector(".pending-note"), "not the bare …thinking note");
+    assert.ok(live.querySelector("details.thinking").open, "the live thinking is shown");
+
+    // Each preview REPLACES the last: they carry the text so far.
+    await w.dispatch(preview({ reasoning: "weighing it up", content: "The ans" }));
+    await w.dispatch(preview({ reasoning: "weighing it up", content: "The answer is" }));
+    live = w.shadow.querySelector(".msg.asst.streaming");
+    assert.match(live.querySelector(".asst-body .md").textContent.trim(), /^The answer is$/);
+
+    await w.dispatch(chatResult("str", 0, "The answer is 42."));
+    assert.equal(w.shadow.querySelector(".msg.asst.streaming"), null, "settled");
+    assert.match(w.shadow.querySelector(".msg.asst .asst-body .md").textContent, /The answer is 42\./);
+
+    // A preview arriving after the result (events can reorder) does not reopen the turn.
+    await w.dispatch(preview({ content: "The ans" }));
+    assert.equal(w.shadow.querySelector(".msg.asst.streaming"), null, "a late preview is ignored");
+});
+
 test("agent runs render as their own session with steps + a final answer", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ag1", "find the login button", "qwen3:14b"));

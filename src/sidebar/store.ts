@@ -59,6 +59,8 @@ export interface Turn {
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
+    /** The reply SO FAR while the turn streams (`chat-stream`): replaced by each preview, cleared by the result. */
+    live?: { content?: string; reasoning?: string; elided?: number };
 }
 export interface AgentStep { step: number; localStep?: number; seq?: number; toolMs?: number; approveMs?: number; remoteMs?: RemoteTiming; ts?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; streamOutput?: string; streamMarks?: [number, number][]; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
 
