@@ -26,6 +26,7 @@ import { PIPE_REF, runPipe, pipeHint } from "../pointers/text-pipe";
 import { toolNameError } from "../pointers/token-id";
 import { CALL_TITLE, type NoReservedParams } from "../tools/tool-params";
 import { currentHasTool } from "../tools/tool-exec";
+import { FETCH_SHORT, FETCH_RENDERED_SHORT } from "../tools/tool-details";
 
 /**
  * Build one agent tool: a JSON-schema function signature the model sees,
@@ -151,6 +152,7 @@ export const navigateTool = function(this: MlApi, opts: { crossOrigin?: boolean 
             (allowCrossOrigin
                 ? "This run MAY cross to other SITES (different origins) — do so only when the task needs it, and never carry sensitive info from one site into another site's forms. "
                 : "Same-origin ONLY — a cross-site URL is refused (tell the user instead). ") +
+            "Navigating REPLACES the page the user is looking at; to only read a URL, use `fetch_url`. " +
             "Prefer this over clicking a link when you already know the destination URL.",
         parameters: {
             type: "object",
@@ -200,70 +202,14 @@ export const fetchTool = function(this: MlApi): MlTool {
         name: "fetch_url",
         requiresApproval: true,   // a NEW url hits the unforgeable gate; an approved one auto-approves (autoApprove)
         summary: "Fetches a URL's content (GET) to read a file/API the page can't; optional as-you / rendered modes.",
-        description: "GET a URL's content via the extension — bypasses CORS, and by default sends NO cookies. Use it to " +
-            "READ a raw file, a JSON API, or another site WITHOUT navigating there (also works on pages " +
-            "that block the extension, e.g. raw.githubusercontent.com). The result reports the body plus a " +
-            "best-effort TYPE (json/csv/parquet/arrow/html/xml/markdown/code/text/binary) so you can chain — JSON comes " +
-            "pre-parsed, a code file names its language. The type is a HEURISTIC " +
-            "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
-            "mislabel), not authoritative. GET only: no request body and no custom request headers; `credentials: true` is the one way to send the user's cookies. Each NEW url is approved once by " +
-            "the user, then remembered for the session. Prefer this over `navigate` when only YOU need to read a URL; when the user should see the page, see the NOTE below. " +
-            "**TABLES (csv/tsv/parquet/arrow) come back PARSED, as a pandas-shaped object** — you do not need to split " +
-            "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
-            "embedded newlines are handled, and numeric columns are cast. You get a `df.head()`: the header, the " +
-            "first 5 rows, then `[N rows x M columns]` and `dtypes: <col> <dtype>, …` — pandas' own names " +
-            "(`int64`, `float64`, `bool`, `str`, `object`), with pandas 3's rules, so text is `str` and a whole-number column holding one " +
-            "blank is `float64` (NaN forces the float) and a Parquet file's dtypes are READ from its schema " +
-            "rather than inferred. The row count is the FILE\'s, not the preview\'s — 5 rows shown out of " +
-            "`[50,000 rows x 4 columns]` means there are 50,000. To work on ALL of them, if you have `python_exec`, pass the " +
-            "SAME URL to its `tables` (e.g. `tables: { df: \"<the url>\" }`): it loads the already-parsed table " +
-            "from the cache as a real DataFrame — no second request, and never `read_csv` (the sandbox has no " +
-            "network). `schema: true` on a table returns just its shape + dtypes. Set `pipe` instead if you want " +
-            "to scan the RAW text yourself — that skips the parsed preview and gives you the lines your scan selected. " +
-            "Set `schema: true` when you KNOW it returns JSON and only need the STRUCTURE — you get a compact " +
-            "TS-like shape (`{ id: number, items: { name: string }[] }`) instead of the whole payload (and a " +
-            "clear error, saying what it actually was, if it isn't JSON). " +
-            "Set `credentials: true` to fetch AS THE USER (sends their cookies) — for AUTHENTICATED data (a " +
-            "private gist, a logged-in dashboard's API). It ALWAYS asks the user (never remembered) and is " +
-            "never cached; use it ONLY when public access won't do. " +
-            "Set `rendered: true` when a plain GET returns an EMPTY / skeleton page because the content is " +
-            "drawn by JavaScript (a client-rendered SPA, an infinite-scroll feed's first screen): it opens the " +
-            "URL in a background tab so the page's JS runs, then returns the SETTLED DOM — with cookie/consent/ad " +
-            "overlays heuristically stripped. It renders in an INCOGNITO tab (NO session/cookies — a safe read), " +
-            "so a SAME-ORIGIN render is FREE (no prompt, like a same-origin navigate) and a cross-origin one asks " +
-            "once then is remembered (both need the extension's 'Allow in Incognito' setting on — you'll get a " +
-            "clear message if it's off). ADD `credentials: true` to render in the USER'S logged-in SESSION instead " +
-            "(a normal tab that carries their cookies — for a page that only shows content when signed in); that " +
-            "runs as-the-user so it ALWAYS re-asks, same-origin or not, and is never remembered. " +
-            "Either way it's slower/heavier than a raw GET; reach for it only when the raw fetch's HTML is clearly " +
-            "unrendered. It waits for the page to settle (not a fixed delay) and scrolls to trip lazy content; a few " +
-            "widgets that only load when signed-in or focused/visible may still not appear in a background render " +
-            "(credentials:true covers signed-in; enabling CDP in settings lets it emulate foreground). Never cached. " +
-            "Set `ask: \"<question>\"` to have a fast reader model READ the fetched content and answer that " +
-            "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
-            "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
-            "An HTML page is auto-converted to clean Markdown (scripts/nav/chrome stripped) so you get the " +
-            "readable content, not tag soup. Better still, many docs sites PUBLISH their own Markdown version of a page — " +
-            "this NEGOTIATES for it (asking the server, then following any version the page declares, then a " +
-            "conventional `.md` URL) and falls back to converting the HTML itself, so you usually get the site's " +
-            "authored text rather than our reduction of its markup. Set `format: \"html\"` if you specifically " +
-            "need the original markup and no negotiation. " +
-            "**NOTE:** When a user asks you to get information from a user-facing HTML page, assume the user " +
-            "wants you to actually navigate them to a page by default so that they see the information themselves. " +
-            "You can still use this tool to fetch the information for your own usage, but navigate the user so that " +
-            "they have parity to you. Only when the prompt is clearly indicative of a programmatic lookup or the user " +
-            "clearly does not want to see your work should you use this tool without updating the user's web browser view " +
-            "(e.g. querying an API to locate the target in the background before navigating the user, or answering a question " +
-            "that does not indicate the user would like to see the page/information off the page themselves). Users most " +
-            "likely do NOT want to see raw text documents or JSON, but generally MAY be interested to see user-facing HTML " +
-            "pages.",
+        description: FETCH_SHORT,
         parameters: {
             type: "object",
             properties: {
                 url: { type: "string", description: "The absolute http(s) URL to fetch. The page you are on is free in every mode; with rendered + credentials it returns that page's live DOM (the only mode that reads a local file:// page)." },
                 schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                 credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
-                rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
+                rendered: { type: "boolean", description: FETCH_RENDERED_SHORT },
                 ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                 format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
                 header: { type: "boolean", description: "For a CSV/TSV only. Whether the first row is a HEADER. Detected automatically (a row of text over columns of numbers is a header), so pass this only to CORRECT it: `false` when the file starts straight into data and the columns came back named after the first record, `true` when a real header was mistaken for data. With no header the columns are numbered by position, exactly as read_csv(header=None)." },

@@ -20,6 +20,7 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { readFileSync, readdirSync } from "node:fs";
+import { salesCsv } from "./sales.mjs";
 
 // Every example page (all self-contained — inline CSS/JS, data-URL images) served straight off disk, so the
 // harness can drive the EXACT pages a human uses for real tasks (spreadsheet / find-waldo / canvas-input / …)
@@ -92,6 +93,7 @@ const sendBlocked = (res) => {
 const RAW = {
     "/data.json": { ct: "application/json", body: JSON.stringify({ id: 7, name: "widget", tags: ["a", "b"] }) },
     "/data.csv": { ct: "text/csv", body: "name,qty,price\napples,3,1.20\npears,5,0.90\n" },
+    "/sales.csv": { ct: "text/csv", body: salesCsv() },   // 3,000 rows: too many to read off a preview (the prompt-budget bench)
     "/code.ts": { ct: "text/plain; charset=utf-8", body: "export const answer: number = 42;\nexport function id<T>(x: T): T { return x; }\n" },
 };
 const sendRaw = (res, r) => { res.writeHead(200, { "content-type": r.ct, "cache-control": "no-store" }); res.end(r.body); };

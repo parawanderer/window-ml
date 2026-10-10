@@ -1,8 +1,9 @@
 # Prompt budget: trimming the system prompt and tool schemas, and measuring it
 
 Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450), `answer` left
-the default kit (#464), and the tool-output-tokens cut shipped measured (below); the rest of step 3 needs the bench.**
-Started 2026-10-08, updated 2026-10-09.
+the default kit (#464), and the tool-output-tokens cut and the `exec`/`fetch_url` split shipped measured (below); the
+shadow/iframe, pipe-example and `locate`/`python_exec` parameter cuts are still open.**
+Started 2026-10-08, updated 2026-10-10.
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -69,8 +70,8 @@ These change what the model knows without asking, so each is a bet that it looks
 | `ml.current` clause (~1,400 chars) down to one sentence | the signature into `agent_api_docs` |
 | Shadow DOM closed-root and iframe edge cases | the scanning tools' own descriptions, which already flag those roots |
 | Pipe dialect worked examples | the dialect grammar stays; examples to `agent_api_docs` |
-| `fetch_url`'s table details (pandas dtypes, `df.head()`) | the table result itself, which already prints them |
-| `exec`'s description repeating `ml.fetch`, `ml.a11y`, `ml.state` | `agent_api_docs` |
+| `fetch_url`'s table details (pandas dtypes, `df.head()`) | SHIPPED, measured: `agent_api_docs({ tool })` (below) |
+| `exec`'s description repeating `ml.fetch`, `ml.a11y`, `ml.state` | SHIPPED, measured: `agent_api_docs({ tool })` (below) |
 | Tool-output-tokens clause (2,669 chars in a UI run) | SHIPPED, measured: 3,738 → ~1,470 chars with `DEREF_CLAUSE` |
 
 **The `ml.current` one shipped without the bench (#450)**, on the owner's call: when `agent_api_docs` is in the
@@ -102,6 +103,30 @@ run's own artifact, never from what the model says it did (the pointer pilot sco
 **Dimensions**: variant (current vs one cut) × model (the panel models) × repeats (3). Report pass rate, calls per
 task and input tokens per call, with spread. **Decision rule**: a cut ships when pass rate does not drop on any model
 and tokens per call fall; a cut that costs one model a task it used to pass is reworked, not shipped.
+
+## Step 3 result: the `exec`/`fetch_url` split (2026-10-10)
+
+`exec` and `fetch_url` keep their TRIGGERS in the schema (when to reach for an option) and serve their MECHANICS from
+`agent_api_docs({ tool })`, or inline when the run has no docs tool (`src/tools/tool-details.ts`). Measured with a
+`split` build variant and a sweep spec over five tasks (total a 3,000-row CSV, reveal a code inside nested shadow
+roots, read a client-rendered page, show a page, look something up without moving the tab), both deleted once it won
+(branch `feat/tool-details` has them).
+
+- **Prompt tokens per call fell 16%**, 16,602 → 13,893 on average, and on every model: Claude Sonnet 5.5 10%, Gemini
+  3.6 Flash 16%, GPT-6 Luna 16%, DeepSeek V4 Pro 15%, DeepSeek Flash 14%, Kimi K3 25%, GLM-5.3 Flash 20%, MiniMax M3
+  16%, gemma4:31b 19%, qwen3.6:35b 13%, glm-4.7-flash 14%. Steps per run held or fell, except Kimi K3 (1.9 → 2.7),
+  which looks the details up; it still pays less per run.
+- **Pass rate held on all 11** (3 repeats, 15 runs a model): 160/165 split against 158/165 current. Ten models scored
+  15/15 split; glm-4.7-flash scored 10/15 on both.
+- **The first sweep found a bug in both texts**: told "without changing what I'm looking at", qwen3.6, glm-4.7-flash
+  and MiniMax M3 navigated about two thirds of the time. Asked afterwards (held runs, `--hold failures`), all six
+  said `fetch_url` was the right tool: they read "don't change" as "don't mutate", and `fetch_url`'s showing-vs-
+  fetching note told them to navigate by default. The fix, in the shipped text: "don't change my page" means fetch,
+  and `navigate`'s description says navigating replaces the page the user is looking at. On that task (8 repeats,
+  three models) passes went from 8/24 to 17/24 (current) and 7/24 to 19/24 (split); asked to SHOW a page, they still
+  navigated (47/48, the one miss an error).
+- **Not covered**: glm-4.7-flash's remaining misses on the client-rendered page (5/16; most did not navigate, so
+  likely a rendering miss, not read yet).
 
 ## Step 3 result: the tool-output-tokens cut (2026-10-09)
 

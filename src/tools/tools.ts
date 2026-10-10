@@ -30,6 +30,7 @@ import { clipHeadTail, panelHead, boundedLines, ceilingNote } from "../agent/out
 import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
 
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
+import { EXEC_SHORT } from "./tool-details";
 
 /**
  * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
@@ -378,73 +379,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
         T({
             name: "exec",
             summary: "Runs JavaScript to inspect the page.",
-            description: "Escape hatch: run JS in the page, like one cell in a console. You get back " +
-                "BOTH anything it console.log's AND the final expression's value — so either " +
-                "console.log the data you want to inspect, or make the last line evaluate to it " +
-                "(e.g. `[...document.querySelectorAll('.card')].map(c => c.innerText.slice(0,80))`), " +
-                "or both. Async is supported: you may `await` inside and `return` a value " +
-                "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
-                `The returned value AND the console output are EACH truncated to ${OUTPUT_CAP.exec.default} chars, and the note at the cut says how much of how much you got, so ` +
-                "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
-                "handful of fields, the few items you actually need), not a full outerHTML dump. When a value is too large " +
-                "to return whole, return its SHAPE: `ml.schema(x)` gives the TS-like type of any JSON, then read only the " +
-                "fields you need. " +
-                `If you GENUINELY need more room for ONE call, pass \`maxChars\` (up to ${OUTPUT_CAP.exec.ceiling}) WITH a ` +
-                "`maxCharsReason` — that raise asks the human first (a bigger dump costs your own context). " +
-                // Define "read-only" so the model writes qualifying code instead of guessing why some
-                // exec calls run instantly and others prompt (the auto-run is the autoApproveReadonly flag):
-                "AUTO-RUN vs APPROVAL: code that is read-only BY CONSTRUCTION — only queries/reads + pure " +
-                "computation (`.map`/`.filter`/`.reduce`, `for (const x of …)`, `ml.range`, the read-only " +
-                "`ml.*` reads; NO mutation, effectful calls, reassignment (`x += …`), `.push`, a C-style " +
-                "`for(;;)`/`while`, or `for…in`) — runs in a mediated \"safe\" interpreter with NO approval " +
-                "prompt; anything else is still allowed but falls back to real `eval` and asks the user first. " +
-                "So for a read-only survey prefer `.map`/`.filter`/`.reduce`/`for…of` + `ml.range(n)` — reach " +
-                "for mutation or a while-loop only when the task actually needs it. " +
-                // Advertise ml.pipe HERE rather than in the system prompt or the tools' `pipe` parameter: exec
-                // is where you'd reach for it, and inside exec its availability is self-evident (naming it on
-                // another tool would name a capability that needs exec, which the run may not have).
-                // The macro is advertised HERE for the same reason ml.pipe is: exec is where you would write it,
-                // and it exists nowhere else. Naming it as a PROMISE is the load-bearing half — a model that
-                // thinks `@tool:x` is a value writes `.length` on a Promise and gets `undefined` with no error.
-                "POINTERS: write `@tool:abc1234` (or `@tool:fetch_url`, or `@tool:\"a label\"`) directly in the " +
-                "code — it is real syntax here and reads that output. It is a plain VALUE, not a promise: no " +
-                "`await`, no `.then`. `const rows = @tool:abc1234.split(\"\\n\");` works as written, because " +
-                "every pointer you name is resolved before the script starts. Inside a string or a comment it " +
-                "stays literal text, so you can still log one. " +
-                "FILTERING TEXT: `ml.pipe(text, \"grep -i pricing | head -20\")` runs the same small dialect the " +
-                "tools' `pipe` parameter takes, over ANY string — a survey's output, a fetch, python's stdout. " +
-                "Cheaper to write (and to get right) than the equivalent `.split`/`.filter`/`.slice` chain. " +
-                "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
-                "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
-                "tools use (`>>>` crosses each shadow root, open or captured closed, and each same-origin iframe; a trailing " +
-                "`:contains(\"text\")` filters by visible text) — instead of hand-chaining `.shadowRoot` / " +
-                "`.contentDocument`. " +
-                // Advertise the a11y primitive HERE (not only on interactives' output) so a straight-to-exec
-                // survey reaches for it instead of hand-rolling a partial `getAttribute('aria-label')`.
-                "ACCESSIBLE NAME / ROLE / REFERENCE: for a control's screen-reader name, role, aria-state, or the " +
-                "stable `>>>` selector to pass to click/type, use `ml.a11y(el)` → { role, name, state, selector } " +
-                "(the SAME expertise `interactives` uses — the full aria-label → aria-labelledby → label/placeholder " +
-                "→ text cascade) rather than hand-rolling `getAttribute('aria-label')`, which misses cases. " +
-                "`ml.queryAll` + `ml.a11y` are read-only, so a survey composing them auto-runs (no prompt). " +
-                // ml.fetch in exec: the fetch_url tool, callable inline — the payoff is cached RE-reads are a
-                // read-only op (free), so approve a source once then parse/slice it across calls. Trimmed
-                // signature here; full FetchResult type is in agent_api_docs.
-                "CROSS-SITE READS: `ml.fetch(url)` — the same GET as the `fetch_url` tool, but callable inline — " +
-                "reads a raw file / JSON API / other site the DOM can't reach, returning " +
-                "`{ url, status, ok, type: 'json'|'csv'|'html'|'code'|'text'|…, text, json?, schema? }` (full type " +
-                "via `agent_api_docs`). For a JSON body, `.json` is pre-parsed and `.schema` is a compact TS-like " +
-                "SHAPE of it (`{ id: number, items: { name: string }[] }`) — read that to learn the structure of a " +
-                "big payload without dumping it all. A NEW url asks once; then RE-reading that same url from a " +
-                "read-only survey is FREE (cached) — approve a source once, then parse/slice/re-query it freely " +
-                "(like `python_exec` on a Google Sheet). Failures aren't cached; pass `ml.fetch(url, { fresh: " +
-                "true })` to SKIP the cache and force a live re-fetch (needs approval, even for a cached url). " +
-                "PERSISTENT STATE: you have a `state` object (also `ml.state`) that is NOT reset between calls — " +
-                "it's a live page kernel, like cells in a Jupyter notebook. For any multi-step work, DEFINE helper " +
-                "functions and stash intermediate results on it ONCE, then REUSE them on later calls instead of " +
-                "re-deriving from scratch (e.g. call 1: `state.rows = [...document.querySelectorAll('tr')].map(...)`; " +
-                "call 2: `state.rows.filter(r => r.total > 100).length`). It's a single object shared across the whole " +
-                "page session (and every run in this tab), so it survives — but two parallel runs share it. " +
-                "Use exec only when the other tools can't answer; prefer them.",
+            description: EXEC_SHORT(OUTPUT_CAP.exec.default, OUTPUT_CAP.exec.ceiling),
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             // Debug view: show the JS that ran as a highlighted code block (raw
             // toggle still reveals the underlying args/result).

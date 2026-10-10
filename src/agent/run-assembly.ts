@@ -17,6 +17,7 @@ import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
+import { withToolDetails } from "../tools/tool-details";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
  *  factories, and the OCR reader for a pasted image. The worker's adapter implements exactly this. */
@@ -275,6 +276,8 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
                 token: citeParam("the pricing table") } } }
             : t);
     }
+    // A split tool's mechanics: a pointer into agent_api_docs, or the text itself without that tool (tool-details.ts).
+    toolset = withToolDetails(toolset);
     // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
     // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
     // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
