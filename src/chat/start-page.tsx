@@ -13,7 +13,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session/session-host";
 import { loadDraft, saveDraft } from "../sidebar/drafts";
-import { IconSend, IconWarn } from "../sidebar/icons";
+import { IconEye, IconEyeOff, IconSend, IconWarn } from "../sidebar/icons";
+import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
@@ -81,6 +82,11 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // waits (with a placeholder pill the real one fades into, rather than a pill that jumps into the row).
     const [models, setModels] = useState<ModelChoice[] | null>(() => (rt ? modelCache.get(rt.id) ?? null : null));
     const [model, setModel] = useState("");
+    // NATIVE VISION for this run, as the Commander's eye toggle has it: offered only for a model the runtime says is a
+    // CLOUD one (an Ollama model's vision is probed, and an unknown provenance gets no toggle), and dropped whenever
+    // the model or the device changes, so a choice made for one model never rides along to another.
+    const [vision, setVision] = useState(false);
+    useEffect(() => { setVision(false); }, [model, rt?.id]);
     const canList = !!rt && mayCommand(rt, "models.list");
     useEffect(() => {
         setModels(rt ? modelCache.get(rt.id) ?? null : null); setModel("");
@@ -130,7 +136,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         try {
             const r = kind === "chat"
                 ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(model ? { model } : {}) })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), target: pick.target(), ...(model ? { model } : {}), ...(streaming ? { stream: true as const } : {}) });
+                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), target: pick.target(), ...(model ? { model } : {}), ...(vision && cloud ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
             if (r.ok) { saveDraft("start", ""); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); }
@@ -145,6 +151,16 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         // mount. Device and tab both come and go with the kind, so without this the row half faded and half popped.
         ? <ModelPicker key={`${kind}-${rt.id}`} models={models} value={model} onChange={setModel} head={head} />
         : models === null && canList ? <span class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""} tp-pill-wait`} role="status" aria-label="Loading models" /> : null);
+    const chosen = models?.find((m) => (model ? m.id === model : m.default));
+    const cloud = kind === "agent" && chosen?.where === "cloud";
+    const visionToggle = cloud ? (
+        <button class={`cmp-vis${vision ? " on" : ""}`} type="button" aria-pressed={vision}
+            aria-label={vision ? "Native vision on for this run" : "Native vision off for this run"}
+            {...cursorTipOn(vision
+                ? "This run: the model sees images itself (native vision). Click to turn off."
+                : "This run: no native vision, so images go to the reader model. Click to turn on for a cloud model that can see.")}
+            onClick={() => setVision((v) => !v)}>{vision ? <IconEye /> : <IconEyeOff />}</button>
+    ) : null;
     const modelTop = modelAs(false);
     const modelHead = modelAs(true);
     const sendButton = (
@@ -164,6 +180,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
             {runtimes.length > 1 ? <DevicePicker runtimes={runtimes} value={rt.id} onChange={setRuntimeId} /> : null}
             {pick.inline}
             {narrow ? null : modelTop}
+            {visionToggle}
             {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
             {/* Said in the row rather than only on send: the choice is already made by the time anyone
                 types, and a send button that simply will not go is the thing this replaces. */}

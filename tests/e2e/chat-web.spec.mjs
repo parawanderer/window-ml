@@ -3102,6 +3102,64 @@ test("a returned value drawn as a tree is the size its text is, at the page's co
     // of the text it replaced.
     expect(await fs(cell.locator(".jt-value .jt-row").first())).toBe(textFs);
     expect(textFs).toBe(await page.evaluate(() => getComputedStyle(document.querySelector(".chat")).getPropertyValue("--code-fs").trim()));
+// --- native vision on the start page, as the Commander offers it ---
+
+test("the start page offers native vision for a cloud model's run only, and sends it only when turned on", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const eye = page.locator(".chat-start-row .cmp-vis");
+    const modelPill = page.getByRole("button", { name: /^Model:/ });
+    const pickModel = async (name) => {
+        await modelPill.click();
+        await page.getByRole("listbox", { name: "Model" }).getByRole("option", { name }).click();
+    };
+    // The default (an Ollama model, whose vision is probed) and another local one: no toggle.
+    await expect(modelPill).toHaveText("qwen3:32b");
+    await expect(eye).toHaveCount(0);
+    await pickModel(/gemma3:27b/);
+    await expect(eye).toHaveCount(0);
+    // A cloud model: the toggle, off.
+    await pickModel(/gemini-flash-latest/);
+    await expect(eye).toHaveAttribute("aria-pressed", "false");
+    await eye.click();
+    await expect(eye).toHaveAttribute("aria-pressed", "true");
+    // A chat has no vision decision to make (its images go to the model as they are): no toggle there.
+    await pickKind(page, "Chat");
+    await expect(eye).toHaveCount(0);
+    await pickKind(page, "Agent");
+    // Another model drops the choice: it was made for that model, and does not ride along.
+    await pickModel(/gemma3:27b/);
+    await pickModel(/gemini-flash-latest/);
+    await expect(eye).toHaveAttribute("aria-pressed", "false");
+
+    const box = page.locator(".chat-start-box textarea");
+    await box.fill("read the chart");
+    await box.press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", model: "litellm.google/gemini-flash-latest" });
+    expect((await commands(page)).at(-1)).not.toHaveProperty("vision");
+
+    await page.goto(server.url);
+    await pickModel(/gemini-flash-latest/);
+    await eye.click();
+    await box.fill("read the chart again");
+    await box.press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "read the chart again", vision: true });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- the composer's send hint ---
+
+test("the send hint, once typed past, keeps its line's height and gives up its width", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const hint = page.locator(".composer-foot .chint");
+    await expect(hint).toBeVisible();
+    const foot = page.locator(".composer-foot");
+    const before = await foot.evaluate((el) => el.getBoundingClientRect().height);
+    expect(await hint.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(50);
+    await page.locator(".composer .cinput").fill("x");
+    // What follows the hint on its line (the run's token figures) must start the line, not wait where the hint ended.
+    await expect.poll(() => hint.evaluate((el) => el.getBoundingClientRect().width)).toBe(0);
+    expect(await foot.evaluate((el) => el.getBoundingClientRect().height)).toBe(before);
     expect(errors).toEqual([]);
     await page.close();
 });
