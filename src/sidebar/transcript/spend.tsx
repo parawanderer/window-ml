@@ -6,7 +6,7 @@
 import { signal } from "@preact/signals";
 import type { CallCost, CallToPrice } from "../../spend/price-book";
 import { PRICE_CURRENCY } from "../../spend/price-book";
-import { config } from "../store";
+import { config, rev } from "../store";
 import type { Session } from "../store";
 import { shownModel } from "../model";
 import { services } from "../services";
@@ -83,6 +83,10 @@ function costsFor(s: Session, calls: CallToPrice[]): CallCost[] | null | undefin
 /** What the session has spent, beside the gauge. Draws nothing where the host cannot price calls, or where there is
  *  nothing to say: no priced call, and no local call missing an electricity price. */
 export function SpendChip({ s }: { s: Session }) {
+    // The session is mutated in place, so its props never change; reading signals (the priced answer, the config)
+    // makes this component skip a re-render with unchanged props, and it froze on the first call. `rev` is bumped
+    // on every change to a session, so reading it brings each new call through (store.ts).
+    void rev.value;
     const calls = sessionCalls(s);
     if (!calls.length) return null;
     const costs = costsFor(s, calls);
