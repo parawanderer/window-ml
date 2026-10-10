@@ -40,6 +40,9 @@ export interface ChatExtras {
      * prompt or a folder picker. Resolves whether it worked. Null where this device cannot fix it.
      */
     fix?(runtime: RuntimeId, code: string): (() => Promise<boolean>) | null;
+    /** Put `query` in the runtime's Settings search, so opening Settings lands on the one field an attention item names.
+     *  Absent where this device cannot search that runtime's settings: the item then opens Settings unfiltered. */
+    findSetting?(runtime: RuntimeId, query: string): void;
     /**
      * Renew THIS DEVICE's own certificate (`renew.ts`): ask a runtime that will, install what it answers with.
      * Resolves to a sentence when it did not happen, or null when it did — including the case where the runtime found

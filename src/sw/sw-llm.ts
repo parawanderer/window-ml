@@ -4,10 +4,10 @@
 // server-tool-mode handback probe. Also the model-list/server-tool/setModel/unload plumbing. Extracted from
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
-import { pricesForCall } from "./sw-prices";
+import { spendForCall } from "./sw-prices";
 import type { JsonSchema } from "../contract";
 import type { MlConfig, ApiFormat, ProtoMode } from "../contract/contract-config";
-import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase, PriceRef } from "../contract/contract-chat";
+import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "../contract/contract-chat";
 import type { LoadedModel, ServerTool } from "../contract/contract-server";
 import type { FetchLlmPayload } from "../contract/contract-messages";
 import { wireHint } from "../contract/contract-run";
@@ -159,8 +159,8 @@ const rawUsage = (u: Record<string, unknown>): TokenUsage["raw"] | null => {
 // Stamp the measured wall-clock of a model call onto its usage (source-side timing the server doesn't report),
 // so a run's tok/s can divide by "time spent waiting on the model" (excluding our tool runs, which happen
 // between calls). No usage (server reported no counts) → nothing to stamp. Never mutates the input.
-const withGenMs = (usage: TokenUsage | null, genMs: number, requestId?: string, prices?: PriceRef | null): TokenUsage | null =>
-    usage ? { ...usage, genMs, ...(requestId ? { requestId } : {}), ...(prices ? { prices } : {}) } : usage;
+const withGenMs = (usage: TokenUsage | null, genMs: number, requestId?: string, spend?: Pick<TokenUsage, "prices" | "electricity">): TokenUsage | null =>
+    usage ? { ...usage, genMs, ...(requestId ? { requestId } : {}), ...spend } : usage;
 
 /** OUR id for one request, sent as `hint.request` and echoed on the server's `gen.end`, so the panel matches the
  *  server's record of a generation to the call that caused it exactly instead of by model and end time. Opaque
@@ -787,7 +787,7 @@ const HANDBACK_ERROR =
 export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
     const { config, format, body, send, model, requestId } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this model call → usage.genMs (for the run's tok/s)
-    const prices = pricesForCall(config.priceSnapshotUrl).catch(() => null);   // the prices this call runs under (sw-prices.ts); off unless set
+    const spend = spendForCall(config);   // the prices this call runs under (sw-prices.ts); nothing unless spend tracking is set
 
     let data: any;
     if (payload.toolIds?.length && !payload.raw) {
@@ -815,7 +815,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
             // The model's separate thinking channel (reasoning_content / message.thinking). The agent
             // loop surfaces it as a collapsible "think" section, distinct from `content` (its prose).
             reasoning: format.extractReasoning(data) || null,
-            usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0, requestId, await prices),
+            usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0, requestId, await spend),
         };
     }
 
@@ -828,7 +828,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
         // no-match and a chat gets an empty string, rather than crashing the run. Only a
         // MISSING container is a real format/endpoint mismatch (e.g. a wrong route's SPA HTML).
         if (format.hasContainer(data)) {
-            return { content: "", sources: [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0, requestId, await prices) };
+            return { content: "", sources: [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0, requestId, await spend) };
         }
         throw new Error(
             `Response did not match the "${config.apiFormat}" format ` +
@@ -841,7 +841,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
     // sources: server-side tool / RAG provenance (OpenWebUI attaches it top-level
     // when a tool runs). Absent on plain chats and the Ollama-native format.
     // usage: OpenWebUI nests it under `usage`; Ollama-native puts counts at the root.
-    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0, requestId, await prices) };
+    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0, requestId, await spend) };
 }
 
 /** Did the response come back as protobuf — and, under `"on"`, say so when it did not.
@@ -883,7 +883,7 @@ function servedProto(res: Response, asked: ProtoMode | null, url: string): boole
 export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, model, protoAsked, requestId } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
-    const prices = pricesForCall(config.priceSnapshotUrl).catch(() => null);   // the prices this call runs under (sw-prices.ts); off unless set
+    const spend = spendForCall(config);   // the prices this call runs under (sw-prices.ts); nothing unless spend tracking is set
 
     const consume = async (res: Response) => {
         // NEGOTIATED BY WHAT CAME BACK, not by what we asked for. We send `Accept: application/protobuf` when
@@ -990,13 +990,13 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
             const { content, sawToolCall, sources, reasoning, usage } = await consume(await send(body, true));
-            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning, usage: withGenMs(usage, Date.now() - _t0, requestId, await prices) };   // real answer, or a plain empty completion
+            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning, usage: withGenMs(usage, Date.now() - _t0, requestId, await spend) };   // real answer, or a plain empty completion
         }
         throw new Error(HANDBACK_ERROR);
     }
 
     const { content, sources, reasoning, usage } = await consume(await send(body, true));
-    return { content, sources, model, reasoning, usage: withGenMs(usage, Date.now() - _t0, requestId, await prices) };
+    return { content, sources, model, reasoning, usage: withGenMs(usage, Date.now() - _t0, requestId, await spend) };
 }
 
 /** Streaming variant for the AGENT loop (opt-in `stream:true`). Unlike streamLLM (text-only), it ACCUMULATES
@@ -1010,7 +1010,7 @@ export async function streamAgentTurn(
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, protoAsked, requestId } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this streamed agent-turn call → usage.genMs
-    const prices = pricesForCall(config.priceSnapshotUrl).catch(() => null);   // the prices this call runs under (sw-prices.ts); off unless set
+    const spend = spendForCall(config);   // the prices this call runs under (sw-prices.ts); nothing unless spend tracking is set
     let content = "", reasoning = "";
     // OpenAI streams tool_calls as FRAGMENTS keyed by `index` (id + name + arguments-string pieces); Ollama
     // sends them WHOLE in a chunk. Accumulate both, then normalize via the format's own extractToolCalls.
@@ -1138,7 +1138,7 @@ export async function streamAgentTurn(
         const arr = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => ({ id: v.id, type: "function", function: { name: v.name, arguments: v.args } }));
         tool_calls = format.extractToolCalls({ choices: [{ message: { tool_calls: arr } }] } as any);
     }
-    const timed = withGenMs(usage, Date.now() - _t0, requestId, await prices);
+    const timed = withGenMs(usage, Date.now() - _t0, requestId, await spend);
     // The counted thinking figure goes on the usage when the server did not report a real one itself.
     const counted = timed && reasoningTokens != null && timed.reasoningTokens == null ? { ...timed, reasoningTokens } : timed;
     return { content: content || null, tool_calls, reasoning: reasoning || null,

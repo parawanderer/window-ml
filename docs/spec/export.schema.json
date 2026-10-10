@@ -782,6 +782,23 @@
           "description": "The price snapshot this call ran under, when spend tracking is on (`priceSnapshotUrl`): each source's sha256, so a cost can be worked out later against exactly those prices. Absent when it is off.",
           "$ref": "#/$defs/PriceRef"
         },
+        "electricity": {
+          "description": "The electricity price set when this call ran (`electricityPerKwh`), so a local model's energy can be costed at the price of the day. Absent when unset.",
+          "type": "object",
+          "properties": {
+            "perKwh": {
+              "type": "number"
+            },
+            "currency": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "perKwh",
+            "currency"
+          ],
+          "additionalProperties": true
+        },
         "cachedTokens": {
           "description": "How much of the prompt the server's prefix cache served — OpenAI's standard `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD prefill; ABSENT is \"not reported\" — never collapsed, since a count of 0 is a measurement. A cache hit is invisible in `promptTokens`, which is the same either way; this and the prefill's duration are the evidence. Cheap in TIME, never in tokens — do not fold it into a spend figure.",
           "type": "number"

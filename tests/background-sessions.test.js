@@ -709,6 +709,11 @@ test("capabilities.attention: what needs a hand on this runtime, as codes, sent 
     // Turning the archive on clears the suggestion that it is off.
     bg.setSync({ sessionArchive: true });
     await until(["python-packages-missing"]);
+    // Spend tracking on without an electricity price: the inbox asks for it, and setting one clears it.
+    bg.setSync({ priceSnapshotUrl: "http://box:3002" });
+    await until(["python-packages-missing", "spend-no-electricity-price"]);
+    bg.setSync({ electricityPerKwh: 0.3 });
+    await until(["python-packages-missing"]);
 
     // The server went away and the URL was changed: asked again at once, not at the next page.
     answering = false;

@@ -73,3 +73,13 @@ test("a price service that is down never fails the call: it runs with no prices 
     const { pricesForCall } = await fresh(async () => { throw new TypeError("fetch failed"); });
     assert.equal(await pricesForCall("http://box:3002"), null);
 });
+
+// --- what a call records ---
+
+test("a call records the electricity price only when one is set, and the price snapshot only when the service is", async () => {
+    const svc = service({ bodies: {}, sources: {} });
+    const { spendForCall } = await fresh(svc.fetch);
+    assert.deepEqual(await spendForCall({ priceSnapshotUrl: "", electricityPerKwh: 0, electricityCurrency: "EUR" }), {});
+    assert.deepEqual(await spendForCall({ priceSnapshotUrl: "", electricityPerKwh: 0.31, electricityCurrency: "eur " }), { electricity: { perKwh: 0.31, currency: "EUR" } });
+    assert.deepEqual(svc.asked, [], "no price service set: nothing fetched");
+});

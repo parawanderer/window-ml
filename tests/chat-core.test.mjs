@@ -618,6 +618,14 @@ test("tabTree: browser order per window, a group's run of tabs under its heading
     assert.ok(tabMatches(t(1), "s1.EXAMPLE") && !tabMatches(t(1), "nope"));
 });
 
+test("spend with no electricity price: an item that opens Settings on the one field", async () => {
+    const { attentionItems } = await import("../src/chat/attention.ts");
+    const here = { id: "local", name: "This browser", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: { localSettings: true, attention: ["spend-no-electricity-price"] } };
+    const [item] = attentionItems([here], new Map(), (r, fix) => fix.kind === "settings");
+    assert.equal(item.level, "limits");
+    assert.deepEqual({ kind: item.fix.kind, find: item.fix.find }, { kind: "settings", find: "Electricity price" });
+});
+
 test("attentionItems: reported and checked codes once each, problems first, fixes only where this device can apply them", async () => {
     const { attentionItems, attentionCount } = await import("../src/chat/attention.ts");
     const rt = (id, caps) => ({ id, name: id === "local" ? "This browser" : "Lab box", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: caps });
