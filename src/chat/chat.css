@@ -399,6 +399,14 @@ html, body, #root { height: 100%; }
     padding: 4px 9px;
 }
 .chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
+/* STACKED (`useStackOnWrap`), as Gemini's box does: once what is typed would wrap beside the controls, the text takes
+   the box's full width and the controls drop to a row under it — attach at the left, the model and send at the
+   right. Reordered, never re-parented, so the caret and the selection stay where they were. */
+.chat .composer-row.stacked { flex-wrap: wrap; row-gap: 2px; }
+.chat .composer-row.stacked > .cinput { order: -1; flex: 1 0 100%; }
+/* Whatever follows the text (the model, else send) starts the right-hand group. */
+.chat .composer-row.stacked > .cinput + * { margin-left: auto; }
+.chat.calm .composer-row.stacked { border-radius: 20px; padding: 8px 9px 6px; }
 /* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
 .chat .composer-foot .chint { margin-right: 14px; }
 .chat .composer-foot .chint.gone { margin-right: 0; }
