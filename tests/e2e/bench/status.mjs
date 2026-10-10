@@ -2,13 +2,15 @@
 // push): `status.md` (text) and `status.json` (that object, less the timeline and the box's samples, which have files of
 // their own), rewritten at most every `everyMs` while the sweep runs and once more at its end. A model that started the
 // sweep in the background reads these instead of opening the page: how far along it is, what is running, what it has
-// spent, what the bench holds in memory against its budget (with the chart's readings as a table), the held runs with
-// the commands for each, and whether it paused. Nothing here waits on anything: a read is a file read.
+// spent and is estimated to spend by its end, what the bench holds in memory against its budget (with the chart's
+// readings as a table), the held runs with the commands for each, and whether it paused. Nothing here waits on anything:
+// a read is a file read.
 
 import { writeFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { fmtBytes, limitWhence } from "./memory-budget.mjs";
 import { spendLine } from "./live-spend.mjs";
+import { forecastText } from "./spend-predict.mjs";
 
 /** What status.json keeps of the page's state: everything but the timeline and the box's samples (timeline.md, memory.md). */
 export const statusJson = ({ timeline: _t, resources: _r, ...s }) => s;
@@ -39,6 +41,7 @@ export function statusText(s, now = Date.now()) {
         for (const [m, t] of Object.entries(s.spend.models ?? {})) out.push(`| ${m} | ${t.calls} | ${t.computedCalls ? `${money(t.computed)} (${t.computedCalls})` : ""} | ${t.reportedCalls ? `${money(t.reported)} (${t.reportedCalls})` : ""} | ${t.local || ""} | ${t.unpriced || ""} | ${t.pending || ""} |`);
         out.push("", "Computed: each call's tokens at the rates of the price snapshot it ran under. Reported: the provider's own figure. scores.md prices the logged calls the same way.", "");
     }
+    if (s.forecast?.left) out.push("## Spend estimate (narrows as runs finish)", "", ...forecastText(s.forecast).map((l) => l.replace(/^ {2}/, "")), "");
     const m = s.memory;
     if (m && (m.active || m.groups?.length)) {
         out.push("## Memory (everything the bench holds on this machine, every clone's)", "",

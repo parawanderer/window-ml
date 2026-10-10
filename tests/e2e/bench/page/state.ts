@@ -96,6 +96,8 @@ export interface BenchState {
     resources?: PackedSamples | null;
     /** what this invocation's runs spent so far, priced as their calls came in (live-spend.mjs); null without calls */
     spend?: SweepSpend | null;
+    /** What the sweep will cost by its end (spend-predict.mjs): spent so far plus the estimate for the cells left. */
+    forecast?: SpendForecast | null;
     /** what the bench holds in this machine's memory, against its budget (memory-budget.mjs, hold-menu.mjs) */
     memory?: MemoryState | null;
 }
@@ -120,6 +122,10 @@ export interface MemoryState {
 export interface SpendTally { calls: number; computed: number; computedCalls: number; reported: number; reportedCalls: number; local: number; unpriced: number; pending: number }
 
 /** A sweep's live spend: the total, per driver model, and per run (by its place in `runs`). */
+/** One forecast tally: computed spend so far, the estimate still to come, the cells left, and how many of those are local or have no estimate. */
+export interface ForecastTally { spent: number; remaining: number; total: number; left: number; local: number; unknown: number; why: string | null; basis: { item: number; task: number; model: number } }
+/** The sweep's spend forecast, in total and per driver model, at the rates of the snapshot `prices` names. */
+export interface SpendForecast extends ForecastTally { currency: string; prices: string | null; models: Record<string, ForecastTally> }
 export interface SweepSpend { currency: string; total: SpendTally; models: Record<string, SpendTally>; runs: Record<string, SpendTally> }
 
 /** A model's score on the scoreboard (scores.mjs `scoreboard`): θ relative to the average task, and its chance there. */

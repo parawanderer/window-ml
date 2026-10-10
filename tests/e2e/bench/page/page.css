@@ -239,7 +239,8 @@ td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
               background: linear-gradient(135deg, transparent 50%, var(--fg-faint) 50%) }
 /* spend.tsx: the sweep's spend in the header and on each model's pill */
 .role.spend b, .badge.spend b { font-weight: 600; font-variant-numeric: tabular-nums }
-.badge.spend.partial b::after { content: "+"; color: var(--fg-faint); margin-left: 1px }
+.spend .est { color: var(--fg-dim) }
+.badge.spend.partial > .tt b::after { content: "+"; color: var(--fg-faint); margin-left: 1px }
 /* memory.tsx: the memory budget and the held-run menu */
 .memory h3 { font-size: 12px; margin: 12px 0 6px }
 .memory .mkinds, .memory .mhints { margin: 8px 0; padding-left: 18px }
