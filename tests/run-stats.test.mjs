@@ -66,6 +66,18 @@ test("normalizeUsage: a server's own reasoning_tokens is taken only when it is a
     assert.equal(normalizeUsage({ prompt_tokens: 5, completion_tokens: 90 }).reasoningTokens, undefined);
 });
 
+test("normalizeUsage: keeps the usage block's numbers verbatim as `raw`, and nothing else the server sent beside them", () => {
+    // OpenRouter's shape: a cost and its breakdown that no named field carries.
+    const or = normalizeUsage({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0012,
+        cost_details: { upstream_inference_cost: 0.001, note: "x" }, prompt_tokens_details: { cached_tokens: 4 } });
+    assert.deepEqual(or.raw, { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0012,
+        cost_details: { upstream_inference_cost: 0.001 }, prompt_tokens_details: { cached_tokens: 4 } });
+    // An ollama-native reply is passed whole: its message, model name and context array stay out.
+    const native = normalizeUsage({ model: "qwen", message: { role: "assistant", content: "hi" }, context: [1, 2], done: true,
+        prompt_eval_count: 7, eval_count: 3, eval_duration: 1e9 });
+    assert.deepEqual(native.raw, { prompt_eval_count: 7, eval_count: 3, eval_duration: 1e9 });
+});
+
 test("normalizeUsage: reads Ollama eval_duration (ns) → evalMs (ms)", () => {
     const nu = normalizeUsage({ prompt_eval_count: 100, eval_count: 40, eval_duration: 2_000_000_000 });   // 2e9 ns = 2000ms
     assert.equal(nu.promptTokens, 100);

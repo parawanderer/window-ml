@@ -49,6 +49,11 @@ export interface TokenUsage {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** The server's usage block AS SENT, for what the named fields do not carry (a provider's `cost`,
+     *  `cost_details`, cache-write counts): its numeric fields, and objects of numbers one level down. Whatever
+     *  else the server put beside the counts (an ollama-native reply's message, its model name) is left out. Read
+     *  it for spend; never compute a count from it that a named field already gives. */
+    raw?: Record<string, number | Record<string, number>>;
     /** How much of the prompt the server's prefix cache served — OpenAI's standard
      *  `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is
      *  deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD
