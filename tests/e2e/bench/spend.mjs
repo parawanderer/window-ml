@@ -49,6 +49,11 @@ function modelReader(session) {
     };
 }
 
+/** A delegated call's record (`subUsage.calls_[]`) as a turn's usage: its counts, and what it recorded beyond them once
+ *  the extension keeps it (#554: raw, prices, electricity), as recorded. */
+export const subcallUsage = (c) => ({ promptTokens: c.prompt, completionTokens: c.completion, totalTokens: (c.prompt ?? 0) + (c.completion ?? 0), genMs: c.ms,
+    ...(c.raw ? { raw: c.raw } : {}), ...(c.prices ? { prices: c.prices } : {}), ...(c.electricity ? { electricity: c.electricity } : {}) });
+
 /**
  * The model calls of one exported session (run.json's `session`), oldest first: the driver's turns, each followed by
  * the delegated calls made during its step. Calls with no usage recorded are not calls this can say anything about,
@@ -65,9 +70,7 @@ export function callsOf(session, run = session?.hash) {
         }
         for (const c of s.subUsage?.calls_ ?? []) {
             out.push({ run, call: out.length, at: Number.isFinite(c.ts) ? new Date(c.ts).toISOString() : null, kind: "sub", step: s.step ?? null,
-                model: c.model ?? null, usage: JSON.stringify({ promptTokens: c.prompt, completionTokens: c.completion, totalTokens: (c.prompt ?? 0) + (c.completion ?? 0), genMs: c.ms,
-                    // What a sub-call recorded beyond its counts, once the extension keeps it (#554): kept as recorded.
-                    ...(c.raw ? { raw: c.raw } : {}), ...(c.prices ? { prices: c.prices } : {}), ...(c.electricity ? { electricity: c.electricity } : {}) }) });
+                model: c.model ?? null, usage: JSON.stringify(subcallUsage(c)) });
         }
     }
     return out;
@@ -135,6 +138,7 @@ export function spendReport(db, rows, keyOf) {
         runsWithCalls: withCalls.size,
         runsWithout: rows.filter((r) => !withCalls.has(r.run)).length,
         models: spendByModel(priced, (run) => byRun.get(run) ?? null),
+        about: SPEND_ABOUT,
     };
 }
 

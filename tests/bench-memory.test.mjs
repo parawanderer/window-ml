@@ -44,10 +44,11 @@ test("a box with no /api/info gives no reading (unknown, never zero), and the po
     assert.equal(await readSample(BACKEND, { fetchImpl: stock }), null);
     let calls = 0;
     const poll = startResourcePoll(BACKEND, { everyMs: 1, maxMisses: 3, fetchImpl: async (...a) => { calls++; return stock(...a); } });
-    await new Promise((r) => setTimeout(r, 60));
-    const after = calls;
-    await new Promise((r) => setTimeout(r, 30));
+    // Waits for it to go quiet rather than a fixed time: a loaded machine runs the 1 ms timer late.
+    let after = -1;
+    for (const end = Date.now() + 2000; Date.now() < end && calls !== after;) { after = calls; await new Promise((r) => setTimeout(r, 30)); }
     assert.equal(calls, after, "stopped by itself");
+    assert.ok(calls <= 2 * 3, `at most two requests for each of its three tries, not ${calls}`);
     assert.equal(poll.samples(), null);
     poll.stop();
 });

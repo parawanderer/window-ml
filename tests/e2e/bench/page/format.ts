@@ -14,3 +14,8 @@ export function dur(ms: number | null | undefined): string {
     const t = Math.round(ms / 1000);
     return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m${String(t % 60).padStart(2, "0")}s`;
 }
+
+/** An amount of money as the spend views write it: four decimals under one unit (a call costs fractions of a cent), two above. */
+export function fmtMoney(x: number, currency: string): string {
+    return `${x.toFixed(Math.abs(x) < 1 ? 4 : 2)} ${currency}`;
+}
