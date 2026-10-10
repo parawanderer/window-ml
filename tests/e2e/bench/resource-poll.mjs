@@ -11,6 +11,7 @@
 const { loadedFrom } = await import("../../../src/resource/resource-events.ts");
 const { residencyOf, residentFrom } = await import("../../../src/resource/residency.ts");
 const { parseInfo } = await import("../../../src/resource/resource-capacity.ts");
+const { ownership } = await import("../../../src/resource/ownership.ts");
 
 /** How often the box is read. The panel polls `/api/ps` at this rate too. */
 export const POLL_MS = 2000;
@@ -92,9 +93,10 @@ const clock = (t) => new Date(t).toISOString().slice(11, 19);
 /**
  * memory.md: what the page's memory chart shows, as text. Each pool's peak and mean use against its total (used is
  * total minus free, the figure the chart's pool lines draw), and each model's stretch in memory with its largest
- * footprint. Read from the same packed samples the page gets.
+ * footprint. Read from the same packed samples the page gets. `ours` is the sessions this sweep ran (`wml-<hash>`):
+ * with it, and a box that names sessions on its generations, each model also says whose it was (`ownership`).
  */
-export function memoryText(packed) {
+export function memoryText(packed, ours = new Set()) {
     const out = ["# Memory during the sweep", ""];
     if (!packed?.samples.length) return out.concat(["No readings: the backend serves no `/api/info` (a stock Ollama or a cloud API), or the sweep ran against the fake model. The page draws no chart either."]).join("\n") + "\n";
     const all = packed.samples.map((s) => ({ ...s, capacity: packed.capacities[s.c] }));
@@ -110,15 +112,22 @@ export function memoryText(packed) {
         const peak = used.reduce((a, b) => (b.used > a.used ? b : a));
         out.push(`| ${p.name} | ${gib(peak.total)} | ${gib(peak.used)} | ${clock(peak.t)} | ${gib(used.reduce((a, b) => a + b.used, 0) / used.length)} |`);
     }
+    // Whose each model was over its readings, in order ("not this sweep's, then used by this sweep"), when known.
+    const owner = ownership(packed.events ?? [], (session) => ours.has(session));
+    const WHOSE = { ours: "loaded for this sweep", used: "used by this sweep", other: "not this sweep's" };
     const models = new Map();
     for (const s of all) for (const m of s.models) {
-        const e = models.get(m.model) ?? { from: s.t, to: s.t, peak: 0 };
+        const e = models.get(m.model) ?? { from: s.t, to: s.t, peak: 0, whose: [] };
         e.to = s.t; e.peak = Math.max(e.peak, m.vramBytes + m.ramBytes);
+        const o = owner?.(m.model, s.t);
+        if (o && e.whose.at(-1) !== WHOSE[o]) e.whose.push(WHOSE[o]);
         models.set(m.model, e);
     }
-    out.push("", "| model | first seen resident | last seen | largest footprint (VRAM + RAM) |", "| --- | --- | --- | --- |");
-    for (const [m, e] of models) out.push(`| ${m} | ${clock(e.from)} | ${clock(e.to)} | ${gib(e.peak)} |`);
-    if (!models.size) out.push("| (none resident) | | | |");
+    const whoseCol = owner ? " whose |" : "";
+    out.push("", `| model | first seen resident | last seen | largest footprint (VRAM + RAM) |${whoseCol}`, `| --- | --- | --- | --- |${owner ? " --- |" : ""}`);
+    for (const [m, e] of models) out.push(`| ${m} | ${clock(e.from)} | ${clock(e.to)} | ${gib(e.peak)} |${owner ? ` ${e.whose.join(", then ")} |` : ""}`);
+    if (!models.size) out.push(`| (none resident) | | | |${owner ? " |" : ""}`);
+    if (owner) out.push("", "Whose: from the session each generation named to the box. \"Loaded for this sweep\" is read off the first generation a load served; a model resident before the box's events begin reads \"not this sweep's\" until a run of this sweep uses it.");
     // The box's own events, when the server has an event stream: what it loaded, dropped and served, from any client.
     const evs = (packed.events ?? []).filter((e) => e.kind !== "gen").sort((a, b) => a.t - b.t);
     if (packed.events) {

@@ -272,6 +272,12 @@ per device, in bytes.
   own side task — a session title or a step summary, which are not lane events of their own — and says so; a
   live run caught it being called "a session this panel isn't showing" about the run on screen. A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
+- **WHOSE A RESIDENT MODEL WAS** (`ownership`, ownership.ts; `OwnerTag`, owner-tag.tsx). A surface that knows its own
+  sessions passes `ResourceTracks` an `owner`, and the memory tooltips tag each model they name: loaded for us, used
+  by us, or not ours. The server names a session on generations only, never on a load, so "loaded for us" is read off
+  the FIRST generation a load served; two requests queued on one cold model can finish in either order. A model
+  resident before the events begin is never "loaded for" anyone. No hint on any generation gives no reader at all,
+  never "nothing is ours". The bench passes this sweep's runs; the panel passes nothing yet.
 - **WHAT EACH CARD WAS DOING: the phase strip** (`ribbonSpans`, `PhaseStrip`). A thin row per model in a strip
   RESERVED above a per-card plot (it was drawn on the plot's top edge, where a card near full memory drew over it),
   drawing only TIMED phases — the engine's prefill/decode, our own streamed channels

@@ -33,6 +33,7 @@ import { settleScrub, ScrubStrip } from "./resource-scrub";
 import { DeviceView } from "./resource-device-view";
 import { UtilView, BoxView, OverlayView } from "./resource-box-views";
 import { kbFocus, kbPool, hoverModel, stepFocus, stepDepth } from "./vram-focus";
+import { OwnerContext, type OwnerInfo } from "./owner-tag";
 
 /** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
  *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
@@ -158,8 +159,10 @@ export interface LaneContext { axis: Axis; samples: ResourceSample[]; runs: Reso
  *   sweep, one lane per run) keeps its own rows and still moves with every zoom, scrub and selection made on the chart
  * @param endAt where a RECORDING that no longer grows ends (a finished bench sweep): the clock the live view follows
  *   stops there. Following the wall clock, "live" on a recording read later slid past its end and drew nothing.
+ * @param owner whose each model was (`ownership`), for a surface that knows its own sessions: the memory tooltips tag
+ *   each model they name with it. Absent, they tag nothing.
  */
-export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane, endAt }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren; endAt?: number }) {
+export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane, endAt, owner = null }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren; endAt?: number; owner?: OwnerInfo | null }) {
     const clock = () => endAt ?? Date.now();
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none — see the note on `filled` below.
@@ -299,7 +302,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
         wheelScrub(e);
     };
     return (
-        <>
+        <OwnerContext.Provider value={owner}>
             <div class="rc" onWheel={wheelScrub} onPointerEnter={holdAxis} onPointerMove={holdAxis} onPointerLeave={releaseAxis}>
                 {/* The plots' RULES obey the same kind filter as the lane and the strip: hiding "loads" takes the
                     load steps off the chart too, rather than leaving them ruled through a trace whose lane bars
@@ -331,7 +334,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
                 : laneEnabled.value
                 ? <div onWheel={wheelLane}><EventLane samples={filled} events={shown} session={samples} /></div>
                 : null}
-        </>
+        </OwnerContext.Provider>
     );
 }
 

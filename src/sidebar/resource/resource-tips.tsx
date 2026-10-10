@@ -19,6 +19,7 @@ import { hhmmssms, fmtAge, fmtDur, hhmmss } from "../timestamps";
 import { tileOffsets } from "../tip";
 import { useTipPlacement } from "../use-tip";
 import { kbFocus, hoverModel, focusDepth } from "./vram-focus";
+import { OwnerTag, OwnerNote } from "./owner-tag";
 
 /** The sample under the pointer, or null when the pointer is not over this plot. The fraction comes from the
  *  crosshair — one pointermove sets both — so a tooltip can never name a different datapoint than the line
@@ -259,6 +260,8 @@ export function BandTip({ bands, frame, history, samples, ceiling, scope, label,
         <div class={`rc-tip rc-tip-model${kb ? ` rc-tip-kb${side}` : ""}`} role="tooltip" ref={ref} style={style}>
             <div class="rc-tip-line"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />
                 <span class="rc-tip-name">{name}</span>
+                {/* Whose it was then, when the chart's surface knows its own sessions (the bench). */}
+                <OwnerTag model={name} t={(hoverSample ?? samples.at(-1))?.t ?? Date.now()} />
                 {/* WHICH CARD, once you are reading one card's contents. A split model shows one of these per
                     track and their figures differ on purpose, so a tip that did not name its own device
                     would be two unlabelled answers to the same question. */}
@@ -356,7 +359,7 @@ export function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: Reso
             {models.length
                 ? <div class="rc-tip-line rc-tip-dim rc-tip-holders">{models.map((b) => (
                     <span class="rc-tip-consumer" key={b.key}>
-                        <i class="rc-tip-dot" style={{ background: colorFor(b.model!) }} />{b.model}</span>))}</div>
+                        <i class="rc-tip-dot" style={{ background: colorFor(b.model!) }} />{b.model}<OwnerTag model={b.model!} t={at.t} /></span>))}</div>
                 // NOT "nothing resident" WHEN THE POOL IS FULL. Read off `ps`, which has no runner object
                 // during a load, that put "88.28 GiB of 95.59 GiB (92%)" and "nothing resident" in the SAME
                 // tooltip. The sample knows what was loading; when it does not, "not attributed" is still the
@@ -376,6 +379,7 @@ export function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: Reso
                     <span class="rc-tip-consumer" key={b.key}>
                         <i class="rc-tip-dot" style={{ background: bandFill(b.key, undefined, b.of) }} />{b.label} {formatBytes(b.bytes)}</span>))}</div>
                 : null}
+            {models.length ? <OwnerNote /> : null}
             {models.length ? <div class="rc-tip-line rc-tip-keys"><span><ClickFirst /><kbd>↑↓</kbd> pick a model</span></div> : null}
         </div>
     );
@@ -463,6 +467,7 @@ export function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surfa
                                         ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} />
                                         : <i class="rc-tip-dot rc-tip-dot-none" />}
                                     <span class="rc-tip-cname">{c.label}</span>
+                                    {c.model ? <OwnerTag model={c.model} t={frame.t} /> : null}
                                     {/* NO "gone" MARKER HERE. This tooltip reads a sample from the PAST — it
                                         answers "what was on this card at that instant", and at that instant
                                         the model was resident, so annotating it with what happened later is
@@ -493,6 +498,7 @@ export function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surfa
                     ))}
                 </div>
             ) : null}
+            <OwnerNote />
             {/* AT THE BOTTOM, where the other view puts it — a hint that moves between views is one more
                 thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
                 breakdown of its own (the decomposition is per MODEL), and naming a key that silently does

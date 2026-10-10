@@ -584,6 +584,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .rc-tip-dim { color: var(--fg-faint); }
+/* Whose a model was at the hovered instant (owner-tag.tsx), on a surface that knows its own sessions (the bench): a small
+   outlined word after the name, accented for ours, plain for used by us, faint for not ours. */
+.rc-tip-owner { margin-left: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 0.85em; white-space: nowrap; color: var(--fg-dim); }
+.rc-tip-owner.ours { color: var(--accent); border-color: var(--accent); }
+.rc-tip-owner.other { color: var(--fg-faint); border-style: dashed; }
 /* WHEN the figures above were measured. Ruled off, because it is a different kind of fact from the rest of
    the tip: those describe a quantity, this one says which instant the quantity is from. */
 .rc-tip-when { padding-top: 3px; border-top: 1px solid var(--tip-line); color: var(--fg-faint);
