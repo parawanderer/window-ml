@@ -15,6 +15,8 @@ export type Routes = {
     /** One runtime: what it is, the models it offers, what it keeps. */
     Runtime: { id: string };
     Devices: undefined;
+    /** This app's build against the newest one, and installing it (Android). */
+    Update: undefined;
     Pair: undefined;
     Welcome: undefined;
     Join: undefined;

@@ -1,9 +1,9 @@
 // SettingsScreen.tsx — THE APP'S SETTINGS, as a phone draws them: grouped rows in rounded cards, not the chat page's
 // desktop tabs. The theme (the system's, or light or dark), this device's account, and the runtimes it can see with what
-// it may do on each. Pairing and the device list arrive as screens of their own.
+// it may do on each, and on Android whether the app checks GitHub for a newer build of itself. Pairing and the device list arrive as screens of their own.
 
 import { useContext, useEffect, useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -15,6 +15,8 @@ import { Dot, IconButton } from "../ui";
 import { CODE_SIZES } from "../../../src/native/text-size";
 import { setCodeSize, useCodeSize } from "../code-size";
 import { NOTIFY_WHAT, askNotify, notifyState, type NotifyPermission } from "../notify";
+import { setUpdateCheck, useAppUpdate } from "../app-update";
+import { BUILD } from "../generated/build";
 
 const THEMES: { value: ThemeChoice; label: string }[] = [
     { value: "system", label: "Same as the phone" },
@@ -37,6 +39,7 @@ export function SettingsScreen() {
     const e = useEmbed();
     const { choice, setChoice } = useContext(ThemeChoiceContext);
     const code = useCodeSize();
+    const update = useAppUpdate();
     // Read once: the answer only changes by a press here or a trip to the phone's own settings, and coming back
     // from those remounts the screen.
     const [notify, setNotify] = useState<NotifyPermission | null>(null);
@@ -94,6 +97,34 @@ export function SettingsScreen() {
                         {notify === "granted" ? <Check size={20} color={p.accent} /> : notify === "undetermined" ? <ChevronRight size={20} color={p.fgFaint} /> : null}
                     </Pressable>
                 </View>
+
+                {/* APP UPDATES, Android only: iOS has no build to download. The switch says what it costs, because each
+                    check tells GitHub this phone's address; the row below opens the build against the newest one. */}
+                {update.supported ? <>
+                    <Text style={[s.group, { color: p.fgDim }]}>App updates</Text>
+                    <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg }]}>
+                        <View style={s.row}>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[s.rowText, { color: p.fg }]}>Check GitHub for new builds</Text>
+                                <Text style={{ color: p.fgDim, fontSize: SIZE.small, marginTop: 2 }}>
+                                    {BUILD.repo ? `A few times a day, from ${BUILD.repo}. GitHub sees this phone's address each time.` : "This build was made outside CI and names no repository, so it cannot check."}
+                                </Text>
+                            </View>
+                            <Switch testID="update-switch" accessibilityLabel="Check GitHub for new builds" value={update.enabled} disabled={!BUILD.repo}
+                                onValueChange={setUpdateCheck} trackColor={{ true: p.accent, false: p.panel2 }} />
+                        </View>
+                        <Pressable testID="update-row" accessibilityRole="button" onPress={() => nav.navigate("Update")}
+                            style={({ pressed }) => [s.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }, pressed && { backgroundColor: p.panel2 }]}>
+                            <Text style={[s.rowText, { color: p.fg }]}>This build</Text>
+                            <Text style={{ color: update.last?.state === "behind" && !update.off ? p.accent : p.fgDim, fontSize: SIZE.small }}>
+                                {update.off || !update.last ? (BUILD.sha?.slice(0, 7) ?? "unknown")
+                                    : update.last.state === "behind" ? `${update.last.commits} behind`
+                                    : update.last.state === "current" ? "newest" : BUILD.sha?.slice(0, 7) ?? "unknown"}
+                            </Text>
+                            <ChevronRight size={20} color={p.fgFaint} />
+                        </Pressable>
+                    </View>
+                </> : null}
 
                 <Text style={[s.group, { color: p.fgDim }]}>This device</Text>
                 <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg }]}>

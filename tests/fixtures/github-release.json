@@ -1,0 +1,29 @@
+{
+  "url": "https://api.github.com/repos/parawanderer/window-ml/releases/408244799",
+  "html_url": "https://github.com/parawanderer/window-ml/releases/tag/android-latest",
+  "id": 408244799,
+  "tag_name": "android-latest",
+  "target_commitish": "e2af705699aa7a6df586f753895ae41c476b2178",
+  "name": "Android build (rolling)",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-10-09T18:43:37Z",
+  "published_at": "2026-10-09T19:01:15Z",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/parawanderer/window-ml/releases/assets/625887876",
+      "id": 625887876,
+      "name": "window-ml.apk",
+      "label": "",
+      "content_type": "application/vnd.android.package-archive",
+      "state": "uploaded",
+      "size": 59624639,
+      "digest": "sha256:55e46c8edcf9bca255a7466bb7a012a7e94220d81ca5e2a5fd68de0f59dad6bb",
+      "download_count": 2,
+      "created_at": "2026-10-09T19:01:12Z",
+      "updated_at": "2026-10-09T19:01:14Z",
+      "browser_download_url": "https://github.com/parawanderer/window-ml/releases/download/android-latest/window-ml.apk"
+    }
+  ],
+  "body": "The phone app, built from the newest commit on main. Download `window-ml.apk` on the phone and open it;\nAndroid will ask whether the browser may install apps.\n\nSigned with the standard Android debug key, so it is for trying the app out rather than for distribution.\nAn app already installed under `dev.wander.windowml` from another source has to be uninstalled first.\n\narm64-v8a only."
+}

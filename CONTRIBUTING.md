@@ -113,6 +113,12 @@ It is signed with the standard Android debug key, which is all a sideload needs,
 under `dev.wander.windowml` from anywhere else has to be uninstalled first. arm64-v8a only, which is every phone made
 in the last decade.
 
+After that the app keeps itself current: a few times a day it asks GitHub whether `android-latest` has moved, puts "A
+newer build of this app is out" in its inbox with how far behind it is (commits and days), and its update screen
+(Settings → App updates) lists what changed and installs the new APK. Android asks once whether the app may install
+apps. The check is a switch in the same place, since each one tells GitHub the phone's address. A build you make
+yourself names no repository and never checks.
+
 ### Using it on a device with no packaged app (an iPad, any browser)
 
 The same client, hosted: **https://parawanderer.github.io/window-ml/**. Open it, and the browser offers to install it

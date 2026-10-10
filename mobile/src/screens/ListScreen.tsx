@@ -14,6 +14,7 @@ import * as Haptics from "expo-haptics";
 import type { SessionSummary } from "../../../src/session/session-host";
 import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
+import { useUpdateRow } from "../app-update";
 import { ago, approvalsPending, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
@@ -29,6 +30,8 @@ export function ListScreen() {
     const insets = useSafeAreaInsets();
     const nav = useNavigation<NativeStackNavigationProp<Routes>>();
     const e = useEmbed();
+    const update = useUpdateRow();
+    const badge = e.attention.count + (update ? 1 : 0);
     // Can a session be started on this machine at all? The page's own answer (`startable`), so the `+` appears on
     // exactly the runtimes the chat page draws one on — a machine that is offline or that this device may only watch
     // gets none, and its absence is the honest signal about which machines can take work.
@@ -72,10 +75,12 @@ export function ListScreen() {
                     problems, never for suggestions, so a set-up account shows no badge (attention.ts). */}
                 <IconButton label="Search sessions" icon={(c) => <IconSearch color={c} />} onPress={() => nav.navigate("Search")} />
                 <IconButton label="New session" icon={(c) => <IconCompose color={c} />} onPress={() => nav.navigate("NewChat")} />
-                {e.attention.items.length ? (
+                {/* A newer build of this app counts toward the badge although it is a suggestion: it is the one item
+                    nobody would otherwise hear about, and putting it away in the inbox clears it until the next build. */}
+                {e.attention.items.length || update ? (
                     <View>
-                        <IconButton label={e.attention.count ? `${e.attention.count} things need attention` : "Suggestions"} icon={(c) => <IconInbox color={c} />} onPress={() => nav.navigate("Attention")} />
-                        {e.attention.count ? <View pointerEvents="none" style={s.inboxBadge}><Badge n={e.attention.count} label={`${e.attention.count} need attention`} /></View> : null}
+                        <IconButton label={badge ? `${badge} things need attention` : "Suggestions"} icon={(c) => <IconInbox color={c} />} onPress={() => nav.navigate("Attention")} />
+                        {badge ? <View pointerEvents="none" style={s.inboxBadge}><Badge n={badge} label={`${badge} need attention`} /></View> : null}
                     </View>
                 ) : null}
                 <IconButton label="Settings" icon={(c) => <IconGear color={c} />} onPress={() => nav.navigate("Settings")} />

@@ -1,0 +1,61 @@
+{
+  "url": "https://api.github.com/repos/parawanderer/window-ml/compare/60972b0f848ac0cf18e4944ed41a46194a3e15ab...e2af705699aa7a6df586f753895ae41c476b2178",
+  "html_url": "https://github.com/parawanderer/window-ml/compare/60972b0f848ac0cf18e4944ed41a46194a3e15ab...e2af705699aa7a6df586f753895ae41c476b2178",
+  "status": "ahead",
+  "ahead_by": 3,
+  "behind_by": 0,
+  "total_commits": 3,
+  "commits": [
+    {
+      "sha": "3ae557caae87449bddb39ee7a5bbb8013c5e4edb",
+      "html_url": "https://github.com/parawanderer/window-ml/commit/3ae557caae87449bddb39ee7a5bbb8013c5e4edb",
+      "commit": {
+        "author": {
+          "name": "Shane B.",
+          "email": "37834723+parawanderer@users.noreply.github.com",
+          "date": "2026-10-09T18:31:37Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-10-09T18:31:37Z"
+        },
+        "message": "fix(scripts): merge-when-green counts a deleted file as a deleted test only when it is one (#536)\n\nThe rule refused any PR that deleted a file under tests/, but tests/ also holds the harness and the bench's own code: moving the bench page's Card out to src/sidebar (#518) read as \"deletes a test file\". A deleted test is now a *.test.* or *.spec.* file or a fixture under tests/fixtures/ (deletedTests, tested); a test whose lines go is still caught by the test( line count.\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>"
+      }
+    },
+    {
+      "sha": "e93dfd09065a1c92e5dc0283cab1d9ba52984a4f",
+      "html_url": "https://github.com/parawanderer/window-ml/commit/e93dfd09065a1c92e5dc0283cab1d9ba52984a4f",
+      "commit": {
+        "author": {
+          "name": "Shane B.",
+          "email": "37834723+parawanderer@users.noreply.github.com",
+          "date": "2026-10-09T18:32:59Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-10-09T18:32:59Z"
+        },
+        "message": "refactor(bench): the page's card, tiles, badges and buttons go to the shared pool; the Timeline chip counts on the page clock (#518)\n\n* fix(bench): the Timeline's window chip counts on the page clock, so a running sweep's \"all\" grows between pushes and on a saved page\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(bench): a standalone page's card, tiles, badges and buttons move to the shared pool (page-kit.css, fold-card.tsx)\n\nThe bench page's generic pieces leave bench/page: Card (moved with move-symbols, its storage key kept so folded cards stay folded) to src/sidebar/fold-card.tsx, and the card, fold button, tiles, badges and buttons rules to src/sidebar/page-kit.css, which the code index now reads. Kept out of sidebar.css: .card, .btn and .badge are generic names the panel and the chat page style their own way. page.css keeps the bench's own layout.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>"
+      }
+    },
+    {
+      "sha": "e2af705699aa7a6df586f753895ae41c476b2178",
+      "html_url": "https://github.com/parawanderer/window-ml/commit/e2af705699aa7a6df586f753895ae41c476b2178",
+      "commit": {
+        "author": {
+          "name": "Shane B.",
+          "email": "37834723+parawanderer@users.noreply.github.com",
+          "date": "2026-10-09T18:43:37Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-10-09T18:43:37Z"
+        },
+        "message": "feat(bench): a sweep's report includes every cell on disk of the same spec and build; earlier versions are listed, not counted (#537)\n\nA sweep built up a model or a task at a time (--only, --models) now reads as one: report.md, summary.md, rows.json and the page include every cell in the sweep directory whose cache key is the current spec and build's. Cells from an earlier spec or build are listed under \"Also on disk, from an earlier version\" (`older` in rows.json and page.json) and are in no figure. BENCH DONE and done.json still count only what the invocation ran or read.\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>"
+      }
+    }
+  ]
+}

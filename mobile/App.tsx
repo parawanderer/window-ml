@@ -14,6 +14,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { loadDrafts } from "./src/drafts";
 import { loadPinnedModels } from "./src/pinned-models";
 import { loadCodeSize, useCodeSize } from "./src/code-size";
+import { loadAppUpdate } from "./src/app-update";
 import { EmbedProvider, useEmbed } from "./src/embed";
 import { SessionLayer, SessionLayerProvider } from "./src/layer";
 import type { Routes } from "./src/routes";
@@ -25,6 +26,7 @@ import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { CreateScreen, JoinScreen, WelcomeScreen } from "./src/screens/AccountScreens";
 import { DevicesScreen, PairScreen } from "./src/screens/DeviceScreens";
 import { RuntimeScreen } from "./src/screens/RuntimeScreen";
+import { UpdateScreen } from "./src/screens/UpdateScreen";
 import { ThemeChoiceContext, usePalette, type ThemeChoice } from "./src/theme";
 import { Toast } from "./src/ui";
 import { ImageViewer } from "./src/viewer";
@@ -41,6 +43,8 @@ export default function App() {
             if (t === "light" || t === "dark" || t === "system") setChoiceState(t);
             setLoaded(true);
         });
+        // Not awaited: the first frame never waits on GitHub. It reads its own last answer and checks if one is due.
+        void loadAppUpdate();
     }, []);
     const theme = useMemo(() => ({ choice, setChoice: (c: ThemeChoice) => { setChoiceState(c); void AsyncStorage.setItem(THEME_KEY, c); } }), [choice]);
     if (!loaded) return null;
@@ -94,6 +98,7 @@ function Shell() {
                         <Stack.Screen name="Devices" component={DevicesScreen} />
                         <Stack.Screen name="Runtime" component={RuntimeScreen} />
                         <Stack.Screen name="Pair" component={PairScreen} />
+                        <Stack.Screen name="Update" component={UpdateScreen} />
                     </>}
                 </Stack.Navigator>
             </NavigationContainer>
