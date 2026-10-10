@@ -159,7 +159,7 @@ test("scrolling back moves a selection earlier at the same width, on the plot an
 });
 
 test("pinching in on live narrows the window and keeps following; the chip's ✕ restores the default width", async (t) => {
-    const c = await chart(t);
+    const c = await chart(t, { running: true });
     await c.wheel(c.q(".rc"), { ctrlKey: true, deltaY: -300, clientX: 700 });
     const [left, width] = c.box();
     assert.ok(width < 100, `narrower (${width}%)`);
@@ -172,8 +172,8 @@ test("pinching in on live narrows the window and keeps following; the chip's ✕
     assert.equal(c.chip().kind, "at-default");
 });
 
-test("dragging the strip's box moves the selection; dragged back to the end, it is live again", async (t) => {
-    const c = await chart(t);
+test("dragging the strip's box moves the selection; dragged back to the end of a sweep still running, it is live again", async (t) => {
+    const c = await chart(t, { running: true });
     await c.drag(c.q(".rc .rc-hit"), xAt(10_000), xAt(20_000));
     const [l0, w0] = c.box();
     const mid = ((l0 + w0 / 2) / 100) * W;
@@ -185,6 +185,23 @@ test("dragging the strip's box moves the selection; dragged back to the end, it 
     await c.drag(c.q(".rc-scrub-track"), ((l1 + w1 / 2) / 100) * W, W);
     assert.ok(c.live(), "at the tail it follows again");
     assert.equal(c.chip().kind, "resized", "at the width it was given, which the chip offers to undo");
+});
+
+test("a finished recording offers no live view: its button goes back to all of it, and a window dragged to the end stays put", async (t) => {
+    const c = await chart(t);
+    const button = () => c.q(".rc-scrub-live");
+    assert.equal(button().textContent, "↺all");
+    await c.drag(c.q(".rc .rc-hit"), xAt(10_000), xAt(20_000));
+    const [l0, w0] = c.box();
+    await c.drag(c.q(".rc-scrub-track"), ((l0 + w0 / 2) / 100) * W, W);
+    const [l1, w1] = c.box();
+    near(l1 + w1, 100, 0.5, "at the end");
+    near(w1, w0, 0.5, "at the width it had");
+    assert.equal(c.chip().kind, "pinned", "nothing to follow: the end is where it was put");
+    button().click();
+    await c.tick();
+    assert.deepEqual(c.box(), [0, 100]);
+    assert.equal(c.chip().kind, "at-default");
 });
 
 // --- the readout ---

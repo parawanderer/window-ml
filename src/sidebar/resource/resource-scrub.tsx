@@ -61,7 +61,7 @@ export function settleScrub(next: { from: number; to: number }, ex: { from: numb
  *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
  *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
  *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
-export function ScrubStrip({ samples, window: win, pan, events = [], follows }: {
+export function ScrubStrip({ samples, window: win, pan, events = [], follows, ended = false }: {
     samples: ResourceSample[]; window: { from: number; to: number } | null;
     /** The window at its REAL width, for a pan. `window` is clipped to the last reading while it fills, which is right
      *  for drawing it and for a resize (narrowing means fewer seconds than the history), and wrong for a pan: moving
@@ -69,6 +69,8 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows }: 
      *  window by the unread gap, until it was a sliver and then nothing. */
     pan?: { from: number; to: number } | null;
     events?: ResourceEvent[]; follows: boolean;
+    /** a recording that ended (a finished sweep): the way back is to all of it, not to a session's stretch */
+    ended?: boolean;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -221,17 +223,18 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows }: 
             {/* The icon slot is ALWAYS filled — playing or paused. An icon present in only one state changes
                 the button's width, so the control jumped every time the view left or rejoined live, which is
                 exactly the moment you are looking at it. */}
-            {/* Where nothing follows the clock (a scoped session that has finished), clearing the zoom returns to the
-                session's own stretch, so the button says that instead of promising a live view it cannot give. */}
+            {/* Where nothing follows the clock (a scoped session that has finished, a recording that ended), clearing the
+                zoom returns to the session's own stretch or to the whole recording, so the button says which instead of
+                promising a live view it cannot give. */}
             {follows ? (
                 <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
                     onClick={() => (zoomRange.value = null)}>
                     <span class="rc-live-icon" aria-hidden="true">{ex.atTail ? "▶" : "⏸"}</span>live
                 </button>
             ) : (
-                <button class={`rc-scrub-live${zoomRange.value ? "" : " on"}`} title="Back to this session's own stretch"
+                <button class={`rc-scrub-live${zoomRange.value ? "" : " on"}`} title={ended ? "Back to the whole recording: it has ended, so there is nothing live to follow" : "Back to this session's own stretch"}
                     onClick={() => (zoomRange.value = null)}>
-                    <span class="rc-live-icon" aria-hidden="true">↺</span>session
+                    <span class="rc-live-icon" aria-hidden="true">↺</span>{ended ? "all" : "session"}
                 </button>
             )}
             {/* Two lines from the window's edges down to the LANE's, so the magnification between them is
