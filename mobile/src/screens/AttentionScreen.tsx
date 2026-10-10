@@ -4,12 +4,19 @@
 //
 // A phone fixes none of it: every fix is a click in the runtime's own browser or its Settings. So each item says WHICH
 // device, and the screen offers no button that could not work. Suggestions can be put away on this phone.
+//
+// The one item about THIS APP is a newer build of it (src/app-update.ts), which the phone CAN act on: it opens the
+// update screen.
 
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { X } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { ChevronRight, X } from "lucide-react-native";
+import type { Routes } from "../routes";
+import { hideUpdateRow, useUpdateRow } from "../app-update";
 import type { AttentionRow } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
 import { Bar } from "./AccountScreens";
@@ -30,17 +37,21 @@ export function AttentionScreen() {
     const p = usePalette();
     const insets = useSafeAreaInsets();
     const e = useEmbed();
+    const nav = useNavigation<NativeStackNavigationProp<Routes>>();
+    const update = useUpdateRow();
     const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
     useEffect(() => {
         void AsyncStorage.getItem(DISMISSED).then((raw) => { try { setHidden(new Set(JSON.parse(raw ?? "[]") as string[])); } catch { /* none */ } });
     }, []);
     // Only a suggestion can be put away: a problem stays until the runtime stops reporting it.
     const dismiss = (key: string) => {
+        if (key === update?.key) { hideUpdateRow(key); return; }
         const next = new Set(hidden).add(key);
         setHidden(next);
         void AsyncStorage.setItem(DISMISSED, JSON.stringify([...next]));
     };
-    const items = e.attention.items.filter((i) => i.level !== "suggests" || !hidden.has(i.key));
+    const fromRuntimes = e.attention.items.filter((i) => i.level !== "suggests" || !hidden.has(i.key));
+    const items = update ? [update, ...fromRuntimes] : fromRuntimes;
     const tone = (level: AttentionRow["level"]) => (level === "blocks" ? p.err : level === "limits" ? p.notice : p.fgFaint);
 
     return (
@@ -59,12 +70,14 @@ export function AttentionScreen() {
                             <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg, borderColor: p.border }]}>
                                 {rows.map((r, i) => (
                                     <View key={r.key} style={[s.row, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }]}>
-                                        <View style={{ flex: 1 }}>
+                                        <Pressable style={{ flex: 1 }} disabled={r !== update} accessibilityRole={r === update ? "button" : undefined}
+                                            testID={r === update ? "attention-update" : undefined} onPress={() => nav.navigate("Update")}>
                                             <Text style={[s.title, { color: p.fg }]}>{r.title}</Text>
                                             {/* Which device: the fix is a click THERE, never here. */}
                                             {r.runtimeName ? <Text style={[s.where, { color: tone(r.level) }]}>on {r.runtimeName}</Text> : null}
                                             <Text style={[s.detail, { color: p.fgDim }]}>{r.detail}</Text>
-                                        </View>
+                                        </Pressable>
+                                        {r === update ? <ChevronRight size={18} color={p.fgFaint} /> : null}
                                         {r.level === "suggests" ? (
                                             <Pressable accessibilityRole="button" accessibilityLabel={`Put away: ${r.title}`} hitSlop={12} onPress={() => dismiss(r.key)}>
                                                 <X size={18} color={p.fgFaint} />
@@ -76,7 +89,7 @@ export function AttentionScreen() {
                         </View>
                     );
                 })}
-                <Text style={[s.foot, { color: p.fgFaint }]}>Each of these is fixed on the device it names, in its browser or its Settings. This list updates when it is.</Text>
+                {fromRuntimes.length ? <Text style={[s.foot, { color: p.fgFaint }]}>Each of these is fixed on the device it names, in its browser or its Settings. This list updates when it is.</Text> : null}
             </ScrollView>
         </View>
     );

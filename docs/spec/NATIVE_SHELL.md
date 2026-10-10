@@ -186,6 +186,16 @@ page:
 - The keyring stayed in the WebView's IndexedDB for slice 1; its secrets moved to the Keystore / Keychain in #239, and
   its other records to the app's files in #243, so the WebView now persists nothing.
 
+**Updates (Android, 2026-10-10).** There is no store, so the app checks for itself: `src/native/app-update.ts` (shared,
+pure) reads the rolling `android-latest` release and GitHub's compare between its target and the commit this app was
+built from, which `mobile/scripts/sync-embed.mjs` writes into a generated, uncommitted `build.ts` along with CI's
+`GITHUB_REPOSITORY` (no repository: no check). "Behind" is counted in commits on main, because the release is one tag
+remade per push, not a series. A newer build is an inbox suggestion keyed by its commit, and the Update screen downloads
+the APK (`expo-file-system`) and opens it in the package installer (`expo-intent-launcher`, `REQUEST_INSTALL_PACKAGES`).
+Every CI build is signed with React Native's fixed template debug key, which is what lets one install over another.
+Tested against a fake GitHub (`tests/fixtures/fake-github.mjs`) and two captured real responses, in
+`tests/app-update.test.mjs`. The release build allows no cleartext HTTP, so the fake reaches a test, not the emulator.
+
 Screens in the first version: list, session, new session, attention, settings (theme, text size, runtimes, devices and
 pairing, all native: the web tabs were drawn for a desktop). Pairing's QR code and camera scan use native modules.
 Settings need bridge messages of their own (the device list, revoke, leave, the pairing steps), added with them.

@@ -86,8 +86,8 @@ const GENRES = {
     // The phone app's own logic and the bridge it speaks. Its SCREENS are Maestro's (tests/mobile/), which this
     // runner never sees; what is here is what runs without a device.
     mobile: {
-        about: "the phone app (mobile/): its list, its attachments, the native bridge and search",
-        files: ["mobile-attach.test.mjs", "mobile-imports.test.mjs", "mobile-list.test.mjs",
+        about: "the phone app (mobile/): its list, its attachments, the native bridge and search, its update check",
+        files: ["app-update.test.mjs", "mobile-attach.test.mjs", "mobile-imports.test.mjs", "mobile-list.test.mjs",
             "native-bridge.test.mjs", "native-search.test.mjs", "tap-feedback.test.mjs"],
     },
     // THE SESSION CONTRACT and the worker's side of it: what a runtime answers, what the index records, what a
