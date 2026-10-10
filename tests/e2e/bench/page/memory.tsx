@@ -74,6 +74,8 @@ export function MemoryCard({ m, live = false }: { m?: MemoryState | null; live?:
                 <span class="sub">{fmt(m.used)} of a {fmt(m.limit)} limit ({limitWhence(m)}) · {fmt(m.available)} available{m.reserve ? `, ${fmt(m.reserve)} kept free` : ", no reserve (a limit set by hand)"} · room for {fmt(m.room)}</span></header>
             {live ? <LimitControl m={m} /> : null}
             {m.paused ? <div class="mpaused">Paused at the memory budget: {m.paused}. Resume with:<CopyableCode text={m.resume} /></div> : null}
+            {m.waiting && !m.paused ? <div class="mpaused mwaiting">{m.waiting.cell} waits for memory: {m.waiting.why}.{m.waiting.free.length ? <> The runs held earlier keep theirs until released (the sweep never releases them itself). To free some:
+                {m.waiting.free.map((f, i) => <div key={i} class="mcmd"><span>{f.text}</span><CopyableCode text={f.cmd} /></div>)}</> : null}</div> : null}
             <div class="bar"><i style={{ width: `${pct}%` }} /></div>
             <MemoryChart m={m} />
             <ul class="mkinds">{Object.entries(m.byKind).map(([k, v]) => <li key={k}>{KIND[k] ?? k}: <b>{fmt(v)}</b>{k === "runner" && m.runner?.heap ? <span class="dim"> (node heap {fmt(m.runner.heap)})</span> : null}</li>)}</ul>
@@ -93,6 +95,10 @@ export function MemoryCard({ m, live = false }: { m?: MemoryState | null; live?:
             {m.wouldHold.length ? <>
                 <h3>Not held: the budget had no room</h3>
                 <ul>{m.wouldHold.map((w) => <li key={w.dir}>{w.cell} <span class="dim">({w.failure})</span></li>)}</ul>
+            </> : null}
+            {m.released?.length ? <>
+                <h3 class="tt" data-tip="This sweep runs with --when-full release-duplicates: when a cell could not start for memory, it released its own held duplicates (same model, task and failure), keeping the run each group's attach line names.">Released by the sweep: duplicates, one of each kept</h3>
+                <ul class="mreleased">{m.released.map((r) => <li key={r.pid}>{r.cell} <span class="dim">({r.key}, {fmt(r.rss)}) so {r.for} could start</span></li>)}</ul>
             </> : null}
         </Card>
     );

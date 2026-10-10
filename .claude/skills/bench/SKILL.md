@@ -64,7 +64,10 @@ ran in its own process), else of every task's, else 1 GB. At the start it says w
 be held this sweep …"). At the limit, `--when-full pause` (the default) starts nothing more, keeps nothing more (a
 failure it would have kept is listed as "not held"), lets the running cells finish and EXITS 75 (`paused=memory-budget`
 on the last line, `paused` and `resume` in `done.json`), leaving what it holds alive; the same command resumes from the
-cache. `--when-full stop-holding` goes on (overnight) and only stops keeping failures; a cell then waits for room. On
+cache. `--when-full stop-holding` goes on (overnight) and only stops keeping failures; a cell then waits for room. Runs
+held before the budget filled keep their memory until released or idle out (30 min by default, `--hold-idle`), and stop-holding never releases
+them itself (`release-duplicates` releases this sweep's own duplicates, one of each kept): a waiting cell logs what would free some (each duplicate group's "keep one, release the rest" line, else
+releasing the largest group), and status.md and the Memory card show the same while it waits. On
 exit, paused or not, it prints the MENU: every clone's held runs grouped by model · task · failure, each group with a
 command to paste for attach, keep one and release the rest, release all, plus how to resume and what to do with them.
 The page has the same as its Memory card (with a chart of the readings over the sweep, and each group folding). Any
@@ -275,6 +278,18 @@ something the next run is held to. For a model reading results, `panel.mjs` is t
 | `--port N` | Serve on a specific port. The default (7331) is STABLE on purpose, so a browser tab can just reload between sweeps instead of needing a new URL. Falls back to any free port if taken. |
 | `--models a,b` | With an interview file (`.json`, `.interview.ts`) in place of a spec: the models to put it to (or `PANEL_MODELS`). `--surface hud\|console` and `--turn-minutes N` as `panel.mjs` takes them. |
 | `--pdf` | Also render each run to `run.html` + `run.pdf`. Off by default: it roughly triples a cell's disk and adds a render per run. The HTML is written alongside deliberately — it is searchable and diffable where a PDF is neither, and it is the only way to see why a PDF looks wrong. |
+| `--regression` | Run the regression suite (`specs/regression.bench.ts`) in place of a spec path. |
+| `--lanes` | One lane per model: each model's cells in turn, different models at once when the box says the next fits beside what is loaded (`/api/fits`); a cloud model always goes. `--jobs N` then caps the lanes running at once. |
+| `--capture always\|failure\|never` | Snapshot the browser (screenshot + DOM of every open page): on every run, on failures (the default), or never. |
+| `--hold all\|failures\|k=v` | Keep those cells' runs open after their last turn, each in a detached process, to go on talking to (`node tests/e2e/converse.mjs --attach <dir> "…"`). The sweep still exits. `hold.mjs` lists, releases and groups them (below). |
+| `--hold-idle N` | Release a held run after N minutes with no message (default 30). |
+| `--hold-window` | A held run's browser as a minimised real window (`hold.mjs --show` brings it up) instead of headless. `--hold-headless` is the old default, still accepted. |
+| `--memory-limit 12G` | The most the bench may hold in this machine's memory, for this sweep, over any machine-wide limit (`hold.mjs --limit`). Default half the RAM, with a quarter kept free; a limit given by hand keeps none free. |
+| `--when-full pause\|stop-holding\|release-duplicates` | At the memory budget: `pause` (default) starts nothing more and exits 75 once the running cells end, held runs left alive, the same command resuming; `stop-holding` goes on, keeping no more failures, a cell waiting for room (it names what would free some); `release-duplicates` is stop-holding that, when a cell cannot start, releases this sweep's own held duplicates (same model, task and failure), one of each kept, and says which. |
+| `--no-sync` / `--only-db` | With a bench store configured (`sync.mjs`): do not push this sweep, or push its rows but not its run directories. |
+| `--help` | Print every flag (the header of `run.mjs`). An unknown flag is an error that says so. |
+
+`hold.mjs` (held runs and the memory budget, any time, from any clone): no flag lists this clone's held runs; `--menu` every clone's, grouped, with commands to paste; `--stop [pid|cell|dir …]` releases them (all, or those matching); `--ledger` every bench process and its memory; `--limit [12G|auto]` shows or sets the machine-wide limit (running sweeps take it up within 5 s); `--show`/`--hide [x]` a held window; `--help` all of it.
 
 Backend selection is the same as observe: `USE_ENV=1` reads `.env`, `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`
 set one explicitly, and with neither it runs the scripted fake-LLM (which is what makes the smoke spec

@@ -48,6 +48,11 @@ export function statusText(s, now = Date.now()) {
             `${fmtBytes(m.used)} of a ${fmtBytes(m.limit)} limit (${limitWhence({ source: m.limitSource ?? "auto", by: m.limitBy, at: m.limitAt })}; change it machine-wide, running sweeps included: \`node --import tsx tests/e2e/bench/hold.mjs --limit 12G\`); ${fmtBytes(m.available)} available${m.reserve ? `, ${fmtBytes(m.reserve)} kept free` : ", no reserve (a limit set by hand)"}; room for ${fmtBytes(m.room)}. At the limit: ${m.whenFull}.`,
             ...Object.entries(m.byKind ?? {}).map(([k, v]) => `- ${k}: ${fmtBytes(v)}${k === "runner" && m.runner?.heap ? ` (node heap ${fmtBytes(m.runner.heap)})` : ""}`), "");
         if (m.paused) out.push(`PAUSED: ${m.paused}`, `Resume: ${m.resume}`, "");
+        if (m.waiting && !m.paused) {
+            out.push(`WAITING since ${clock(m.waiting.since)}: ${m.waiting.cell} cannot start for memory (${m.waiting.why}).`);
+            if (m.waiting.free.length) out.push("Runs held earlier keep their memory until released; the sweep never releases them itself. To free some:", "", ...m.waiting.free.map((f) => `- ${f.text}: \`${f.cmd}\``));
+            out.push("");
+        }
         const h = m.history ?? [];
         if (h.length >= 2) {
             const kinds = [...new Set(h.flatMap((p) => Object.keys(p.values)))];
@@ -67,6 +72,7 @@ export function statusText(s, now = Date.now()) {
             }
             out.push("", ...(m.hints ?? []).map((x) => `- ${x}`), "");
         }
+        if (m.released?.length) out.push("Released by the sweep (--when-full release-duplicates; one of each kind kept):", "", ...m.released.map((r) => `- ${clock(r.at)} ${r.cell} (${r.key}, ${fmtBytes(r.rss)}, pid ${r.pid}) so ${r.for} could start`), "");
         if (m.wouldHold?.length) out.push("Not held (the budget had no room):", "", ...m.wouldHold.map((w) => `- ${w.cell} (${w.failure}): ${w.dir}`), "");
         out.push("Any time, from any clone: `node --import tsx tests/e2e/bench/hold.mjs --menu` (held runs and their commands), `--ledger` (every bench process and its memory).", "");
     }

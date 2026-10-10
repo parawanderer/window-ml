@@ -74,6 +74,14 @@ test("status.json is the page's state less the timeline and the box's samples, w
     assert.deepEqual([j.spend, j.memory, j.runs], [STATE.spend, STATE.memory, STATE.runs]);
 });
 
+test("status.md: a run waiting for memory, since when, and what would free some; not while paused, which says it instead", () => {
+    const waiting = { cell: "csv/glm/r4", why: "the bench holds 7.9 GB of 8.0 GB", since: T0 + 65_000, free: [{ text: "keep one of 5 × glm · icon-heart · step cap, release the rest (about 4.4 GB)", cmd: "cd /r && node --import tsx tests/e2e/bench/hold.mjs --stop 2 3 4 5" }] };
+    const md = statusText({ ...STATE, memory: { ...STATE.memory, paused: null, waiting } }, T0);
+    assert.match(md, /WAITING since 14:01:05: csv\/glm\/r4 cannot start for memory \(the bench holds 7\.9 GB of 8\.0 GB\)\.\nRuns held earlier keep their memory until released; the sweep never releases them itself\. To free some:\n\n- keep one of 5 × glm · icon-heart · step cap, release the rest \(about 4\.4 GB\): `cd \/r && node --import tsx tests\/e2e\/bench\/hold\.mjs --stop 2 3 4 5`/);
+    assert.ok(!statusText({ ...STATE, memory: { ...STATE.memory, waiting } }, T0).includes("WAITING"), "paused says PAUSED");
+    assert.match(statusText({ ...STATE, memory: { ...STATE.memory, paused: null, waiting: { ...waiting, free: [] } } }, T0), /cannot start for memory \(the bench holds 7\.9 GB of 8\.0 GB\)\.\n\n/);
+});
+
 // --- the writer ---
 
 test("both files are written whole, with no temporary file left behind", () => {
@@ -87,20 +95,20 @@ test("both files are written whole, with no temporary file left behind", () => {
 test("the writer writes at most every so often, the latest state lands, it builds the state only to write it, and flush writes now", async () => {
     const wrote = [];
     let built = 0;
-    const w = statusWriter("d", { everyMs: 40, write: (_d, s) => wrote.push(s) });
+    const w = statusWriter("d", { everyMs: 400, write: (_d, s) => wrote.push(s) });
     for (let i = 0; i < 50; i++) w.update(() => { built++; return i; });
     assert.equal(wrote.length, 0, "nothing synchronously");
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual(wrote, [49], "one write, of the latest");
     assert.equal(built, 1, "built once, not once per update");
     w.update(() => "a"); w.update(() => "b");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual(wrote, [49], "the next waits out the interval");
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 450));
     assert.deepEqual(wrote, [49, "b"]);
     w.update(() => "c");
     w.flush({ final: true });
     assert.deepEqual(wrote.at(-1), { final: true }, "the final state, at once");
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 450));
     assert.equal(wrote.length, 3, "and the pending one does not land after it");
 });

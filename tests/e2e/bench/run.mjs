@@ -8,6 +8,8 @@
 //                         the lanes running at once. An interview runs this way unless --jobs is given
 //   … --only idFormat=label --only task=two-tables      re-measure a subset
 //   … --repeats 2 --dry   print the matrix, and against a real backend what it would cost, and stop
+//   … --skip task=csv     leave cells out (the inverse of --only; both repeatable, ANDed)
+//   … --regression        run the regression suite (specs/regression.bench.ts) in place of a spec path
 //   … --no-cache          re-run cells that are already measured
 //   … --pdf               also render each run to run.html + run.pdf (slower, and much larger)
 //   … --capture always    snapshot the browser (screenshot + DOM, every open page) on EVERY run, not
@@ -18,22 +20,29 @@
 //   … --serve --open      …and open it in a browser
 //   … tests/e2e/panel/bloat.json --models a,b,c    an INTERVIEW file instead of a spec: one run per model, each
 //                         follow-up sent as the turn before it ends, the answers side by side on the page (where a
-//                         person can mark one wrong) and in summary.md; `--surface hud|console` as panel.mjs takes it
+//                         person can mark one wrong) and in summary.md; `--surface hud|console` and `--turn-minutes 15`
+//                         (how long one turn may take) as panel.mjs takes them
 //   … --hold all | failures | k=v   keep those cells' runs open after their last turn, each in a detached process, to go
 //                         on talking to (`failures`: only a run that errored or was wrong). The sweep still exits; the
 //                         attach lines are printed above BENCH DONE (bench/hold.mjs lists and releases them).
 //                         `--hold-idle 60` releases one after that many minutes with no message (default 30). A held
 //                         run's browser is headless, as every bench browser is; `--hold-window` makes it a minimised real
 //                         window instead (`hold.mjs --show` brings it up), at the cost of one window popping up per held cell
+//                         (`--hold-headless`, the old default, is still accepted and changes nothing)
 //   … --memory-limit 12G  the most the bench may hold in this machine's memory (browsers held open, its own processes),
 //                         across every bench process here (memory-budget.mjs; default half the RAM). A quarter of the RAM
 //                         is also kept free, checked live before each cell starts and before a failed run is kept open.
-//   … --when-full pause | stop-holding   at the budget: `pause` (the default) starts no more cells, holds nothing more, and
-//                         exits 75 once the running cells end, printing what is held and the command that resumes;
-//                         `stop-holding` goes on running and records each later failure as "would have held" (overnight)
+//   … --when-full pause | stop-holding | release-duplicates   at the budget: `pause` (the default) starts no more cells,
+//                         holds nothing more, and exits 75 once the running cells end, printing what is held and the
+//                         command that resumes; `stop-holding` goes on running and records each later failure as "would
+//                         have held" (overnight), a cell waiting for room while runs held earlier keep theirs (it names
+//                         what would free some); `release-duplicates` is stop-holding that, when a cell cannot start,
+//                         releases THIS sweep's held duplicates (same model · task · failure), keeping the one each
+//                         group's attach line names, and says which in the log, status.md and the page
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
 //                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
 //                         Browser" to dock the page as an editor tab)
+//   … --help              print this
 //
 // The division of labour this is built for: an agent defines the benchmark in code, runs it, and reads the
 // terminal; a human watching over its shoulder opens the page. Same data, two audiences — which is why
@@ -79,9 +88,10 @@ import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
 import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool } from "./spend-predict.mjs";
+import { headerHelp } from "./cli-help.mjs";
 import { statusWriter } from "./status.mjs";
 import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
-import { failureShape, menuText, groupHeld, groupCommands, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
+import { failureShape, menuText, groupHeld, groupCommands, freeingCommands, duplicatesToRelease, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -94,6 +104,9 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 /** The regression suite's spec (`--regression`): every included task of every spec, over `--models`. */
 const REGRESSION_SPEC = path.join(HERE, "specs/regression.bench.ts");
+
+/** What `--when-full` takes: what a sweep does at its memory budget. */
+const WHEN_FULL = ["pause", "stop-holding", "release-duplicates"];
 
 function parseArgv(argv) {
     const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined, hold: [], holdIdle: undefined, memoryLimit: undefined, whenFull: "pause" };
@@ -114,7 +127,7 @@ function parseArgv(argv) {
             if (args.memoryLimit == null) throw new Error(`--memory-limit takes a size such as 12G or 512M, not ${argv[i]}`);
         } else if (a === "--when-full") {
             args.whenFull = argv[++i];
-            if (!["pause", "stop-holding"].includes(args.whenFull)) throw new Error(`--when-full takes pause or stop-holding, not ${args.whenFull}`);
+            if (!WHEN_FULL.includes(args.whenFull)) throw new Error(`--when-full takes ${WHEN_FULL.join(", ")}, not ${args.whenFull}`);
         }
         else if (a === "--hold-headless") args.holdWindow = false;   // the default now; kept so an old command line still parses
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
@@ -128,7 +141,9 @@ function parseArgv(argv) {
         else if (a === "--serve") args.serve = true;
         else if (a === "--port") { args.serve = true; args.port = Number(argv[++i]) || 0; }
         else if (a === "--open") { args.serve = true; args.open = true; }
+        else if (a === "--help" || a === "-h") args.help = true;
         else if (!a.startsWith("--")) args.specPath = a;
+        else throw new Error(`unknown flag ${a} (--help lists them)`);
     }
     return args;
 }
@@ -411,12 +426,25 @@ async function memoryLets(cell, ctx) {
     let said = null;
     for (;;) {
         const a = ctx.budget.canStart(cell.task.id);
-        if (a.ok) return true;
+        if (a.ok) { if (ctx.waiting) { ctx.waiting = null; ctx.changed?.(); } return true; }
         if (ctx.budget.whenFull === "pause") { ctx.pause(a.why); return false; }
-        if (a.why !== said) ctx.log(`  ⏸ ${cellPath(cell)} waits for memory: ${a.why}`);
+        // release-duplicates: this sweep's own held duplicates go first (each group keeps the one its attach line names);
+        // the cell then waits for the budget's next measurement to see the memory come back.
+        if (ctx.budget.whenFull === "release-duplicates" && ctx.releaseDuplicates?.(cellPath(cell), a.why)) {
+            await new Promise((r) => setTimeout(r, 6_000));
+            continue;
+        }
+        if (a.why !== said) {
+            // What would free memory, named where a reader of the log, status.md or the page sees it: runs held earlier
+            // keep their memory until someone releases them or they idle out, and the sweep never releases them itself.
+            const free = freeingCommands(ctx.budget.entries());
+            ctx.waiting = { cell: cellPath(cell), why: a.why, since: Date.now(), free };
+            ctx.log(`  ⏸ ${cellPath(cell)} waits for memory: ${a.why}${free.length ? `\n    held runs keep it until released; to free some:\n${free.map((f) => `      ${f.text}:\n        ${f.cmd}`).join("\n")}` : ""}`);
+            ctx.changed?.();
+        }
         said = a.why;
         await new Promise((r) => setTimeout(r, 15_000));
-        if (ctx.paused) return false;
+        if (ctx.paused) { ctx.waiting = null; return false; }
     }
 }
 
@@ -462,9 +490,11 @@ async function pool(cells, jobs, fn) {
 }
 
 const main = async () => {
-    const args = parseArgv(process.argv.slice(2));
+    let args;
+    try { args = parseArgv(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
+    if (args.help) { process.stdout.write(headerHelp(import.meta.url)); return; }
     if (!args.specPath) {
-        console.error("usage: node --import tsx tests/e2e/bench/run.mjs <spec.bench.ts> [--jobs N] [--only k=v] [--skip k=v] [--repeats N] [--dry] [--no-cache]");
+        console.error("usage: node --import tsx tests/e2e/bench/run.mjs <spec.bench.ts> [--jobs N] [--only k=v] [--skip k=v] [--repeats N] [--dry] [--no-cache]  (--help for every flag)");
         process.exit(2);
     }
     // An interview file is a spec too: one task over a `model` dimension. Every model is PROBED first, as panel.mjs
@@ -685,6 +715,7 @@ const main = async () => {
     // The page's state, and the same object as status.md/status.json for a model reading the sweep from the CLI (status.mjs).
     // The state is built only for a reader: the page on each change, the status files at most every 2 s.
     const push = () => { if (dash) dash.update(liveState()); status.update(liveState); };
+    ctx.changed = push;
     const liveState = () => ({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results), older,
@@ -699,10 +730,29 @@ const main = async () => {
     const memoryView = () => {
         const st = budget.state();
         const entries = budget.entries();
-        return { ...st, active: budget.active, whenFull: budget.whenFull, paused: ctx.paused, resume, hints: HOLD_HINTS,
+        return { ...st, active: budget.active, whenFull: budget.whenFull, paused: ctx.paused, waiting: ctx.waiting ?? null, released: ctx.released, resume, hints: HOLD_HINTS,
             runner: entries.find((e) => e.pid === process.pid) ?? null,
             groups: groupHeld(entries).map((g) => ({ key: g.key, count: g.runs.length, rss: g.rss, sweeps: [...new Set(g.runs.map((r) => r.sweep))], commands: groupCommands(g) })),
             wouldHold: ctx.wouldHold, history: budget.history() };
+    };
+    // --when-full release-duplicates: when a cell cannot start for memory, this sweep's own held duplicates (same model ·
+    // task · failure; another sweep's or clone's are never touched) are released, each group keeping the run its attach
+    // line names. Each release is logged, kept for status.md and the page, and leaves the sweep's list of held runs.
+    ctx.released = [];
+    ctx.releaseDuplicates = (cell, why) => {
+        const go = duplicatesToRelease(budget.entries(), { sweep: spec.name, repo: ROOT });
+        if (!go.length) return false;
+        for (const r of go) {
+            try { process.kill(r.pid, "SIGTERM"); } catch { /* already gone */ }
+            try { unregister(r.pid); } catch { /* dropped on the next read */ }
+            ctx.released.push({ cell: r.cell, key: r.key, pid: r.pid, rss: r.rss ?? 0, at: Date.now(), for: cell });
+            const gone = ctx.held.runs.find((h) => h.pid === r.pid);
+            ctx.held.runs = ctx.held.runs.filter((h) => h.pid !== r.pid);
+            for (const rs of runsState) if (gone && rs.held === gone.attach) { delete rs.held; rs.released = true; }
+        }
+        console.log(`  ⇣ released ${go.length} held duplicate${go.length === 1 ? "" : "s"} of this sweep so ${cell} can start (${why}), one of each kept: ${go.map((r) => `${r.cell} (pid ${r.pid})`).join(", ")}`);
+        push();
+        return true;
     };
     // What this invocation's runs have spent so far, priced as their calls come in (live-spend.mjs): a snapshot body
     // the scores log lacks is fetched from the price service by its hash and kept there. Only against a real backend.
@@ -915,6 +965,7 @@ const main = async () => {
         held: ctx.held.runs.map(({ pid, cell, dir, attach, expiresAt }) => ({ pid, cell, dir, attach, expiresAt })), kept: ctx.kept });
     if (ctx.paused) Object.assign(done, { paused: ctx.paused, exit: PAUSED_EXIT, resume });
     if (ctx.wouldHold.length) done.wouldHold = ctx.wouldHold;
+    if (ctx.released.length) done.released = ctx.released;
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
     // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not
     // go now goes on the next push.

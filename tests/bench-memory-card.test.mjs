@@ -85,6 +85,16 @@ test("the copy button copies the command exactly and shows it was copied", async
     assert.equal(block.querySelector(".tt-pop").textContent, "copied!");
 });
 
+test("a run waiting for memory: the banner with what would free some, each command copyable; none while paused or without a wait", async () => {
+    const waiting = { cell: "csv/glm/r4", why: "the bench holds 7.9 GB of 8.0 GB", since: 1_760_000_000_000, free: [{ text: "keep one of 2 × glm · icon-heart · step cap, release the rest (about 1.2 GB)", cmd: cmds([101, 102]).keepOne }] };
+    const { doc } = await page({ ...base, memory: { ...MEMORY, paused: null, waiting } });
+    const w = doc.querySelector("#memory .mwaiting");
+    assert.match(w.textContent, /^csv\/glm\/r4 waits for memory: the bench holds 7\.9 GB of 8\.0 GB\. The runs held earlier keep theirs until released/);
+    assert.deepEqual([...w.querySelectorAll(".mcmd")].map((r) => [r.querySelector("span").textContent, codeText(r)]), [[waiting.free[0].text, cmds([101, 102]).keepOne]]);
+    assert.equal((await page({ ...base, memory: { ...MEMORY, waiting } })).doc.querySelector("#memory .mwaiting"), null, "paused says so instead");
+    assert.equal((await page({ ...base, memory: { ...MEMORY, paused: null } })).doc.querySelector("#memory .mwaiting"), null);
+});
+
 // --- the chart ---
 
 test("the chart: one area per kind, stacked, over the sweep's readings, with its peak against the limit under it", async () => {
