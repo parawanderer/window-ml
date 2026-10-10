@@ -243,3 +243,14 @@ test("agent session: a resume is a divider in run.md, and names what it lost", (
     // After the turn's answer, which is when it happened — not before the run had said anything.
     assert.ok(md.indexOf("done") < md.indexOf("resumed on"), "the seam follows the answer it came after");
 });
+
+// --- how an approval decision reads ---
+
+test("every approval decision has its own note, and only a denial reads as one", async () => {
+    const { APPROVAL_NOTE, approvalNote } = await import("../src/sidebar/export/export.ts");
+    // Enumerated from the contract's union, not sampled: a value missing here is a type error in export.ts.
+    const all = ["readonly", "sandbox", "same-origin", "consented", "self-source", "user", "denied", "skipped", "cancelled"];
+    assert.deepStrictEqual(Object.keys(APPROVAL_NOTE).sort(), [...all].sort());
+    for (const a of all) assert.equal(/denied/.test(approvalNote(a)), a === "denied", `${a}: ${approvalNote(a)}`);
+    assert.equal(approvalNote("from-the-future"), "decided: from-the-future", "an unknown value is named, never called a denial");
+});
