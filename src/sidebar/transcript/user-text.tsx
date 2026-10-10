@@ -112,8 +112,16 @@ export function UserActions({ text }: { text: string }) {
 // what context is captured before sending. Removable in the composer (`onRemove`); read-only under a sent message.
 export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove?: () => void }) {
     const label = ctx.anchorText ? `${ctx.role || "element"} · "${truncate(ctx.anchorText, 30)}"` : (ctx.role || "element");
+    // The panel's tip, not the browser's `title`: what was captured (its first lines) and the selector it is scoped by.
+    // Its leave handler is composed with the highlight's, since a prop after a spread replaces it.
+    const lines = (ctx.text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const tip = cursorTipOn(
+        <div class="el-tip">
+            <div><b>{ctx.role || "element"}</b> <code>{ctx.selector}</code></div>
+            {lines.length ? <div class="el-tip-text">{lines.slice(0, 6).map((l, i) => <div key={i}>{truncate(l, 80)}</div>)}{lines.length > 6 ? <div>…</div> : null}</div> : null}
+        </div>);
     return (
-        <div class="el-pill" onPointerEnter={() => highlightEl(ctx.selector)} onPointerLeave={clearHighlight} title={ctx.selector}>
+        <div class="el-pill" {...tip} onPointerEnter={() => highlightEl(ctx.selector)} onPointerLeave={() => { tip.onPointerLeave(); clearHighlight(); }}>
             <span class="el-pill-ic" aria-hidden="true">📌</span>
             <span class="el-pill-txt">{label}</span>
             {onRemove ? <button class="el-pill-x" onClick={onRemove} aria-label="Remove element context" title="Remove">×</button> : null}
