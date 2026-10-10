@@ -1,0 +1,119 @@
+{
+  "hash": "9885dd1fe60cd0db5136b8cb63959a8c",
+  "kind": "agent",
+  "model": "deepseek.deepseek-flash",
+  "steps": [
+    {
+      "step": 1,
+      "seq": 1,
+      "at": "2026-10-09T08:46:22.143Z",
+      "usage": {
+        "promptTokens": 12050,
+        "completionTokens": 59,
+        "totalTokens": 12109,
+        "cachedTokens": 1792,
+        "genMs": 1102,
+        "requestId": "wml-r-12051ef7029eccde"
+      }
+    },
+    {
+      "step": 1,
+      "seq": 1,
+      "at": "2026-10-09T08:46:22.153Z",
+      "tool": "exec"
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "at": "2026-10-09T08:46:23.310Z",
+      "usage": {
+        "promptTokens": 12208,
+        "completionTokens": 19,
+        "totalTokens": 12227,
+        "cachedTokens": 12032,
+        "reasoningTokens": 11,
+        "genMs": 1151,
+        "requestId": "wml-r-2461c80b5871b164"
+      }
+    },
+    {
+      "step": 3,
+      "seq": 3,
+      "at": "2026-10-09T08:46:24.470Z",
+      "usage": {
+        "promptTokens": 12232,
+        "completionTokens": 17,
+        "totalTokens": 12249,
+        "cachedTokens": 12032,
+        "reasoningTokens": 15,
+        "genMs": 978,
+        "requestId": "wml-r-2af134fc4b2dad83"
+      }
+    }
+  ],
+  "events": [
+    {
+      "kind": "run",
+      "at": "2026-10-09T08:46:21.029Z",
+      "model": "deepseek.deepseek-flash",
+      "id": "run:9885dd1fe60cd0db5136b8cb63959a8c:0",
+      "cost": {
+        "inTokens": 24258,
+        "outTokens": 78,
+        "tokPerSec": 34.62050599201065,
+        "genBasis": "wall"
+      }
+    },
+    {
+      "kind": "gen",
+      "at": "2026-10-09T08:46:21.041Z",
+      "model": "deepseek.deepseek-flash",
+      "id": "gen:9885dd1fe60cd0db5136b8cb63959a8c:1",
+      "cost": {
+        "inTokens": 12050,
+        "outTokens": 59,
+        "tokPerSec": 53.53901996370236,
+        "genBasis": "wall",
+        "wallMs": 1102
+      }
+    },
+    {
+      "kind": "gen",
+      "at": "2026-10-09T08:46:22.159Z",
+      "model": "deepseek.deepseek-flash",
+      "id": "gen:9885dd1fe60cd0db5136b8cb63959a8c:2",
+      "cost": {
+        "inTokens": 12208,
+        "outTokens": 19,
+        "tokPerSec": 16.507384882710685,
+        "genBasis": "wall",
+        "wallMs": 1151
+      }
+    },
+    {
+      "kind": "run",
+      "at": "2026-10-09T08:46:23.312Z",
+      "model": "deepseek.deepseek-flash",
+      "id": "run:9885dd1fe60cd0db5136b8cb63959a8c:1",
+      "cost": {
+        "inTokens": 12232,
+        "outTokens": 17,
+        "tokPerSec": 17.382413087934562,
+        "genBasis": "wall"
+      }
+    },
+    {
+      "kind": "gen",
+      "at": "2026-10-09T08:46:23.492Z",
+      "model": "deepseek.deepseek-flash",
+      "id": "gen:9885dd1fe60cd0db5136b8cb63959a8c:3",
+      "cost": {
+        "inTokens": 12232,
+        "outTokens": 17,
+        "tokPerSec": 17.382413087934562,
+        "genBasis": "wall",
+        "wallMs": 978
+      }
+    }
+  ]
+}

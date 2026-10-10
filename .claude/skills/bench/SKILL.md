@@ -298,6 +298,20 @@ hash, never `shown`: the prompt is part of the build being compared. The verdict
 page, with which models fell on each flagged task, and μ for every earlier build. With 3 models × 3 repeats a single
 task must get about 2 logits harder to be caught most of the time; more repeats is the lever.
 
+### Spend (what each model call cost, kept raw)
+
+Every model call of a logged run goes into `scores.sqlite`, table `calls`, beside its run: one row per call, in order,
+with the usage the extension recorded for it, verbatim (`usage` JSON: the counts, `raw` the server's own usage block with
+a provider's `cost` when it sends one, `prices` the price snapshot the call ran under, `electricity` the price per kWh
+set then). `kind` is `turn` (the driver's) or `sub` (a delegated look, locate or verify, which records counts only). The
+model is read from the run's `gen` event with the same counts, and is null when none matches. Each price snapshot body a
+call names is kept once in `snapshots`, by its sha256, fetched from the extension's worker (`__mlPriceBody`) at the end
+of the run only when the log lacks it, and refused when it does not hash to its name. Nothing is priced on write: a cost
+is computed when read. Set `PRICE_SNAPSHOT_URL`, `ELECTRICITY_PER_KWH` and `ELECTRICITY_CURRENCY` (env or `.env`) for a
+real run to record them; unset records nothing, never zero. Runs logged before this have no calls, which means "no
+per-call data". Both tables sync with the store (views `calls`, `price_snapshots`).
+`sqlite3 tests/e2e/artifacts/bench/scores.sqlite "SELECT run, call, model, json_extract(usage,'$.raw.cost') FROM calls ORDER BY id DESC LIMIT 20"`
+
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at
 `<task>/<combo>/r<N>/`, each containing that run's full observe-style artifacts:

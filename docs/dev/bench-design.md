@@ -32,7 +32,9 @@ the page, and a new card is not done until its file is written beside it and lis
 writes" table.
 
 Data that accumulates ACROSS sweeps goes in SQLite rather than a file per sweep: the scoreboard's log,
-`scores.sqlite` (`scores.mjs`), one row per run, inserted once and never updated, under the same who-and-when rule;
+`scores.sqlite` (`scores.mjs`), one row per run, inserted once and never updated, under the same who-and-when rule,
+with each run's model calls beside it (`calls`, the usage as recorded, priced only on read; price snapshot bodies once
+by hash in `snapshots`: `spend.mjs`);
 and the box log, `box.sqlite` (`box-stream.mjs`), every frame of the server's event stream once, keyed by the box and
 the server's clock so two sweeps watching one box store it once. A sweep's page bakes in what it saw, so a saved
 report stays scrollable without either file.

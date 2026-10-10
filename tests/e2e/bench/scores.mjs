@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { fitRasch, sigmoid, RASCH_DEFAULTS } from "./rasch.mjs";
 import { defaultBy } from "./mark.mjs";
 import { regressionReport, regressionText } from "./regress.mjs";
+import { openSpend } from "./spend.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -68,6 +69,8 @@ export async function openScores(file = SCORES_DB) {
     await mkdir(path.dirname(file), { recursive: true });
     const db = new DatabaseSync(file);
     db.exec(SCHEMA);
+    // Each model call's usage and the price snapshots they name, beside the runs (spend.mjs).
+    openSpend(db);
     // A log made before a column existed gets it, empty: its runs stay readable and say they predate it.
     const have = new Set(db.prepare("PRAGMA table_info(runs)").all().map((c) => c.name));
     for (const [col, type] of [["shown", "TEXT"], ["suite", "TEXT"]]) if (!have.has(col)) db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${type}`);

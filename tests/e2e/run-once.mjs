@@ -41,6 +41,7 @@ import { renderMarkdownPage, lanePrelude } from "./viewer.mjs";
 import { readDotenv } from "../../scripts/dotenv.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { priceHashes } from "./bench/spend.mjs";
 
 /** The default fake-LLM script: read the code off the page, then answer with it. */
 export const DEFAULT_SCRIPT = [
@@ -61,6 +62,19 @@ export const DEFAULT_TASK = "What code is shown on this page? Use findByText to 
  */
 /** The route to append when `OPENWEBUI_URL` names only a host. Keyed by wire format. */
 const DEFAULT_CHAT_PATH = { openai: "/api/chat/completions", ollama: "/api/chat" };
+
+/**
+ * The spend settings a real run sets on the extension, from the environment over .env: `PRICE_SNAPSHOT_URL` (the box's
+ * price service), `ELECTRICITY_PER_KWH` and `ELECTRICITY_CURRENCY`. Each absent stays absent: no prices, no electricity price.
+ */
+export function spendFromEnv(dotenv = {}, env = {}) {
+    const get = (k) => (env[k] ?? dotenv[k] ?? "").trim();
+    const perKwh = Number(get("ELECTRICITY_PER_KWH"));
+    return {
+        ...(get("PRICE_SNAPSHOT_URL") ? { priceSnapshotUrl: get("PRICE_SNAPSHOT_URL") } : {}),
+        ...(perKwh > 0 ? { electricityPerKwh: perKwh, electricityCurrency: get("ELECTRICITY_CURRENCY") || "EUR" } : {}),
+    };
+}
 
 /**
  * Build a backend from a parsed `.env`. Pure, so the rules below are testable without a file on disk.
@@ -93,6 +107,7 @@ export function backendFromDotenv(dotenv, env = {}) {
         key: dotenv.OPENWEBUI_KEY || "",
         utilityModel: dotenv.OPENWEBUI_UTILITY_MODEL || "",
         visionModel: dotenv.OPENWEBUI_VISION_MODEL || "",
+        ...spendFromEnv(dotenv, env),
     };
 }
 
@@ -101,6 +116,7 @@ export async function resolveBackendFromEnv(env = process.env) {
         return {
             chatUrl: env.E2E_BACKEND, model: env.E2E_MODEL || "", key: env.E2E_KEY || "",
             apiFormat: (env.E2E_FORMAT || "openai").toLowerCase(),
+            ...spendFromEnv({}, env),
         };
     }
     if (env.USE_ENV) {
@@ -396,7 +412,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {}, stream = null,
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null, keep = null, window: windowMode = null,
+        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null, keep = null, window: windowMode = null, havePrice = null,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -425,6 +441,9 @@ export async function runOnce(cfg = {}) {
             chatUrl: backend ? backend.chatUrl : fake.url,
             apiKey: backend?.key || "",
             model: backend ? backend.model : FAKE_MODEL,
+            // Spend (Settings > Spend): the price service, and the electricity price each call records. Unset, absent.
+            ...(backend?.priceSnapshotUrl ? { priceSnapshotUrl: backend.priceSnapshotUrl } : {}),
+            ...(backend?.electricityPerKwh ? { electricityPerKwh: backend.electricityPerKwh, electricityCurrency: backend.electricityCurrency || "EUR" } : {}),
         };
         // Only when seeding. `fake` is NULL whenever a real backend is configured and no seed was asked
         // for, and building this unconditionally dereferenced it — so EVERY real-model run crashed here
@@ -702,6 +721,14 @@ export async function runOnce(cfg = {}) {
         await dump(events);
         await settle();
         const { session, md, images, json } = renderRun(events);
+        // The price snapshot bodies this run's calls name, read from the worker while it still stands (exact bytes,
+        // base64; null for one it does not hold). The bench keeps each once, by hash (bench/spend.mjs).
+        const priceBodies = {};
+        for (const [hash, kind] of priceHashes(session)) {
+            if (havePrice?.(hash)) continue;
+            const b64 = await ext.sw.evaluate((h) => globalThis.__mlPriceBody?.(h) ?? null, hash).catch(() => null);
+            if (b64) priceBodies[hash] = { kind, b64 };
+        }
 
         transcript.push({ kind: "result", task, finalUrl, steps: stepCount, runMs, error: error || null, result: result ?? null });
         if (artDir) {
@@ -711,7 +738,7 @@ export async function runOnce(cfg = {}) {
                         : `[${t.kind}${t.type ? ":" + t.type : ""}] ${t.text}`).join("\n"));
         }
 
-        const out = { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured,
+        const out = { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured, priceBodies,
             stream: stream ?? (surface ? false : agentOptions.stream === true) };
         if (keep) {
             // The run is over and measured; the browser, the session and its gates stay live for as long as `keep` says.

@@ -69,6 +69,7 @@ import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { repoUrl } from "../../../scripts/gen-build-info.mjs";
 import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, modelKey, SCORES_DB } from "./scores.mjs";
 import { plannedPower } from "./regress.mjs";
+import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -256,7 +257,8 @@ async function runCell(cell, ctx, index) {
             held = startHeld({ ...ctx.held.job, index, key, fingerprint: ctx.fingerprint, dir, env, sweep: ctx.spec.name, label,
                 window: ctx.held.window, idleMs: (ctx.held.idleMin ?? t.holdIdleMinutes ?? HOLD_IDLE_MIN) * 60_000 }, { onEvent, onTurns });
             ({ run, statuses } = await held.ran);
-        } else run = await runOnce(runConfig(cell, env, dir, { ...(nextTurn ? { nextTurn } : {}), onEvent }));
+        } else run = await runOnce(runConfig(cell, env, dir, { ...(nextTurn ? { nextTurn } : {}), onEvent,
+            havePrice: ctx.scores ? (h) => !missingSnapshots(ctx.scores, [h]).length : null }));
     } catch (err) {
         run = { events: [], result: null, error: String(err), runMs: 0, approvals: [], seedBoundaryStep: -1 };
     }
@@ -292,7 +294,14 @@ async function runCell(cell, ctx, index) {
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
     // Into the scores log, once, as it lands (scores.mjs): a sweep that dies half way still leaves its runs counted.
     const row = ctx.scores && runRow({ ...saved, fromCache: false }, t, ctx.scoreSweep);
-    if (row) ctx.logged += logRuns(ctx.scores, [row]);
+    if (row) {
+        ctx.logged += logRuns(ctx.scores, [row]);
+        // What each model call spent, raw, and the price snapshot bodies they name that the log lacks (spend.mjs).
+        logCalls(ctx.scores, callsOf(run.session));
+        for (const [hash, { kind, b64 }] of Object.entries(run.priceBodies ?? {})) {
+            if (logSnapshot(ctx.scores, { hash, kind, body: Buffer.from(b64, "base64") }) === null) ctx.log(`  (price snapshot ${hash.slice(0, 12)} did not match its hash; not kept)`);
+        }
+    }
     ctx.ran++;
     ctx.report?.(index, "done", { ...saved, dir, fromCache: false, held: entry || null });
     if (entry) ctx.log(`  ⏸ ${label} is held open: ${entry.attach}`);

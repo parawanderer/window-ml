@@ -103,7 +103,7 @@ test("overlapping pushes from two clones and a fresh clone read back as each run
     assert.equal(rows.length, 4, "each run once");
     assert.equal(passRate(rows), passRate(all));
     // A second pull fetches nothing new and adds nothing.
-    assert.deepEqual(await pull(store(), { into }), { scores: 0, box: 0, files: 0 });
+    assert.deepEqual(await pull(store(), { into }), { scores: 0, calls: 0, snapshots: 0, box: 0, files: 0 });
 });
 
 test("box frames: pushed by range and read back once per (box, server time, kind, digest), across clones", async () => {
@@ -248,4 +248,30 @@ test("a listing of the whole bucket sends no empty prefix: Garage refuses `prefi
 test("not configured: status says so and nothing else", async () => {
     assert.deepEqual(await status(null), { configured: false });
     assert.ok(!existsSync("/nonexistent"));
+});
+
+// --- the spend tables ---
+
+test("calls and price snapshots go through the store and back once each, a snapshot's bytes exact", async () => {
+    objects.clear();
+    const { callsOf, logCalls, logSnapshot, readCalls } = await import("../tests/e2e/bench/spend.mjs");
+    const { createHash } = await import("node:crypto");
+    const session = JSON.parse(readFileSync(new URL("./fixtures/bench/spend-session.json", import.meta.url)));
+    const body = Buffer.from([0, 255, 10, 13, 0xe2, 0x82]);   // not valid UTF-8: only base64 brings it back whole
+    const hash = createHash("sha256").update(body).digest("hex");
+    const logWith = async () => {
+        const f = path.join(tmp(), "scores.sqlite"); const db = await openScores(f);
+        logCalls(db, callsOf(session)); logSnapshot(db, { hash, kind: "openrouter", body }); db.close(); return f;
+    };
+    const sent = await push(store(), { clone: "a", scoresDb: await logWith(), boxDb: "/x", sweeps: [] });
+    assert.deepEqual([sent.calls, sent.snapshots], [3, 1]);
+    await push(store(), { clone: "b", scoresDb: await logWith(), boxDb: "/x", sweeps: [] });
+    const into = tmp();
+    const got = await pull(store(), { into });
+    assert.deepEqual([got.calls, got.snapshots], [3, 1]);
+    const db = await openScores(path.join(into, "scores.sqlite"));
+    assert.equal(readCalls(db).length, 3);
+    assert.deepEqual(Buffer.from(db.prepare("SELECT body FROM snapshots").get().body), body);
+    db.close();
+    assert.match(String(objects.get("views.sql")), /CREATE OR REPLACE VIEW calls AS[\s\S]*DISTINCT ON \(run, call\)/);
 });

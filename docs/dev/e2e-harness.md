@@ -79,7 +79,7 @@ as in AGENTS.md — they are all under `src/`.
   scoreboard's log: a Rasch fit over predicate-scored runs gives each model a score comparable across tasks
   (`scores.mjs`, `rasch.mjs`; the skill's "The scoreboard"). Every task says whether it is in the REGRESSION SUITE
   (`regression: { included, reason }`, required); `run.mjs --regression --models …` runs those tasks and `regress.mjs`
-  says whether the build made them harder (the skill's "The regression suite"). The harness also watches the box: its `/api/events`
+  says whether the build made them harder (the skill's "The regression suite"). Each run's model calls go beside it in `calls`, raw, with any price snapshot body once by hash (`spend.mjs`; the skill's "Spend"). The harness also watches the box: its `/api/events`
   stream when the server has one (`box-stream.mjs`: the worker's connection rules, the panel's `residentFrom`,
   `residencyOf` and `machineEventFrom`; every frame kept once in `box.sqlite`), else polled `/api/ps` + `/api/info`
   (`resource-poll.mjs`). The timeline draws the memory with the panel's `ResourceTracks`, the lanes (the box's row,
