@@ -13,13 +13,15 @@ export type AttentionCode =
     // Suggestions: the archive is off, so retention deletes for good; the archive is on and keeps no copy on disk.
     | "archive-off" | "archive-folder-none"
     // The build: made without Python's wheels, so python_exec and the bench fail at run time.
-    | "python-packages-missing";
+    | "python-packages-missing"
+    // Spend tracking is on (a price service is set) but no electricity price is, so a local model's runs cost nothing.
+    | "spend-no-electricity-price";
 
 /** How long an answer about the backend stands before a page connecting asks again. */
 const BACKEND_TTL_MS = 60_000;
 
 let codes: AttentionCode[] = [];
-let cfg: { model: string; utilityModel: string; chatUrl: string } | null = null;
+let cfg: { model: string; utilityModel: string; chatUrl: string; priceSnapshotUrl: string; electricityPerKwh: number } | null = null;
 let perms = { sites: true, groups: true };
 /** null: not asked yet, or no URL to ask */
 let backendOk: boolean | null = null;
@@ -53,6 +55,7 @@ export function recomputeAttention(): void {
         else if (folder === "none") next.push("archive-folder-none");
     } else if (archive === false) next.push("archive-off");
     if (deps.pythonMissing?.()) next.push("python-packages-missing");
+    if (cfg && cfg.priceSnapshotUrl.trim() && !(cfg.electricityPerKwh > 0)) next.push("spend-no-electricity-price");
     if (next.join() === codes.join()) return;
     codes = next;
     deps.onChange();
@@ -85,9 +88,10 @@ async function readPermissions(): Promise<void> {
 }
 
 async function readConfig(): Promise<void> {
-    const c = await chrome.storage.sync.get({ model: "", utilityModel: "", chatUrl: "" }).catch(() => null) as Record<string, unknown> | null;
+    const c = await chrome.storage.sync.get({ model: "", utilityModel: "", chatUrl: "", priceSnapshotUrl: "", electricityPerKwh: 0 }).catch(() => null) as Record<string, unknown> | null;
     if (!c) return;
-    cfg = { model: String(c.model ?? ""), utilityModel: String(c.utilityModel ?? ""), chatUrl: String(c.chatUrl ?? "") };
+    cfg = { model: String(c.model ?? ""), utilityModel: String(c.utilityModel ?? ""), chatUrl: String(c.chatUrl ?? ""),
+        priceSnapshotUrl: String(c.priceSnapshotUrl ?? ""), electricityPerKwh: Number(c.electricityPerKwh) || 0 };
     recomputeAttention();
 }
 
@@ -108,7 +112,7 @@ export function watchAttention(opts: { archiveOn: () => boolean | null; onChange
         chrome.storage.onChanged?.addListener((changes, area) => {
             if (area !== "sync") return;
             const backend = changes.chatUrl || changes.apiKey || changes.apiFormat;
-            if (!(changes.model || changes.utilityModel || backend || changes.sessionArchive)) return;
+            if (!(changes.model || changes.utilityModel || backend || changes.sessionArchive || changes.priceSnapshotUrl || changes.electricityPerKwh)) return;
             void readConfig().then(() => { if (backend) { backendAt = 0; return probeBackend(); } });
         });
     } catch { /* no events (a test harness) */ }

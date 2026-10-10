@@ -29,7 +29,7 @@ import { VramPanel } from "./sidebar/resource/vram";
 import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource/resource-feed";
 import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
-import { Settings } from "./sidebar/settings/settings";
+import { Settings, searchSettings } from "./sidebar/settings/settings";
 import { config, psError } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
@@ -131,6 +131,7 @@ const extras: ChatExtras = {
     runState: (id, run) => (localRuntimes.has(id) ? <RunStateView run={run} /> : null),
     fixedTimes: (id, code) => (localRuntimes.has(id) && code === "archive-folder-lapsed" ? regrantCount() : 0),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
+    findSetting: (id, query) => { if (localRuntimes.has(id)) searchSettings(query); },
     // The narrow grant: one origin, asked for inside the click. `<all_urls>` would also unblock it and is the wrong
     // thing to ask for — a page to start runs on is not a reason to read every site.
     grantOrigin: (id, origin) => (localRuntimes.has(id) && /^https?:\/\//i.test(origin)

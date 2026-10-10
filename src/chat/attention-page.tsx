@@ -137,7 +137,10 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
         // THIS surface's Devices screen, where a pairing both starts and is confirmed. The one item that uses it is
         // the revocation signer's, whose quarter is a re-pairing rather than a press (attention.ts).
         if (fix.kind === "devices") { devicesStep.value = "refresh"; settingsTab.value = "devices"; mainView.value = "settings"; return; }
-        if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
+        if (fix.kind === "settings") {
+            if (fix.find) extras?.findSetting?.(it.runtime.id, fix.find);
+            settingsTab.value = "extension"; mainView.value = "settings"; return;
+        }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);
         if (!ask) return;

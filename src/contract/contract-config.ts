@@ -124,6 +124,11 @@ export interface MlConfig {
     /** The base URL of the box's price service (port 3002 on mlbox), for spend: each model call records which price snapshot it ran
      *  under, and the worker keeps each snapshot's bodies once. Empty (the default) turns it off, and nothing is fetched. */
     priceSnapshotUrl: string;
+    /** What a kWh costs you, for the electricity a LOCAL model uses (spend). 0 (the default) is unset: with the price
+     *  service on, the inbox asks for it. Recorded on every model call, so changing it later does not reprice old runs. */
+    electricityPerKwh: number;
+    /** The currency `electricityPerKwh` is in, as a code ("EUR", "USD"). */
+    electricityCurrency: string;
     /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
      *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
     utilityModel: string;
@@ -278,6 +283,8 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
+    electricityPerKwh: 0,
+    electricityCurrency: "EUR",
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

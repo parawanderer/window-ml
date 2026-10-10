@@ -7,7 +7,7 @@
 // box's raw model list, which `modelFilter` would hide, so they are read from the worker realm only, never through `ml`.
 
 import { recordHousekeeping } from "./sw-housekeeping";
-import type { PriceRef } from "../contract/contract-chat";
+import type { PriceRef, TokenUsage } from "../contract/contract-chat";
 
 /** How old the snapshot may get before a call asks the service again (it refreshes hourly). */
 const STALE_MS = 60 * 60 * 1000;
@@ -130,6 +130,20 @@ export async function pricesForCall(setting: unknown): Promise<PriceRef | null> 
         if (!current) await Promise.race([pending, new Promise((r) => setTimeout(r, FIRST_WAIT_MS))]);
     }
     return current?.ref ?? null;
+}
+
+/**
+ * What a model call records for spend: the price snapshot (when the service is set) and the electricity price (when
+ * one is set). Never rejects: a call does not fail over its bookkeeping.
+ * @param config the two settings it reads
+ */
+export async function spendForCall(config: { priceSnapshotUrl?: unknown; electricityPerKwh?: unknown; electricityCurrency?: unknown }): Promise<Pick<TokenUsage, "prices" | "electricity">> {
+    const out: Pick<TokenUsage, "prices" | "electricity"> = {};
+    const prices = await pricesForCall(config.priceSnapshotUrl).catch(() => null);
+    if (prices) out.prices = prices;
+    const perKwh = Number(config.electricityPerKwh);
+    if (Number.isFinite(perKwh) && perKwh > 0) out.electricity = { perKwh, currency: String(config.electricityCurrency || "").trim().toUpperCase() };
+    return out;
 }
 
 /**

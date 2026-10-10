@@ -30,7 +30,7 @@ export type StateAttentionLevel = "blocks" | "limits" | "suggests";
 export type AttentionCode =
     | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
     | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing"
-    | "archive-off" | "archive-folder-none"
+    | "archive-off" | "archive-folder-none" | "spend-no-electricity-price"
     /** THIS DEVICE, not a runtime: an iPhone or iPad reading the hosted client in a tab rather than as an app. */
     | "add-to-home"
     /** THIS DEVICE's certificate: running out, and run out. See {@link certItems}. */
@@ -47,7 +47,8 @@ export type AttentionCode =
  */
 export type AttentionFix =
     | { kind: "act"; label: string }
-    | { kind: "settings"; label: string; where: string }
+    /** `find` is the Settings search that lands on the one field, where this device can search its settings */
+    | { kind: "settings"; label: string; where: string; find?: string }
     /** open Settings → Devices on THIS surface, where a pairing both starts and is confirmed */
     | { kind: "devices"; label: string }
     | { kind: "run"; label: string; run: () => void };
@@ -136,6 +137,11 @@ const KNOWN: Record<AttentionCode, Known> = {
         level: "suggests", title: "No utility model",
         detail: "Sessions get no titles or summaries, and side calls use nothing. A small, fast model is enough.",
         fix: { kind: "settings", label: "Choose one", where: "Extension → Models → Utility model" },
+    },
+    "spend-no-electricity-price": {
+        level: "limits", title: "Spend tracking has no electricity price",
+        detail: "A price service is set, so API calls are costed, but local models are not until you say what a kWh costs you.",
+        fix: { kind: "settings", label: "Set it now", where: "Extension → Spend → Electricity price", find: "Electricity price" },
     },
     "tab-groups": {
         level: "suggests", title: "Tab groups show without names",
