@@ -99,7 +99,10 @@ test("the tools the model is shown are the page's own definitions, built by the 
     await flush();
     const offered = new Map(chats()[0].body.tools.map((t) => [t.function.name, t.function.description]));
     const { ml } = loadDomWorld();
-    const page = [...ml.domTools, ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool(), ml.fetchTool()];
+    // The run finishes exec's and fetch_url's descriptions with their details pointer (tool-details.ts), as here.
+    const { withToolDetails } = await import("../src/tools/tool-details.ts");
+    const docs = offered.has("agent_api_docs") ? [{ name: "agent_api_docs", description: "" }] : [];
+    const page = withToolDetails([...ml.domTools, ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool(), ml.fetchTool(), ...docs]).slice(0, docs.length ? -1 : undefined);
     for (const t of page) {
         if (!offered.has(t.name)) continue;
         assert.equal(offered.get(t.name), t.description, `${t.name}: the worker shows the model the page's description`);

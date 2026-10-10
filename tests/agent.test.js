@@ -3978,8 +3978,8 @@ test("exec's description tells the model the cap the code applies, read from the
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const { default: d, ceiling: c } = OUTPUT_CAP.exec;
-    assert.match(exec.description, new RegExp(`truncated to ${d} chars`));
-    assert.match(exec.description, new RegExp(`up to ${c}\\)`));
+    assert.match(exec.description, new RegExp(`cut to ${d} chars`));
+    assert.match(exec.description, new RegExp(`\\(up to ${c}\\)`));
     assert.match(exec.parameters.properties.js.description, new RegExp(`truncated to ${d} chars`));
     assert.doesNotMatch(exec.description, /~\d/, "no approximate figure: the note at the cut is exact, so the instruction is too");
 });

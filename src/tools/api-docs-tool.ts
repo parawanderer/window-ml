@@ -18,6 +18,7 @@ import { ML_READONLY_METHODS } from "../readonly-exec";
 import { browserInfo } from "../util";
 import { errText } from "../dom/dom";
 import { runPipe, pipeHint, PIPE_REF } from "../pointers/text-pipe";
+import { toolDetailsSection } from "./tool-details";
 import { queryApiDocs, isDefaultQuery, withoutMembers, type ApiDocsQuery } from "./api-docs-query";
 import { hiddenMlMembers } from "../ml/ml-member-tools";
 
@@ -206,6 +207,10 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
                         "than sections: `search` returns every section that mentions a term, which is the wrong grain " +
                         "for a question like \"which methods take a signal\". " + PIPE_REF
                 },
+                tool: {
+                    type: "string",
+                    description: "A tool's reference (e.g. \"fetch_url\"): how its options behave, beyond its description. Standalone.",
+                },
                 diff: {
                     type: "boolean",
                     description: "Return the EXACT local diff of this build's uncommitted changes (vs its commit) " +
@@ -219,8 +224,9 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
         // handed to the slicer as searchable env sections. Resolved for the default view (which shows them) and
         // for a `search` (the model hunts the HUD shortcut via search, as observed) — but NOT for a member/type
         // drill, which shouldn't pay two background round-trips for context it didn't ask for.
-        run: async (args: ApiDocsQuery & { diff?: boolean; pipe?: string } = {}, ctx?: ToolContext): Promise<string> => {
+        run: async (args: ApiDocsQuery & { diff?: boolean; pipe?: string; tool?: string } = {}, ctx?: ToolContext): Promise<string> => {
             if (args.diff) return dirtyDiffSection();   // explicit: the exact local diff (never in the default view)
+            if (typeof args.tool === "string" && args.tool.trim()) return toolDetailsSection(args.tool.trim(), (n) => ctx?.hasTool ? ctx.hasTool(n) : true);
             const wantEnv = isDefaultQuery(args) || !!(args.search && args.search.trim());
             const env = wantEnv
                 ? [
