@@ -14,6 +14,7 @@ import { accessibleName } from "../dom/a11y";
 import { formatLegend, foldDelimiters, type Box as LegendBox } from "../dom/legend";
 
 import { citeParam } from "./tool-params";
+import { LOCATE } from "./tool-details";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
@@ -327,70 +328,57 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
         name: "locate",
         summary: "Finds an on-screen element by describing how it looks.",
         capabilities: ["vision"],
-        description: "Find an on-screen control by DESCRIBING how it looks — for unlabelled icons, " +
-            "custom widgets, canvas, or any UI you can't reach by text or a guessed selector. Returns a " +
-            "CSS selector (or an `@pt:…` coordinate, for canvas) to pass to click/type/answer. Sees only " +
-            "the current viewport (scroll the target into view first). " +
-            "If the target sits on a <canvas> (a game/drawing surface — no DOM nodes inside it), FIRST " +
-            "identify the canvas and pass ITS selector as `selector` so the search is cropped to it; the " +
-            "result is an `@pt:…` coordinate token (there's no element to select), which you verify with " +
-            "look({ selector: \"@pt:…\" }) and then click. On a busy canvas UI, zoom in with `container: " +
-            "true` — the grounding model outlines a panel/card/toolbar and returns an `@box:…` region " +
-            "token; scope back into it (selector: \"@box:…\") to find a control, recursing box→sub-box→@pt.",
+        description: LOCATE.description,
         parameters: {
             type: "object",
             properties: {
                 description: {
                     type: "string",
-                    description: "What to find, described by its APPEARANCE — colour, shape, icon, and any " +
-                        "visible text — NOT by a name, brand, or role the vision model can't see (it reads " +
-                        "pixels, not names). Good: \"a red heart icon\", \"a round blue button with a " +
-                        "magnifying glass\", \"the star/favourite icon next to the chat title\". Bad: \"Big Pete\", " +
-                        "\"the delete handler\", \"the submit button\" (say what it LOOKS like instead)."
+                    description: LOCATE.params.description
                 },
                 filter: {
                     type: "string",
                     enum: ["clickables", "inputs", "images", "all"],
-                    description: "Which elements to consider (default 'clickables')."
+                    description: LOCATE.params.filter
                 },
                 selector: {
                     type: "string",
-                    description: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. For iframes or shadow roots, pass a selector to the iframe or shadow root parent element here! NOT the target's own selector. An `@pt:…` token also works: re-searches the box around that point with ANY strategy (e.g. grid inside a point)."
+                    description: LOCATE.params.selector
                 },
                 index: {
                     type: "integer",
-                    description: "Which match of `selector` to scope to (0-based); default 0."
+                    description: LOCATE.params.index
                 },
                 margin: {
                     type: "integer",
-                    description: "For 'grounding': grow the predicted box by N px (try 40–120) and re-match — when a box snapped to the WRONG element. Reuses the cached box (no 2nd vision call)."
+                    description: LOCATE.params.margin
                 },
                 strategy: {
                     type: "string",
                     enum: ["auto", "grounding", "marks", "grid", "grid-grounding"],
-                    description: "Default 'auto'. 'grounding' = a coordinate model points at it (needs one configured; best for a clear spot). 'marks' = numbered badges, model picks by number (robust when cluttered). 'grid' = a numbered grid, model picks the CELL (any vision model; zoom with `cells` or raise `gridSize`). 'grid-grounding' = grid narrows to a cell, THEN grounding points precisely inside it (needs a grounding model; best for a small target on a busy page or canvas, where a plain grid centre only grazes). 'auto' = grounding then marks."
+                    description: LOCATE.params.strategy
                 },
                 region: {
                     type: "string",
                     enum: ["left", "right", "top", "bottom", "center", "top-left", "top-right", "bottom-left", "bottom-right"],
-                    description: "Coarse pre-crop by rough position BEFORE the grid — for a dense scene where the grid has too many near-identical cells to pick from (you can vaguely tell 'left'/'bottom' even when you can't read a cell number). Bands are full-length ('left' = left side, full height); corners are quadrants. Halves overlap, so if unsure which side, guess one and try the opposite on a miss. Composes with any strategy."
+                    description: LOCATE.params.region
                 },
                 gridSize: {
                     type: "integer",
-                    description: "For 'grid': base cell count (default 4, 2–8; the grid maxes out ~60 cells). To go FINER, don't raise this — zoom with `cells` (a fresh grid inside a cell) or pre-crop with `region`."
+                    description: LOCATE.params.gridSize
                 },
                 cells: {
                     type: "array",
                     items: { type: "integer" },
-                    description: "A previously-returned cell selection (1, 2 adjacent, or a 2×2 block of 4). 'grid' draws a fresh grid inside it (recursive zoom); 'grid-grounding' grounds directly inside it (reuses the pick — no re-roll)."
+                    description: LOCATE.params.cells
                 },
                 container: {
                     type: "boolean",
-                    description: "Set true to OUTLINE a sub-area rather than pick a control — the grounding model boxes a container (a panel, card, toolbar, dialog) and returns an `@box:…` region token instead of a click point. Use it on a busy <canvas> UI to zoom in: get the container box, then locate({ selector: \"@box:…\", description: \"…\" }) to find a control INSIDE it (recurse as needed), and click the final `@pt:…`. Needs a grounding model."
+                    description: LOCATE.params.container
                 },
                 verify: {
                     type: "boolean",
-                    description: "For a result that is a DOM element or an `@box:…` region, also return its marked crop in THIS call, instead of a separate look(). A point/`@pt:…` result ALWAYS returns one. Default false: a DOM element selector usually needs no visual check."
+                    description: LOCATE.params.verify
                 },
             },
             required: ["description"],

@@ -199,6 +199,31 @@ def verdict():
 verdict()
 """)
 
+md("""
+## Why glm-4.7-flash still lost csv-total after the fix
+
+The same classification over glm's table-task runs, the recheck and the re-run after the fix together. A class that
+appears under one prompt only is a behaviour that prompt caused.
+""")
+
+code("""
+glm = runs[runs.sweep.isin(["cuts2-recheck2", *FIX_SWEEPS]) & (runs.model == "glm-4.7-flash:latest") & runs.task.isin(TABLE_TASKS)]
+g = glm[~glm.passed].assign(why=lambda d: d.apply(why, axis=1))
+passed = glm.pivot_table(index="task", columns="prompt", values="passed", aggfunc=["sum", "count"])
+display(passed)
+g.pivot_table(index=["task", "why"], columns="prompt", values="repeat", aggfunc="count", fill_value=0)
+""")
+
+md("""
+## Decision (2026-10-10)
+
+Shipped: the `locate` cut and the private-rendering error that leads with its retry. Not shipped: the `python_exec`
+cut. With the `tables` fix MiniMax recovered on the table tasks, but glm-4.7-flash gave up on csv-total without
+calling `python_exec` only under the cut (the table above), so `python_exec` keeps its full texts and cannot have
+regressed. The `locate` cut held on icon-heart for qwen3.6 and glm-4.7-flash; MiniMax's remaining gap there is one
+run in eight. The record is `docs/spec/PROMPT_BUDGET.md`.
+""")
+
 nb = nbf.v4.new_notebook(cells=cells)
 nb.metadata["kernelspec"] = {"display_name": "Python 3", "language": "python", "name": "python3"}
 nbf.write(nb, HERE / "prompt-cuts2.ipynb")
