@@ -14,12 +14,51 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
 
 /**
+ * Turn on "Allow in Incognito" for the loaded extension, as its chrome://extensions toggle does, and return the new
+ * worker. Chrome disables the extension to apply it and, for one loaded with `--load-extension`, leaves it disabled
+ * (a reload does not bring it back), so it is enabled again here; that starts a fresh worker.
+ */
+async function allowIncognito(/** @type {import("@playwright/test").BrowserContext} */ context, /** @type {string} */ extensionId) {
+    const page = await context.newPage();
+    try {
+        await page.goto("chrome://extensions");
+        const err = await page.evaluate(async (/** @type {string} */ id) => {
+            // chrome://extensions' own API, which the extension types do not describe.
+            const dev = /** @type {any} */ (chrome).developerPrivate;
+            /** @returns {Promise<{ error?: string, v?: any }>} */
+            const call = (/** @type {Function} */ fn, /** @type {any[]} */ ...args) => new Promise((resolve) => fn(...args, (/** @type {any} */ v) => resolve(chrome.runtime.lastError ? { error: chrome.runtime.lastError.message } : { v })));
+            const set = await call(dev.updateExtensionConfiguration, { extensionId: id, incognitoAccess: true });
+            if (set.error) return set.error;
+            // The toggle disables the extension to apply itself; enabling it before that lands is undone by it.
+            for (let i = 0; i < 100; i++) {
+                const info = await call(dev.getExtensionInfo, id);
+                if (info.v?.state === "DISABLED" && info.v.incognitoAccess?.isActive) return null;
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            return "it was never disabled to apply the setting";
+        }, extensionId);
+        if (err) throw new Error(`could not allow the extension in incognito: ${err}`);
+        const fresh = context.waitForEvent("serviceworker", { timeout: 15000 });
+        const enable = await page.evaluate((/** @type {string} */ id) => new Promise((resolve) => chrome.management.setEnabled(id, true, () => resolve(chrome.runtime.lastError?.message ?? null))), extensionId);
+        if (enable) throw new Error(`could not enable the extension again: ${enable}`);
+        const sw = await fresh;
+        if (!(await sw.evaluate(() => new Promise((r) => chrome.extension.isAllowedIncognitoAccess(r))))) throw new Error("the extension came back without incognito access");
+        return sw;
+    } finally {
+        await page.close().catch(() => {});
+    }
+}
+
+/**
  * Launch Chromium with the built extension. Returns { context, sw, extensionId, close }.
  *
  * `dist` loads a DIFFERENT build directory than `dist/` — how the bench runs an experimental variant
  * (an esbuild `--define`d build in its own outdir) without the experiment ever becoming a product flag.
+ *
+ * `incognito` turns on "Allow in Incognito", which a fresh install has off (and so does every launch without it): a
+ * private rendered fetch needs it. The returned `sw` is then the worker of the re-enabled extension.
  */
-export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[] }} */ { dist, headful, args = [] } = {}) {
+export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[], incognito?: boolean }} */ { dist, headful, args = [], incognito = false } = {}) {
     // `E2E_DIST` runs a whole spec against a bundle built ELSEWHERE (`node build.mjs --outdir <dir>`), so a suite
     // can test a change while `dist/` is still loaded in a window someone is using — rebuilding it underneath a
     // live extension is exactly the hazard the build rule warns about.
@@ -52,6 +91,7 @@ export async function launchExtension(/** @type {{ headful?: boolean, dist?: str
     let [sw] = context.serviceWorkers();
     if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 15000 });
     const extensionId = new URL(sw.url()).host;
+    if (incognito) sw = await allowIncognito(context, extensionId);
     return { context, sw, extensionId, close: () => context.close() };
 }
 
@@ -137,7 +177,8 @@ export async function approveOrigin(sw, origin) {
  */
 export async function waitForMl(page, { approve = true } = {}) {
     if (approve) {
-        const sw = page.context().serviceWorkers()[0];
+        // The newest: a relaunched extension (launchExtension's `incognito`) leaves its old, dead worker listed first.
+        const sw = page.context().serviceWorkers().at(-1);
         const origin = new URL(page.url()).origin;
         if (sw && /^https?:/.test(origin)) await approveOrigin(sw, origin);
     }

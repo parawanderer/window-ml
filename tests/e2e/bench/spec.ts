@@ -73,6 +73,12 @@ export interface BenchTask {
     python?: boolean;
     /** enable tool tokens (pointers) */
     toolTokens?: boolean;
+    /**
+     * Turn on the extension's "Allow in Incognito" before the run. Off by default, as in a fresh install, and then a
+     * private rendered fetch (`fetch_url({ rendered: true })` without credentials) returns guidance instead of the page,
+     * so a task about RENDERING sets it, or it measures recovery from that error. Part of the task's hash.
+     */
+    incognito?: boolean;
     /** a SECOND measured turn in the same session */
     followup?: string;
     /**
@@ -213,6 +219,8 @@ export interface CellEffects {
     tools?: string[] | null;
     toolTokens?: boolean;
     python?: boolean;
+    /** override the task's `incognito` (an `incognito: [false, true]` dimension maps here) */
+    incognito?: boolean;
     /**
      * Start the run from a UI surface ("hud", …) instead of a console `ml.agent`, overriding the task's own `surface`;
      * `null` forces a console run. A UI run gets the kit a person's run gets, so `tools`, `python`, `toolTokens`,

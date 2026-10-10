@@ -380,7 +380,8 @@ behaviour (navigation, SW lifecycle, content-script re-injection) can be exercis
 **opt-in and slow** — reach for it only when jsdom/`node:vm` genuinely can't represent the
 thing. The parts:
 
-- **`harness.mjs`** — `launchExtension()` (persistent context + `--load-extension=dist`),
+- **`harness.mjs`** — `launchExtension()` (persistent context + `--load-extension=dist`; `{ incognito: true }` turns
+  on "Allow in Incognito" through chrome://extensions and returns the re-enabled extension's worker; off by default),
   `configureExtension(sw, cfg)` (writes `chrome.storage.sync` via the SW), `waitForMl(page)` (which also APPROVES the
   page's origin, since every page-started message is refused for an unapproved one, docs/dev/site-access.md;
   `{ approve: false }` leaves it unapproved), `approveOrigin(sw, origin)`. The node:vm harness does the same for a test

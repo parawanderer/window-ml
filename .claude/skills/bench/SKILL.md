@@ -196,6 +196,11 @@ A task (or a cell, through `apply`) can set `surface: "hud"` to start the run th
 kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
 `seed` are console knobs and do not apply to it. `sharedWatches`/`watchNotes` go to `ml.current` as in observe.
 
+`incognito: true` on a task (or a cell's `apply`) turns on the extension's "Allow in Incognito" before the run. A
+fresh install has it off, and so does every other run here: a private rendered fetch (`fetch_url({ rendered: true })`
+without credentials) then returns guidance instead of the page, so a task about rendering MUST set it or it measures
+recovery from that error (spa-rendered did, until it set it). It is part of the task's hash and the cell's cache key.
+
 `stream: true` on a task or a cell streams each model turn, as the HUD does (tool calls assembled from chunks, usage
 from the stream's last chunk); `dimensions: { stream: [false, true] }` with `apply: (c) => ({ stream: c.stream })`
 makes it an arm. Unset, a console run is NOT streamed (`ml.agent`'s default, and every sweep before this knob) and a

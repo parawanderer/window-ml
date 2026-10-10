@@ -91,6 +91,8 @@ export function taskHash(task, combo = {}) {
         seed: task.seed ? String(task.seed.task) : null,
         succeeded: typeof task.succeeded === "function" ? String(task.succeeded) : null,
         variant: variantOf(combo),
+        // Only when set, so a task that never set it keeps the hash it was logged under.
+        ...(task.incognito ? { incognito: true } : {}),
     });
     return createHash("sha256").update(material).digest("hex").slice(0, 12);
 }

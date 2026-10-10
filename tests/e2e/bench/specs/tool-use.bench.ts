@@ -56,9 +56,11 @@ export default defineBench({
             succeeded: ({ answer }) => /SHDW-7788/.test(answer),
         },
         {
-            // The rendered trigger: a raw GET of /spa is an empty shell. Not navigating keeps it a fetch.
+            // The rendered trigger: a raw GET of /spa is an empty shell. Not navigating keeps it a fetch. With incognito
+            // off (a fresh install), the private render fails first and this measured recovery, not rendering.
             id: "spa-rendered",
             regression: SUITE,
+            incognito: true,
             task: "What does the page at /spa on this site show once its script has run? Don't change the page I'm on.",
             succeeded: ({ answer, steps }) => /SPA-RENDERED-9931/.test(answer) && !navigated(steps),
         },

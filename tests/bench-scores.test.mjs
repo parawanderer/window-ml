@@ -100,6 +100,12 @@ test("an edited task or predicate is a new item; another model on the same task 
     assert.equal(variantOf({ z: 1, model: "m", a: 2 }), '{"a":2,"z":1}');
 });
 
+test("a task that turns on incognito is a new item; one that never set it keeps the hash it was logged under", () => {
+    const h = taskHash(TASK, { model: "a" });
+    assert.notEqual(taskHash({ ...TASK, incognito: true }, { model: "a" }), h);
+    assert.equal(taskHash({ ...TASK, incognito: false }, { model: "a" }), h);
+});
+
 test("the log keeps a run once, survives being reopened, and is never rewritten", needsSqlite, async () => {
     const file = path.join(tmp(), "scores.sqlite");
     let db = await openScores(file);
