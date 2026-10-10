@@ -732,7 +732,8 @@ export async function runOnce(cfg = {}) {
         const priceBodies = {};
         for (const [hash, kind] of priceHashes(session)) {
             if (havePrice?.(hash)) continue;
-            const b64 = await ext.sw.evaluate((h) => globalThis.__mlPriceBody?.(h) ?? null, hash).catch(() => null);
+            // `__mlPriceBody` answers `{ source, contentType, base64 }` (sw-prices.ts), or null for a hash it does not hold.
+            const b64 = await ext.sw.evaluate(async (h) => (await globalThis.__mlPriceBody?.(h))?.base64 ?? null, hash).catch(() => null);
             if (b64) priceBodies[hash] = { kind, b64 };
         }
 
