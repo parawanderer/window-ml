@@ -8,6 +8,7 @@
 
 import { recordHousekeeping } from "./sw-housekeeping";
 import type { PriceRef, TokenUsage } from "../contract/contract-chat";
+import { priceBook, callCost, type PriceOf, type CallCost, type CallToPrice } from "../spend/price-book";
 
 /** How old the snapshot may get before a call asks the service again (it refreshes hourly). */
 const STALE_MS = 60 * 60 * 1000;
@@ -186,6 +187,51 @@ export async function priceBody(hash: unknown): Promise<{ source: string; conten
     let bin = "";
     for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
     return { source: row.source, contentType: row.contentType, base64: btoa(bin) };
+}
+
+/** How many price books stay parsed at once. Each holds a few megabytes of parsed price lists, and a session's calls
+ *  usually ran under one or two snapshots. */
+const BOOKS_MAX = 4;
+// state: cache (price books parsed from stored bodies, by the hashes they were built from; rebuilt from IndexedDB on a miss)
+const books = new Map<string, Promise<PriceOf | null>>();
+
+/** The price book for one snapshot's sources, or null when this browser holds none of their bodies. */
+function bookFor(sources: Record<string, string>): Promise<PriceOf | null> {
+    const key = JSON.stringify(Object.entries(sources).sort());
+    let book = books.get(key);
+    if (!book) {
+        book = (async () => {
+            const bodies: Record<string, Uint8Array> = {};
+            for (const [name, hash] of Object.entries(sources)) {
+                const row = await store(BODIES, "readonly").then((st) => st ? done(st.get(String(hash).toLowerCase())) as Promise<BodyRow | undefined> : undefined).catch(() => undefined);
+                if (row) bodies[name] = new Uint8Array(row.bytes);
+            }
+            return Object.keys(bodies).length ? priceBook(bodies) : null;
+        })();
+        books.set(key, book);
+        while (books.size > BOOKS_MAX) books.delete(books.keys().next().value!);
+    }
+    return book;
+}
+
+/** At most this many calls are priced per request. */
+const PRICE_CALLS_MAX = 5000;
+
+/**
+ * What each call cost, priced on READ against the snapshot it ran under (`src/spend/price-book.ts`), for the panel's
+ * spend view. A call whose snapshot this browser no longer holds is priced as having none, so it says why.
+ * @param calls the calls, in any order; the answer is in the same order
+ */
+export async function costCalls(calls: unknown): Promise<CallCost[]> {
+    if (!Array.isArray(calls)) return [];
+    const out: CallCost[] = [];
+    for (const c of calls.slice(0, PRICE_CALLS_MAX) as CallToPrice[]) {
+        const usage = c?.usage && typeof c.usage === "object" ? c.usage : { promptTokens: 0, completionTokens: 0 };
+        const sources = usage.prices?.sources;
+        const book = sources && typeof sources === "object" ? await bookFor(sources) : null;
+        out.push(callCost(usage, typeof c?.model === "string" ? c.model : null, book));
+    }
+    return out;
 }
 
 (globalThis as { __mlPriceBody?: typeof priceBody }).__mlPriceBody = priceBody;

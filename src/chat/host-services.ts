@@ -117,6 +117,9 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         openLink: (url) => platform.openLink(url),
         hostAccess: null,
         sheetTitle: async () => null,
+        // The snapshots a call was priced under live in the runtime's worker, not here.
+        priceCalls: null,
+        findSetting: null,
         savePref: (key, value) => platform.prefs.set(key, value),
         saveFile: (name, data) => platform.saveFile(name, data),
         printDoc: platform.printDoc ?? null,

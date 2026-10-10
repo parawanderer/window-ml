@@ -4,7 +4,7 @@
 // content-script shell, or panel.ts) over `postMessage`. The parent can prove a message came from this extension
 // iframe, which is what makes an approval posted this way unforgeable by the page.
 import { hintSession } from "../contract/contract-run";
-import { config } from "./store";
+import { config, view } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
@@ -87,6 +87,13 @@ export const extensionServices: SidebarServices = {
         try { chrome.runtime.sendMessage({ type: "FETCH_SHEET_TITLE", payload: { id } }, (resp: { data?: string } | undefined) => resolve(resp?.data || null)); }
         catch { resolve(null); }
     }),
+    priceCalls: (calls) => new Promise((resolve) => {
+        try { chrome.runtime.sendMessage({ type: "PRICE_CALLS", payload: { calls } }, (resp: { data?: import("../spend/price-book").CallCost[] } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : null)); }
+        catch { resolve(null); }
+    }),
+    // Loaded on the click, not with this file: Settings is the whole settings view, and what loads the services
+    // (the code-block tools under Node, among others) must not pull it in.
+    findSetting: (query) => { void import("./settings/settings").then((m) => { m.searchSettings(query); view.value = { name: "settings" }; }); },
     savePref: (key, value) => { try { chrome.storage.local.set({ [key]: value }); } catch { /* no chrome in a bare render */ } },
     saveFile: (name, data) => downloadBlob(name, data),
     // Print from a REAL browser tab via the background, NOT this frame: `window.print()` is suppressed for a frame

@@ -474,6 +474,59 @@ test("composer usage gauge: absent until the server reports token counts", async
     assert.ok(w.shadow.querySelector(".csend").disabled, "the send button is disabled while the box is empty");
 });
 
+// --- the composer's spend chip ----------------------------------------------------------------------------
+
+/** A worker that prices calls the way sw-prices.ts answers: a reported cost as given, a local model as local. */
+const priceLikeWorker = (calls) => calls.map((c) => c.usage.raw?.cost != null
+    ? { reported: c.usage.raw.cost, computed: null, local: false, why: null, unpriced: [], notes: [] }
+    : c.model === "qwen3:8b" ? { reported: null, computed: null, local: true, why: "a local model: its cost is electricity", unpriced: [], notes: [] }
+    : { reported: null, computed: null, local: false, why: "no price snapshot recorded", unpriced: [], notes: [] });
+
+test("spend chip: a session's priced calls are summed beside the gauge, and its tooltip says how they were priced", async () => {
+    const w = await loadSidebarWorld({ priceCalls: priceLikeWorker });
+    await w.dispatch(chatStart("spd", 0, "hi", { model: "or.acme/m1" }));
+    await w.dispatch(chatResult("spd", 0, "a", { model: "or.acme/m1", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100, raw: { cost: 0.25 } } }));
+    await w.dispatch(chatStart("spd", 1, "more", { model: "or.acme/m1" }));
+    await w.dispatch(chatResult("spd", 1, "b", { model: "or.acme/m1", usage: { promptTokens: 200, completionTokens: 20, totalTokens: 220, raw: { cost: 0.5 } } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush(); await w.tick();
+    const chip = w.shadow.querySelector(".usage-spend");
+    assert.ok(chip, "the chip renders");
+    assert.match(chip.textContent, /^\$0\.75/, "each call's cost, summed (not the latest one, unlike occupancy)");
+    assert.match(chip.querySelector(".tt-pop").textContent, /2 model calls, as the provider reported/);
+    assert.ok(!chip.querySelector(".spend-warn"), "no warning with no local calls");
+});
+
+test("spend chip: absent where the host cannot price calls, and where nothing was priced and nothing is missing", async () => {
+    const w = await loadSidebarWorld();   // the worker answers PRICE_CALLS with nothing
+    await w.dispatch(chatStart("np", 0, "hi", { model: "or.acme/m1" }));
+    await w.dispatch(chatResult("np", 0, "a", { model: "or.acme/m1", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100, raw: { cost: 0.25 } } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush(); await w.tick();
+    assert.ok(!w.shadow.querySelector(".usage-spend"), "a null answer is 'cannot price here', never $0");
+
+    const w2 = await loadSidebarWorld({ priceCalls: priceLikeWorker });   // spend off: a local call says nothing
+    await w2.dispatch(chatStart("lo", 0, "hi", { model: "qwen3:8b" }));
+    await w2.dispatch(chatResult("lo", 0, "a", { model: "qwen3:8b", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100 } }));
+    w2.shadow.querySelector(".row").click();
+    await w2.tick(); await w2.flush(); await w2.tick();
+    assert.ok(!w2.shadow.querySelector(".usage-spend"));
+});
+
+test("spend chip: spend on, a local call and no electricity price is a warning that opens Settings at that field", async () => {
+    const w = await loadSidebarWorld({ priceCalls: priceLikeWorker, sync: { priceSnapshotUrl: "http://box:3002" } });
+    await w.dispatch(chatStart("lw", 0, "hi", { model: "qwen3:8b" }));
+    await w.dispatch(chatResult("lw", 0, "a", { model: "qwen3:8b", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100 } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush(); await w.tick();
+    const chip = w.shadow.querySelector(".usage-spend");
+    assert.ok(chip, "the chip renders for the warning alone");
+    assert.match(chip.querySelector(".tt-pop").textContent, /1 call on a local model.*No electricity price is set/s);
+    chip.querySelector("button.spend-warn").click();
+    await w.tick(); await w.flush();
+    assert.equal(w.shadow.querySelector(".set-search")?.value, "Electricity price", "Settings opens filtered to the field");
+});
+
 test("composer: typing enables Send and posts sessionSend; an empty box on a running session is the Stop button", async () => {
     const w = await loadSidebarWorld();
     const posted = [];

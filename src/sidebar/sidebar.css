@@ -1026,6 +1026,14 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .usage-pct, .usage-total { color: var(--fg-dim); font-size: 0.8em; font-variant-numeric: tabular-nums; }
 /* Delegated sub-call spend (look/locate/verify's own vision calls) — a ghosted "+N sub" chip beside
    the gauge. Faint on purpose: it's separate SPEND, not part of the context-window occupancy. */
+/* What the session has spent in money, beside the context gauge: the amount, and a warning when a local model's
+   electricity cannot be costed */
+.usage-spend { margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; color: var(--fg-faint); font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The spend chip's warning: no electricity price is set; a click opens that setting */
+.spend-warn { display: inline-flex; padding: 0; border: 0; background: none; color: var(--warn); cursor: pointer; }
+.spend-warn svg { width: 12px; height: 12px; }
+/* One fact per line in the spend chip's tooltip */
+.spend-line { display: block; }
 .usage-sub { margin-left: 6px; color: var(--fg-faint); font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --------------------------- shared bits -------------------------------- */

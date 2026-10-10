@@ -11,7 +11,8 @@
 // Rows logged before that have no model on most turns; `spendReport` reads those as the run's driver.
 
 import { createHash } from "node:crypto";
-import { priceCalls, spendByModel, PRICE_CURRENCY } from "./cost.mjs";
+import { priceCalls, spendByModel } from "./cost.mjs";
+import { PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
 
 export const SPEND_SCHEMA = `
 CREATE TABLE IF NOT EXISTS calls (
