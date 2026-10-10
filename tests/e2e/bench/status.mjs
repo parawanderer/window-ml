@@ -7,7 +7,7 @@
 
 import { writeFileSync, renameSync } from "node:fs";
 import path from "node:path";
-import { fmtBytes } from "./memory-budget.mjs";
+import { fmtBytes, limitWhence } from "./memory-budget.mjs";
 import { spendLine } from "./live-spend.mjs";
 
 /** What status.json keeps of the page's state: everything but the timeline and the box's samples (timeline.md, memory.md). */
@@ -42,7 +42,7 @@ export function statusText(s, now = Date.now()) {
     const m = s.memory;
     if (m && (m.active || m.groups?.length)) {
         out.push("## Memory (everything the bench holds on this machine, every clone's)", "",
-            `${fmtBytes(m.used)} of a ${fmtBytes(m.limit)} limit; ${fmtBytes(m.available)} available${m.reserve ? `, ${fmtBytes(m.reserve)} kept free` : ", no reserve (a limit set by hand)"}; room for ${fmtBytes(m.room)}. At the limit: ${m.whenFull}.`,
+            `${fmtBytes(m.used)} of a ${fmtBytes(m.limit)} limit (${limitWhence({ source: m.limitSource ?? "auto", by: m.limitBy, at: m.limitAt })}; change it machine-wide, running sweeps included: \`node --import tsx tests/e2e/bench/hold.mjs --limit 12G\`); ${fmtBytes(m.available)} available${m.reserve ? `, ${fmtBytes(m.reserve)} kept free` : ", no reserve (a limit set by hand)"}; room for ${fmtBytes(m.room)}. At the limit: ${m.whenFull}.`,
             ...Object.entries(m.byKind ?? {}).map(([k, v]) => `- ${k}: ${fmtBytes(v)}${k === "runner" && m.runner?.heap ? ` (node heap ${fmtBytes(m.runner.heap)})` : ""}`), "");
         if (m.paused) out.push(`PAUSED: ${m.paused}`, `Resume: ${m.resume}`, "");
         const h = m.history ?? [];

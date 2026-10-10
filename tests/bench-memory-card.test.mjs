@@ -50,7 +50,7 @@ test("a paused sweep's card: the budget, the paused banner with the resume comma
     const { doc } = await page({ ...base, memory: MEMORY });
     const card = doc.querySelector("#memory");
     assert.ok(card);
-    assert.match(card.querySelector("header .sub").textContent, /5\.0 GB of a 8\.0 GB limit · 9\.0 GB available, 4\.0 GB kept free · room for 3\.0 GB/);
+    assert.match(card.querySelector("header .sub").textContent, /5\.0 GB of a 8\.0 GB limit \(half the RAM, the default\) · 9\.0 GB available, 4\.0 GB kept free · room for 3\.0 GB/);
     const banner = card.querySelector(".mpaused");
     assert.match(banner.textContent, /Paused at the memory budget: the memory limit/);
     assert.equal(codeText(banner.querySelector(".copyable-code")), RESUME);

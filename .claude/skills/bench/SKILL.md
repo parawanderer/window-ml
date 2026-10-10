@@ -69,7 +69,12 @@ exit, paused or not, it prints the MENU: every clone's held runs grouped by mode
 command to paste for attach, keep one and release the rest, release all, plus how to resume and what to do with them.
 The page has the same as its Memory card (with a chart of the readings over the sweep, and each group folding). Any
 time: `hold.mjs --menu` (the menu), `hold.mjs --ledger` (every entry and its memory), `hold.mjs --stop <pid> <pid> …`.
-A budget with room for no browser does not start (`BENCH NOT STARTED … paused=memory-budget`, exit 75) and one with room
+**The limit can change while sweeps run.** `hold.mjs --limit 12G` (or the Memory card's control on a live page, POST
+`/memory-limit`) sets one MACHINE-WIDE limit, kept beside the ledger (`limit.json`); every running sweep reads it on its
+next measurement (5 s) and logs the change (`⇄ memory limit 8.0 GB → 12.0 GB`). `--limit auto` goes back to half the
+RAM, `--limit` alone shows it. A sweep's own `--memory-limit` wins over it; lowering it below what is held stops nothing,
+but nothing more starts or is held until it is under. A paused sweep has exited: raise the limit, then run its resume
+command. A limit set by hand either way keeps no reserve. A budget with room for no browser does not start (`BENCH NOT STARTED … paused=memory-budget`, exit 75) and one with room
 for one warns, each naming the `--memory-limit` to pass; a limit set by hand also drops the quarter kept free (it swaps).
 
 **Reading a running sweep from the CLI: `status.md` and `status.json`** in the sweep directory, rewritten at most every

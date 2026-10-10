@@ -4,6 +4,8 @@
 //   node --import tsx tests/e2e/bench/hold.mjs --stop [x …]   release them all (or those whose pid is x, or whose cell or directory has x)
 //   node --import tsx tests/e2e/bench/hold.mjs --menu         the held runs of every clone, grouped, with what to paste for each (hold-menu.mjs)
 //   node --import tsx tests/e2e/bench/hold.mjs --ledger       everything the bench holds in memory on this machine (memory-budget.mjs)
+//   node --import tsx tests/e2e/bench/hold.mjs --limit [12G | auto]   the machine-wide memory limit: shown, set, or back to half
+//                                                             the RAM; every running sweep takes it up within 5 s
 //   node --import tsx tests/e2e/bench/hold.mjs --show [x]     bring a held run's browser window up (--hide minimises it again)
 //   node tests/e2e/converse.mjs --attach <cell dir> "…"       the next message to one (converse's inbox/outbox protocol)
 //
@@ -23,7 +25,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseSelector, selected } from "./cells.mjs";
-import { ledger, measureLedger, unregister, fmtBytes, autoLimit, availableMemory, budgetState } from "./memory-budget.mjs";
+import { ledger, measureLedger, unregister, fmtBytes, availableMemory, budgetState, readLimit, setLimit, resolveLimit, limitWhence, parseSize, RESERVE_FRAC } from "./memory-budget.mjs";
+import os from "node:os";
 import { menuText } from "./hold-menu.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -262,16 +265,31 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         console.log(lines.length ? lines.join("\n") : "no runs are held open");
     } else if (argv[0] === "--ledger") {
         const l = measureLedger();
-        const st = budgetState({ limit: autoLimit(), entries: l, available: availableMemory() });
-        console.log(`the bench holds ${fmtBytes(st.used)} (auto limit ${fmtBytes(st.limit)}; ${fmtBytes(st.available)} available, ${fmtBytes(st.reserve)} kept free)`);
+        const lim = resolveLimit({ machine: readLimit() });
+        const st = budgetState({ limit: lim.bytes, entries: l, available: availableMemory(), reserveFrac: lim.handSet ? 0 : RESERVE_FRAC });
+        console.log(`the bench holds ${fmtBytes(st.used)} of a ${fmtBytes(st.limit)} limit (${limitWhence(lim)}); ${fmtBytes(st.available)} available${st.reserve ? `, ${fmtBytes(st.reserve)} kept free` : ""}`);
         for (const e of l) console.log(`  ${e.kind.padEnd(8)} pid ${String(e.pid).padEnd(7)} ${fmtBytes(e.rss).padStart(8)} (peak ${fmtBytes(e.peak)})${e.heap ? ` heap ${fmtBytes(e.heap)}` : ""}  ${e.cell ?? e.sweep ?? ""}${e.repo ? `  ${e.repo}` : ""}`);
         if (!l.length) console.log("  (nothing)");
+    } else if (argv[0] === "--limit") {
+        // The machine-wide limit (memory-budget.mjs): every bench process here reads it on its next measurement.
+        const was = resolveLimit({ machine: readLimit() });
+        if (argv[1] != null) {
+            const bytes = argv[1] === "auto" ? null : parseSize(argv[1]);
+            if (argv[1] !== "auto" && bytes == null) { console.log(`not a size: ${argv[1]} (12G, 512M, or auto for half the RAM)`); process.exit(2); }
+            setLimit(bytes, `${os.userInfo().username} (hold.mjs)`);
+        }
+        const now = resolveLimit({ machine: readLimit() });
+        const used = budgetState({ limit: now.bytes, entries: measureLedger(), available: availableMemory(), reserveFrac: 0 }).used;
+        console.log(`machine-wide memory limit: ${fmtBytes(now.bytes)} (${limitWhence(now)})${argv[1] != null && was.bytes !== now.bytes ? `, was ${fmtBytes(was.bytes)}` : ""}`);
+        console.log(`the bench holds ${fmtBytes(used)} now. A running sweep takes the new limit up within 5 s; one started with --memory-limit keeps its own.`);
+        if (used > now.bytes) console.log(`that is over the limit: nothing running is stopped, but nothing more starts or is held until it is under. What to release: hold.mjs --menu`);
+        if (now.handSet) console.log("a limit set by hand keeps no share of the RAM free, so past what this machine has free it swaps and runs slower");
     } else if (!argv.length) {
         const list = heldRuns();
         if (!list.length) console.log("no runs are held open");
         for (const h of list) console.log(`${h.cell} of ${h.sweep} (pid ${h.pid}, window ${h.window ?? "?"}, until ${h.expiresAt} unless spoken to)\n  ${h.attach}`);
     } else {
-        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir …] | --menu | --ledger]");
+        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir …] | --menu | --ledger | --limit [size | auto]]");
         process.exit(2);
     }
 }

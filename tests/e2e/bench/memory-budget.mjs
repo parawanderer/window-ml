@@ -218,6 +218,41 @@ export function predictBrowser(db, task) {
     return { bytes: ASSUMED_BROWSER, basis: "assumed: no browser measured yet", n: 0 };
 }
 
+/** The machine-wide limit a person set (`hold.mjs --limit`, the page's Memory card), beside the ledger. */
+export const limitFile = (file = LEDGER_FILE) => path.join(path.dirname(file), "limit.json");
+
+/** The machine-wide limit: `{ bytes, by, at }`, or null when none is set (or the file is not one). */
+export function readLimit(file = LEDGER_FILE) {
+    try {
+        const l = JSON.parse(fs.readFileSync(limitFile(file), "utf8"));
+        return Number.isFinite(l?.bytes) && l.bytes > 0 ? { bytes: l.bytes, by: l.by ?? null, at: l.at ?? null } : null;
+    } catch { return null; }
+}
+
+/** Set the machine-wide limit (`bytes`), or clear it (null: back to half the RAM). Every running sweep reads it on its
+ *  next measurement. Returns what is set now. */
+export function setLimit(bytes, by = null, file = LEDGER_FILE) {
+    const f = limitFile(file);
+    if (bytes == null) { fs.rmSync(f, { force: true }); return null; }
+    if (!(Number.isFinite(bytes) && bytes > 0)) throw new Error(`not a memory limit: ${bytes}`);
+    writeRaw(f, { bytes: Math.round(bytes), by, at: new Date().toISOString() });
+    return readLimit(file);
+}
+
+/**
+ * Which limit is in force: this sweep's `--memory-limit` (`flag`), else the machine-wide one a person set (`machine`),
+ * else half the RAM. `{ bytes, source: "flag" | "machine" | "auto", handSet, by?, at? }`; a limit a person set (either
+ * kind) is HAND-SET, which drops the free-memory reserve: they chose it knowing it may swap.
+ */
+export function resolveLimit({ flag = null, machine = null, total = os.totalmem() } = {}) {
+    if (flag != null) return { bytes: flag, source: "flag", handSet: true };
+    if (machine) return { bytes: machine.bytes, source: "machine", handSet: true, by: machine.by, at: machine.at };
+    return { bytes: autoLimit(total), source: "auto", handSet: false };
+}
+
+/** Where the limit in force came from, in words. */
+export const limitWhence = (l) => (l.source === "flag" ? "this sweep's --memory-limit" : l.source === "machine" ? `set machine-wide${l.by ? ` by ${l.by}` : ""}${l.at ? ` at ${String(l.at).slice(0, 16).replace("T", " ")} UTC` : ""}` : "half the RAM, the default");
+
 /**
  * One sweep's budget: registers the runner in the ledger (its tree holds every browser it runs in-process; held runs'
  * browsers are their own entries), re-measures every `everyMs`, and answers the two questions a sweep asks. `canStart`:
@@ -225,9 +260,13 @@ export function predictBrowser(db, task) {
  * already counted, so the question is whether one more cell would still fit after it. `active` false (a fake-model sweep
  * that holds nothing) registers and measures, but never says no.
  */
-export function startBudget({ limit = autoLimit(), reserveFrac = RESERVE_FRAC, whenFull = "pause", db = null, active = true, sweep = null, repo = null, cmd = null, everyMs = 5000, file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
+export function startBudget({ limit = null, reserveFrac = null, onLimit = () => {}, whenFull = "pause", db = null, active = true, sweep = null, repo = null, cmd = null, everyMs = 5000, file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
     register({ kind: "runner", pid: process.pid, sweep, repo, cmd, heap: process.memoryUsage().heapUsed }, file);
     let entries = measure(), available = avail();
+    // The limit is read on every measurement: a person can raise or lower the machine-wide one while the sweep runs.
+    // A hand-set limit (this sweep's flag, or the machine-wide one) keeps no reserve unless the caller says otherwise.
+    let cur = resolveLimit({ flag: limit, machine: readLimit(file), total });
+    const reserveOf = () => reserveFrac ?? (cur.handSet ? 0 : RESERVE_FRAC);
     // Every reading, for the page's chart: what each kind held then, and the room. Halved (every other one dropped)
     // past HISTORY_MAX, so a sweep of hours stays a few hundred points.
     const history = [];
@@ -237,18 +276,22 @@ export function startBudget({ limit = autoLimit(), reserveFrac = RESERVE_FRAC, w
     };
     const refresh = () => {
         try { update(process.pid, { heap: process.memoryUsage().heapUsed }, file); entries = measure(); available = avail(); } catch { /* keep the last reading */ }
+        const next = resolveLimit({ flag: limit, machine: readLimit(file), total });
+        if (next.bytes !== cur.bytes || next.source !== cur.source) { const was = cur; cur = next; try { onLimit(next, was); } catch { /* a log line */ } }
         const st = state();
         record(st);
         return st;
     };
-    const state = () => budgetState({ limit, entries, available, total, reserveFrac });
+    const state = () => ({ ...budgetState({ limit: cur.bytes, entries, available, total, reserveFrac: reserveOf() }), limitSource: cur.source, limitBy: cur.by ?? null, limitAt: cur.at ?? null });
     record(state());
     const timer = setInterval(refresh, everyMs);
     timer.unref?.();
     const predict = (task) => predictBrowser(db, task);
     const ask = (task) => (active ? admits(refresh(), predict(task).bytes) : { ok: true, why: null });
     return {
-        limit, whenFull, active, state, refresh, predict,
+        whenFull, active, state, refresh, predict,
+        /** The limit in force now: `{ bytes, source, handSet, by?, at? }` (resolveLimit). */
+        limit: () => cur,
         entries: () => entries,
         /** The readings so far, oldest first: `{ t, values: { <kind>: bytes }, room }`. */
         history: () => history,
@@ -261,7 +304,7 @@ export function startBudget({ limit = autoLimit(), reserveFrac = RESERVE_FRAC, w
             const s = refresh();
             const per = tasks.map(predict).sort((a, b) => b.bytes - a.bytes)[0] ?? predict("");
             const n = Math.max(0, Math.floor((s.room - per.bytes * jobs) / per.bytes));
-            return { n, room: s.room, per, text: `about ${n} failed run${n === 1 ? "" : "s"} can be held this sweep (${fmtBytes(s.room)} free under the ${fmtBytes(limit)} limit${s.reserve ? ` with ${fmtBytes(s.reserve)} of RAM kept free` : ""}, ~${fmtBytes(per.bytes)} per browser: ${per.basis}). The bench holds ${fmtBytes(s.used)} now${Object.keys(s.byKind).length ? ` (${Object.entries(s.byKind).map(([k, v]) => `${k} ${fmtBytes(v)}`).join(", ")})` : ""}.` };
+            return { n, room: s.room, per, text: `about ${n} failed run${n === 1 ? "" : "s"} can be held this sweep (${fmtBytes(s.room)} free under the ${fmtBytes(cur.bytes)} limit (${limitWhence(cur)})${s.reserve ? ` with ${fmtBytes(s.reserve)} of RAM kept free` : ""}, ~${fmtBytes(per.bytes)} per browser: ${per.basis}). The bench holds ${fmtBytes(s.used)} now${Object.keys(s.byKind).length ? ` (${Object.entries(s.byKind).map(([k, v]) => `${k} ${fmtBytes(v)}`).join(", ")})` : ""}.` };
         },
         stop() { clearInterval(timer); try { unregister(process.pid, file); } catch { /* dropped on the next read */ } },
     };

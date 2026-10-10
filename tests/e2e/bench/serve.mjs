@@ -144,6 +144,21 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
             res.writeHead(200, { "content-type": "application/json" });
             return res.end(JSON.stringify(saved));
         }
+        // The machine-wide memory limit (memory-budget.mjs), from the Memory card: `{ limit: "12G" | "auto" }`. Every running
+        // sweep takes it up on its next measurement; this answers with what is set now. JSON only, as /mark.
+        if (url.pathname === "/memory-limit" && req.method === "POST") {
+            if (!/^application\/json\b/.test(req.headers["content-type"] || "")) { res.writeHead(415); return res.end("JSON only"); }
+            let raw = "";
+            for await (const chunk of req) { raw += chunk; if (raw.length > 1000) { res.writeHead(413); return res.end("too large"); } }
+            let body; try { body = JSON.parse(raw); } catch { res.writeHead(400); return res.end("not JSON"); }
+            const { setLimit, parseSize, readLimit, resolveLimit, limitWhence, fmtBytes } = await import("./memory-budget.mjs");
+            const bytes = body?.limit === "auto" ? null : parseSize(body?.limit);
+            if (body?.limit !== "auto" && bytes == null) { res.writeHead(400); return res.end("not a size: 12G, 512M, or auto"); }
+            setLimit(bytes, "person (page)");
+            const now = resolveLimit({ machine: readLimit() });
+            res.writeHead(200, { "content-type": "application/json" });
+            return res.end(JSON.stringify({ bytes: now.bytes, source: now.source, text: `${fmtBytes(now.bytes)} (${limitWhence(now)})` }));
+        }
         // This sweep's runs held open (hold.mjs), for the page's Watch card, and each one's screen passed through from its
         // own process (stream.mjs), so the page reaches it on its own origin.
         if (url.pathname === "/held") {

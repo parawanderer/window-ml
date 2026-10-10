@@ -47,7 +47,7 @@ test("status.md: progress, what runs now, spend per driver, and a pause with how
 
 test("status.md: the memory budget, the chart's readings as a table with the peak, held groups with every command, what was not held", () => {
     const md = statusText(STATE, T0);
-    assert.match(md, /3\.5 GB of a 8\.0 GB limit; 9\.0 GB available, 4\.0 GB kept free; room for 4\.5 GB\. At the limit: pause\./);
+    assert.match(md, /3\.5 GB of a 8\.0 GB limit \(half the RAM, the default; change it machine-wide, running sweeps included: `node --import tsx tests\/e2e\/bench\/hold\.mjs --limit 12G`\); 9\.0 GB available, 4\.0 GB kept free; room for 4\.5 GB\. At the limit: pause\./);
     assert.match(md, /- runner: 200 MB \(node heap 90 MB\)/);
     assert.match(md, /Over the sweep \(the page's chart; 40 readings, peak 3\.5 GB at 14:01:40\)/);
     const rows = md.split("\n").filter((l) => /^\| \d\d:\d\d:\d\d \|/.test(l));
@@ -64,6 +64,7 @@ test("status.md leaves out what is not there: no spend, no budget in force, noth
     assert.match(md, /^# s: finished\n\n1 of 1 runs done\. Written/);
     for (const h of ["## Running now", "## Spend", "## Memory", "rewritten every few seconds"]) assert.ok(!md.includes(h), h);
     assert.match(statusText({ ...STATE, memory: { ...STATE.memory, reserve: 0 } }, T0), /no reserve \(a limit set by hand\)/);
+    assert.match(statusText({ ...STATE, memory: { ...STATE.memory, limitSource: "machine", limitBy: "sb", limitAt: "2026-10-10T12:30:00Z" } }, T0), /8\.0 GB limit \(set machine-wide by sb at 2026-10-10 12:30 UTC;/);
 });
 
 test("status.json is the page's state less the timeline and the box's samples, which have files of their own", () => {
