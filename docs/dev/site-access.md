@@ -1,6 +1,7 @@
 # Site access: which pages may use `window.ml`
 
 The design and its reasons are `docs/spec/SITE_ACCESS.md`. This is how the built parts work and where to change them.
+What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 
 ## The gate
 
