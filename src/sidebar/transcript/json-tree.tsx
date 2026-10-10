@@ -52,13 +52,18 @@ export function jtPreview(v: object, unsent = false): string {
 export interface JsonSchemaNode { description?: string; properties?: Record<string, JsonSchemaNode>; items?: JsonSchemaNode; }
 // A JSON key. When the schema gives it a description, it becomes a hoverable tooltip (same .tt/.tt-pop as
 // elsewhere) + a dotted underline so you can tell which keys carry docs — a debugging affordance over raw args.
-export function JtKey({ name, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
+export function JtKey({ name: raw, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
+    const name = keyLabel(raw);
     if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
     // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
     // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
     if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
     return <span class="jt-key">{name}:</span>;
 }
+/** A key as the tree prints it: bare when it is an identifier, quoted as a JSON string otherwise, so a key with a
+ *  space, a colon or nothing in it does not read as part of the syntax around it. */
+export const keyLabel = (key: string): string => (IDENT.test(key) ? key : JSON.stringify(key));
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 /** The JSONPath (RFC 9535) of a member: `[i]` for an array index, `.name` for a key that is an identifier, `["key"]`
  *  for any other key. What a watch takes, so a copied path can be pasted in as one. */
 export const childPath = (path: string, key: string, arr: boolean): string =>

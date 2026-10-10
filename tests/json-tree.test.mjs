@@ -48,6 +48,17 @@ test("a copied value: a string as itself, anything else as indented JSON", () =>
     assert.equal(T.copyableValue(false), "false");
 });
 
+// --- how a key is printed: bare when it is an identifier, quoted otherwise ---
+
+test("a key that is not an identifier is printed quoted, so a space or a colon in it reads as part of the key", () => {
+    for (const [key, want] of [["n", "n"], ["_x1", "_x1"], ["$el", "$el"], ["info routing/readonly-worker", '"info routing/readonly-worker"'],
+        ["a.b", '"a.b"'], ["1st", '"1st"'], ["a:b", '"a:b"'], ["", '""'], ['say "hi"', '"say \\"hi\\""']])
+        assert.equal(T.keyLabel(key), want, `key ${JSON.stringify(key)}`);
+    const host = show({ v: { n: 12, kinds: { "info tab/pinned": 6, "": 0 } }, allOpen: true });
+    const keys = [...host.querySelectorAll(".jt-key")].map((k) => k.textContent);
+    assert.deepEqual(keys, ["n:", "kinds:", '"info tab/pinned":', '"":']);
+});
+
 // --- the right-click menu, only where a caller asked for it ---
 
 test("with no path the tree offers no menu: the browser's own stays, so the trees that never asked are unchanged", () => {

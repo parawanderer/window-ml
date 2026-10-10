@@ -2167,7 +2167,11 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
        to the page's own colour drew a box with nothing in it beside a block that was plainly full. */
     padding: 6px 44px 6px 8px; background: var(--code-bg, var(--bg)); border: 1px solid var(--border);
     border-radius: 5px; max-width: 100%; overflow-x: auto;
+    /* The text view's size (`.code`), so flipping the view does not shrink the value: a `.jt-row` is 0.86em of what
+       holds it, which inside this box multiplied the code size down a second time. */
+    font-size: 0.92em;
 }
+.jt-value .jt-row { font-size: 1em; }
 /* The row where a clipped value's text ended, in the container that was still open there. */
 .jt-cut { color: var(--fg-faint); font-style: italic; }
 /* A value tree's members the model was NOT sent (the panel keeps more than the tool's output cap): dimmed like

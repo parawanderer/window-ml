@@ -3087,3 +3087,21 @@ test("the Run state panel is not offered here: it reads this browser's own runs,
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- a returned value, as text and as a tree ---
+
+test("a returned value drawn as a tree is the size its text is, at the page's code size", async () => {
+    const { page, errors } = await open(DESKTOP, "#s=laptop%3A3f9a0c21", { "view.calm": false });
+    const step = page.locator('[data-astep-seq="1"]');
+    if (!(await step.getAttribute("class")).includes("open")) await step.locator(".astep-head, summary, [role=button]").first().click();
+    const cell = step.locator(".r-py-val");
+    const fs = (loc) => loc.evaluate((el) => getComputedStyle(el).fontSize);
+    const textFs = await fs(cell.locator("pre.code").first());
+    await cell.getByRole("button", { name: "tree" }).click();
+    // A `.jt-row` is 0.86em of what holds it, and the tree's box already carried the code size: the tree drew at 0.86
+    // of the text it replaced.
+    expect(await fs(cell.locator(".jt-value .jt-row").first())).toBe(textFs);
+    expect(textFs).toBe(await page.evaluate(() => getComputedStyle(document.querySelector(".chat")).getPropertyValue("--code-fs").trim()));
+    expect(errors).toEqual([]);
+    await page.close();
+});
