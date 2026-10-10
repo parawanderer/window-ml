@@ -66,6 +66,49 @@ export function ThumbStrip({ imgs, loading, onRemove }: { imgs: string[]; loadin
     );
 }
 
+/** Slack before a stacked box goes back to one row: the text must fit the inline width with this much to spare, so a
+ *  line right at the edge does not flip the layout on every keystroke. */
+const UNSTACK_SLACK_PX = 12;
+
+/**
+ * Should this box STACK: the text across the full width, the controls on a row under it? As Gemini's does, once what
+ * is typed no longer fits on one line beside the controls, so a paragraph is written in a wide box rather than a
+ * narrow column. It goes back to one row when the text would fit there again (one line, no newline), measured
+ * against the width the text had before it stacked, with {@link UNSTACK_SLACK_PX} to spare.
+ *
+ * @param area the textarea
+ * @param text what is in it (the hook re-measures when it changes)
+ * @param on off where the box is a one-line input, so nothing is measured
+ */
+export function useStackOnWrap(area: { current: HTMLTextAreaElement | null }, text: string, on: boolean): boolean {
+    const [stacked, setStacked] = useState(false);
+    // The text's width when it last sat in the row, which is the room it gets back by unstacking.
+    const inlineW = useRef(0);
+    useEffect(() => {
+        const el = area.current;
+        if (!on || !el) return;
+        const cs = getComputedStyle(el);
+        const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+        if (!stacked) {
+            const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
+            const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+            if (text.includes("\n") || el.scrollHeight > padY + line * 1.5) { inlineW.current = el.clientWidth - padX; setStacked(true); }
+            return;
+        }
+        if (!text || (!text.includes("\n") && textWidth(text, cs) <= inlineW.current - UNSTACK_SLACK_PX)) setStacked(false);
+    }, [text, on, stacked]);
+    return on && stacked;
+}
+
+/** How wide `text` is on one line in an element's font: a canvas measure, so nothing is laid out to find out. */
+let measureCtx: CanvasRenderingContext2D | null = null;   // state: cache
+function textWidth(text: string, cs: CSSStyleDeclaration): number {
+    measureCtx ??= typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+    if (!measureCtx) return Infinity;
+    measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return measureCtx.measureText(text).width;
+}
+
 /** Is the screen phone-narrow (560px or less)? Follows the window, so rotating a phone changes it. */
 function useNarrowScreen(): boolean {
     const q = typeof matchMedia === "function" ? matchMedia("(max-width: 560px)") : null;
@@ -129,7 +172,10 @@ export function Composer({ s, multiline, tools }: { s: Session; multiline?: bool
         el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_H)}px`;
     };
     // Sending empties the box, and an emptied box has to come back to one line on its own.
-    useEffect(() => { if (multiline) grow(area.current); }, [text, multiline]);
+    // STACKED once a line would wrap beside the controls (`useStackOnWrap`), and grown again after, since the box is
+    // a different width on each side of the switch.
+    const stacked = useStackOnWrap(area, text, !!multiline);
+    useEffect(() => { if (multiline) grow(area.current); }, [text, multiline, stacked]);
     // Enter SENDS only — it must NEVER cancel a run (pressing Enter with an empty box while a run is in
     // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
@@ -142,7 +188,7 @@ export function Composer({ s, multiline, tools }: { s: Session; multiline?: bool
     return (
         <div class="composer" data-rev={r}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
-            <div class="composer-row">
+            <div class={`composer-row${stacked ? " stacked" : ""}`}>
                 <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
                 <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one into the box)</span></button>

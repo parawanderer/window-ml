@@ -3167,3 +3167,38 @@ test("the send hint, once typed past, keeps its line's height and gives up its w
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- the input box stacks once a line would wrap beside its controls ---
+
+test("a paragraph gets the box's full width, the controls drop under it, and a short line brings them back", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const row = page.locator(".composer .composer-row");
+    const box = row.locator(".cinput");
+    const attach = row.getByRole("button", { name: "Attach an image" });
+    const rect = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+    await box.fill("a short line");
+    await expect(row).not.toHaveClass(/stacked/);
+    const inline = await rect(box);
+
+    await box.fill("a paragraph long enough that it can no longer sit on one line beside the attach button, the model and send, so it wraps ".repeat(2));
+    await expect(row).toHaveClass(/stacked/);
+    const [wide, plus, r] = [await rect(box), await rect(attach), await rect(row)];
+    expect(wide.w).toBeGreaterThan(inline.w + 60);
+    expect(wide.w).toBeGreaterThan(r.w - 40);
+    // The text sits ABOVE the controls, and send stays at the right.
+    expect(plus.y).toBeGreaterThanOrEqual(wide.y + wide.h - 2);
+    const send = await rect(row.getByRole("button", { name: /^(Send|Stop the run)$/ }));
+    expect(send.x + send.w).toBeGreaterThan(r.x + r.w - 60);
+    // The caret stays in the box through the switch: it is reordered, never remounted.
+    await expect(box).toBeFocused();
+
+    // Back to a line that fits: one row again. And a newline stacks however short the text is.
+    await box.fill("short again");
+    await expect(row).not.toHaveClass(/stacked/);
+    await box.fill("two\nlines");
+    await expect(row).toHaveClass(/stacked/);
+    await box.fill("");
+    await expect(row).not.toHaveClass(/stacked/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
