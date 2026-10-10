@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldStreaks, streakFacts, holdsSeq, foldedInView, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
+import { foldStreaks, streakFacts, holdsSeq, foldedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
@@ -119,10 +119,11 @@ test("a step that REVISES another never folds: the diff header is the only place
 // vanishes between frames and you go looking for it), and the other must not (or opening an old session plays a
 // page of animations about rows the reader never saw).
 
-/** A streak whose last call landed `ago` ms before `now`. */
-const streakAt = (ago, now = 1_000_000) => ({
+/** A streak whose last call landed `ago` ms before `now`, its first `spread` ms before that. */
+const streakAt = (ago, now = 1_000_000, spread = 3000) => ({
     kind: "streak", tool: "exec", step: 1,
-    turns: [turn(1, "exec"), turn(2, "exec"), { step: 3, localStep: 3, tools: [{ step: 3, seq: 3, tool: "exec", ts: now - ago }] }],
+    turns: [{ step: 1, localStep: 1, tools: [{ step: 1, seq: 1, tool: "exec", ts: now - ago - spread }] }, turn(2, "exec"),
+        { step: 3, localStep: 3, tools: [{ step: 3, seq: 3, tool: "exec", ts: now - ago }] }],
 });
 
 test("a streak whose calls landed a moment ago collapses; an old one is simply folded already", () => {
@@ -130,6 +131,17 @@ test("a streak whose calls landed a moment ago collapses; an old one is simply f
     assert.equal(foldedInView(streakAt(200, now), now), true, "a fold the reader just watched");
     assert.equal(foldedInView(streakAt(JUST_ARRIVED_MS + 1, now), now), false, "past the window: history");
     assert.equal(foldedInView(streakAt(5 * 60_000, now), now), false, "and a run from this morning, certainly");
+});
+
+test("rows that were up for a moment fold without the collapse: two calls in one turn are a flicker, not a motion", () => {
+    const now = 1_000_000;
+    // Both calls of one turn landed 40 ms apart and the group formed 80 ms later: the first row was never really seen.
+    assert.equal(foldedInView(streakAt(80, now, 40), now), false);
+    // …while a first call the reader watched run for a second and a half still collapses.
+    assert.equal(foldedInView(streakAt(80, now, 1500), now), true);
+    // The boundary is the earliest row's time on screen, not the gap between calls.
+    assert.equal(foldedInView(streakAt(300, now, FOLD_SEEN_MS - 300), now), true);
+    assert.equal(foldedInView(streakAt(300, now, FOLD_SEEN_MS - 301), now), false);
 });
 
 test("the run having ENDED is not a reason to snap — that is the fold most certain to be watched", () => {

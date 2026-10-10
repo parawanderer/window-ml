@@ -877,6 +877,15 @@ button.chat-page-go:hover { color: var(--fg); }
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* An embedded output folds and opens on the same curve. It eases in only when OPENED AGAIN (`.opening`): one drawn
+   with its answer must simply be there. */
+.chat.calm .tok-block { --astep-close-ms: 200; }
+.chat.calm .tok-body.opening { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
+.chat.calm .tok-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .tok-block { --astep-close-ms: 0; }
+    .chat.calm .tok-body.opening, .chat.calm .tok-body.closing { animation: none; }
+}
 /* A TURN ARRIVING IS THE LOG MOVING, so it looks like it. A new turn appearing at full height in one frame is a
    developer-tooling cut: everything under it jumps and the reader loses the line they were on. It drifts up and
    fades in instead — deliberately FASTER than the disclosures (180ms against 220), because this one is not a
@@ -934,6 +943,8 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .astep.tool.open.closing { margin: 3px 0; padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .astep.tool { transition: none; } }
 .chat.calm .astep-body { padding: 6px 0 10px 4px; }
+/* An open call carries the fold rail down its left, as an open group does: room for its hit strip. */
+.chat.calm .astep-body.railed { padding-left: 13px; }
 .chat.calm .aturn-prose { margin: 6px 0 14px; }
 .chat.calm .msg.user { margin-bottom: 22px; }
 /* …and room ABOVE it: a reply starting immediately under your own bubble reads as one block of text
@@ -1851,21 +1862,7 @@ button.chat-page-go:hover { color: var(--fg); }
    DARK rather than accented: membership is structure, not status, and the steps inside carry their own colours — a
    failed call's red dot, a gate's amber rail — that a coloured bracket would compete with for the same meaning. */
 .astreak-body { position: relative; margin-left: -12px; padding-left: 13px; }
-/* The line itself is drawn by a ::before so the BUTTON can be wider than it: the thing you aim at is the gutter,
-   and the thing you see is a hairline. It brightens on hover, which is the only way a rail says it is a control. */
-.astreak-rail {
-    position: absolute; left: 0; top: 0; bottom: 0; width: 11px;
-    margin: 0; padding: 0; border: none; background: none; appearance: none; cursor: pointer;
-}
-.astreak-rail::before {
-    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px;
-    background: color-mix(in srgb, var(--fg) 12%, transparent); transition: background .15s ease;
-}
-.astreak-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
-@media (prefers-reduced-motion: reduce) { .astreak-rail::before { transition: none; } }
-/* NOT A TAP TARGET. It duplicates the header, which is full width, and an 11px strip running down the side of the
-   content is a mis-tap rather than an affordance on a phone. The line stays; only the click goes. */
-@media (pointer: coarse) { .astreak-rail { pointer-events: none; } }
+/* The rail inside it is the shared fold rail (`.fold-rail`, sidebar.css). */
 /* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
 .astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }

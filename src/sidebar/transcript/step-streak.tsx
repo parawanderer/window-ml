@@ -20,7 +20,7 @@ import type { AgentTurnGroup } from "../debug-reducer";
 import { fmtDur } from "../timestamps";
 import { toolFailed } from "../format";
 import { IconChevron } from "../icons";
-import { cursorTipOn } from "../ui-kit";
+import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
 
@@ -47,7 +47,25 @@ const lastTs = (s: ToolStreak): number => {
  * be folded already. {@link justArrived} is that distinction, shared with the arriving-turn animation, because
  * two answers to "did I see this happen" is how one of them ends up subtly different.
  */
-export const foldedInView = (s: ToolStreak, now = Date.now()): boolean => justArrived(lastTs(s), now);
+export const foldedInView = (s: ToolStreak, now = Date.now()): boolean => {
+    if (!justArrived(lastTs(s), now)) return false;
+    // …AND THE ROWS WERE ON SCREEN LONG ENOUGH TO HAVE BEEN SEEN. One turn that calls two tools at once folds about as
+    // soon as its first row appears, and collapsing a row that was up for a few frames is a flicker rather than a
+    // motion that says where anything went. Measured from the EARLIEST stamped call, which is the row that was up
+    // longest; with nothing earlier than the last stamped, there is no evidence anything was watched.
+    const first = firstTs(s);
+    return first > 0 && now - first >= FOLD_SEEN_MS;
+};
+
+/** How long a group's rows must have been on screen before folding them is worth animating. */
+export const FOLD_SEEN_MS = 600;
+
+/** When this streak's earliest stamped call landed — 0 when none is stamped. */
+const firstTs = (s: ToolStreak): number => {
+    let min = 0;
+    for (const t of s.turns) for (const st of t.tools) if (st.ts && (!min || st.ts < min)) min = st.ts;
+    return min;
+};
 
 /** A folded run of turns. `turns` is kept whole so expanding renders exactly what would have been there — an open
  *  streak is indistinguishable from no streak at all. `tools` is the DISTINCT tool names in it, in order: one in
@@ -273,8 +291,7 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                         also the full-width target a finger gets — a thin strip beside the content is a mis-tap
                         waiting to happen on a phone, which is why the stylesheet takes this one's clicks away on a
                         coarse pointer. */}
-                    <button class="astreak-rail" aria-hidden="true" tabIndex={-1} onClick={toggle}
-                        {...cursorTipOn("Collapse this group")} />
+                    <FoldRail onFold={toggle} tip="Collapse this group" />
                     {s.turns.map(render)}
                   </div>
                 : null}
