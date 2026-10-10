@@ -357,6 +357,7 @@ async function navRace(during, { gone = false } = {}) {
             return jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });   // the gate a privileged builtin always gets
             if (msg?.type !== "RUN_TOOL_IN_PAGE" || msg.payload?.name !== tool || msg.payload.renderOnly || msg.payload.precheck) return undefined;
             await during(bg);
             if (gone) throw new Error("A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received");
@@ -366,7 +367,7 @@ async function navRace(during, { gone = false } = {}) {
     bg.commit(6, { documentId: "doc-evil", url: "https://evil.example/" });
     await bg.send({ type: "START_RUN", payload: {
         runId: "navy", task: "go to the bank", systemPrompt: "sys",
-        tools: [{ name: tool, description: "go", parameters: { type: "object", properties: { url: { type: "string" } } }, requiresApproval: false, capabilities: [] }],
+        tools: [{ name: tool, description: "go", parameters: { type: "object", properties: { url: { type: "string" } } }, requiresApproval: true, capabilities: [] }],
         model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
     } }, { ...hostilePage(6), documentId: "doc-evil" });
     return (turn2 || []).map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
@@ -420,10 +421,12 @@ test("a page on ANOTHER tab cannot write into a run's live tool output", async (
             : streamResponse(['data: {"choices":[{"delta":{"content":"done"}}]}\n', "data: [DONE]\n"]); })(),
     });
     const panel = bg.connect("ml-devtools");
+    // exec always asks (a page cannot send it requiresApproval: false); the panel approves it.
+    panel.onMessage((m) => { const e = m.__mlDebug; if (e?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: e.id, seq: e.seq, decision: true } }); });
     panel.send({ type: "ml-devtools-init", tabId: 7 });
     await bg.send({ type: "START_RUN", payload: {
         runId: "victim", task: "t", systemPrompt: "s",
-        tools: [{ name: "exec", requiresApproval: false, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
         model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", stream: true,
     } }, { tab: { id: 7, url: "https://ok.example/" }, url: "https://ok.example/" });
     await new Promise((r) => setTimeout(r, 150));   // past the fan's trailing emit

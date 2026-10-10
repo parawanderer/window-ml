@@ -39,6 +39,20 @@ the extension's own UI out in the worker, changing nothing on the page (`docs/de
 out of a shot"). The worker's vision host asks the page for layout only, through one checked protocol
 (`docs/dev/agent-tools.md`, "The worker's vision host").
 
+**A page cannot start a run that claims the worker built it.** `startBackgroundRun` (`sw/sw-run-host.ts`) strips
+`builtBy`, `rebuild.builtBy` and `display` from a page's START_RUN payload (`pageStartPayload`) before `hostRun`, so only
+the worker's own `hostRun` call (`sw/sw-run-start.ts`) and `makeWorkerRun` make a run the worker's. The run host branches
+on `builtBy` for tool routing, grants, vision, the answer and what it stores, so a page's claim would get all of them.
+`pageOrigin` and `pageUrl` are replaced by the sender's (the origin the origin gate read, and the top frame's URL): the
+origin seeds the run's consented origins and the URL is "the page you are on", so a page naming another site would get
+navigations and reads there without a gate. A page's payload may ask for more gating, never less: the auto-approve
+flags (`autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`, `autoApproveSelfSource`) and
+`selfIntrospection` hold only when the worker's config allows them too, and a builtin tool that asks for approval
+(`GATED_TOOL_NAMES`) or a server tool (`remote`) always does, whatever `requiresApproval` the page sent. A run id
+another tab holds, running or settled, is refused. `approvalRouting` stays the page's: it changes only where its own
+run's gates are shown (`"external"` hides the buttons and waits on the worker-realm `__mlApprovals` channel), never
+whether they block.
+
 **A page's answer cannot carry a picture, a reply or a spend into a worker-built run.** For a run the worker built or
 was handed (`makeWorkerRun`, mid-turn included), the run host drops `image`, `imageLabel`, `images`, `feedback` and
 `subUsage` from every page envelope (`withoutPageVision`, `sw/worker-verify.ts`), so a page can neither show the model
@@ -220,6 +234,9 @@ extension's open shadow roots, and knows every run id. Cover:
   reaching the backend, a tab or the screen; on a tab hosting a run, only `RUN_TAB_TYPES` allowed, every other type enumerated; a
   sender that can never be granted refused even when its host is approved; revoke and deny without reload; a page
   cannot edit the lists; the stream port.
+- `tests/redteam-page-run-builtby.test.mjs`: a page START_RUN claiming `builtBy`/`rebuild.builtBy` stays page-built,
+  its `pageOrigin`/`pageUrl` are the sender's, its auto-approve flags and `requiresApproval` never undercut the worker's,
+  its run id is its own tab's, and its `approvalRouting` never resolves or skips a gate.
 - `tests/e2e/site-access.spec.mjs`: the hostile site, against a real browser.
 
 The vm harness approves a test sender's origin unless `loadBackground({ siteGate: true })`, and gives a URL-less test

@@ -89,6 +89,8 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_tabId, msg) => {
+            // A page-built run's click and type always ask (the worker forces requiresApproval); its UI gate is approved here.
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
             if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
