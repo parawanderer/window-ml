@@ -104,6 +104,32 @@ run's own artifact, never from what the model says it did (the pointer pilot sco
 task and input tokens per call, with spread. **Decision rule**: a cut ships when pass rate does not drop on any model
 and tokens per call fall; a cut that costs one model a task it used to pass is reworked, not shipped.
 
+## Step 3 result, round 2: `locate`'s option texts (2026-10-10)
+
+`locate` keeps its triggers in the schema and serves its full description and parameter texts from
+`agent_api_docs({ tool: "locate" })` (`LOCATE` and `TOOL_DETAILS.locate` in `src/tools/tool-details.ts`): about 3,900
+characters down to 1,460 on every call. The "Incognito is off" rendering error now leads with the retry that works
+(`credentials:true`) and tells the user how to allow Incognito only as the alternative. Measured with a `cuts2` variant
+that also cut `python_exec`'s `tables`/`cast`/`mode` texts; the variant and its spec are deleted (the branch
+`backup/prompt-cuts-2` has them). The numbers, per model and task, are computed in
+[`notebooks/bench/prompt-cuts2.ipynb`](../../notebooks/bench/prompt-cuts2.ipynb) from 520 pinned runs.
+
+- **First sweep** (11 models x 4 tasks x 3): eight models unchanged, DeepSeek V4 Pro one better, and three models one
+  or two worse (MiniMax M3, qwen3.6:35b, glm-4.7-flash). Prompt tokens per call fell about 6% with both cuts.
+- **Recheck** (those three, x 8): qwen3.6 held (31/32 both). MiniMax fell 31 → 27: two failures were the `python_exec`
+  cut (it wrote `tables=` inside its Python code; it answered a table task from a screenshot), the rest unrelated (a
+  status line it never read, the step cap, a correct click made through `exec` that the task's check does not count).
+- **One sentence fixed MiniMax** ("Pass it HERE, not in your code"): 32/32 on the table tasks under both prompts.
+  glm-4.7-flash, re-run the same way, tied overall (9/16 both) but lost csv-total (8/16 → 4/16 across both runs): only
+  under the cut did it fetch the CSV and then give up without calling `python_exec` (3 runs).
+- **Shipped**: the `locate` cut and the error. **Not shipped**: the `python_exec` cut, so its texts are unchanged and
+  the table tasks cannot have regressed. The `locate` cut held on icon-heart for qwen3.6 and glm-4.7-flash; MiniMax is
+  7/8 → 6/8 there (one run, p = 0.5). The spa task never got worse.
+- **Saving**: the `locate` cut is about 70% of what round 2 removed, so roughly 4% of prompt tokens per call. That is
+  an estimate from the character counts; the sweeps measured both cuts together.
+- **Not covered**: a canvas task (the bench has no grounding model, so `locate`'s canvas and `container` options were
+  not exercised), and the remaining one-run icon-heart gap on MiniMax.
+
 ## Step 3 result: the `exec`/`fetch_url` split (2026-10-10)
 
 `exec` and `fetch_url` keep their TRIGGERS in the schema (when to reach for an option) and serve their MECHANICS from

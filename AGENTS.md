@@ -277,7 +277,7 @@ driver or script you will reuse gets `.claude/skills/<name>/SKILL.md` and a one-
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
 least monthly, read what a call carries the way `docs/dev/prompt-review.md` describes (panel, bench, debrief).
-Last review: **2026-10-10** (#544). A review commit carries `Prompt-Review: <date>`; update the date here with it. `scripts/check-prompt-review.mjs` reminds.
+Last review: **2026-10-10** (#544, then round 2). A review commit carries `Prompt-Review: <date>`; update the date here with it. `scripts/check-prompt-review.mjs` reminds.
 
 **RULE — a complex analysis worth keeping goes in a notebook, not in a reply:** one that spans several files (bench
 sweeps, model comparisons) and is not a feature of a tool lives in `notebooks/<topic>/` as a `make-<name>.py` generator

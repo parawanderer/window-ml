@@ -40,3 +40,21 @@ test("'don't change my page' means fetch, in the short form and the details; nav
     const src = (await import("node:fs")).readFileSync(new URL("../src/ml/ml-tool-factories.ts", import.meta.url), "utf8");
     assert.match(src, /Navigating REPLACES the page the user is looking at; to only read a URL, use `fetch_url`\./);
 });
+
+// --- the second round of cuts: locate's option texts (docs/spec/PROMPT_BUDGET.md) ---
+
+test("locate keeps a trigger for every option, its full text is served as details, and nothing pads", async () => {
+    const { LOCATE, TOOL_DETAILS } = await import("../src/tools/tool-details.ts");
+    const full = TOOL_DETAILS.locate;
+    for (const k of Object.keys(LOCATE.params)) assert.ok(LOCATE.params[k].length > 0, k);
+    assert.match(full, /`strategy`: .*grid narrows to a cell/, "the strategies' mechanics are served");
+    const short = LOCATE.description.length + Object.values(LOCATE.params).join("").length;
+    assert.ok(short < full.length * 0.5, `${short} vs ${full.length}`);
+    for (const t of [LOCATE.description, ...Object.values(LOCATE.params)]) assert.doesNotMatch(t, / {2}/);
+    assert.ok(!("python_exec" in TOOL_DETAILS), "python_exec's texts stay whole: cutting them cost glm-4.7-flash");
+});
+
+test("a private rendered fetch with Incognito off leads with the retry that works", async () => {
+    const src = (await import("node:fs")).readFileSync(new URL("../src/sw/sw-fetch.ts", import.meta.url), "utf8");
+    assert.match(src, /which is off\. Retry with credentials:true to render in the user's own session instead/);
+});

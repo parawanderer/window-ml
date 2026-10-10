@@ -573,7 +573,7 @@ export async function fetchRenderedContent(url: string, incognito: boolean, cdp:
     let emulated = false;               // did we attach the debugger for focus/visibility emulation?
     if (incognito) {
         if (!(await isIncognitoAllowed())) {
-            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps(undefined, chrome.runtime.id)} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
+            throw new Error(`A private (no-session) rendered fetch needs the extension allowed in Incognito, which is off. Retry with credentials:true to render in the user's own session instead (it asks them once). If they would rather keep it private, tell them how to allow it: ${incognitoEnableSteps(undefined, chrome.runtime.id)}`);
         }
         let win: chrome.windows.Window | undefined;
         try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }
