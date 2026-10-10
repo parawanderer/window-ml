@@ -83,3 +83,23 @@ test("a call records the electricity price only when one is set, and the price s
     assert.deepEqual(await spendForCall({ priceSnapshotUrl: "", electricityPerKwh: 0.31, electricityCurrency: "eur " }), { electricity: { perKwh: 0.31, currency: "EUR" } });
     assert.deepEqual(svc.asked, [], "no price service set: nothing fetched");
 });
+
+// --- a two-rate tariff ---
+
+test("off-peak: the hours wrap past midnight, weekends count all day when set, and unparsable hours mean none", async () => {
+    const { isOffPeak } = await fresh(async () => new Response("", { status: 404 }));
+    const at = (day, hour) => new Date(2026, 9, 5 + day, hour, 30);   // 2026-10-05 is a Monday (day 0 here)
+    for (const [h, want] of [[22, false], [23, true], [3, true], [6, true], [7, false], [12, false]]) assert.equal(isOffPeak(at(0, h), "23-7", true), want, `Monday ${h}:30`);
+    assert.equal(isOffPeak(at(5, 12), "23-7", true), true, "Saturday noon, weekends on");
+    assert.equal(isOffPeak(at(5, 12), "23-7", false), false, "Saturday noon, weekends off");
+    assert.equal(isOffPeak(at(0, 10), "9-17", false), true, "a daytime window that does not wrap");
+    for (const bad of ["", "night", "23", "5-5"]) assert.equal(isOffPeak(at(0, 3), bad, false), false, JSON.stringify(bad));
+});
+
+test("a call records the rate in effect when it ran; with no off-peak price set it records the single rate as before", async () => {
+    const { spendForCall } = await fresh(async () => new Response("", { status: 404 }));
+    const cfg = { electricityPerKwh: 0.26216, electricityCurrency: "EUR", electricityOffPeakPerKwh: 0.22113, electricityOffPeakHours: "23-7", electricityOffPeakWeekends: true };
+    assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 14)), { electricity: { perKwh: 0.26216, currency: "EUR", rate: "normal" } });
+    assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.22113, currency: "EUR", rate: "off-peak" } });
+    assert.deepEqual(await spendForCall({ ...cfg, electricityOffPeakPerKwh: 0 }, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.26216, currency: "EUR" } });
+});

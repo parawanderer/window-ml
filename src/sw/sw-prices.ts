@@ -133,16 +133,40 @@ export async function pricesForCall(setting: unknown): Promise<PriceRef | null> 
 }
 
 /**
+ * Whether a moment falls in a two-rate tariff's off-peak time, on this device's clock: all weekend when `weekends`, and
+ * the "from-to" hours ("23-7" wraps past midnight). Hours that do not parse mean no off-peak hours.
+ * @param at the moment
+ * @param hours the off-peak hours, "from-to"
+ * @param weekends whether Saturday and Sunday are off-peak all day
+ */
+export function isOffPeak(at: Date, hours: string, weekends: boolean): boolean {
+    const day = at.getDay();
+    if (weekends && (day === 0 || day === 6)) return true;
+    const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(hours);
+    if (!m) return false;
+    const from = Number(m[1]) % 24, to = Number(m[2]) % 24, h = at.getHours();
+    if (from === to) return false;
+    return from < to ? h >= from && h < to : h >= from || h < to;
+}
+
+/**
  * What a model call records for spend: the price snapshot (when the service is set) and the electricity price (when
  * one is set). Never rejects: a call does not fail over its bookkeeping.
  * @param config the two settings it reads
  */
-export async function spendForCall(config: { priceSnapshotUrl?: unknown; electricityPerKwh?: unknown; electricityCurrency?: unknown }): Promise<Pick<TokenUsage, "prices" | "electricity">> {
+export async function spendForCall(config: { priceSnapshotUrl?: unknown; electricityPerKwh?: unknown; electricityCurrency?: unknown; electricityOffPeakPerKwh?: unknown; electricityOffPeakHours?: unknown; electricityOffPeakWeekends?: unknown }, now: Date = new Date()): Promise<Pick<TokenUsage, "prices" | "electricity">> {
     const out: Pick<TokenUsage, "prices" | "electricity"> = {};
     const prices = await pricesForCall(config.priceSnapshotUrl).catch(() => null);
     if (prices) out.prices = prices;
     const perKwh = Number(config.electricityPerKwh);
-    if (Number.isFinite(perKwh) && perKwh > 0) out.electricity = { perKwh, currency: String(config.electricityCurrency || "").trim().toUpperCase() };
+    if (Number.isFinite(perKwh) && perKwh > 0) {
+        const currency = String(config.electricityCurrency || "").trim().toUpperCase();
+        const offPeak = Number(config.electricityOffPeakPerKwh);
+        out.electricity = Number.isFinite(offPeak) && offPeak > 0
+            ? (isOffPeak(now, String(config.electricityOffPeakHours ?? ""), config.electricityOffPeakWeekends !== false)
+                ? { perKwh: offPeak, currency, rate: "off-peak" } : { perKwh, currency, rate: "normal" })
+            : { perKwh, currency };
+    }
     return out;
 }
 

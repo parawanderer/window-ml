@@ -66,7 +66,7 @@ export interface TokenUsage {
     prices?: PriceRef;
     /** The electricity price set when this call ran (`electricityPerKwh`), so a local model's energy can be costed at
      *  the price of the day. Absent when unset. */
-    electricity?: { perKwh: number; currency: string };
+    electricity?: { perKwh: number; currency: string; rate?: "normal" | "off-peak" };
     /** How much of the prompt the server's prefix cache served — OpenAI's standard
      *  `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is
      *  deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD

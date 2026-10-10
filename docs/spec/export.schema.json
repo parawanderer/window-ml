@@ -791,6 +791,13 @@
             },
             "currency": {
               "type": "string"
+            },
+            "rate": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "off-peak"
+              ]
             }
           },
           "required": [
