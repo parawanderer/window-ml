@@ -153,6 +153,7 @@ learned by shipping the wrong version first.
 | notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
+| the system prompt, a tool's description, anything else the model reads | `docs/dev/prompt-review.md` (+ `docs/spec/PROMPT_BUDGET.md`) |
 
 **The traps, one line each.** Each doc's `Traps` section has the full text and the reason.
 
@@ -272,6 +273,10 @@ subsystem gets a doc and a row in the table above.
 **RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current, WITHOUT asking.** A harness,
 driver or script you will reuse gets `.claude/skills/<name>/SKILL.md` and a one-line mention here (detail in
 `docs/dev/e2e-harness.md` or `docs/dev/working-in-the-repo.md`).
+
+**RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
+least monthly, read what a call carries the way `docs/dev/prompt-review.md` describes (panel, bench, debrief).
+Last review: **2026-10-10** (#544). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
 **RULE — never pad model-facing text for alignment.** A model pays for every space. Single space or a delimiter;
 assert no run of two spaces (`tests/token-pipe.test.mjs`). Human-facing surfaces align freely.
