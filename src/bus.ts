@@ -3,6 +3,7 @@
 // ring, the in-agent-run depth counter (so a tool's internal ml.chat doesn't spawn
 // orphan sessions), and the same-tab session registry.
 
+import { spendOf } from "./contract/contract-chat";
 import type { MlHistory } from "./contract/contract-chat";
 import type { AgentResult, MlAgentHandle } from "./contract/contract-agent";
 import type { MlDebugEvent } from "./contract/contract-debug";
@@ -94,9 +95,9 @@ export const emitDebug = (event: MlDebugEvent): void => {
             m.prompt += p; m.completion += c; m.calls += 1; subByModel.set(model, m);
             // Keep the individual call too: a span needs a start and a duration, and a sum has neither. `ts`
             // is when the call FINISHED (the result event), so the span runs back over its own generation.
-            const ev = event as { ts?: number; usage?: { genMs?: number; evalMs?: number } | null };
+            const ev = event as { ts?: number; usage?: import("./contract").TokenUsage | null };
             subCalls.push({ model, ts: ev.ts || Date.now(), ms: ev.usage?.genMs ?? ev.usage?.evalMs ?? 0,
-                            prompt: p, completion: c });
+                            prompt: p, completion: c, ...spendOf(ev.usage) });
         }
         return;   // never buffer/emit orphan internal chats
     }

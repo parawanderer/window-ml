@@ -252,3 +252,12 @@ export interface MlHistory {
     chat(this: MlHistory, prompt: string, opts?: ChatOptions): Promise<string | Record<string, unknown>>;
     fork(this: MlHistory): MlHistory;
 }
+
+/**
+ * The part of a call's usage that spend needs beyond its counts (raw numbers, price snapshot, electricity price), for
+ * a sub-call's record: what the run's own calls carry on their usage, kept for the calls the loop never sees.
+ * @param u the call's usage
+ */
+export function spendOf(u: TokenUsage | null | undefined): Pick<TokenUsage, "raw" | "prices" | "electricity"> {
+    return { ...(u?.raw ? { raw: u.raw } : {}), ...(u?.prices ? { prices: u.prices } : {}), ...(u?.electricity ? { electricity: u.electricity } : {}) };
+}
