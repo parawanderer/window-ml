@@ -8,6 +8,12 @@
 
 import type { MlTool } from "../contract/contract-agent";
 
+declare const __ML_PROMPT_VARIANT__: string | undefined;
+
+/** The second round of cuts (docs/spec/PROMPT_BUDGET.md): `locate`'s and `python_exec`'s mechanics move to the docs,
+ *  and the private-rendering error leads with the retry. Off unless the build defines the `cuts2` variant. */
+export const CUTS2 = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "cuts2";
+
 /** `exec`'s short form: what to reach for and when; the mechanics are {@link TOOL_DETAILS}.exec. */
 export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "Escape hatch: run JS in the page, like one console cell. You get back what it console.logs AND its final " +
@@ -39,6 +45,94 @@ export const FETCH_SHORT =
 export const FETCH_RENDERED_SHORT =
     "If true, run the page's JavaScript in a background tab and return the settled DOM: for a page a plain GET " +
     "returns empty. Slower; never cached.";
+
+/** `locate`'s full description and parameter descriptions: what every call carries without `cuts2`, and its details
+ *  with it. */
+const LOCATE_FULL = {
+    description: "Find an on-screen control by DESCRIBING how it looks — for unlabelled icons, " +
+            "custom widgets, canvas, or any UI you can't reach by text or a guessed selector. Returns a " +
+            "CSS selector (or an `@pt:…` coordinate, for canvas) to pass to click/type/answer. Sees only " +
+            "the current viewport (scroll the target into view first). " +
+            "If the target sits on a <canvas> (a game/drawing surface — no DOM nodes inside it), FIRST " +
+            "identify the canvas and pass ITS selector as `selector` so the search is cropped to it; the " +
+            "result is an `@pt:…` coordinate token (there's no element to select), which you verify with " +
+            "look({ selector: \"@pt:…\" }) and then click. On a busy canvas UI, zoom in with `container: " +
+            "true` — the grounding model outlines a panel/card/toolbar and returns an `@box:…` region " +
+            "token; scope back into it (selector: \"@box:…\") to find a control, recursing box→sub-box→@pt.",
+    params: {
+        description: "What to find, described by its APPEARANCE — colour, shape, icon, and any " +
+                        "visible text — NOT by a name, brand, or role the vision model can't see (it reads " +
+                        "pixels, not names). Good: \"a red heart icon\", \"a round blue button with a " +
+                        "magnifying glass\", \"the star/favourite icon next to the chat title\". Bad: \"Big Pete\", " +
+                        "\"the delete handler\", \"the submit button\" (say what it LOOKS like instead).",
+        filter: "Which elements to consider (default 'clickables').",
+        selector: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. For iframes or shadow roots, pass a selector to the iframe or shadow root parent element here! NOT the target's own selector. An `@pt:…` token also works: re-searches the box around that point with ANY strategy (e.g. grid inside a point).",
+        index: "Which match of `selector` to scope to (0-based); default 0.",
+        margin: "For 'grounding': grow the predicted box by N px (try 40–120) and re-match — when a box snapped to the WRONG element. Reuses the cached box (no 2nd vision call).",
+        strategy: "Default 'auto'. 'grounding' = a coordinate model points at it (needs one configured; best for a clear spot). 'marks' = numbered badges, model picks by number (robust when cluttered). 'grid' = a numbered grid, model picks the CELL (any vision model; zoom with `cells` or raise `gridSize`). 'grid-grounding' = grid narrows to a cell, THEN grounding points precisely inside it (needs a grounding model; best for a small target on a busy page or canvas, where a plain grid centre only grazes). 'auto' = grounding then marks.",
+        region: "Coarse pre-crop by rough position BEFORE the grid — for a dense scene where the grid has too many near-identical cells to pick from (you can vaguely tell 'left'/'bottom' even when you can't read a cell number). Bands are full-length ('left' = left side, full height); corners are quadrants. Halves overlap, so if unsure which side, guess one and try the opposite on a miss. Composes with any strategy.",
+        gridSize: "For 'grid': base cell count (default 4, 2–8; the grid maxes out ~60 cells). To go FINER, don't raise this — zoom with `cells` (a fresh grid inside a cell) or pre-crop with `region`.",
+        cells: "A previously-returned cell selection (1, 2 adjacent, or a 2×2 block of 4). 'grid' draws a fresh grid inside it (recursive zoom); 'grid-grounding' grounds directly inside it (reuses the pick — no re-roll).",
+        container: "Set true to OUTLINE a sub-area rather than pick a control — the grounding model boxes a container (a panel, card, toolbar, dialog) and returns an `@box:…` region token instead of a click point. Use it on a busy <canvas> UI to zoom in: get the container box, then locate({ selector: \"@box:…\", description: \"…\" }) to find a control INSIDE it (recurse as needed), and click the final `@pt:…`. Needs a grounding model.",
+        verify: "For a result that is a DOM element or an `@box:…` region, also return its marked crop in THIS call, instead of a separate look(). A point/`@pt:…` result ALWAYS returns one. Default false: a DOM element selector usually needs no visual check.",
+    },
+};
+
+/** `locate` under `cuts2`: the triggers. */
+const LOCATE_SHORT: typeof LOCATE_FULL = {
+    description: "Find an on-screen control by DESCRIBING how it looks: unlabelled icons, custom widgets, canvas, or any " +
+        "UI you can't reach by text or a selector. Returns a CSS selector (or an `@pt:…` point, for canvas) for " +
+        "click/type/answer. Sees only the current viewport. On a <canvas>, pass the canvas as `selector`; on a busy " +
+        "canvas, `container: true` returns an `@box:…` region to search inside.",
+    params: {
+        description: "What it LOOKS like (colour, shape, icon, visible text), never a name or role the vision model " +
+            "cannot see: \"a red heart icon\", not \"the submit button\".",
+        filter: LOCATE_FULL.params.filter,
+        selector: "A CONTAINER to crop to (a modal, a row, the <canvas>, an iframe or shadow host), not the target; or " +
+            "an `@pt:…`/`@box:…` token to search around.",
+        index: LOCATE_FULL.params.index,
+        margin: "Grow a grounding box by N px (40–120) when it snapped to the wrong element; no second vision call.",
+        strategy: "'auto' (default); 'grounding' a clear spot; 'marks' a cluttered area; 'grid' any vision model; " +
+            "'grid-grounding' a small target on a busy page. Try another when a result is wrong.",
+        region: "Pre-crop to a rough area (left, top-right, center…) when a grid has too many similar cells.",
+        gridSize: "For 'grid': cells per side (default 4, 2–8). To go finer, zoom with `cells`.",
+        cells: "Cells a previous grid result picked: zoom into them.",
+        container: "Outline a panel/card/toolbar instead of a control: returns an `@box:…` to search inside.",
+        verify: "Also return the marked crop for a DOM or `@box:…` result (an `@pt:…` result always has one).",
+    },
+};
+
+/** The `locate` texts this build shows. */
+export const LOCATE: typeof LOCATE_FULL = CUTS2 ? LOCATE_SHORT : LOCATE_FULL;
+
+/** `python_exec`'s three longest parameter descriptions in full (its `tables` text is built per page, so the part
+ *  that depends on the page stays in `python-tool.ts`). */
+export const PYTHON_FULL = {
+    tables: "A SINGLE source string (a CSS selector for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url " +
+        "already read, or an `@tool:` pointer to a table such as a fetch_url of a CSV/Parquet/Arrow file) → loaded as " +
+        "`df`. OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
+        "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
+        "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +
+        "the extension (credentialed) — you do NOT need mode:'full' for it; keep mode:'readonly' (an external Sheet " +
+        "just asks once to approve, then loads as a normal df). " +
+        "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
+    cast: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Compute it in your INPUT IMAGE's pixel space — casting AUTO-projects it to on-screen VIEWPORT coordinates (dpr + crop offset), so the returned @pt/@box is the correct click point, NOT displaced. Omit for a raw text result.",
+    mode: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs — including Google Sheets (the extension fetches those for you, so 'full' is NOT needed). Only pick 'full' to fetch some OTHER arbitrary URL yourself.",
+};
+
+/** `python_exec`'s same three under `cuts2`: the triggers. */
+export const PYTHON_SHORT: typeof PYTHON_FULL = {
+    tables: "Table(s) to load, ALREADY parsed (never re-read them): one source → `df`, or { name: source } → each under " +
+        "its name. A source: a page <table> selector, a Google Sheets URL, a URL fetch_url read, or an `@tool:` " +
+        "pointer to a table.",
+    cast: "'pt' or 'box': the return is a clickable point ([x,y]) or box ([x1,y1,x2,y2]) in the input image's pixels, " +
+        "placed on the page for you.",
+    mode: "'readonly' (default): no network, may run without asking, Google Sheets included. 'full': network, always " +
+        "asks; only to fetch some other URL yourself.",
+};
+
+/** The `python_exec` texts this build shows. */
+export const PYTHON: typeof PYTHON_FULL = CUTS2 ? PYTHON_SHORT : PYTHON_FULL;
 
 /** Each split tool's MECHANICS, served by `agent_api_docs({ tool })` (or appended inline without that tool). */
 export const TOOL_DETAILS: Readonly<Record<string, string>> = {
@@ -115,6 +209,10 @@ export const TOOL_DETAILS: Readonly<Record<string, string>> = {
         "suggest they want to see the page). Users rarely want raw text documents or JSON; they often do want " +
         "user-facing pages.",
     ].join("\n\n"),
+    ...(CUTS2 ? {
+        locate: [LOCATE_FULL.description, ...Object.entries(LOCATE_FULL.params).map(([k, v]) => `\`${k}\`: ${v}`)].join("\n\n"),
+        python_exec: [...Object.entries(PYTHON_FULL).map(([k, v]) => `\`${k}\`: ${v}`)].join("\n\n"),
+    } : {}),
 };
 
 /**

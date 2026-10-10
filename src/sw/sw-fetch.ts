@@ -5,6 +5,7 @@
 // reachable, so without it it's a cookie-authenticated read-any-URL exfil primitive), and only a safelisted,
 // non-auth subset of response headers is ever surfaced. Callers gate approval upstream (injected.ts); these
 // functions assume the decision was already made.
+import { CUTS2 } from "../tools/tool-details";
 import type { FetchResult, FetchFormat, FetchAttempt } from "../contract/contract-fetch";
 import { acceptLanguageFrom } from "../contract/contract-fetch";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "../dom/dom";
@@ -573,7 +574,9 @@ export async function fetchRenderedContent(url: string, incognito: boolean, cdp:
     let emulated = false;               // did we attach the debugger for focus/visibility emulation?
     if (incognito) {
         if (!(await isIncognitoAllowed())) {
-            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps(undefined, chrome.runtime.id)} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
+            throw new Error(CUTS2
+                ? `A private (no-session) rendered fetch needs the extension allowed in Incognito, which is off. Retry with credentials:true to render in the user's own session instead (it asks them once). If they would rather keep it private, tell them how to allow it: ${incognitoEnableSteps(undefined, chrome.runtime.id)}`
+                : `A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps(undefined, chrome.runtime.id)} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
         }
         let win: chrome.windows.Window | undefined;
         try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }

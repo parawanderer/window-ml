@@ -1,6 +1,7 @@
 // python-tool.ts — the `python_exec` agent tool: its schema and description, and how a run's result becomes the
 // model-facing text and the sidebar's python-in / python-out descriptors. Moved out of builtin-tools.ts; the sandbox
 // itself is `ml.pythonExec` (injected.ts) → the offscreen document → python-worker.ts.
+import { PYTHON } from "../tools/tool-details";
 import { type MlApi } from "../contract";
 import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
@@ -50,15 +51,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         : singleTable ? " THIS PAGE HAS ONE TABLE — pass `tables:'current'` to load it as `df`." : "";
     const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
         : singleTable ? " Or `'current'` for the one table on this page." : "";
-    const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). A SINGLE source string (a CSS selector " +
-        "for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url already read, or an `@tool:` pointer to a table " +
-        "such as a fetch_url of a CSV/Parquet/Arrow file) → loaded as `df`." + currentClause +
-        " OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
-        "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
-        "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +
-        "the extension (credentialed) — you do NOT need mode:'full' for it; keep mode:'readonly' (an external Sheet " +
-        "just asks once to approve, then loads as a normal df). " +
-        "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.";
+    // The page-dependent `current` clause rides on whichever form this build shows (tool-details.ts).
+    const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON.tables + currentClause;
     return ml.defineTool({
         name: "python_exec",
         summary: "Runs sandboxed Python (numpy/pandas/Pillow) for data & math.",
@@ -79,8 +73,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             properties: {
                 code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return` OR a bare trailing expression (Jupyter-style: a last line `df` is the result). print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
-                cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Compute it in your INPUT IMAGE's pixel space — casting AUTO-projects it to on-screen VIEWPORT coordinates (dpr + crop offset), so the returned @pt/@box is the correct click point, NOT displaced. Omit for a raw text result." },
-                mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs — including Google Sheets (the extension fetches those for you, so 'full' is NOT needed). Only pick 'full' to fetch some OTHER arbitrary URL yourself." },
+                cast: { type: "string", enum: ["pt", "box"], description: PYTHON.cast },
+                mode: { type: "string", enum: ["readonly", "full"], description: PYTHON.mode },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
                 tables: {
                     oneOf: [

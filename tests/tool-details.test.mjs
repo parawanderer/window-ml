@@ -40,3 +40,32 @@ test("'don't change my page' means fetch, in the short form and the details; nav
     const src = (await import("node:fs")).readFileSync(new URL("../src/ml/ml-tool-factories.ts", import.meta.url), "utf8");
     assert.match(src, /Navigating REPLACES the page the user is looking at; to only read a URL, use `fetch_url`\./);
 });
+
+// --- the second round of cuts (`cuts2`): locate's and python_exec's option texts ---
+
+/** tool-details.ts as the `cuts2` build sees it: the define is a global the bundler would have inlined. */
+async function cuts2Build() {
+    globalThis.__ML_PROMPT_VARIANT__ = "cuts2";
+    try { return await import(`../src/tools/tool-details.ts?cuts2=${Math.random()}`); }
+    finally { delete globalThis.__ML_PROMPT_VARIANT__; }
+}
+
+test("without the define locate and python_exec keep their full texts and serve no details", async () => {
+    const { CUTS2, LOCATE, PYTHON, PYTHON_FULL, TOOL_DETAILS } = await import("../src/tools/tool-details.ts");
+    assert.equal(CUTS2, false);
+    assert.equal(PYTHON, PYTHON_FULL);
+    assert.match(LOCATE.params.strategy, /grid narrows to a cell/);
+    assert.ok(!("locate" in TOOL_DETAILS) && !("python_exec" in TOOL_DETAILS));
+});
+
+test("under cuts2 every option keeps a trigger, the full text moves to the details, and nothing pads", async () => {
+    const { LOCATE, PYTHON, PYTHON_FULL, TOOL_DETAILS } = await cuts2Build();
+    const fullLocate = TOOL_DETAILS.locate;
+    for (const k of Object.keys(LOCATE.params)) assert.ok(LOCATE.params[k].length > 0, k);
+    assert.match(fullLocate, /`strategy`: .*grid narrows to a cell/, "the strategies' mechanics are served");
+    for (const k of Object.keys(PYTHON_FULL)) assert.ok(TOOL_DETAILS.python_exec.includes(PYTHON_FULL[k]), `${k} served whole`);
+    const short = LOCATE.description.length + Object.values(LOCATE.params).join("").length + Object.values(PYTHON).join("").length;
+    const long = fullLocate.length + TOOL_DETAILS.python_exec.length;
+    assert.ok(short < long * 0.5, `${short} vs ${long}`);
+    for (const t of [LOCATE.description, ...Object.values(LOCATE.params), ...Object.values(PYTHON)]) assert.doesNotMatch(t, / {2}/);
+});
