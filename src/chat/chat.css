@@ -406,8 +406,10 @@ html, body, #root { height: 100%; }
    BOTTOM of the row, which looks identical while the field is one line and splits the moment the text wraps —
    the model name dropping a half-line below a send button that stays where it was. */
 .composer-tools { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; }
+/* At most 160px, not 240: a long cloud id (`litellm.anthropic/claude-sonnet-…`) took the room the field needs, and
+   the placeholder wrapped onto a second line. The name truncates; the picker shows it whole. */
 .tp-pill.tp-pill-model.tp-pill-quiet { background: transparent; border: none; color: var(--fg-dim); font-size: .82em; padding: 6px 8px; min-height: 0;
-    border-radius: 10px; max-width: 240px; }
+    border-radius: 10px; max-width: 160px; }
 .tp-pill.tp-pill-model.tp-pill-quiet:hover, .tp-pill.tp-pill-model.tp-pill-quiet[aria-expanded="true"] { background: var(--panel-2); color: var(--fg); }
 /* Where each model runs, in the model lists: a faint glyph, the sentence on hover (`WhereMark`). */
 .tp-where { display: inline-flex; flex: 0 0 auto; color: var(--fg-faint); opacity: .8; }
