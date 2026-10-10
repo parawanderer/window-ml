@@ -55,10 +55,20 @@ test("a delegated call keeps what it recorded beyond its counts, and its snapsho
     assert.equal(priceHashes(s).get(sha("map-body")), "litellm_map");
 });
 
-test("a turn no gen event matches has no model (null), never the session's guessed in", () => {
+test("a turn no gen event matches is the driver's (a real session keeps about one gen event per run); without a driver, null", () => {
     const s = structuredClone(SESSION);
     s.events = s.events.filter((e) => e.kind !== "gen");
     assert.ok(callsOf(s).every((c) => c.model === null));
+    assert.ok(callsOf(s, { driver: "deepseek.deepseek-flash" }).every((c) => c.model === "deepseek.deepseek-flash"));
+    // A sub-call names its own model, whatever the driver.
+    assert.equal(callsOf(withSpend(), { driver: "x" })[1].model, "qwen-vl");
+});
+
+test("a seeded run's scripted turn went to the fake LLM: its calls are left out, the measured turns kept in order", () => {
+    const all = callsOf(withSpend());
+    const kept = callsOf(withSpend(), { seedThrough: 1 });
+    assert.deepEqual(kept.map((c) => [c.call, c.step]), [[0, 2], [1, 3]]);
+    assert.equal(all.length - kept.length, 2, "step 1's turn and its delegated call");
 });
 
 test("a run with no usage anywhere has no calls, and no session has none either", () => {
@@ -147,5 +157,20 @@ test("spend per model: computed and reported apart, unpriced counted with why, o
     assert.match(text, /## Spend/);
     assert.match(text, /1 run logged before calls were recorded has no per-call data/);
     assert.match(text, /0\.0012 USD \(1\)/);
+    db.close();
+});
+
+test("UPGRADE: a turn logged with no model is priced as its run's driver on read; a sub-call with none stays unpriced", async () => {
+    const { spendReport } = await import("../tests/e2e/bench/spend.mjs");
+    const db = await tmpDb();
+    const s = withSpend();
+    s.events = [];
+    for (const st of s.steps) if (st.usage) st.usage = { ...st.usage, prices: PRICES };
+    logCalls(db, callsOf(s));   // as #555 wrote them: every turn's model null
+    logSnapshot(db, { hash: sha("or-body"), kind: "openrouter", body: "or-body" });
+    logSnapshot(db, { hash: sha("models-body"), kind: "owui_models", body: "models-body" });
+    const spend = spendReport(db, [{ run: SESSION.hash, model: "deepseek.deepseek-flash" }], (r) => r.model);
+    // The turns get as far as the snapshot (whose bodies here are no model list), not stopped at "which model".
+    assert.equal(spend.models[0].why, "the snapshot has no model list");
     db.close();
 });
