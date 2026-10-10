@@ -260,8 +260,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
     // It only means anything once there is a window to move: with no zoom and no rolling window the plot
     // already shows the whole session, and `scrubExtent` returns null there. In that case the event is left
     // alone so the panel's wheel-through still scrolls the transcript underneath.
-    // Whether the unzoomed view follows the clock: not for a scoped session that has finished (see `scrubIntent`).
-    const follows = !scopedWindow || !!scopedWindow.live;
+    // Whether the unzoomed view follows the clock: not for a scoped session that has finished, nor for a recording that
+    // ended (`endAt`, a finished sweep), whose end no longer moves (see `scrubIntent`).
+    const follows = endAt == null && (!scopedWindow || !!scopedWindow.live);
     const wheelScrub = (e: WheelEvent) => {
         const w = window_;
         if (!w) return;
@@ -313,7 +314,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
                 ahead of the last reading, see `chartWindow`) it is given the window clipped to that reading: a drag
                 on its left edge then means "fewer seconds than the history", which is what narrowing is. */}
             <ScrubStrip samples={samples} window={window_ && samples.length && window_.to > samples[samples.length - 1].t
-                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} pan={window_} events={stripEvents} follows={follows} />
+                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} pan={window_} events={stripEvents} follows={follows} ended={endAt != null} />
             {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
                 connector says the second is the first opened out — see ZoomLink. */}
             {/* Drawn unless the track editor's "event lane" is off — `laneEnabled` is that switch and takes
