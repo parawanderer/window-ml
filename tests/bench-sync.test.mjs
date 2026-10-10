@@ -158,7 +158,7 @@ function sweepDir({ sync, runs }) {
     writeFileSync(path.join(dir, "report.md"), "# report");
     for (const r of runs) {
         mkdirSync(path.join(dir, r.path, "shots"), { recursive: true });
-        writeFileSync(path.join(dir, r.path, "cell.json"), JSON.stringify({ key: `k-${r.path}`, hash: r.hash ?? null }));
+        writeFileSync(path.join(dir, r.path, "cell.json"), JSON.stringify({ key: `k-${r.path}`, hash: r.hash ?? null, ...(r.backend !== undefined ? { backend: r.backend } : {}) }));
         writeFileSync(path.join(dir, r.path, "run.md"), "# run");
         writeFileSync(path.join(dir, r.path, "shots", "1.png"), Buffer.from([1, 2, 3]));
     }
@@ -201,6 +201,25 @@ test("a run a later run of its cell replaced (history/) goes to the store too, u
     assert.ok(objects.has("traces/pb/t1/m-a/r0/new/cell.json"));
     assert.ok(objects.has("traces/pb/t1/m-a/r0/old/cell.json"), `the replaced run, from ${kept}`);
     assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [dir] })).runs, 0, "and not again");
+});
+
+test("a run against the fake LLM never reaches the store, whatever the flags; a sweep of nothing else sends not even its report", async () => {
+    objects.clear();
+    const mixed = sweepDir({ runs: [
+        { path: "t1/m-real/r0", taskId: "t1", hash: "real", backend: "https://box/api/chat/completions (model m)" },
+        { path: "t1/m-fake/r0", taskId: "t1", hash: "fake", backend: "fake-LLM" },
+        { path: "t1/m-old/r0", taskId: "t1", hash: "old" },   // saved before `backend` was: unknown, not fake
+    ] });
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [mixed.dir] })).runs, 2);
+    assert.ok(objects.has("traces/pb/t1/m-real/r0/real/cell.json"));
+    assert.ok(objects.has("traces/pb/t1/m-old/r0/old/cell.json"));
+    assert.ok(![...objects.keys()].some((k) => k.includes("/m-fake/")), "the fake's run stays here");
+    const st = await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root: mixed.root });
+    assert.deepEqual(st.sweeps[0].missing, [], "and status does not count it as missing");
+    objects.clear();
+    const fake = sweepDir({ runs: [{ path: "t1/m/r0", taskId: "t1", hash: "f", backend: "fake-LLM" }] });
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [fake.dir] })).runs, 0);
+    assert.deepEqual([...objects.keys()].filter((k) => k.startsWith("traces/")), [], "no runs, so no page.json or report either");
 });
 
 test("what stays here: a sweep whose spec said sync: false, a task that did, and every run with --only-db", async () => {
