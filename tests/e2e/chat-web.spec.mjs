@@ -3102,6 +3102,10 @@ test("a returned value drawn as a tree is the size its text is, at the page's co
     // of the text it replaced.
     expect(await fs(cell.locator(".jt-value .jt-row").first())).toBe(textFs);
     expect(textFs).toBe(await page.evaluate(() => getComputedStyle(document.querySelector(".chat")).getPropertyValue("--code-fs").trim()));
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // --- native vision on the start page, as the Commander offers it ---
 
 test("the start page offers native vision for a cloud model's run only, and sends it only when turned on", async () => {
