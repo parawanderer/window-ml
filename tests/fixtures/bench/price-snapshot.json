@@ -31,6 +31,28 @@
         "id": "moonshot.kimi-k2.7-code-highspeed",
         "connection_type": "external",
         "owned_by": "openai"
+      },
+      {
+        "id": "ui.gemini-pro-latest",
+        "connection_type": "external",
+        "owned_by": "openai",
+        "info": {
+          "base_model_id": "litellm.google/gemini-pro-latest"
+        }
+      },
+      {
+        "id": "ui.gemma4-31b",
+        "connection_type": "local",
+        "owned_by": "ollama",
+        "info": {
+          "base_model_id": "gemma4:31b"
+        }
+      },
+      {
+        "id": "gemma4:31b",
+        "connection_type": "local",
+        "owned_by": "ollama",
+        "ollama": {}
       }
     ]
   },

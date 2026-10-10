@@ -20,6 +20,16 @@ test("each external model is joined through the box's list, by the id after its 
     assert.deepEqual([book("moonshot.kimi-k3").basis, book("moonshot.kimi-k3").key], ["litellm_map", "moonshot/kimi-k3"]);
 });
 
+test("a model made in Open WebUI is priced as the model it wraps, recursively; a local base is electricity; a loop prices nothing", () => {
+    const p = book("ui.gemini-pro-latest", 1000);
+    assert.deepEqual([p.basis, p.key, p.via], ["litellm_model_info", "google/gemini-pro-latest", ["ui.gemini-pro-latest"]]);
+    assert.deepEqual(book("ui.gemma4-31b"), { local: true, via: ["ui.gemma4-31b"] });
+    const wrap = (id, base) => ({ id, connection_type: "external", info: { base_model_id: base } });
+    const chain = priceBook({ ...SNAP, owui_models: { data: [...SNAP.owui_models.data, wrap("ui.a", "ui.gemini-pro-latest"), wrap("ui.x", "ui.y"), wrap("ui.y", "ui.x")] } });
+    assert.deepEqual(chain("ui.a").via, ["ui.a", "ui.gemini-pro-latest"]);
+    assert.deepEqual(chain("ui.x"), { none: "ui.x wraps itself" });
+});
+
 test("a local model is electricity; a model nothing prices, or none at all, says why", () => {
     assert.deepEqual(book("glm-4.7-flash:latest"), { local: true });
     assert.deepEqual(book("moonshot.kimi-k2.7-code-highspeed"), { none: "no price for kimi-k2.7-code-highspeed" });

@@ -4,7 +4,8 @@
 // sources, and a model nothing prices says why instead of costing 0.
 //
 // The join, measured over the box's model list (tmp/BENCH_COST_PLAN.md): an Open WebUI id is `<connection>.<upstream id>`
-// for an external model; a local one (the list entry carries `ollama`) is paid in electricity, not tokens. The upstream id
+// for an external model; a local one (the list entry carries `ollama`) is paid in electricity, not tokens. A model made in
+// Open WebUI (a preset, `ui.*`) names the model it wraps (`info.base_model_id`) and is priced as that one, recursively. The upstream id
 // is looked up EXACTLY, in order: the box's LiteLLM routes (`litellm_model_info`, its `model_name`), OpenRouter's list,
 // then LiteLLM's public map, there also as `<connection>/<id>` (moonshot.kimi-k3 is the map's moonshot/kimi-k3). Prices in
 // all three are per token, in USD. LiteLLM writes a price it does not have as 0, so a 0 from LiteLLM is missing, never
@@ -54,10 +55,17 @@ export function priceBook(sources) {
     const openrouter = new Map((list(parsed(sources.openrouter)) ?? []).map((m) => [m.id, m]));
     const map = parsed(sources.litellm_map);
     const litellmMap = map && !Array.isArray(map) && typeof map === "object" ? map : {};
-    return (model, prompt = 0) => {
+    const priceOf = (model, prompt = 0, seen = new Set()) => {
         if (!model) return { none: "the run did not say which model served this call" };
         const entry = owui.find((m) => m.id === model);
         if (entry?.ollama) return { local: true };
+        // A preset is priced as the model it wraps; a chain that comes back to itself prices nothing.
+        const base = entry?.info?.base_model_id;
+        if (base && base !== model) {
+            if (seen.has(model)) return { none: `${model} wraps itself` };
+            const p = priceOf(base, prompt, new Set(seen).add(model));
+            return p.none ? p : { ...p, via: [model, ...(p.via ?? [])] };
+        }
         // An external model's id carries its connection's prefix; one the list does not know is tried as given too.
         const external = entry?.connection_type === "external" && model.includes(".");
         const ids = external ? [model.slice(model.indexOf(".") + 1), model] : [model];
@@ -73,9 +81,12 @@ export function priceBook(sources) {
             const l = litellmMap[id];
             if (l && typeof l === "object" && lnum(l.input_cost_per_token) != null) return { basis: "litellm_map", key: id, rates: litellmRates(l, prompt), offPeak: !!l.off_peak_pricing };
         }
+        // A base model the list does not carry but whose id says local (an ollama tag has no connection prefix) is
+        // not guessed: it is unpriced, like any other miss.
         if (!owui.length) return { none: "the snapshot has no model list" };
         return { none: `no price for ${ids[0]}` };
     };
+    return priceOf;
 }
 
 /**
