@@ -81,7 +81,7 @@ import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
 import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool } from "./spend-predict.mjs";
 import { statusWriter } from "./status.mjs";
 import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
-import { failureShape, menuText, groupHeld, groupCommands, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
+import { failureShape, menuText, groupHeld, groupCommands, freeingCommands, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -411,12 +411,19 @@ async function memoryLets(cell, ctx) {
     let said = null;
     for (;;) {
         const a = ctx.budget.canStart(cell.task.id);
-        if (a.ok) return true;
+        if (a.ok) { if (ctx.waiting) { ctx.waiting = null; ctx.changed?.(); } return true; }
         if (ctx.budget.whenFull === "pause") { ctx.pause(a.why); return false; }
-        if (a.why !== said) ctx.log(`  ⏸ ${cellPath(cell)} waits for memory: ${a.why}`);
+        if (a.why !== said) {
+            // What would free memory, named where a reader of the log, status.md or the page sees it: runs held earlier
+            // keep their memory until someone releases them or they idle out, and the sweep never releases them itself.
+            const free = freeingCommands(ctx.budget.entries());
+            ctx.waiting = { cell: cellPath(cell), why: a.why, since: Date.now(), free };
+            ctx.log(`  ⏸ ${cellPath(cell)} waits for memory: ${a.why}${free.length ? `\n    held runs keep it until released; to free some:\n${free.map((f) => `      ${f.text}:\n        ${f.cmd}`).join("\n")}` : ""}`);
+            ctx.changed?.();
+        }
         said = a.why;
         await new Promise((r) => setTimeout(r, 15_000));
-        if (ctx.paused) return false;
+        if (ctx.paused) { ctx.waiting = null; return false; }
     }
 }
 
@@ -685,6 +692,7 @@ const main = async () => {
     // The page's state, and the same object as status.md/status.json for a model reading the sweep from the CLI (status.mjs).
     // The state is built only for a reader: the page on each change, the status files at most every 2 s.
     const push = () => { if (dash) dash.update(liveState()); status.update(liveState); };
+    ctx.changed = push;
     const liveState = () => ({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results), older,
@@ -699,7 +707,7 @@ const main = async () => {
     const memoryView = () => {
         const st = budget.state();
         const entries = budget.entries();
-        return { ...st, active: budget.active, whenFull: budget.whenFull, paused: ctx.paused, resume, hints: HOLD_HINTS,
+        return { ...st, active: budget.active, whenFull: budget.whenFull, paused: ctx.paused, waiting: ctx.waiting ?? null, resume, hints: HOLD_HINTS,
             runner: entries.find((e) => e.pid === process.pid) ?? null,
             groups: groupHeld(entries).map((g) => ({ key: g.key, count: g.runs.length, rss: g.rss, sweeps: [...new Set(g.runs.map((r) => r.sweep))], commands: groupCommands(g) })),
             wouldHold: ctx.wouldHold, history: budget.history() };

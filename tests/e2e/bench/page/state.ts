@@ -108,6 +108,8 @@ export interface MemoryState {
     /** where the limit came from: this sweep's --memory-limit, the machine-wide one a person set, or half the RAM */
     limitSource?: "flag" | "machine" | "auto"; limitBy?: string | null; limitAt?: string | null;
     active: boolean; whenFull: "pause" | "stop-holding"; paused: string | null; resume: string; hints: string[];
+    /** A run that cannot start for memory (stop-holding), and what would free some: commands to paste, nothing done. */
+    waiting?: { cell: string; why: string; since: number; free: { text: string; cmd: string }[] } | null;
     runner: { rss?: number; peak?: number; heap?: number } | null;
     /** held runs of every clone, grouped by model · task · failure, with the commands for each */
     groups: { key: string; count: number; rss: number; sweeps: string[]; commands: { attach: string; keepOne?: string; release: string } }[];

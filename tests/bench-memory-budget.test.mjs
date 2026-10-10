@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, withLedger, ledger, register, update, unregister, measureLedger,
     budgetState, admits, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT } from "../tests/e2e/bench/memory-budget.mjs";
-import { failureShape, groupHeld, groupCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
+import { failureShape, groupHeld, groupCommands, freeingCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
 import { doneLine } from "../tests/e2e/bench/sinks.mjs";
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
@@ -230,4 +230,18 @@ test("a sweep's budget keeps every reading for the chart, thinned past 600, the 
     assert.equal(h.at(-1).values.held, n * MB);
     assert.ok(h.every((p, i) => !i || p.t >= h[i - 1].t), "oldest first");
     b.stop();
+});
+
+// --- a run waiting for memory ---
+
+test("what would free memory for a waiting run: every duplicate group kept to one (the one its attach names), else the largest group; nothing held, nothing", () => {
+    const glm = [101, 102, 103].map((p) => held(p, "glm", "icon-heart", "step cap")), qwen = [201, 202].map((p) => held(p, "qwen", "csv", "wrong answer"));
+    const free = freeingCommands([...glm, ...qwen, held(301, "m", "t", "x", 3 * GB), { kind: "running", pid: 9, rss: GB }]);
+    assert.deepEqual(free, [
+        { text: "keep one of 3 × glm · icon-heart · step cap, release the rest (about 2.0 GB)", cmd: "cd /Users/x/git/window-ml-bench && node --import tsx tests/e2e/bench/hold.mjs --stop 102 103" },
+        { text: "keep one of 2 × qwen · csv · wrong answer, release the rest (about 1.0 GB)", cmd: "cd /Users/x/git/window-ml-bench && node --import tsx tests/e2e/bench/hold.mjs --stop 202" },
+    ]);
+    assert.equal(free[0].cmd, groupCommands(groupHeld(glm)[0]).keepOne, "the menu's own line");
+    assert.deepEqual(freeingCommands([held(5, "a", "t", "x"), held(6, "b", "t", "x", 2 * GB)]), [{ text: "release b · t · x (about 2.0 GB)", cmd: "cd /Users/x/git/window-ml-bench && node --import tsx tests/e2e/bench/hold.mjs --stop 6" }]);
+    assert.deepEqual(freeingCommands([{ kind: "runner", pid: 1 }]), []);
 });

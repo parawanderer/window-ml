@@ -64,7 +64,10 @@ ran in its own process), else of every task's, else 1 GB. At the start it says w
 be held this sweep …"). At the limit, `--when-full pause` (the default) starts nothing more, keeps nothing more (a
 failure it would have kept is listed as "not held"), lets the running cells finish and EXITS 75 (`paused=memory-budget`
 on the last line, `paused` and `resume` in `done.json`), leaving what it holds alive; the same command resumes from the
-cache. `--when-full stop-holding` goes on (overnight) and only stops keeping failures; a cell then waits for room. On
+cache. `--when-full stop-holding` goes on (overnight) and only stops keeping failures; a cell then waits for room. Runs
+held before the budget filled keep their memory until released or idle out (60 min), and the sweep never releases
+them itself: a waiting cell logs what would free some (each duplicate group's "keep one, release the rest" line, else
+releasing the largest group), and status.md and the Memory card show the same while it waits. On
 exit, paused or not, it prints the MENU: every clone's held runs grouped by model · task · failure, each group with a
 command to paste for attach, keep one and release the rest, release all, plus how to resume and what to do with them.
 The page has the same as its Memory card (with a chart of the readings over the sweep, and each group folding). Any

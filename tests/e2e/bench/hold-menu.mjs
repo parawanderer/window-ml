@@ -62,6 +62,20 @@ export function groupCommands(g) {
 }
 
 /**
+ * What would free memory for a run that cannot start, as `{ text, cmd }` to paste: each held group of duplicates kept to
+ * one (the menu's own "keep one, release the rest", so the one kept is the one its attach command names), largest group
+ * first; with no duplicates, releasing the largest group. [] with nothing held. Nothing is released here: the held runs
+ * were kept for a person or an agent, who decides.
+ */
+export function freeingCommands(entries) {
+    const groups = groupHeld(entries);
+    const dup = groups.filter((g) => g.runs.length > 1);
+    if (dup.length) return dup.map((g) => ({ text: `keep one of ${g.runs.length} × ${g.key}, release the rest (about ${fmtBytes(g.rss - (g.runs[0].rss ?? 0))})`, cmd: groupCommands(g).keepOne }));
+    const g = groups[0];
+    return g ? [{ text: `release ${g.key} (about ${fmtBytes(g.rss)})`, cmd: groupCommands(g).release }] : [];
+}
+
+/**
  * The menu as text: the held groups with their commands, any run the budget did not hold (`wouldHold`), how to release
  * one, how to resume (`resume`, the sweep's own command line), and the hints. [] when nothing is held and nothing was
  * turned away.
