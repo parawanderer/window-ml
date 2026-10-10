@@ -33,8 +33,9 @@ export interface StoreBytes extends SessionBytes {
 
 const TOOL_KEYS = new Set(["result", "streamOutput", "output"]);
 
-/** A cheap identity for an image: equal images give equal keys, and a collision needs equal length AND both ends. */
-const fingerprint = (s: string): string => `${s.length}:${s.slice(22, 86)}:${s.slice(-64)}`;
+/** A cheap identity for an image: equal images give equal keys, and a collision needs equal length AND both ends.
+ *  The bytes start after the comma, whatever the type: a WebP's prefix is a character longer than a PNG's. */
+const fingerprint = (s: string): string => { const at = s.indexOf(",") + 1; return `${s.length}:${s.slice(at, at + 64)}:${s.slice(-64)}`; };
 
 /** Measure one session's events. `seen` collects image fingerprints across sessions, for the dedupe estimate. */
 export function measureEvents(events: readonly MlDebugEvent[], seen?: Map<string, number>): SessionBytes {

@@ -20,6 +20,7 @@ const PY_START_TIMEOUT_MS = 120000;
 
 import { ValueStore } from "./pointers/value-store";
 import { htmlToMarkdown } from "./dom/html-to-md";
+import { PNG_DATA_URL } from "./session/image-compact";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -206,6 +207,46 @@ function ensureArchiveWorker(): Worker {
     archiveWorker = w;
     return w;
 }
+
+// ---- The image worker (image-worker.ts): saved screenshots re-encoded as lossless WebP ----
+// Started on the first IMAGE_COMPACT and stopped once idle: libwebp's memory is worth nothing between batches.
+let imageWorker: Worker | null = null;   // state: plumbing
+let imageSeq = 0;   // state: plumbing
+const imagePending = new Map<number, (r: { url: string | null; error?: string }) => void>();   // state: plumbing
+let imageIdle: ReturnType<typeof setTimeout> | null = null;   // state: plumbing
+/** How long the image worker is kept after its last answer. */
+const IMAGE_IDLE_MS = 60_000;
+
+function ensureImageWorker(): Worker {
+    if (imageIdle) { clearTimeout(imageIdle); imageIdle = null; }
+    if (imageWorker) return imageWorker;
+    const w = new Worker(chrome.runtime.getURL("image-worker.js"));
+    w.onmessage = (e: MessageEvent) => {
+        const { id, ...reply } = e.data ?? {};
+        imagePending.get(id)?.(reply);
+        imagePending.delete(id);
+        if (!imagePending.size && imageWorker === w) imageIdle = setTimeout(() => { if (imagePending.size) return; w.terminate(); imageWorker = null; imageIdle = null; }, IMAGE_IDLE_MS);
+    };
+    w.onerror = (e) => {
+        for (const done of imagePending.values()) done({ url: null, error: `image worker stopped: ${e.message || "error"}` });
+        imagePending.clear();
+        imageWorker = null;
+    };
+    imageWorker = w;
+    return w;
+}
+
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    // Only the service worker asks (sw-image-compact.ts), and only ever about a PNG data URL: the worker FETCHES the
+    // URL to decode it, so anything else would make it a fetcher.
+    if (msg?.type === "IMAGE_COMPACT" && !sender.tab && typeof msg.url === "string" && PNG_DATA_URL.test(msg.url)) {
+        const id = ++imageSeq;
+        imagePending.set(id, sendResponse);
+        ensureImageWorker().postMessage({ id, url: msg.url });
+        return true;
+    }
+    return undefined;
+});
 
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type === "ARCHIVE_OP") {

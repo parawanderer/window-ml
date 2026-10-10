@@ -25,6 +25,7 @@ import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
+import { imageCompactor } from "./sw-image-compact";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
@@ -504,10 +505,15 @@ export const sessionStore = (() => {
             },
             retainMs: () => Math.max(0, retentionDays) * DAY_MS,
             limits: storeLimits,
+            // Screenshots are written as PNG and shrunk once the writes stop (sw-image-compact.ts).
+            onWrite: () => imageCompaction?.kick(),
         });
     }
     catch { return null; }
 })();
+
+/** The background pass that re-encodes saved screenshots as lossless WebP once the store goes quiet. */
+const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping }) : null;
 
 /** The index and its server, for this worker's life. */
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
@@ -550,6 +556,8 @@ if (sessionStore) {
         .then((rows) => {
             sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
+            // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
+            imageCompaction?.kick();
         })
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
 }
@@ -875,6 +883,8 @@ try {
     chrome.alarms?.onAlarm.addListener((a) => {
         if (a.name !== SNAPSHOT_ALARM) return;
         void recordStorageSnapshot().catch(() => {});
+        // A pass a stopped worker never finished, or one that failed, is tried again on the same clock.
+        imageCompaction?.kick();
         // The same clock catches a folder whose grant came back (re-granted from a page since the last write).
         if (archiveOn) void archiveCall("sync").catch(() => {});
     });

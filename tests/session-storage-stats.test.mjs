@@ -32,6 +32,20 @@ test("the dedupe estimate counts each distinct image once, across sessions", () 
     assert.deepEqual(s.top.map((r) => r.hash), ["a", "b"], "biggest first");
 });
 
+// --- images compacted to WebP (sw-image-compact.ts) ---
+
+test("WebP images are images, and two differing only at their 64th byte are told apart", () => {
+    const seen = new Map();
+    // Same length and tail, differing only at the 64th byte after the comma: inside the window the fingerprint reads,
+    // unless that window starts at a PNG's prefix length, one character early for a WebP.
+    const at64 = (c) => "data:image/webp;base64," + "A".repeat(63) + c + "A".repeat(200);
+    const a = at64("X"), b = at64("Y");
+    const m = measureEvents([step({ result: a }), step({ result: b })], seen);
+    assert.equal(m.imageCount, 2);
+    assert.equal(m.images, a.length + b.length);
+    assert.equal(seen.size, 2);
+});
+
 import { addBytes, appendSnapshot, emptyBytes, HISTORY_MAX, snapshotRows, topTools } from "../src/session/session-storage-stats.ts";
 
 test("tool output is split by the tool that produced it, and adding keeps the split", () => {

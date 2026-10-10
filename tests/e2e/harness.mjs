@@ -57,13 +57,16 @@ async function allowIncognito(/** @type {import("@playwright/test").BrowserConte
  *
  * `incognito` turns on "Allow in Incognito", which a fresh install has off (and so does every launch without it): a
  * private rendered fetch needs it. The returned `sw` is then the worker of the re-enabled extension.
+ *
+ * `userDataDir` reuses a profile: launch, close, and launch again on the same directory to test what survives a
+ * closed browser (IndexedDB, storage). Absent, every launch is a fresh temporary profile.
  */
-export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[], incognito?: boolean }} */ { dist, headful, args = [], incognito = false } = {}) {
+export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[], incognito?: boolean, userDataDir?: string }} */ { dist, headful, args = [], incognito = false, userDataDir = "" } = {}) {
     // `E2E_DIST` runs a whole spec against a bundle built ELSEWHERE (`node build.mjs --outdir <dir>`), so a suite
     // can test a change while `dist/` is still loaded in a window someone is using — rebuilding it underneath a
     // live extension is exactly the hazard the build rule warns about.
     const DIST = dist ? path.resolve(dist) : process.env.E2E_DIST ? path.resolve(process.env.E2E_DIST) : DEFAULT_DIST;
-    const context = await chromium.launchPersistentContext("", {
+    const context = await chromium.launchPersistentContext(userDataDir, {
         // HEADLESS by default, via `channel: "chromium"`.
         //
         // This used to be headful, on the finding that an MV3 service worker does not register under

@@ -471,6 +471,31 @@ subscription rather than posting them: the client's reducer trusts the contract'
 read is in the ring by the time the backfill is built, so it goes out as part of the backfill and is skipped when
 the queue drains — the ring and the disk overlap, and sending an event twice would show the same step twice.
 
+**Screenshots are shrunk after they are saved.** A PNG is written as it arrives; once the store has been quiet for
+15 s (`COMPACT_QUIET_MS`), and again at worker start and on the six-hourly storage alarm, `sw-image-compact.ts`
+re-encodes each settled session's PNG data URLs as lossless WebP and `SessionStore.compactImages` rewrites those
+events in place. Measured on 264 real run images: 41.6% of the PNG bytes, every pixel equal. The rules:
+
+- **Lossless, and checked.** The image worker (`image-worker.ts`, in the offscreen document) decodes its own WebP and
+  compares every pixel with the PNG's; an image that is not opaque, not smaller, or not identical stays PNG.
+  Chromium's built-in `convertToBlob("image/webp")` is not used: its lossless effort came out LARGER than the PNG on
+  half of the measured images, so the encoder is libwebp in WASM (`@jsquash/webp`).
+- **Only the events.** They are what a transcript and the exports show. A row's `history` is what a resume sends
+  the model, and the running loop's own array, so it stays PNG: no model is ever sent a WebP it never saw, and
+  Ollama's runners may not decode one.
+- **Under the write lock, against the same row.** The encode runs outside the lock (seconds); each rewrite inside it,
+  only if the row is still the one that was read, so a session deleted or evicted meanwhile is not written back.
+  `row.bytes` and `row.split` move by what the images saved, and `row.compacted` records how many events were gone
+  over. A row without it (saved before this existed) is compacted whole.
+- **Committed in chunks, so a closed browser loses little.** A session is rewritten `COMPACT_CHUNK_IMAGES` (8) new
+  images at a time, each chunk one IndexedDB transaction that also advances `row.compacted`. A browser closed during a
+  pass loses the chunk in flight; one closed before the pass ran loses nothing. The worker's start schedules a pass,
+  which carries on from each row's `compacted` (`tests/e2e/image-compact.spec.mjs` closes and reopens a profile).
+- **In the housekeeping log**, subsystem `sessions`: `compact-pass` when a pass with work starts, `compact-images` per
+  session (bytes saved, images found and compacted, `from` above 0 when it carried on from an earlier pass), and
+  `compact-pass-done` with the totals. A pass the browser stopped has no `compact-pass-done`. A failure stops the pass
+  (`compact-images-failed`, a warning) and the next write or alarm tries again.
+
 ## What a session is CONTINUED from
 
 The saved events are a transcript. Resuming needs the model's own history, and the two are not interchangeable: a
