@@ -448,6 +448,177 @@ test("a page that enlarges our sidebar past the refusal share gets a refusal tha
     });
 });
 
+// --- second pass (red team, 2026-10-09): the page navigates the run's tab itself, mid-shot ---
+
+// workerShot pins the capture to one document: a webNavigation.onCommitted for frame 0 during the shot refuses it, and
+// so does a topDocument mismatch after it. The vm (tests/redteam-worker-shot.test.mjs) plays the browser's commit
+// events; this is the real browser: the page (which shares the main world) drives history.back()/forward() on its own
+// timers so a navigation can land while a shot is in flight. Two properties, both held 2026-10-09: every shot ANSWERS
+// in bounded time (measured 30-60 ms taken, ~1.1 s refused; captureVisibleTab is bounded by its quota, the rects read
+// by SHOT_RECTS_MS), and a shot that survives is of one document with the UI masked.
+// All of it is measured INSIDE the worker and read back in one evaluate. An earlier shape armed each navigation with
+// an un-awaited page.evaluate and raced each shot from the runner; its "hung" rounds were Playwright's evaluate
+// channel wedged by promises whose document navigated away — not workerShot: with the collision driven entirely from
+// the worker (chrome.tabs.goForward/goBack armed mid-shot, and the same with a page-driven loop) every shot settled
+// in 30-60 ms. Harness lesson, kept here so the next reader does not re-learn it: keep the page loop self-driving and
+// the shots worker-fired, with ONE read-back after the page settles. The page stops its own loop (a time cap) so no
+// evaluate has to cross a navigation to clearInterval either.
+const SHOT_DEADLINE_MS = 8000;
+test("a page that navigates its own tab while a shot is in flight: every shot answers in bounded time and never leaks", async () => {
+    await withShell(async (s, ext, site) => {
+        // Seed a forward entry (/b) and come back, so the loop's first forward() is a real navigation, not a silent no-op.
+        await s.page.goto(`${site.url}b`);
+        await s.page.waitForTimeout(400);
+        await s.page.goBack();
+        await s.page.waitForTimeout(400);
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the panel paints on the page back at /").toBeGreaterThan(500);
+        // The page drives its own history on raw timers for ~9 s, then self-stops. No page evaluate crosses a navigation.
+        await s.page.evaluate(() => {
+            const stopAt = Date.now() + 9000;
+            let i = 0;
+            window.__navLoop = setInterval(() => {
+                if (Date.now() > stopAt) { clearInterval(window.__navLoop); window.__navDone = true; return; }
+                (i++ % 2 === 0 ? history.forward() : history.back());
+            }, 700);
+        });
+        // Six shots staggered 700 ms against the 700 ms loop, so the collision phase drifts and some rounds catch a
+        // navigation mid-flight. Each is raced against a worker-side deadline; the rows ride back in one evaluate.
+        const rows = await ext.sw.evaluate(async (a) => {
+            const out = [];
+            for (let k = 0; k < 6; k++) {
+                const t0 = Date.now();
+                const p = globalThis.__mlWorkerVisionForTest.workerShot(a.id).then(
+                    (sh) => ({ outcome: "taken", dataUrl: sh.dataUrl }),
+                    (er) => ({ outcome: "refused: " + String(er?.message || er).slice(0, 60) }),
+                );
+                const row = await Promise.race([p, new Promise((res) => setTimeout(() => res({ outcome: "HUNG" }), a.deadline))]);
+                out.push({ k, ms: Date.now() - t0, ...row });
+                await new Promise((r) => setTimeout(r, 700));
+            }
+            return out;
+        }, { id: s.tabId, deadline: SHOT_DEADLINE_MS });
+        const hung = rows.filter((r) => r.outcome === "HUNG").length;
+        const taken = rows.filter((r) => r.dataUrl).map((r) => r.dataUrl);
+        const refused = rows.filter((r) => r.outcome.startsWith("refused")).length;
+        test.info().annotations.push({ type: "mid-shot nav", description: `${refused} refused, ${taken.length} taken, ${hung} past ${SHOT_DEADLINE_MS} ms; settle times ${rows.map((r) => r.ms + "ms").join(", ")}` });
+        expect(hung, `${hung} shot(s) did not answer within ${SHOT_DEADLINE_MS} ms across a mid-shot navigation`).toBe(0);
+        // Wait for the page's own loop to end, settle on /, and decode every taken shot: one that survived a
+        // mid-flight navigation must still be leak-free.
+        await s.page.waitForFunction(() => window.__navDone === true, undefined, { timeout: 20000 }).catch(() => {});
+        await s.page.goto(site.url);
+        await s.page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
+        await s.page.bringToFront();
+        await s.page.waitForTimeout(200);
+        for (const url of taken) expect(await offGreen(s.page, url), "pixels outside the mask on a mid-navigation shot").toBe(0);
+    });
+});
+
+// A real back/forward-cache restore keeps its documentId, so the documentId recheck could not see it: only the
+// onCommitted event can. Measured here (2026-10-09): Chromium under Playwright never serves goBack() from the cache
+// (pageshow.persisted is false) even with NO extension loaded and no unload handler anywhere — the CDP attach itself
+// keeps pages out of the cache — so a same-documentId restore cannot be produced in this harness. What is pinned
+// instead: the vm refuses a commit during a shot even when it carries the SAME documentId
+// (redteam-worker-shot.test.mjs, "a commit back to the same document id"), and after a real back navigation (restore
+// or not) the worker's shot of the tab that came back is still leak-free.
+test("after a back navigation the worker's shot of the tab is still leak-free, whether or not the page came from the back/forward cache", async () => {
+    await withShell(async (s, ext, site) => {
+        // Detect a real cache restore WITHOUT asking the restored page through CDP: a document served from the
+        // back/forward cache keeps its JS state, so a recorder registered on / before leaving still exists after the
+        // back navigation and reports pageshow.persisted; a reloaded document has no recorder at all.
+        await s.page.evaluate(() => {
+            window.__rec = [];
+            addEventListener("pageshow", (e) => window.__rec.push({ persisted: e.persisted, type: performance.getEntriesByType("navigation")[0]?.type }));
+        });
+        await s.page.goto(`${site.url}b`);
+        await s.page.waitForTimeout(300);
+        await s.page.goBack();
+        await s.page.waitForTimeout(600);
+        const rec = await s.page.evaluate(() => window.__rec ?? null);
+        test.info().annotations.push({ type: "bfcache", description: `recorder after goBack: ${JSON.stringify(rec)} (null: the document was NOT restored from the cache — its state was gone)` });
+        // The shell re-runs on the restored document: the panel is where it always was, and a shot must mask it there.
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the panel paints after the back navigation").toBeGreaterThan(500);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
+// --- second pass: paint the two reads cannot see ---
+
+// text-shadow is in no measurement (paintsBeyond adds box-shadow, filter and outline only). Measured 2026-10-09: the
+// rule paints nothing outside the host in this engine, even with `overflow:visible` forced on the tab and the panel.
+// The case therefore HOLDS today and stays a test: if text-shadow ever starts painting there, the shot must not go
+// out under-covered. (The panel's body is an iframe and text does not inherit across it, hence the tab, whose
+// "ml · debug" is real text in our open shadow root.)
+test("text-shadow 500 px off our shadow-root tab paints nothing outside the host, and the shot stays leak-free", async () => {
+    await withShell(async (s) => {
+        await shadowCss(s.page, "#ml-sb-tab{text-shadow:-500px 0 0 #ff00ff,-500px 0 25px #ff00ff !important}");
+        await s.page.waitForTimeout(150);
+        const shot = await s.shoot();
+        if (!shot.error) expect(await offGreen(s.page, shot.dataUrl), "pixels outside the mask").toBe(0);
+        else expect(shot.error, "a refusal must name the page, not the person").toMatch(/page/i);
+    });
+});
+
+// GAP: a `filter: url(#...)` SVG reference has no px lengths, so paintsBeyond adds 0 — while feOffset MOVES the panel
+// 200 px left at paint time and getBoundingClientRect (what the shell measures) does not follow a filter. The svg and
+// the rule both go into our open shadow root, so the paint-server reference resolves in-tree; the filter region is
+// widened (default objectBoundingBox would clip the shifted copy). The panel itself is the filtered box: a filter on
+// the OUTER host would also make it the containing block of the fixed panel and relayout it (measured 2026-10-09).
+// STRIP excludes the sidebar's honest area: the control counts only pixels LEFT of it, which exist only if the ghost
+// really painted there (without the displacement that region is plain green).
+const STRIP = { left: 760, top: 0, width: 520, height: 720 };
+test.fixme("an SVG feOffset filter on our panel moves the UI 200 px left of every rect: the shot is refused, not under-covered", async () => {
+    await withShell(async (s) => {
+        await s.page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("width", "0"); svg.setAttribute("height", "0");
+            svg.innerHTML = `<filter id="ml-shift" x="-100%" y="-10%" width="300%" height="120%"><feOffset in="SourceGraphic" dx="-200" dy="0"/></filter>`;
+            const st = document.createElement("style");
+            st.textContent = "#ml-sb-host{filter:url(#ml-shift) !important}";
+            root.append(svg, st);
+        });
+        await s.page.waitForTimeout(200);
+        expect(await offGreen(s.page, (await s.bare()).dataUrl, STRIP), "the displaced copy paints left of the sidebar").toBeGreaterThan(1000);
+        const shot = await s.shoot();
+        if (!shot.error) expect(await offGreen(s.page, shot.dataUrl), "displaced pixels outside the mask").toBe(0);
+        else expect(shot.error, "a refusal must blame the page, not the person").toMatch(/page/i);
+    });
+});
+
+// --- second pass: a prerendered document ---
+
+// A page that declares a speculation rule gets /b prerendered and, on navigating to it, ACTIVATED: the activated
+// document ran its life (and our content script) in the prerender phase, then flips to visible with the shell already
+// mounted — the mask must be right on it too. Measured 2026-10-09: this headless Chromium never starts the prerender
+// (no commits for /b before the navigation; activationStart 0, navigation type "navigate") even with
+// --enable-features=Prerender2 and even with NO extension loaded, so the property is asserted for whatever document
+// the tab ends up holding, and the annotation says which.
+test("a page with a speculation-rules prerender: the shot of the /b document (activated or plain) is leak-free", async () => {
+    const site = await greenSite();
+    const ext = await launchExtension(["--enable-features=Prerender2"]);
+    try {
+        const s = await setup(ext, site);
+        // greenSite serves the same body everywhere; declare the rule from the page itself (an inline rules script
+        // inserted before the navigation is what a hostile page does; the parser runs it at insertion).
+        await s.page.evaluate((u) => { const l = document.createElement("link"); l.rel = "prerender"; l.href = `${u}b`; document.head.append(l); }, site.url);
+        await s.page.waitForTimeout(1500);
+        await s.page.goto(`${site.url}b`);
+        await s.page.waitForTimeout(800);
+        const act = await s.page.evaluate(() => {
+            const n = performance.getEntriesByType("navigation")[0];
+            return { type: n?.type, activationStart: n?.activationStart ?? null };
+        });
+        test.info().annotations.push({ type: "prerender", description: `navigation type=${act.type}, activationStart=${act.activationStart} (0/null: not activated — this Chromium did not prerender)` });
+        await s.page.bringToFront();
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the panel paints on the /b document").toBeGreaterThan(500);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    } finally { await ext.close(); await site.close(); }
+});
+
 // --- navigations during a shot ---
 
 // A back-forward cache restore keeps its documentId, so only the commit event tells workerShot the pixels may be another
