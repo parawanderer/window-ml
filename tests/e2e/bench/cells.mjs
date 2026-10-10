@@ -100,6 +100,7 @@ export function runConfig(cell, env, dir, extra = {}) {
         tools: e.tools !== undefined ? e.tools : (t.tools ?? null),
         python: e.python ?? !!t.python,
         toolTokens: e.toolTokens ?? !!t.toolTokens,
+        incognito: e.incognito ?? !!t.incognito,
         agentOptions: { ...(t.agentOptions || {}), ...(e.agentOptions || {}) },
         stream: cellStream(cell),
         seed: t.seed || null,
@@ -144,7 +145,7 @@ export function cellKey(cell, fingerprint) {
             script: cell.task.script ? String(cell.task.script) : null,
             agentOptions: cell.task.agentOptions ?? null,
             // Only when set, so adding these fields left every cache written before them valid.
-            ...Object.fromEntries(["asks", "surface", "sharedWatches", "watchNotes"]
+            ...Object.fromEntries(["asks", "surface", "sharedWatches", "watchNotes", "incognito"]
                 .filter((k) => cell.task[k] != null).map((k) => [k, cell.task[k]])),
         },
     });

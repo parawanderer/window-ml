@@ -12,7 +12,7 @@ import {
     stepsOf, authoredTexts, capturedOutputs, sharesRun, reEmission, pointerRefs, pointerUse,
     recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse, isRateLimit,
 } from "../tests/e2e/bench/metrics.mjs";
-import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream } from "../tests/e2e/bench/cells.mjs";
+import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream, runConfig } from "../tests/e2e/bench/cells.mjs";
 
 /** A tool step as the sidebar receives it: a pending START, then the DONE carrying the result. */
 const step = (seq, tool, args, result, extra = {}) => ([
@@ -354,6 +354,15 @@ test("cellKey: every axis of a cell changes its identity", () => {
     assert.notEqual(cellKey({ ...base, combo: { fmt: "label" } }, "c"), k);
     assert.notEqual(cellKey({ ...base, effects: { defines: { X: "1" } } }, "c"), k);
     assert.notEqual(cellKey({ ...base, task: { id: "a", task: "DIFFERENT" } }, "c"), k);
+    // incognito changes what a rendered fetch returns, so a cache from before it was on must not be reused.
+    assert.notEqual(cellKey({ ...base, task: { ...base.task, incognito: true } }, "c"), k);
+});
+
+test("runConfig: a task's incognito reaches the launch, and a cell's effect overrides it", () => {
+    const cell = (task, effects = {}) => ({ task: { id: "a", task: "t", ...task }, effects, combo: {}, repeat: 0 });
+    assert.equal(runConfig(cell({}), {}, "/d").incognito, false);
+    assert.equal(runConfig(cell({ incognito: true }), {}, "/d").incognito, true);
+    assert.equal(runConfig(cell({ incognito: true }, { incognito: false }), {}, "/d").incognito, false);
 });
 
 test("buildGroups: cells needing the same defines share one build; the undefined ones are 'default'", () => {

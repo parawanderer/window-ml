@@ -425,7 +425,7 @@ export async function runOnce(cfg = {}) {
     const site = await startPageServer({});
     // A window only when someone is watching: `hold` (observe's WATCH) or an explicit focusSidebar
     // request means a human is looking at it. A bench cell is neither.
-    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful || windowMode) });
+    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful || windowMode), incognito: !!cfg.incognito });
     let approvalLoopOn = true;
     let captured = [];
     const approvals = [];
