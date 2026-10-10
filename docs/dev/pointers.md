@@ -184,3 +184,11 @@ call; in a survey the worker reads the value store itself), and `DerefText` hand
   One read returns at most `MAX_STORED_READ_CELLS` (5M); past that it names `python_exec`.
 - In the read-only dialect the reads are awaited like `ml` calls, sized by `shape` before the request, and bounded
   in total per script (`MAX_STORED_CELLS`); see `docs/dev/readonly-exec.md`.
+- In an ISOLATED exec (an approved exec of a worker-built run that names a pointer, `exec-routing.ts`) the value is the
+  page's own `DerefText`, spliced into the world as source (`src/isolated-kit.ts`, bundled to `isolated-kit.gen.ts` by
+  `scripts/gen-isolated-kit.mjs`). A stored table's columns and a `.pipe()` ask the worker over the call's own channel
+  (`src/sw/iso-channel.ts`; docs/dev/site-access.md says who can send on it), never `VALUE_COLUMNS`. `.pipe()` there
+  re-reads the named pointer with ANY stages, as a survey's `ml.dereference(ref, { pipe })` does; the main world answers
+  only a pipe the script spells out. The read-only dialect has no `.pipe()` or `.schema()` on a value (it reads one as
+  a string): a survey re-pipes through `ml.dereference`. `tests/isolated-pointer.test.mjs` holds the four paths to the
+  same values and errors.

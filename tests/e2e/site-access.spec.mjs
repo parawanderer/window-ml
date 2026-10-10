@@ -557,3 +557,50 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
         } finally { await close(); }
     });
 });
+
+// PART 4b: an approved exec of a worker-built run on a page that is not approved runs in a CDP isolated world (the
+// e2e browser has no "Allow User Scripts"), and its pointer reads reach the worker mid-script over a binding named for
+// that world. Only a real browser shows which world a binding and an answer land in.
+test.describe("@security part 4b: an isolated exec's channel to the worker", () => {
+    test("the page's main world has no handle on the channel while an isolated exec reads through it, and sees none of what crosses it", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test", "/"));
+            // The page watches the DOM it shares with the isolated world: the exec marks it while its reads are in flight,
+            // and the page probes its own world at that moment, calling the binding if it can see it.
+            await page.evaluate(() => {
+                window.__probe = [];
+                new MutationObserver(() => {
+                    if (document.body.dataset.inflight !== "1" || window.__probe.length) return;
+                    const p = { stream: typeof window.__mlIsoStream, answer: typeof window.__mlIsoAnswer, kit: typeof window.__mlIsoKit, chan: typeof window.__chan };
+                    try { window.__mlIsoStream(JSON.stringify({ nonce: "0".repeat(32), ask: 1, req: { op: "pipe", i: 0, stages: "head" } })); p.call = "called"; } catch (e) { p.call = e.name; }
+                    window.__probe.push(p);
+                }).observe(document.body, { attributes: true });
+            });
+            fake.setScript([
+                // A survey the worker evaluates (no page reads): its value is made of strings its source does not spell.
+                { tool: "exec", args: { js: "return JSON.stringify([1, 2, 3].map((n) => \"v\" + n * 7))" } },
+                // Approved (it writes the DOM), so isolated on this unapproved page; its .pipe() and .schema() need the kit
+                // and the channel.
+                { tool: "exec", args: { js: "document.body.dataset.inflight = \"1\"; const v = @tool:exec; const t = (await v.pipe(\"tail -n 1\")).text; await new Promise((r) => setTimeout(r, 300)); document.body.dataset.inflight = \"0\"; return \"<<<\" + JSON.stringify([t, v.schema()]) + \">>>\"" } },
+                { content: "done" },
+            ]);
+            const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, page.url());
+            await ext.sw.evaluate((t) => { void globalThis.__mlStartUserRunForTest(t, { task: "read it", surface: "hud" }, { approvalRouting: "both" }); }, tabId);
+            await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 20000 }).toBe(1);
+            const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+            expect(gate.tool).toBe("exec");
+            expect(await ext.sw.evaluate((k) => globalThis.__mlApprovals.resolve(k, true), gate.key)).toBe(true);
+            await expect.poll(() => fake.calls().length, { timeout: 20000 }).toBe(3);
+            const results = fake.calls().at(-1).messages.filter((m) => m.role === "tool").map((m) => String(m.content ?? ""));
+            // Positive control: the exec ran isolated and its reads were answered by the worker.
+            expect(results[1]).toContain("Ran in an isolated world");
+            expect(results[1]).toContain(`<<<${JSON.stringify(["[\"v7\",\"v14\",\"v21\"]", "string[] /* 3 items */"])}>>>`);
+            // The page, probing its own world while the reads were in flight, found no binding, no answer hook, no kit.
+            expect(await page.evaluate(() => window.__probe)).toEqual([{ stream: "undefined", answer: "undefined", kit: "undefined", chan: "undefined", call: "TypeError" }]);
+            // And nothing that crossed the channel reached any window message the page saw.
+            const seen = JSON.stringify(await page.evaluate(() => [window.__seen, window.__heard]));
+            expect(seen).not.toContain("v21");
+        } finally { await close(); }
+    });
+});

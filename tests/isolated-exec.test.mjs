@@ -128,12 +128,17 @@ test("the wrapper binds the pointer reads sent with the call, the pipe as a stri
     assert.match((await runWrapped("(ml.dereference('@tool:bad'))", b)).out.threw, /MemoryFault: gone/);
 });
 
-test("a pointer value has the page's shape: a String with its facts; what needs the worker mid-script says so", async () => {
-    const reads = [{ ref: "@tool:t", pipe: [], value: "[1,2]", meta: { kind: "table", id: "t", tool: "fetch_url", step: 2, label: "the table", table: { columns: ["a"] } } }];
+test("a pointer value is the page's own: a String with its facts, its table's facade and .schema(); with no channel to the worker, .pipe() and a stored table's columns say so", async () => {
+    const table = { columns: ["a"], rows: [[1], [2]], shape: [2, 1], dtypes: { a: "int64" } };
+    const reads = [{ ref: "@tool:t", pipe: [], value: "[1,2]", meta: { kind: "table", id: "t", tool: "fetch_url", step: 2, label: "the table", table } }];
     const r = await runWrapped("{ const v = ml.dereference('@tool:t'); return [v.length, v.split(',').length, v + '', v.json[1], v.id, v.tool, v.step, v.label, v.type, typeof v.pipe] }", { reads });
     assert.equal(r.out.v, JSON.stringify([5, 2, "[1,2]", 2, "t", "fetch_url", 2, "the table", "table", "function"]));
-    assert.match((await runWrapped("(ml.dereference('@tool:t').table)", { reads })).out.threw, /\.table is not available in an isolated exec yet\. Read it in a read-only exec/);
-    assert.match((await runWrapped("(ml.dereference('@tool:t').pipe('head 1'))", { reads })).out.threw, /\.pipe\(\) is not available/);
+    assert.equal((await runWrapped("(ml.dereference('@tool:t').table.col('a'))", { reads })).out.v, "[1,2]", "a whole table reads in the world, as on the page");
+    assert.equal((await runWrapped("(ml.dereference('@tool:t').schema())", { reads })).out.v, "table shape: (2, 1)\ndtypes: a int64");
+    assert.match((await runWrapped("(ml.dereference('@tool:t').table.iloc)", { reads })).out.threw, /iloc/, "the facade's own error");
+    assert.match((await runWrapped("(ml.dereference('@tool:t').pipe('head 1'))", { reads })).out.threw, /\.pipe\(\) is not available in this isolated exec: it could not reach the worker/);
+    const stored = [{ ...reads[0], meta: { ...reads[0].meta, value: "v0123456789abcdef", table: { ...table, shape: [9, 1], truncated: true } } }];
+    assert.match((await runWrapped("(ml.dereference('@tool:t').table.col('a'))", { reads: stored })).out.threw, /stored table is not available in this isolated exec: it could not reach the worker/, "never the preview's rows as the whole column");
     assert.equal((await runWrapped("(ml.dereference('@tool:t').json === ml.dereference('@tool:t').json)", { reads })).out.v, "false", "each read is its own value, as on the page");
 });
 

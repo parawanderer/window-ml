@@ -5,10 +5,12 @@
 // isolated world (`Page.createIsolatedWorld`). Both share the page's DOM and nothing else (docs/spec/SITE_ACCESS.md,
 // part 4; exec-routing.ts decides when).
 //
-// The script runs inside ONE self-contained wrapper, built here as source: it binds `ml` (the values the worker sent,
-// frozen) and `state`, captures the console as the main-world exec does, and returns plain data. Nothing is evaluated
-// from a string inside the page, so neither the page's CSP nor the world's matters: like `cdpEval`, the expression form
-// is tried first and the statement body second.
+// The script runs inside ONE self-contained wrapper, built here as source: it binds `ml` (the values the worker sent)
+// and `state`, captures the console as the main-world exec does, and returns plain data. Nothing is evaluated from a
+// string inside the page, so neither the page's CSP nor the world's matters: like `cdpEval`, the expression form is
+// tried first and the statement body second. A pointer value is the page's own (isolated-kit.ts, spliced in as
+// source); what it needs from the worker mid-script (a re-pipe, a stored table's columns) is asked over a channel only
+// that world holds, answered for that call alone (iso-channel.ts).
 
 import { parse } from "acorn";
 import type { PreRead } from "../pointers/named-reads";
@@ -23,6 +25,8 @@ import { grantableOrigin } from "../site-access";
 import type { ExecReason, Isolation } from "./exec-routing";
 import { ensureDebuggerAttached, touchDebugger, hasDebuggerPermission } from "./sw-cdp";
 import { siteDecision } from "./sw-site-access";
+import { ISOLATED_KIT_SOURCE } from "../isolated-kit.gen";
+import type { IsoAnswer } from "./iso-channel";
 
 /** What the worker binds in the isolated world: the pointer reads the script names, and `ml.current` (or why not). */
 export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCurrent; currentError?: string }
@@ -37,13 +41,36 @@ export const ISOLATED_ML_MEMBERS = ["current", "dereference"] as const;
 // only a world this extension configured can reach. The nonce is the second check, the tab the first.
 const isoStreams = new Map<string, { tabId: number; push: (text: string, ts?: number) => void }>();   // state: plumbing — one in-flight call each
 
-/** Route a user-script world's console line to its call. Registered at startup (background.ts). */
-export function onIsolatedStream(msg: unknown, sender: chrome.runtime.MessageSender): void {
-    const m = msg as { type?: string; nonce?: string; text?: string; ts?: number } | null;
-    if (!m || m.type !== "ISO_EXEC_STREAM" || typeof m.nonce !== "string" || typeof m.text !== "string") return;
-    const s = isoStreams.get(m.nonce);
-    if (!s || sender.tab?.id !== s.tabId || sender.frameId !== 0) return;
-    s.push(m.text, typeof m.ts === "number" ? m.ts : undefined);
+/** One in-flight user-script exec that may ask the worker for pointer reads: where it runs, and its server. */
+interface IsoCall { tabId: number; documentId: string; worldId: string; serve: (req: unknown) => Promise<IsoAnswer> }
+// Keyed by the call's nonce, set for the call and deleted when it ends: a request after that, or under another call's
+// nonce, finds nothing. Only `onUserScriptMessage` reaches it, which the page's world cannot send on.
+const isoCalls = new Map<string, IsoCall>();   // state: plumbing — one in-flight call each
+
+/**
+ * Route a user-script world's message: a console line to its call, or a pointer read to its call's server. Registered
+ * at startup (background.ts) on `onUserScriptMessage`. A read is answered only from the call's own tab, top frame,
+ * document and world, under its nonce; anything else gets no answer at all.
+ * @returns true while an answer is pending (the channel stays open)
+ */
+export function onIsolatedMessage(msg: unknown, sender: chrome.runtime.MessageSender, sendResponse?: (r: IsoAnswer) => void): boolean {
+    const m = msg as { type?: string; nonce?: string; text?: string; ts?: number; req?: unknown } | null;
+    if (!m || typeof m.nonce !== "string") return false;
+    if (m.type === "ISO_EXEC_STREAM") {
+        if (typeof m.text !== "string") return false;
+        const s = isoStreams.get(m.nonce);
+        if (!s || sender.tab?.id !== s.tabId || sender.frameId !== 0) return false;
+        s.push(m.text, typeof m.ts === "number" ? m.ts : undefined);
+        return false;
+    }
+    if (m.type !== "ISO_EXEC_ASK" || !sendResponse) return false;
+    const c = isoCalls.get(m.nonce);
+    // Every fact the browser gives about the sender must be the call's, and an absent one is not: a world this extension
+    // configured on another tab, frame or document (or, where Chrome names it, another run's world) gets nothing.
+    const world = (sender as { userScriptWorldId?: string }).userScriptWorldId;
+    if (!c || sender.tab?.id !== c.tabId || sender.frameId !== 0 || sender.documentId !== c.documentId || (world !== undefined && world !== c.worldId)) return false;
+    c.serve(m.req).then(sendResponse, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+    return true;
 }
 
 /** A fresh random nonce for one call. */
@@ -55,8 +82,9 @@ const nonce = (): string => Array.from(crypto.getRandomValues(new Uint8Array(16)
  * @param b what to bind
  * @param n the call's nonce
  * @param stream the expression that sends one console line live (`__t` is the text, `__ts` the time), or "" for none
+ * @param ask an expression for the call's channel to the worker, `(req) => Promise<IsoAnswer>`, or "" for none
  */
-export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, stream: string): string {
+export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, stream: string, ask = ""): string {
     const members = ISOLATED_ML_MEMBERS.filter((m) => m !== "current" || b.current || b.currentError);
     const bound = JSON.stringify({ reads: b.reads, current: b.current ?? null, currentError: b.currentError ?? null, members });
     return `(async () => {
@@ -64,33 +92,28 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const __B = JSON.parse(${JSON.stringify(bound)});
     const __split = (${splitStages.toString()});
     const __stages = (p) => Array.isArray(p) ? p.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()) : (typeof p === "string" && p.trim() ? __split(p) : []);
-    const __reads = new Map(__B.reads.map((r) => [JSON.stringify([r.ref, r.pipe]), r]));
+    const __reads = new Map(__B.reads.map((r, i) => [JSON.stringify([r.ref, r.pipe]), { r, i }]));
     const __no = (k) => { throw new Error("ml." + k + " is not available in this exec, which runs in an isolated world: it has ml." + __B.members.join(", ml.") + ". Do the rest in another call."); };
     const __freeze = (o) => { if (o && typeof o === "object" && !Object.isFrozen(o)) { Object.freeze(o); for (const k of Object.keys(o)) __freeze(o[k]); } return o; };
     const __cur = __B.current ? __freeze({ ...__B.current.current, log: Object.assign([...__B.current.current.log], { text: __B.current.logText }) }) : undefined;
-    // The page's pointer value (deref-read.ts DerefText) as far as one world can hold it: a String with its facts. What
-    // needs the worker while the script runs (a stored table's columns, a re-pipe) is not here yet, and says so.
-    const __later = (k) => () => { throw new Error("A pointer's ." + k + " is not available in an isolated exec yet. Read it in a read-only exec, which reads pointers in the worker."); };
-    const __deref = (r) => {
-        const s = new String(r.value ?? ""), m = r.meta || {};
-        let __j;
-        Object.defineProperties(s, {
-            type: { value: m.kind ?? "text" }, id: { value: m.id ?? "" }, tool: { value: m.tool ?? "" }, step: { value: m.step ?? -1 },
-            ...(m.label ? { label: { value: m.label } } : {}), ...(m.image ? { image: { value: m.image } } : {}), ...(m.latex ? { latex: { value: m.latex } } : {}),
-            text: { get: () => String(s) },
-            json: { get: () => { if (!__j) { const t = String(s).trim(); let v; if (t.startsWith("{") || t.startsWith("[")) { try { v = JSON.parse(t); } catch { v = undefined; } } __j = { v }; } return __j.v; } },
-            ...(m.table ? { table: { get: __later("table") } } : {}),
-            pipe: { value: __later("pipe()") }, schema: { value: __later("schema()") },
-        });
-        return Object.freeze(s);
-    };
+    // The page's pointer value (deref-read.ts DerefText), from the kit; a re-pipe or a stored table's columns ask the
+    // worker over the call's channel, which answers only for this call (iso-channel.ts).
+    ${ISOLATED_KIT_SOURCE}
+    const __chan = ${ask || "undefined"};
+    const __chanAsk = __chan && (async (req) => {
+        const r = await __chan(req);
+        if (!r || typeof r !== "object") throw new Error("The worker did not answer this exec's pointer read.");
+        if (typeof r.error === "string") throw new Error(r.error);
+        return r.ok;
+    });
     const __t0 = {
         dereference(ref, opts) {
-            const r = __reads.get(JSON.stringify([String(ref), __stages(opts && opts.pipe)]));
-            if (!r) throw new Error("ml.dereference(" + JSON.stringify(String(ref)) + ") was not named in the script, so its value was not sent with it. Write the pointer and its pipe as literals and run it again.");
+            const e = __reads.get(JSON.stringify([String(ref), __stages(opts && opts.pipe)]));
+            if (!e) throw new Error("ml.dereference(" + JSON.stringify(String(ref)) + ") was not named in the script, so its value was not sent with it. Write the pointer and its pipe as literals and run it again.");
+            const r = e.r;
             if (r.error !== undefined && r.error !== null) throw new Error(r.error);
             if (r.warning) console.warn(r.warning);
-            return __deref(r);
+            return __mlIsoKit.isoValue(r, e.i, __chanAsk);
         },
     };
     const ml = new Proxy(Object.freeze(__t0), { get(t, k) {
@@ -162,19 +185,22 @@ export async function userScriptsAvailable(): Promise<boolean> {
  * @param code the approved source, pointer macros expanded
  * @param b what to bind
  * @param onStream the call's live-output sink
+ * @param serve the call's pointer-read server (iso-channel.ts), or undefined when it has nothing to ask for
  */
-export async function runInUserScriptWorld(tabId: number, documentId: string, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void): Promise<IsolatedResult> {
+export async function runInUserScriptWorld(tabId: number, documentId: string, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void, serve?: (req: unknown) => Promise<IsoAnswer>): Promise<IsolatedResult> {
     const us = chrome.userScripts;
     const worldId = `wml-${runId}`;
     const n = nonce();
     if (onStream) isoStreams.set(n, { tabId, push: onStream });
+    if (serve) isoCalls.set(n, { tabId, documentId, worldId, serve });
     const stream = onStream ? `chrome.runtime.sendMessage({ type: "ISO_EXEC_STREAM", nonce: ${JSON.stringify(n)}, text: __t, ts: __ts })` : "";
+    const ask = serve ? `((req) => chrome.runtime.sendMessage({ type: "ISO_EXEC_ASK", nonce: ${JSON.stringify(n)}, req }))` : "";
     const run = async (inner: string): Promise<unknown> => {
-        const [res] = await us.execute({ target: { tabId, documentIds: [documentId] }, worldId, injectImmediately: true, js: [{ code: isolatedWrapper(inner, b, n, stream) }] });
+        const [res] = await us.execute({ target: { tabId, documentIds: [documentId] }, worldId, injectImmediately: true, js: [{ code: isolatedWrapper(inner, b, n, stream, ask) }] });
         return (res as { result?: unknown } | undefined)?.result;
     };
     try {
-        await us.configureWorld({ worldId, messaging: !!onStream });
+        await us.configureWorld({ worldId, messaging: !!onStream || !!serve });
         const [expr, body] = forms(code);
         let out: unknown;
         try { out = await run(expr); } catch { out = undefined; }
@@ -192,6 +218,7 @@ export async function runInUserScriptWorld(tabId: number, documentId: string, ru
         return { error: `The isolated exec failed (${(e as Error)?.message || e}).` };
     } finally {
         isoStreams.delete(n);
+        isoCalls.delete(n);
     }
 }
 
@@ -206,8 +233,9 @@ const ISO_BINDING = "__mlIsoStream";
  * @param code the approved source, pointer macros expanded
  * @param b what to bind
  * @param onStream the call's live-output sink
+ * @param serve the call's pointer-read server (iso-channel.ts), or undefined when it has nothing to ask for
  */
-export async function runInCdpWorld(tabId: number, documentId: string, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void): Promise<IsolatedResult> {
+export async function runInCdpWorld(tabId: number, documentId: string, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void, serve?: (req: unknown) => Promise<IsoAnswer>): Promise<IsolatedResult> {
     const at = await ensureDebuggerAttached(tabId);
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec in an isolated world (${at.error}).` };
     const target: chrome.debugger.Debuggee = { tabId };
@@ -218,11 +246,21 @@ export async function runInCdpWorld(tabId: number, documentId: string, runId: st
         if (src.tabId !== tabId || method !== "Runtime.bindingCalled") return;
         const p = params as { name?: string; payload?: string; executionContextId?: number } | undefined;
         if (!p || p.name !== ISO_BINDING || contextId === undefined || p.executionContextId !== contextId) return;
-        try { const m = JSON.parse(p.payload || "{}") as { nonce?: string; text?: string; ts?: number }; if (m.nonce === n && m.text) onStream!(m.text, m.ts); } catch { /* not worth failing the exec */ }
+        let m: { nonce?: string; text?: string; ts?: number; ask?: unknown; req?: unknown };
+        try { m = JSON.parse(p.payload || "{}"); } catch { return; }
+        if (!m || m.nonce !== n) return;
+        if (typeof m.text === "string" && m.text && onStream) { onStream(m.text, m.ts); return; }
+        // A pointer read: answered into the same world, by context id, so nothing else sees it. A late answer (the world
+        // gone with its document) fails quietly.
+        if (serve && Number.isInteger(m.ask)) {
+            const ctxNow = contextId;
+            void serve(m.req).then((ans) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
+                { expression: `globalThis.__mlIsoAnswer(${JSON.stringify(m.ask)}, ${JSON.stringify(ans)})`, contextId: ctxNow })).catch(() => {});
+        }
     };
     try {
         await chrome.debugger.sendCommand(target, "Runtime.enable");
-        if (onStream) {
+        if (onStream || serve) {
             try {
                 // Before the world exists, so it is installed there; named, so no other world (the page's) has it.
                 await chrome.debugger.sendCommand(target, "Runtime.addBinding", { name: ISO_BINDING, executionContextName: worldName });
@@ -239,10 +277,12 @@ export async function runInCdpWorld(tabId: number, documentId: string, runId: st
         // Created on whatever document the frame held; checked AFTER, so a world on any later document is refused (a
         // context dies with its document, so one created on the routed document cannot outlive it).
         if (!(await stillOn(tabId, documentId))) { contextId = undefined; return { error: "The exec did not run: the page navigated before it started." }; }
-        const stream = bound ? `${ISO_BINDING}(JSON.stringify({ nonce: ${JSON.stringify(n)}, text: __t, ts: __ts }))` : "";
+        const stream = bound && onStream ? `${ISO_BINDING}(JSON.stringify({ nonce: ${JSON.stringify(n)}, text: __t, ts: __ts }))` : "";
+        // The binding carries a read out; the answer comes back by an evaluate in this context, to the pending promise.
+        const ask = bound && serve ? `(() => { const P = new Map(); let k = 0; globalThis.__mlIsoAnswer = (id, r) => { const f = P.get(id); if (f) { P.delete(id); f(r); } }; return (req) => new Promise((res) => { const id = ++k; P.set(id, res); ${ISO_BINDING}(JSON.stringify({ nonce: ${JSON.stringify(n)}, ask: id, req })); }); })()` : "";
         type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
         const evaluate = (inner: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
-            { expression: isolatedWrapper(inner, b, n, stream), contextId, awaitPromise: true, returnByValue: true, userGesture: true }) as Promise<EvalResult>;
+            { expression: isolatedWrapper(inner, b, n, stream, ask), contextId, awaitPromise: true, returnByValue: true, userGesture: true }) as Promise<EvalResult>;
         const syntaxErr = (r: EvalResult) => /SyntaxError/.test(r?.exceptionDetails?.exception?.description || r?.exceptionDetails?.text || "");
         const [expr, body] = forms(code);
         let r = await evaluate(expr);
@@ -301,6 +341,8 @@ const ISO_EXEC_CAP = 500;
 export async function runIsolatedExec(o: {
     tabId: number; documentId: string; runId: string; js: string; how: "userScripts" | "cdp"; reason: ExecReason; reads: readonly PreRead[];
     current?: () => Promise<CurrentSnapshot | undefined>; onStream?: (text: string, ts?: number) => void;
+    /** The call's pointer-read server (iso-channel.ts): given only when a read was sent, so a call with none has no channel. */
+    serve?: (req: unknown) => Promise<IsoAnswer>;
 }): Promise<{ result: string; renderIn: RenderDescriptor; renderOut?: RenderDescriptor }> {
     const renderIn = execCodeIn(o.js);
     const b: IsolatedBindings = { reads: o.reads };
@@ -311,7 +353,8 @@ export async function runIsolatedExec(o: {
         } catch (e) { b.currentError = `ml.current could not be read (${(e as Error)?.message || e}).`; }
     }
     const code = expandPointers(o.js).code;
-    const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream);
+    const serve = o.reads.some((r) => r.error === undefined) ? o.serve : undefined;
+    const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve);
     const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there, and ml has only ${["current", "dereference"].filter((m) => m !== "current" || b.current || b.currentError).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
     if ("error" in r) return { result: `Error: ${r.error}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };
     const kept = r.logs.join("\n");
