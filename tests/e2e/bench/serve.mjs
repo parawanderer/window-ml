@@ -13,12 +13,13 @@
 // not add a build step or a package, and SSE is the whole protocol: one direction, text frames, automatic
 // reconnect in the browser.
 
-import { createServer } from "node:http";
+import { createServer, get as httpGet } from "node:http";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { watch as fsWatch, readFileSync } from "node:fs";
-import { extname, join, normalize, resolve, sep, dirname } from "node:path";
+import { extname, join, normalize, resolve, sep, dirname, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { COLUMNS } from "./metrics.mjs";
+import { heldRuns } from "./hold.mjs";
 import { appScript, scoresScript, appCss, invalidate } from "./page/bundle.mjs";
 
 /** The stable default. Arbitrary, but FIXED: a reused URL is the whole point (see startDashboard). */
@@ -53,6 +54,11 @@ export async function stopServedSweep({ port = null, waitMs = 5000 } = {}) {
     await rm(SERVER_FILE, { force: true });
     return s;
 }
+
+/** The repository root: a held run's `dir` is relative to it. */
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+/** The runs held open whose directory is inside the sweep at `root`. */
+const heldHere = (root) => heldRuns().filter((h) => resolve(REPO, h.dir).startsWith(root + sep));
 
 const MIME = {
     ".md": "text/plain; charset=utf-8", ".json": "application/json", ".txt": "text/plain; charset=utf-8",
@@ -137,6 +143,25 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
             if (!saved) { res.writeHead(400); return res.end("not a mark: taskId, who, turn, and a quote or a note"); }
             res.writeHead(200, { "content-type": "application/json" });
             return res.end(JSON.stringify(saved));
+        }
+        // This sweep's runs held open (hold.mjs), for the page's Watch card, and each one's screen passed through from its
+        // own process (stream.mjs), so the page reaches it on its own origin.
+        if (url.pathname === "/held") {
+            res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+            return res.end(JSON.stringify(heldHere(root).map(({ pid, cell, dir, expiresAt, stream }) => ({ pid, cell, dir: relative(root, resolve(REPO, dir)), expiresAt, stream: !!stream }))));
+        }
+        const held = url.pathname.match(/^\/held\/(\d+)\/stream$/);
+        if (held) {
+            const h = heldHere(root).find((x) => String(x.pid) === held[1] && x.stream);
+            if (!h) { res.writeHead(404); return res.end("not held, or no screen"); }
+            const up = httpGet({ host: "127.0.0.1", port: h.stream, path: "/stream" }, (r) => {
+                res.writeHead(r.statusCode ?? 502, { "content-type": "application/octet-stream", "cache-control": "no-store" });
+                res.flushHeaders();
+                r.pipe(res);
+            });
+            up.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+            req.on("close", () => up.destroy());
+            return;
         }
         if (url.pathname.startsWith("/artifacts/")) {
             // Confined to the sweep directory: a `..` in a link must not read the filesystem, even on a
@@ -244,7 +269,8 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
             flush();   // never end on a coalesced-away final state
             for (const c of clients) { try { c.end(); } catch { /* already gone */ } }
             clients.clear();
-            await new Promise((r) => server.close(r));
+            // And every other connection: an idle keep-alive or a held run's screen passed through would hold close() open.
+            await new Promise((r) => { server.close(r); server.closeAllConnections(); });
         },
     };
 }

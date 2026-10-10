@@ -64,7 +64,11 @@ its memory on the box, and on SIGTERM. `hold.mjs` lists the held runs (`artifact
 [pid|cell|dir]` releases them, a held run's browser is headless like every bench browser (`--hold-window` makes it a minimised
 real window that `hold.mjs --show [x]` brings up and `--hide` minimises again; on macOS each such window takes the
 screen as it opens, every cell under `--hold failures`, so it is opt-in), and each turn sent to it after its own goes in `continued.jsonl` and on the page's
-Continued card, apart from the interview and never scored, and merge-when-green releases those a merged worktree left. A held cell is never served
+Continued card, apart from the interview and never scored, and merge-when-green releases those a merged worktree left.
+To SEE a held run, open the live page (`--serve`, or `serve.mjs <sweep dir>` after the sweep): its Watch card lists the
+held runs, and each one opens as a tile streaming that browser's screen, headless or not (`stream.mjs`; captured only while
+a tile is open). Tiles drag by their title and resize by their corner; when the run lets go the tile keeps its last frame,
+greyed, under "stream ended". A saved `report.html` has no server behind it, so no Watch card. A held cell is never served
 from the cache under `all` or a selector (a cached result has no browser to keep); under `failures` it is.
 
 **Local models in parallel: `--lanes`.** One lane per model: each model's runs in turn, different models at once when

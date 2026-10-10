@@ -206,3 +206,28 @@ a.role.score { color: inherit } a.role.score:hover { text-decoration: none; back
 
 /* A tag beside a run's outcome (StreamTag) keeps its distance from it. */
 td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
+
+/* The Watch card's list of held runs: one button each, to open its screen as a tile. */
+.watch-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 }
+/* The open screens, side by side and wrapping; each tile's width is its own (dragged by its corner). */
+.watch-tiles { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start }
+/* One held run's screen: a title bar to drag it by, the frames, and a corner grip to resize it. */
+.watch-tile { position: relative; margin: 0; max-width: 100%; border: 1px solid var(--border); border-radius: 8px;
+              overflow: hidden; background: var(--panel) }
+.watch-tile.dragging { opacity: .7; outline: 2px solid var(--accent) }
+.watch-tile figcaption { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 10px; cursor: grab;
+                         touch-action: none; user-select: none; border-bottom: 1px solid var(--border) }
+.watch-tile.dragging figcaption { cursor: grabbing }
+.watch-tile figcaption code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.watch-state { color: var(--ok); font-size: 11px }
+.watch-tile.ended .watch-state { color: var(--fg-dim) }
+.watch-screen { position: relative; background: #000 }
+.watch-screen img { display: block; width: 100%; height: auto }
+.watch-wait { padding: 40px 12px; text-align: center; color: var(--fg-dim); background: var(--bg) }
+/* Over: the last frame, greyed, under "stream ended", once the held run is gone. */
+.watch-tile.ended img { filter: grayscale(1) brightness(.6) }
+.watch-ended { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+               color: #fff; font-weight: 650; letter-spacing: .02em; text-shadow: 0 1px 3px #000 }
+/* The resize corner: drag it to make the tile wider or narrower; the height follows the screen's shape. */
+.watch-grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; touch-action: none;
+              background: linear-gradient(135deg, transparent 50%, var(--fg-faint) 50%) }

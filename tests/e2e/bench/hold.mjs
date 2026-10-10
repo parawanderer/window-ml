@@ -12,7 +12,8 @@
 // again). Each held run is an entry in HELD_FILE while it lives, and goes on `/end`, after its idle minutes with no
 // message, or on SIGTERM (what `--stop` and merge-when-green send), closing its browser. A held run's browser is headless, as
 // every bench browser is; `--hold-window` makes it a minimised real window a person can bring up (`--show`), opt-in because
-// on macOS each one takes the screen as it opens. Each turn sent after the run's own is logged in `continued.jsonl` beside its outbox report,
+// on macOS each one takes the screen as it opens. To look at a held run, the bench page streams its screen instead
+// (stream.mjs, the Watch card): its process serves it on a local port while someone watches. Each turn sent after the run's own is logged in `continued.jsonl` beside its outbox report,
 // which the page shows under that run's answers, apart from the scripted ones.
 
 import { spawn } from "node:child_process";
@@ -23,7 +24,8 @@ import { parseSelector, selected } from "./cells.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
-/** The runs held open right now, a list of `{ pid, cell, sweep, dir, attach, expiresAt, window }` (merge-when-green reads it). */
+/** The runs held open right now, a list of `{ pid, cell, sweep, dir, attach, expiresAt, window, stream }` (merge-when-green
+ *  reads it; `stream` is the local port its screen is served on, stream.mjs). */
 export const HELD_FILE = process.env.BENCH_HELD_FILE || path.join(ROOT, "tests/e2e/artifacts/bench/held.json");   // the env: tests only
 /** Whether a held run's browser can be a window here: not on a Linux box with no display, where only headless runs. */
 export const canShow = (env = process.env, platform = process.platform) => platform !== "linux" || !!(env.DISPLAY || env.WAYLAND_DISPLAY);
@@ -164,7 +166,11 @@ async function child() {
             const rel = path.relative(ROOT, dir);
             let expiresAt = Date.now() + job.idleMs;
             let shown = job.window ? "minimized" : "headless";
-            const entry = () => ({ pid: process.pid, cell: job.label, sweep: job.sweep, dir: rel, attach: `node tests/e2e/converse.mjs --attach ${rel} "<message>"`, expiresAt: new Date(expiresAt).toISOString(), window: shown });
+            // Its screen, for the bench page to show while someone watches (stream.mjs): captured only then.
+            const { serveScreen } = await import("./stream.mjs");
+            const screen = await serveScreen((onFrame) => ctl.screencast(onFrame)).catch((e) => { console.log(`no screen stream: ${e}`); return null; });
+            const entry = () => ({ pid: process.pid, cell: job.label, sweep: job.sweep, dir: rel, attach: `node tests/e2e/converse.mjs --attach ${rel} "<message>"`, expiresAt: new Date(expiresAt).toISOString(), window: shown,
+                ...(screen ? { stream: screen.port } : {}) });
             putHeld(entry());
             // Show or hide the window when asked, also while a turn runs (a person wants to watch it work).
             const winFile = path.join(dir, WINDOW_FILE);
@@ -202,6 +208,7 @@ async function child() {
             }
             clearInterval(watchWindow);
             dropHeld(process.pid);
+            await screen?.close();   // the page's tile says the stream ended, over the last frame
             status(`done: released (${why})`);
         };
         await runOnce(runConfig(cell, job.env, dir, {
