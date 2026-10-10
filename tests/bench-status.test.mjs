@@ -95,20 +95,20 @@ test("both files are written whole, with no temporary file left behind", () => {
 test("the writer writes at most every so often, the latest state lands, it builds the state only to write it, and flush writes now", async () => {
     const wrote = [];
     let built = 0;
-    const w = statusWriter("d", { everyMs: 40, write: (_d, s) => wrote.push(s) });
+    const w = statusWriter("d", { everyMs: 400, write: (_d, s) => wrote.push(s) });
     for (let i = 0; i < 50; i++) w.update(() => { built++; return i; });
     assert.equal(wrote.length, 0, "nothing synchronously");
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual(wrote, [49], "one write, of the latest");
     assert.equal(built, 1, "built once, not once per update");
     w.update(() => "a"); w.update(() => "b");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual(wrote, [49], "the next waits out the interval");
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 450));
     assert.deepEqual(wrote, [49, "b"]);
     w.update(() => "c");
     w.flush({ final: true });
     assert.deepEqual(wrote.at(-1), { final: true }, "the final state, at once");
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 450));
     assert.equal(wrote.length, 3, "and the pending one does not land after it");
 });
