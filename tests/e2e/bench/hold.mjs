@@ -7,6 +7,7 @@
 //   node --import tsx tests/e2e/bench/hold.mjs --limit [12G | auto]   the machine-wide memory limit: shown, set, or back to half
 //                                                             the RAM; every running sweep takes it up within 5 s
 //   node --import tsx tests/e2e/bench/hold.mjs --show [x]     bring a held run's browser window up (--hide minimises it again)
+//   node --import tsx tests/e2e/bench/hold.mjs --help         print this
 //   node tests/e2e/converse.mjs --attach <cell dir> "…"       the next message to one (converse's inbox/outbox protocol)
 //
 // A sweep started with `--hold` (run.mjs), or over a task that says `hold`, runs each held cell through `startHeld`: a
@@ -28,6 +29,7 @@ import { parseSelector, selected } from "./cells.mjs";
 import { ledger, measureLedger, unregister, fmtBytes, availableMemory, budgetState, readLimit, setLimit, resolveLimit, limitWhence, parseSize, RESERVE_FRAC } from "./memory-budget.mjs";
 import os from "node:os";
 import { menuText } from "./hold-menu.mjs";
+import { headerHelp } from "./cli-help.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -241,6 +243,7 @@ async function child() {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
     const argv = process.argv.slice(2);
     if (argv[0] === "--child") await child();
+    else if (argv[0] === "--help" || argv[0] === "-h") process.stdout.write(headerHelp(import.meta.url));
     else if (argv[0] === "--show" || argv[0] === "--hide") {
         const want = argv[0].slice(2);
         const which = heldRuns().filter((h) => !argv[1] || [String(h.pid), h.cell, h.dir].some((s) => String(s).includes(argv[1])));
@@ -289,7 +292,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         if (!list.length) console.log("no runs are held open");
         for (const h of list) console.log(`${h.cell} of ${h.sweep} (pid ${h.pid}, window ${h.window ?? "?"}, until ${h.expiresAt} unless spoken to)\n  ${h.attach}`);
     } else {
-        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir …] | --menu | --ledger | --limit [size | auto]]");
+        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir …] | --menu | --ledger | --limit [size | auto] | --help]");
         process.exit(2);
     }
 }

@@ -72,6 +72,7 @@ export function statusText(s, now = Date.now()) {
             }
             out.push("", ...(m.hints ?? []).map((x) => `- ${x}`), "");
         }
+        if (m.released?.length) out.push("Released by the sweep (--when-full release-duplicates; one of each kind kept):", "", ...m.released.map((r) => `- ${clock(r.at)} ${r.cell} (${r.key}, ${fmtBytes(r.rss)}, pid ${r.pid}) so ${r.for} could start`), "");
         if (m.wouldHold?.length) out.push("Not held (the budget had no room):", "", ...m.wouldHold.map((w) => `- ${w.cell} (${w.failure}): ${w.dir}`), "");
         out.push("Any time, from any clone: `node --import tsx tests/e2e/bench/hold.mjs --menu` (held runs and their commands), `--ledger` (every bench process and its memory).", "");
     }

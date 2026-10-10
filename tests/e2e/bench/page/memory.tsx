@@ -96,6 +96,10 @@ export function MemoryCard({ m, live = false }: { m?: MemoryState | null; live?:
                 <h3>Not held: the budget had no room</h3>
                 <ul>{m.wouldHold.map((w) => <li key={w.dir}>{w.cell} <span class="dim">({w.failure})</span></li>)}</ul>
             </> : null}
+            {m.released?.length ? <>
+                <h3 class="tt" data-tip="This sweep runs with --when-full release-duplicates: when a cell could not start for memory, it released its own held duplicates (same model, task and failure), keeping the run each group's attach line names.">Released by the sweep: duplicates, one of each kept</h3>
+                <ul class="mreleased">{m.released.map((r) => <li key={r.pid}>{r.cell} <span class="dim">({r.key}, {fmt(r.rss)}) so {r.for} could start</span></li>)}</ul>
+            </> : null}
         </Card>
     );
 }

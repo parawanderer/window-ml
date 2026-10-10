@@ -107,8 +107,10 @@ export interface MemoryState {
     limit: number; used: number; byKind: Record<string, number>; available: number; total: number; reserve: number; room: number;
     /** where the limit came from: this sweep's --memory-limit, the machine-wide one a person set, or half the RAM */
     limitSource?: "flag" | "machine" | "auto"; limitBy?: string | null; limitAt?: string | null;
-    active: boolean; whenFull: "pause" | "stop-holding"; paused: string | null; resume: string; hints: string[];
+    active: boolean; whenFull: "pause" | "stop-holding" | "release-duplicates"; paused: string | null; resume: string; hints: string[];
     /** A run that cannot start for memory (stop-holding), and what would free some: commands to paste, nothing done. */
+    /** Held runs the sweep released itself (`--when-full release-duplicates`), each to let a waiting cell start. */
+    released?: { cell: string; key: string; pid: number; rss: number; at: number; for: string }[];
     waiting?: { cell: string; why: string; since: number; free: { text: string; cmd: string }[] } | null;
     runner: { rss?: number; peak?: number; heap?: number } | null;
     /** held runs of every clone, grouped by model · task · failure, with the commands for each */
