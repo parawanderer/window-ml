@@ -40,12 +40,12 @@ out of a shot"). The worker's vision host asks the page for layout only, through
 (`docs/dev/agent-tools.md`, "The worker's vision host").
 
 **A page cannot start a run that claims the worker built it.** `startBackgroundRun` (`sw/sw-run-host.ts`) strips
-`builtBy`, `rebuild.builtBy` and `display` from a page's START_RUN payload (`pageStartPayload`) before `hostRun`, so only
+`builtBy`, `rebuild.builtBy`, `display` and `origin` (the PromptOrigin) from a page's START_RUN payload (`pageStartPayload`) before `hostRun`, so only
 the worker's own `hostRun` call (`sw/sw-run-start.ts`) and `makeWorkerRun` make a run the worker's. The run host branches
 on `builtBy` for tool routing, grants, vision, the answer and what it stores, so a page's claim would get all of them.
 `pageOrigin` and `pageUrl` are replaced by the sender's (the origin the origin gate read, and the top frame's URL): the
 origin seeds the run's consented origins and the URL is "the page you are on", so a page naming another site would get
-navigations and reads there without a gate. A page's payload may ask for more gating, never less: the auto-approve
+navigations and reads there without a gate. `maxSteps` goes through `stepBudget`, as on RESUME_RUN (a whole number up to 200, otherwise the loop's default), so a page cannot ask for an unbounded run, and a dropped `origin` means a page cannot stamp its prompt as typed on an extension surface such as the HUD. A page's payload may ask for more gating, never less: the auto-approve
 flags (`autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`, `autoApproveSelfSource`) and
 `selfIntrospection` hold only when the worker's config allows them too, and a builtin tool that asks for approval
 (`GATED_TOOL_NAMES`) or a server tool (`remote`) always does, whatever `requiresApproval` the page sent. A run id

@@ -240,6 +240,40 @@ test("a page's own tool named nothing privileged keeps the requiresApproval it s
     assert.ok(r.toPage.some((p) => p.name === "my_tool"), "it ran in the page");
 });
 
+// --- maxSteps and origin: a page's START_RUN gets the resume's step budget and cannot stamp its prompt's origin ---
+
+const startEventOf = (r) => r.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event.kind === "agent")?.event;
+const EXT = { id: "ext", url: "chrome-extension://ext/sidebar.html", origin: "chrome-extension://ext" };
+
+/** The run's `run.input` (what the state inspector shows of the live turn, including where the prompt was typed), read while
+ *  the run is held at an unanswered gate. */
+async function liveRunInput(extra) {
+    const r = await pageRun(extra, [{ name: "navigate", args: { url: "https://other.example/" } }], { approve: false });
+    const dump = await r.bg.send({ type: "DUMP_RUN_STATE", payload: { run: "pagerun9" } }, EXT);
+    return { r, input: dump.data.entries.find((e) => e.id === "run.input")?.value };
+}
+
+test("a page START_RUN with a huge or invalid maxSteps runs with the resume's budget, the same stepBudget", T, async () => {
+    const control = await pageRun({ maxSteps: 7 }, []);
+    assert.equal(startEventOf(control)?.maxSteps, 7, "positive control: a sane budget is kept");
+    const huge = await pageRun({ maxSteps: 100000 }, []);
+    assert.equal(startEventOf(huge)?.maxSteps, 200, "the page asked the worker for an unbounded run");
+    for (const bad of [-3, 0, 2.5, "50", NaN, null]) {
+        const r = await pageRun({ maxSteps: bad }, []);
+        const got = startEventOf(r)?.maxSteps;
+        assert.ok(got === undefined || (Number.isInteger(got) && got > 0 && got <= 200), `maxSteps ${String(bad)} reached the run as ${String(got)}`);
+    }
+});
+
+test("a page START_RUN with origin { surface: \"hud\" } carries no origin: its prompt is not stamped as typed on an extension surface", T, async () => {
+    const control = await liveRunInput({});
+    assert.equal(control.input?.task, "do it", "positive control: the live turn's input is readable");
+    assert.equal(control.input.origin, null);
+    const forged = await liveRunInput({ origin: { surface: "hud" } });
+    assert.equal(forged.input?.task, "do it");
+    assert.equal(forged.input.origin, null, "the page's origin was stamped on its prompt");
+});
+
 // --- a page cannot start its run under another tab's run id ---
 
 test("a page cannot start a run under the id of another tab's run, live or settled", T, async () => {

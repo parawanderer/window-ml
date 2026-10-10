@@ -106,13 +106,14 @@ const GATED_TOOL_NAMES: ReadonlySet<string> = new Set(["exec", "python_exec", "f
 
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy` and `display`. Only the worker's own `hostRun` call
+ * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display` and `origin` (the PromptOrigin: a page could
+ *   stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
  * - Replaced by the sender's, as the browser stamped it (what the origin gate read): `pageOrigin` seeds the run's
  *   consented origins and `pageUrl` is "the page you are on", so a page naming another site would get navigations and
  *   reads there without a gate. Absent when the sender has none.
- * - Bounded by the worker's config: `autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`,
+ * - Bounded: `maxSteps` goes through `stepBudget`, as on RESUME_RUN. By the worker's config: `autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`,
  *   `autoApproveSelfSource` and `selfIntrospection` hold only when the config allows them too; and a tool named in
  *   `GATED_TOOL_NAMES`, or a server tool (`remote`), always `requiresApproval`.
  * @param payload what the page sent
@@ -122,7 +123,10 @@ const GATED_TOOL_NAMES: ReadonlySet<string> = new Set(["exec", "python_exec", "f
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
+    const { builtBy: _b, display: _d, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
+    // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
+    const budget = stepBudget(rest.maxSteps);
+    if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
     if (rest.rebuild && typeof rest.rebuild === "object") {
         const { builtBy: _rb, ...rebuild } = rest.rebuild;
         rest.rebuild = rebuild;
