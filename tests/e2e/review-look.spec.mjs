@@ -560,32 +560,37 @@ test("text-shadow 500 px off our shadow-root tab paints nothing outside the host
     });
 });
 
-// GAP: a `filter: url(#...)` SVG reference has no px lengths, so paintsBeyond adds 0 — while feOffset MOVES the panel
-// 200 px left at paint time and getBoundingClientRect (what the shell measures) does not follow a filter. The svg and
-// the rule both go into our open shadow root, so the paint-server reference resolves in-tree; the filter region is
-// widened (default objectBoundingBox would clip the shifted copy). The panel itself is the filtered box: a filter on
-// the OUTER host would also make it the containing block of the fixed panel and relayout it (measured 2026-10-09).
-// STRIP excludes the sidebar's honest area: the control counts only pixels LEFT of it, which exist only if the ghost
-// really painted there (without the displacement that region is plain green).
+// A `filter: url(#...)` SVG reference has no px lengths, and feOffset MOVES the panel 200 px left at paint time, where
+// getBoundingClientRect (what the shell measures) does not follow. The svg goes into our open shadow root, so the
+// paint-server reference resolves in-tree; the filter region is widened (default objectBoundingBox would clip the shifted
+// copy). The panel itself is the filtered box: a filter on the OUTER host would also make it the containing block of the
+// fixed panel and relayout it (measured 2026-10-09). STRIP excludes the sidebar's honest area: the control counts only
+// pixels LEFT of it, which exist only if the ghost really painted there. Our own styles set no filter on our UI, so any
+// filter there (this one included) is `tampered` and refused with the sentence that names the page; the mask is never
+// grown to the viewport for it. Set by a stylesheet in our root (refused for that too) and by an inline style alone.
 const STRIP = { left: 760, top: 0, width: 520, height: 720 };
-test.fixme("an SVG feOffset filter on our panel moves the UI 200 px left of every rect: the shot is refused, not under-covered", async () => {
-    await withShell(async (s) => {
-        await s.page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
-            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-            svg.setAttribute("width", "0"); svg.setAttribute("height", "0");
-            svg.innerHTML = `<filter id="ml-shift" x="-100%" y="-10%" width="300%" height="120%"><feOffset in="SourceGraphic" dx="-200" dy="0"/></filter>`;
-            const st = document.createElement("style");
-            st.textContent = "#ml-sb-host{filter:url(#ml-shift) !important}";
-            root.append(svg, st);
+for (const how of ["a stylesheet in our root", "an inline style on our panel"]) {
+    test(`an SVG feOffset filter on our panel moves the UI 200 px left of every rect: the shot is refused, not under-covered (${how})`, async () => {
+        await withShell(async (s) => {
+            await s.page.evaluate((inline) => {
+                const root = document.getElementById("ml-sb-root").shadowRoot;
+                const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                svg.setAttribute("width", "0"); svg.setAttribute("height", "0");
+                svg.innerHTML = `<filter id="ml-shift" x="-100%" y="-10%" width="300%" height="120%"><feOffset in="SourceGraphic" dx="-200" dy="0"/></filter>`;
+                root.append(svg);
+                if (inline) { root.getElementById("ml-sb-host").style.setProperty("filter", "url(#ml-shift)", "important"); return; }
+                const st = document.createElement("style");
+                st.textContent = "#ml-sb-host{filter:url(#ml-shift) !important}";
+                root.append(st);
+            }, how === "an inline style on our panel");
+            await s.page.waitForTimeout(200);
+            expect(await offGreen(s.page, (await s.bare()).dataUrl, STRIP), "the displaced copy paints left of the sidebar").toBeGreaterThan(1000);
+            const shot = await s.shoot();
+            expect(shot.dataUrl).toBeUndefined();
+            expect(shot.error, "refused with the sentence that names the page, not the person").toBe(TAMPERED);
         });
-        await s.page.waitForTimeout(200);
-        expect(await offGreen(s.page, (await s.bare()).dataUrl, STRIP), "the displaced copy paints left of the sidebar").toBeGreaterThan(1000);
-        const shot = await s.shoot();
-        if (!shot.error) expect(await offGreen(s.page, shot.dataUrl), "displaced pixels outside the mask").toBe(0);
-        else expect(shot.error, "a refusal must blame the page, not the person").toMatch(/page/i);
     });
-});
+}
 
 // --- second pass: a prerendered document ---
 

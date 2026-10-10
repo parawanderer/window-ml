@@ -155,6 +155,7 @@ test("an answer is `tampered` when the page has moved a host off the root elemen
             "an adopted stylesheet": () => mounted(docEl, [sel([0, 0, 10, 10])], { adopted: [{}] }),
             "a reflection on our element": () => mounted(docEl, [sel([0, 0, 10, 10], { "-webkit-box-reflect": "left 0px" })]),
             "a filter on our element": () => mounted(docEl, [sel([0, 0, 10, 10], { filter: "blur(100px)" })]),
+            "an SVG filter reference on our element (an feOffset moves the UI anywhere, with no length to bound)": () => mounted(docEl, [sel([0, 0, 10, 10], { filter: "url(\"#ml-shift\")" })]),
             "a text shadow on our element": () => mounted(docEl, [sel([0, 0, 10, 10], { "text-shadow": "rgb(0, 0, 0) -500px 0px 0px" })]),
             "a filter on our host": () => mounted(docEl, [sel([0, 0, 10, 10])], { hostCs: { filter: "drop-shadow(rgb(0, 0, 0) 0px 0px 0px)" } }),
         };
