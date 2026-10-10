@@ -7,7 +7,7 @@
 //                         the next fits beside what is loaded (/api/fits); a cloud model always goes. `--jobs N` caps
 //                         the lanes running at once. An interview runs this way unless --jobs is given
 //   … --only idFormat=label --only task=two-tables      re-measure a subset
-//   … --repeats 2 --dry   print the matrix and stop
+//   … --repeats 2 --dry   print the matrix, and against a real backend what it would cost, and stop
 //   … --no-cache          re-run cells that are already measured
 //   … --pdf               also render each run to run.html + run.pdf (slower, and much larger)
 //   … --capture always    snapshot the browser (screenshot + DOM, every open page) on EVERY run, not
@@ -74,10 +74,11 @@ import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { repoUrl } from "../../../scripts/gen-build-info.mjs";
-import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, modelKey, SCORES_DB } from "./scores.mjs";
+import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, modelKey, taskHash, SCORES_DB } from "./scores.mjs";
 import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
+import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool } from "./spend-predict.mjs";
 import { statusWriter } from "./status.mjs";
 import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
 import { failureShape, menuText, groupHeld, groupCommands, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
@@ -196,6 +197,42 @@ async function renderPdf(session, dir, name) {
     } finally { await page.close().catch(() => {}); }
 }
 
+/**
+ * What the cache says about a cell: `{ hit }` (a finished run under the same key, served instead of running it),
+ * `{ retry }` (it ERRORED last time, which measured nothing about the model, so it runs again), or null (no usable
+ * entry, or a cell to hold always, which needs a live browser).
+ */
+async function cacheEntry(cell, ctx) {
+    const cacheFile = path.join(ctx.sweepDir, cellPath(cell), "cell.json");
+    if (!ctx.cache || holdMode(cell, ctx.holdCli) === "always" || !existsSync(cacheFile)) return null;
+    try {
+        const saved = JSON.parse(await readFile(cacheFile, "utf8"));
+        if (saved.key !== cellKey(cell, ctx.fingerprint)) return null;
+        return saved.measurement && !saved.measurement.ok ? { retry: saved } : { hit: saved };
+    } catch { return null; }   // unreadable cache → re-run
+}
+
+/**
+ * What the sweep will cost (spend-predict.mjs), printed: each cell the cache will not serve, priced from its model's past
+ * runs of the task (this clone's log and the pulled pool) at the price service's current rates, else at the newest
+ * snapshot the log holds. Returns `{ cells, toRun, prices, atStart }` for the forecast as the sweep runs, or null with
+ * no prices at all (said why).
+ */
+async function estimateSpend(cells, nRun, { backend, scores, driverOf, cacheCtx }) {
+    const prices = (backend.priceSnapshotUrl ? await latestPrices(backend.priceSnapshotUrl) : null) ?? newestLoggedPrices(scores);
+    if (!prices) {
+        console.log("  spend estimate: none (no price service in .env and no price snapshot in the scores log)\n");
+        return null;
+    }
+    const pool = await openPool(path.join(ROOT, "tests/e2e/artifacts/bench-pool/scores.sqlite"));
+    const toRun = await Promise.all(cells.slice(0, nRun).map((c) => cacheEntry(c, cacheCtx).then((e) => !e?.hit)));
+    const est = predictCells(cells.map((c, i) => ({ model: driverOf(i), task: c.task.id, taskHash: taskHash(c.task, c.combo) })), pastRuns([scores, pool]), prices.priceOf);
+    pool?.close();
+    const atStart = forecast(est, { stateOf: () => "pending", modelOf: driverOf, cachedOf: (i) => i >= nRun || !toRun[i], prices: prices.at });
+    console.log(`${forecastText(atStart, { start: true }).join("\n")}\n`);
+    return { cells: est, toRun, prices, atStart };
+}
+
 /** Run one cell (or read it back from cache) and return its measurement. */
 async function runCell(cell, ctx, index) {
     const key = cellKey(cell, ctx.fingerprint);
@@ -204,21 +241,15 @@ async function runCell(cell, ctx, index) {
 
     // A cell to hold always runs: a cached result has no browser to keep. One held only on failure keeps its cache.
     const hold = holdMode(cell, ctx.holdCli);
-    if (ctx.cache && hold !== "always" && existsSync(cacheFile)) {
-        try {
-            const saved = JSON.parse(await readFile(cacheFile, "utf8"));
-            // A run that ERRORED (the backend refused, timed out, crashed) measured nothing about the model: run it
-            // again rather than serve the error from the cache. A finished run, right or wrong, is kept.
-            if (saved.key === key && saved.measurement && !saved.measurement.ok) {
-                ctx.retried++;
-                ctx.log(`  ↻ ${cellPath(cell)}: errored last time${isRateLimit(saved.measurement.error) ? " (rate-limited)" : ""}, running it again`);
-            } else if (saved.key === key) {
-                ctx.cached++;
-                const hit = { ...saved, dir, fromCache: true };
-                ctx.report?.(index, "done", hit);
-                return hit;
-            }
-        } catch { /* unreadable cache → re-run */ }
+    const cached = await cacheEntry(cell, ctx);
+    if (cached?.retry) {
+        ctx.retried++;
+        ctx.log(`  ↻ ${cellPath(cell)}: errored last time${isRateLimit(cached.retry.measurement.error) ? " (rate-limited)" : ""}, running it again`);
+    } else if (cached?.hit) {
+        ctx.cached++;
+        const hit = { ...cached.hit, dir, fromCache: true };
+        ctx.report?.(index, "done", hit);
+        return hit;
     }
     // The memory budget (memory-budget.mjs): no cell starts once the sweep paused at it, nor while its browser would not fit.
     if (!(await memoryLets(cell, ctx))) return null;
@@ -488,6 +519,13 @@ const main = async () => {
     if (args.dry) {
         for (const c of cells) console.log(`  ${comboLabel(c.combo)} · ${c.task.id} · r${c.repeat}  [${cellKey(c, fingerprint)}]`);
         if (alsoSame.length) console.log(`\n  and in the report, already on disk: ${alsoSame.map((s) => s.rel).join(", ")}`);
+        // What it would cost, before paying for it: against the configured backend, from the scores log.
+        const backend = await resolveBackendFromEnv();
+        const scores = backend ? await openScores() : null;
+        if (scores) {
+            console.log("");
+            await estimateSpend(cells, cells.length, { backend, scores, driverOf: (i) => cells[i].effects.backend?.model ?? backend.model ?? null, cacheCtx: { sweepDir, cache: args.cache, holdCli: args.hold, fingerprint } });
+        }
         console.log(`\n  (dry run — nothing executed)\n`);
         return;
     }
@@ -651,7 +689,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results), older,
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null, memory: memoryView(),
+        resources: resPoll?.resources() ?? null, ...spendState(), memory: memoryView(),
     });
     const status = statusWriter(sweepDir);
     console.log(`  status (for a model reading this from the CLI): ${path.relative(ROOT, sweepDir)}/status.md and status.json, rewritten every few seconds\n`);
@@ -682,6 +720,21 @@ const main = async () => {
         if (inSeed[i]) { if (ev.kind === "agent-result") inSeed[i] = false; return false; }
         return spent?.add(i, ev, driverOf(i)) ?? false;
     };
+    // What the sweep will cost (spend-predict.mjs): each cell to run priced from its model's past runs of the task at the
+    // price service's current rates (else the newest snapshot the log holds), from this clone's log and the pulled pool.
+    // Printed now; on the page, in status.md and at the end it narrows as cells finish.
+    const predicted = backend && scores ? await estimateSpend(cells, nRun, { backend, scores, driverOf, cacheCtx: ctx }) : null;
+    /** The spend so far and the forecast over it, for the page and status files. */
+    function spendState() {
+        const spend = spent?.summary(driverOf) ?? null;
+        return { spend, forecast: forecastNow(spend) };
+    }
+    /** The forecast now, over `spend` (live spend's summary): spent so far plus what the unfinished cells are estimated to add. */
+    function forecastNow(spend) {
+        if (!predicted) return null;
+        return forecast(predicted.cells, { stateOf: (i) => runsState[i]?.state ?? "pending", spentOf: (i) => spend?.runs?.[i] ?? null, modelOf: driverOf,
+            cachedOf: (i) => i >= nRun || !predicted.toRun[i] || !!runsState[i]?.cached, prices: predicted.prices.at });
+    }
     ctx.report = (i, state, info) => {
         const r = runsState[i];
         if (state === "running" && r.state !== "running") r.startedAt = Date.now();   // for the elapsed ticker
@@ -797,7 +850,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, older, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null, memory: memoryView(),
+        resources: resPoll?.resources() ?? null, ...spendState(), memory: memoryView(),
         // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
         // run of a task that says so.
         ...(spec.sync === false || spec.tasks.some((t) => t.sync === false)
@@ -833,6 +886,7 @@ const main = async () => {
         if (none.length) console.log(`  ${none.length} of ${spec.tasks.length} task${spec.tasks.length === 1 ? "" : "s"} had no \`succeeded\` predicate, so their runs count for tokens but not for any model's score: ${none.join(", ")}`);
     } else if (backend) console.log("\n  (runs not logged for the scoreboard: this Node has no node:sqlite)");
     if (pageState.spend) console.log(`  spend: ${spendLine(pageState.spend)}`);
+    if (predicted?.atStart) console.log(`  ${estimateCheck(predicted.atStart, pageState.forecast)}`);
     if (resPoll) console.log(`  box: ${resPoll.mode === "stream" ? `its event stream, every frame kept in ${path.relative(ROOT, BOX_DB)}` : "polled memory (the server has no event stream)"}; memory.md says what it did.`);
     console.log("");
     // A live watcher holds the process open: without a page to keep current, stop watching marks.jsonl now.
@@ -844,7 +898,7 @@ const main = async () => {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
             runs: runsState, rows, older, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
-            resources: pageState.resources, spend: pageState.spend, memory: pageState.memory,
+            resources: pageState.resources, spend: pageState.spend, forecast: pageState.forecast, memory: pageState.memory,
         });
         // The page outlives the sweep, the sweep's PROCESS does not: a caller that started it in the background (an
         // agent's background task, a `&` and a wait) learns it finished by its exit, which a held-open server never gave.

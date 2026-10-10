@@ -268,7 +268,7 @@ something the next run is held to. For a model reading results, `panel.mjs` is t
 | `--only k=v` | Select cells. Works on any dimension, plus `task=<id>` and `repeat=<n>`. Repeatable, ANDed. |
 | `--skip k=v` | The inverse. |
 | `--repeats N` | Override the spec's repeat count — use `--repeats 1` while iterating on a spec. |
-| `--dry` | Print the matrix and its cell keys, run nothing. Do this before any long sweep. |
+| `--dry` | Print the matrix and its cell keys, and against a real backend (`USE_ENV=1`) the spend estimate, run nothing. Do this before any long sweep. |
 | `--no-cache` | Re-run cells that are already measured. |
 | `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, and the page is bundled from source in memory (no dist to rebuild). |
 | `--open` | `--serve` plus launch a browser. |
@@ -353,6 +353,15 @@ checked, and kept in `snapshots`. The page shows it as a `spent` badge in the he
 `spent` segment on each driver model's pill, computed first and reported in the tip; a `+` means some calls are unpriced
 or still waiting on their snapshot. `page.json` carries it as `spend`, the terminal prints it as one line at the end, and
 `scores.html` has a Spend card from the logged calls.
+
+Before it runs, a sweep prints a spend estimate (`spend-predict.mjs`; `--dry` prints it too, so ask what a sweep would cost
+before paying for it): each cell the cache will not serve is the mean of its model's 20 most recent past runs of the same
+task (else the task under another wording, else the model's other tasks, else "no estimate", never 0), their logged calls
+re-priced at the price service's `/latest` rates (else the newest snapshot the log holds), local models apart as
+electricity. The history is this clone's scores log plus `artifacts/bench-pool/scores.sqlite` when `sync.mjs pull` has
+fetched every clone's. As cells finish, a finished one's estimate gives way to what it spent and a running one counts
+the larger of the two: the page shows `est.` beside each `spent` (a `+` when some runs have no estimate), status.md has
+a Spend estimate section, and the end prints the start estimate beside the computed spend, so its error shows every sweep.
 
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at
