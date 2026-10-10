@@ -7,6 +7,30 @@
 // the page can see (when each shot happens), override (a stylesheet beats an inline style) or outwait (it holds the
 // ack); a read of rects is none of those.
 
+/**
+ * The inline style of every shadow host the shell mounts. An inline `!important` declaration beats every author
+ * stylesheet `!important` rule, layered or not, as well as animations and transitions, so no rule of the page's moves,
+ * scales, zooms, filters, reflects, clips, blends or hides a host, whether it stays or is inserted through the CSSOM
+ * between two of the watch's reads and deleted before the next (a change no read sees and no MutationObserver reports).
+ * `all` rather than a list: the hosts need no property off its initial value, and a property CSS adds later is covered
+ * without anyone remembering it. It leaves out `direction`, `unicode-bidi` and custom properties, none of which moves
+ * the UI. A stylesheet INSIDE our open root (a `:host` rule) still wins over it (an inner context's `!important` beats
+ * the outer one's), which is why the watch keeps refusing one as tampered.
+ */
+export const HOST_STYLE = "all: initial !important;";
+
+/**
+ * Hide or show a host for the page's own shot. A plain `style.visibility` is not `!important` and loses to the host's
+ * own {@link HOST_STYLE}, so the hide is `!important` too, and showing removes it to fall back to `all: initial`.
+ * @param host the shadow host, if mounted
+ * @param hidden whether to hide it
+ */
+export function setHostHidden(host: HTMLElement | null, hidden: boolean): void {
+    if (!host) return;
+    if (hidden) host.style.setProperty("visibility", "hidden", "important");
+    else host.style.removeProperty("visibility");
+}
+
 /** What the shell hides for the page's own shot and brings back after: the sidebar, the off-mode card, the lightbox, the hover box. */
 export interface ShotSurface {
     /** Hide everything that would land in a capture (called again while already hidden: must be idempotent). */

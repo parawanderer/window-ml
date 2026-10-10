@@ -20,7 +20,7 @@ import { resolveContextContainer, domToContext } from "../dom/dom";   // right-c
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
-import { answerShotRects, pageShotGate, sheetText, type ShotRoots } from "./shell-shot";
+import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -676,7 +676,7 @@ function hlContainer(): ShadowRoot {
     if (hlRoot) return hlRoot;
     hlHost = document.createElement("div");
     hlHost.id = `${SB_ROOT}-hl`;
-    hlHost.style.cssText = "all: initial;";
+    hlHost.style.cssText = HOST_STYLE;
     hlRoot = hlHost.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = HIGHLIGHT_CSS;
@@ -778,14 +778,14 @@ const shot = pageShotGate({
             window.addEventListener("scroll", onScroll, { passive: true });
             scrollPin = { x, y, onScroll };
         }
-        if (shellHost) shellHost.style.visibility = "hidden";
-        if (cardHost) cardHost.style.visibility = "hidden";   // the off-mode card, if it's showing
+        setHostHidden(shellHost, true);
+        setHostHidden(cardHost, true);   // the off-mode card, if it's showing
         if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
         hideHighlight();   // a hover box would otherwise land in the capture
     },
     show() {
-        if (shellHost) shellHost.style.visibility = "";
-        if (cardHost) cardHost.style.visibility = "";
+        setHostHidden(shellHost, false);
+        setHostHidden(cardHost, false);
         if (lightbox) lightbox.style.visibility = "";
         if (scrollPin) {
             window.removeEventListener("scroll", scrollPin.onScroll);
@@ -1240,12 +1240,13 @@ function mountOverlay(): void {
     if (shellHost) return;
     // Host the shell's chrome (container/tab/resize/iframe) inside a shadow root
     // so the page's CSS can't bleed into it (e.g. a global `div { opacity: .8 }`,
-    // as example.com actually ships). `all: initial` on the shadow host blocks
-    // page rules that target the host element itself. Secrets still live in the
-    // iframe (its own extension origin), not in this shell.
+    // as example.com actually ships). `all: initial !important` on the shadow host
+    // (HOST_STYLE) blocks page rules that target the host element itself, the
+    // page's `!important` ones included. Secrets still live in the iframe (its
+    // own extension origin), not in this shell.
     shellHost = document.createElement("div");
     shellHost.id = SB_ROOT;
-    shellHost.style.cssText = "all: initial;";
+    shellHost.style.cssText = HOST_STYLE;
     const root = shellHost.attachShadow({ mode: "open" });
     shadowRoot = root;
 
@@ -1292,7 +1293,7 @@ function mountCard(): void {
     if (cardHost) return;
     cardHost = document.createElement("div");
     cardHost.id = SB_CARD;
-    cardHost.style.cssText = "all: initial;";
+    cardHost.style.cssText = HOST_STYLE;
     const root = cardHost.attachShadow({ mode: "open" });
     cardRoot = root;
     const style = document.createElement("style");
