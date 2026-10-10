@@ -2,6 +2,7 @@
 // the runs held open grouped by model · task · failure with a command to paste for each action (hold-menu.mjs), and the
 // runs the budget turned away. The same menu prints in the terminal when a sweep ends or pauses.
 
+import { useState } from "preact/hooks";
 import type { MemoryState } from "./state";
 import { CopyableCode } from "../../../../src/sidebar/code-block";
 import { TimeChart } from "../../../../src/sidebar/settings/time-chart";
@@ -30,16 +31,48 @@ function MemoryChart({ m }: { m: MemoryState }) {
         axis={<><span>{clock(h[0].t)}</span><span>{fmt(peak)} peak of {fmt(m.limit)}</span><span>{clock(h.at(-1)!.t)}</span></>} />;
 }
 
+/** Where the limit came from, in words (memory-budget.mjs `limitWhence`). */
+export const limitWhence = (m: Pick<MemoryState, "limitSource" | "limitBy" | "limitAt">) =>
+    m.limitSource === "flag" ? "this sweep's --memory-limit" : m.limitSource === "machine"
+        ? `set machine-wide${m.limitBy ? ` by ${m.limitBy}` : ""}${m.limitAt ? ` at ${m.limitAt.slice(0, 16).replace("T", " ")} UTC` : ""}`
+        : "half the RAM, the default";
+
+/**
+ * The machine-wide limit, changed from the page (POST /memory-limit): every running sweep takes it up within 5 s. A
+ * sweep started with its own --memory-limit keeps that, so the control says so instead.
+ */
+function LimitControl({ m }: { m: MemoryState }) {
+    const [value, setValue] = useState("");
+    const [said, setSaid] = useState<string | null>(null);
+    const send = async (limit: string) => {
+        try {
+            const r = await fetch("/memory-limit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit }) });
+            setSaid(r.ok ? `Set: ${(await r.json()).text}. Running sweeps take it up within 5 s.` : `Not set: ${await r.text()}`);
+        } catch (e) { setSaid(`Not set: ${String(e)}`); }
+    };
+    if (m.limitSource === "flag") return <div class="mlimit dim">This sweep was started with --memory-limit, which wins over the machine-wide limit.</div>;
+    return (
+        <form class="mlimit" onSubmit={(e) => { e.preventDefault(); if (value.trim()) send(value.trim()); }}>
+            <span class="tt" data-tip="The most the bench may hold on this machine, for every bench process here. Raise it to hold more failed runs (past the free RAM it swaps and runs slower); lower it and nothing running stops, but nothing more starts or is held past it. Also: hold.mjs --limit 12G">Machine-wide limit</span>
+            <input type="text" size={6} placeholder={`${Math.round(m.limit / GB)}G`} value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} aria-label="memory limit, e.g. 12G" />
+            <button class="btn small" type="submit">set</button>
+            {m.limitSource === "machine" ? <button class="btn small" type="button" onClick={() => send("auto")}>back to half the RAM</button> : null}
+            {said ? <span class="dim">{said}</span> : null}
+        </form>
+    );
+}
+
 /** One command: what it does, then the line to paste, as a code block with a copy button. */
 const Cmd = ({ label, cmd }: { label: string; cmd: string }) => <div class="mcmd"><span class="dim">{label}</span><CopyableCode text={cmd} /></div>;
 
-export function MemoryCard({ m }: { m?: MemoryState | null }) {
+export function MemoryCard({ m, live = false }: { m?: MemoryState | null; live?: boolean }) {
     if (!m || (!m.active && !m.groups.length)) return null;
     const pct = Math.min(100, Math.round((m.used / m.limit) * 100));
     return (
         <Card id="memory" anchor label="the memory budget" class="memory">
             <header><h2 class="tt" data-tip="Everything the bench keeps in this machine's memory, from every bench process here (the shared ledger, ~/.cache/window-ml-bench/ledger.json): each process tree's resident memory, summed. Shared pages count once per process, so this over-states, the safe side.">Memory</h2>
-                <span class="sub">{fmt(m.used)} of a {fmt(m.limit)} limit · {fmt(m.available)} available{m.reserve ? `, ${fmt(m.reserve)} kept free` : ", no reserve (a limit set by hand)"} · room for {fmt(m.room)}</span></header>
+                <span class="sub">{fmt(m.used)} of a {fmt(m.limit)} limit ({limitWhence(m)}) · {fmt(m.available)} available{m.reserve ? `, ${fmt(m.reserve)} kept free` : ", no reserve (a limit set by hand)"} · room for {fmt(m.room)}</span></header>
+            {live ? <LimitControl m={m} /> : null}
             {m.paused ? <div class="mpaused">Paused at the memory budget: {m.paused}. Resume with:<CopyableCode text={m.resume} /></div> : null}
             <div class="bar"><i style={{ width: `${pct}%` }} /></div>
             <MemoryChart m={m} />

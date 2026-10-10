@@ -160,7 +160,7 @@ function App() {
                     </section>
                 ) : null}
                 <section class="card"><Stats s={s} /><Models s={s} /></section>
-                <MemoryCard m={s.memory} />
+                <MemoryCard m={s.memory} live={!baked} />
                 <Flight s={s} />
                 <Answers s={s} base={base} live={!baked} />
                 <Continued s={s} base={base} />

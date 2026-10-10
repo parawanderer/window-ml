@@ -79,7 +79,7 @@ import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
 import { statusWriter } from "./status.mjs";
-import { startBudget, autoLimit, tooSmall, RESERVE_FRAC, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
+import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
 import { failureShape, menuText, groupHeld, groupCommands, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
@@ -534,12 +534,15 @@ const main = async () => {
     const resume = inDir(process.cwd(), shellLine(["node", ...process.execArgv, path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2).filter((a) => a !== "--no-cache")]));
     const holding = cells.some((c) => holdMode(c, args.hold));
     // A limit set by hand is the person's call on swap: it drops the free-memory reserve as well.
-    const budget = startBudget({ limit: args.memoryLimit ?? autoLimit(), reserveFrac: args.memoryLimit != null ? 0 : RESERVE_FRAC, whenFull: args.whenFull, db: scores, active: !!backend || holding, sweep: spec.name, repo: ROOT, cmd: resume });
+    // The limit: this sweep's --memory-limit, else the machine-wide one (hold.mjs --limit, or the page), re-read on every
+    // measurement so a person can change it while the sweep runs, else half the RAM.
+    const budget = startBudget({ limit: args.memoryLimit ?? null, whenFull: args.whenFull, db: scores, active: !!backend || holding, sweep: spec.name, repo: ROOT, cmd: resume,
+        onLimit: (now, was) => console.log(`  ⇄ memory limit ${fmtBytes(was.bytes)} → ${fmtBytes(now.bytes)} (${limitWhence(now)})${now.bytes < was.bytes ? "; nothing running is stopped, but nothing more starts or is held past it" : ""}`) });
     if (budget.active) {
         const expect = budget.expect([...new Set(cells.map((c) => c.task.id))], args.jobs);
         if (holding) console.log(`  memory: ${expect.text}\n`);
         const st = budget.state();
-        const small = tooSmall({ room: st.room, per: expect.per.bytes, bench: st.byKind.runner ?? 0, limit: st.limit, reserve: st.reserve, jobs: args.jobs, held: holding ? 3 : 0, limitGiven: args.memoryLimit != null });
+        const small = tooSmall({ room: st.room, per: expect.per.bytes, bench: st.byKind.runner ?? 0, limit: st.limit, reserve: st.reserve, jobs: args.jobs, held: holding ? 3 : 0, limitGiven: budget.limit().handSet });
         if (small?.level === "error") {
             console.log(`  ✖ ${small.text}\n\nBENCH NOT STARTED ${spec.name} paused=memory-budget`);
             budget.stop();

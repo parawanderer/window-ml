@@ -103,6 +103,8 @@ export interface BenchState {
 /** The memory budget as the page shows it: every figure in bytes. */
 export interface MemoryState {
     limit: number; used: number; byKind: Record<string, number>; available: number; total: number; reserve: number; room: number;
+    /** where the limit came from: this sweep's --memory-limit, the machine-wide one a person set, or half the RAM */
+    limitSource?: "flag" | "machine" | "auto"; limitBy?: string | null; limitAt?: string | null;
     active: boolean; whenFull: "pause" | "stop-holding"; paused: string | null; resume: string; hints: string[];
     runner: { rss?: number; peak?: number; heap?: number } | null;
     /** held runs of every clone, grouped by model · task · failure, with the commands for each */

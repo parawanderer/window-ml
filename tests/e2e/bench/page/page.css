@@ -259,3 +259,5 @@ td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
 .mem-page { fill: color-mix(in srgb, var(--fg-faint) 40%, transparent); background: color-mix(in srgb, var(--fg-faint) 40%, transparent) }
 .mem-running { fill: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 55%, transparent) }
 .mem-held { fill: color-mix(in srgb, var(--warn) 60%, transparent); background: color-mix(in srgb, var(--warn) 60%, transparent) }
+.memory .mlimit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 12px }
+.memory .mlimit input { font: inherit; width: 6em; padding: 2px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg) }
