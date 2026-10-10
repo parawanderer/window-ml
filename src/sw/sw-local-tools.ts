@@ -16,7 +16,7 @@ import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { dropAnswer } from "./worker-answer";
 import { dropVisionMemory } from "./worker-vision";
-import { buildWorkerTools, dropWorkerTools, pageOnlySend, spendDelta, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
+import { buildWorkerTools, dropWorkerTools, pageOnlySend, spendDelta, workerSpend, WORKER_TOOL_NAMES, type WorkerPyMedia } from "./worker-tools";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -49,11 +49,13 @@ export function dropAllLocalTools(): void { localToolsets.clear(); }
  * @param runId the run
  * @param p its payload
  * @param tabUrl its tab's URL, for the worker's `ml`
+ * @param media python_exec's image and cast through the worker's vision over the run's tab (worker-media.ts), given by
+ *   the run host so this module does not import the vision host
  */
-export async function ensureLocalTools(runId: string, p: StartRunPayload, tabId: number, tabUrl: () => string): Promise<void> {
+export async function ensureLocalTools(runId: string, p: StartRunPayload, tabId: number, tabUrl: () => string, media?: WorkerPyMedia): Promise<void> {
     if (localToolsets.has(runId)) return;
     const offered = new Set(p.tools.filter((t) => t.remote).map((t) => t.name));
-    const builtin = buildWorkerTools(runId, tabId, tabUrl, p.tools.map((t) => t.name));
+    const builtin = buildWorkerTools(runId, tabId, tabUrl, p.tools.map((t) => t.name), media);
     if (!offered.size && !builtin.length) return;
     const bundleIds = [...new Set(p.tools.flatMap((t) => (t.remote ? [t.remote.toolId] : [])))];
     const bundles = offered.size ? await listServerTools().catch(() => []) : [];

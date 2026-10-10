@@ -10,6 +10,25 @@ import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
 export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "highlight") => Promise<AnswerMedia[]>;
+
+/** The most `answer` elements whose media a selector adds to the HUD card. */
+export const ANSWER_MEDIA_MAX = 6;
+
+/**
+ * The parts of each designated `answer` element's HUD media that are the page's to say, without its image: the
+ * element's path, whether it is an `<img>`, and how the card shows it (`show`, else an image inline and anything
+ * else as a highlight). The page's own capture (injected.ts `captureAnswer`) fills in an image for each; for a run
+ * whose vision is the worker's, the worker crops each one from its own capture instead (worker-media.ts).
+ * @param els the designated elements (only the first {@link ANSWER_MEDIA_MAX} get media)
+ * @param show the model's `show`
+ * @returns one media item per element, each with an empty image
+ */
+export function answerMediaShape(els: Element[], show?: "inline" | "highlight"): AnswerMedia[] {
+    return els.slice(0, ANSWER_MEDIA_MAX).map((el) => {
+        const isImg = typeof HTMLImageElement !== "undefined" && el instanceof HTMLImageElement;
+        return { image: "", selector: elPath(el), kind: isImg ? "image" : "element", mode: show || (isImg ? "inline" : "highlight") };
+    });
+}
 // A CDP-backed resolve of a `>>>` selector across SEALED (closed/declarative) shadow roots — the discovery
 // half of the sealed-shadow reach. Returns describe lines (tag#id.classes "text") for each match, or null when
 // the debugger is off / nothing resolved. ml-backed (round-trips to the background), injected so the pure
@@ -83,14 +102,17 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
     const T = defineTool;
     /** Resolve an `answer` designation in this page's DOM: the matches (the first 50 kept), their preview, and a
      *  screenshot crop of each for the HUD card (best effort: a failed capture omits the media, the answer stands).
-     *  The page's `answer` tool uses it, and so does a worker-built run's, asking the page (run-delegation.ts). */
-    const selectAnswer = async (selector: string, index: number | undefined, note: string | undefined, show: AnswerArgs["show"]): Promise<AnswerSelection> => {
+     *  The page's `answer` tool uses it, and so does a worker-built run's, asking the page (run-delegation.ts). With
+     *  `capture` false (a run whose vision is the worker's) nothing is captured here: each media item is its shape only
+     *  (`answerMediaShape`), and the worker crops its image from its own capture. */
+    const selectAnswer = async (selector: string, index: number | undefined, note: string | undefined, show: AnswerArgs["show"], capture = true): Promise<AnswerSelection> => {
         let els = queryAll(selector);
         if (index != null) els = els[index] ? [els[index]] : [];
         if (!els.length) return { count: 0 };
         const kept = els.slice(0, 50);
         let media: AnswerMedia[] | undefined;
-        if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
+        if (!capture) media = answerMediaShape(kept, show);
+        else if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
         return { count: els.length, nodes: kept, preview: kept.slice(0, 5).map(elLine).join("; "), media };
     };
     return [

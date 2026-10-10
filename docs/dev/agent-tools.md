@@ -211,6 +211,24 @@ as the tab not showing). Who strips is decided on the page's ANSWER, so a call i
 over comes back stripped. Tests: `tests/worker-verify.test.mjs`, `tests/review-verify.test.mjs`, and the verify cases
 of `tests/vision-characterize.test.mjs`.
 
+**The answer's media and python's `image` of a worker-built run are the worker's** (`src/sw/worker-media.ts`). The
+`answer` tool asks the page to resolve a selector with `mediaInWorker`: the page captures nothing and answers each
+element's shape (`answerMediaShape`: path, kind, mode), and `checkSelection` refuses a reply carrying any image or more
+items than the page's own resolution makes (one for a call with an index, else min(count, 6)). The worker crops item i (the call's `index`, else the i-th match) over a vision host pinned to the document the
+page answered in, as `ml.screenshot(el, { noOverlay: true })` crops it (scrolled into view, the `target` geometry op,
+`tooSmall`/`offScreen`); an item it cannot shoot, a crop over the card's 4 MB bound, or one drawn while the tab moved
+keeps its chip with no image. An `<img>` is cropped from the capture at its drawn size (the owner's answer 2): its src is
+never fetched. A `python_exec` with an `image` runs in the worker: the shot is `shootWithBox(…, { raw: true, margin })`
+(ml-vision.ts), whose crop transform is the rect it cropped, never a second answer from the page (the same boxes as the
+page's `_shotBox`); a `cast` over an image with no transform is refused (`CAST_NO_TRANSFORM`) rather than minting image
+pixels as viewport coordinates. A `cast` mints its token through `ml._mintToken` (python-tool.ts `MintToken`) in the
+PAGE's registry, pinned to the image's document, so a click on it resolves where the image was taken. The ratchet is `tests/e2e/media-in-worker.spec.mjs`: a full run (look, locate, a
+verified click and type, python with an image and a cast, an answer with media), once worker-built and once a page-built
+run after its hand-over, counted at the worker's router by sender: during the run the page sends nothing at all, apart
+from an in-run probe the test has it send (so a stopped counter fails rather than passes) and, for the reloaded
+handed-over page, its own `CONTENT_READY` and `RUN_READOPTED`. Unit tests: `tests/worker-media.test.mjs`,
+`tests/review-media.test.mjs`.
+
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
 its context named `window.ml` or the extension. Two pieces fix it. `SELF_CLAUSE` (prompts.ts,

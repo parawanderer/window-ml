@@ -5,7 +5,8 @@
 // slice 2 part 2). These are the same tools, from the same factories, given an `ml` whose members the worker answers
 // itself: the descriptor the model is shown and the run's approval are unchanged, and only where the body runs moves.
 
-import type { FetchLlmPayload, FetchResult, MlApi, MlTool, SubcallUsage, TokenUsage } from "../contract";
+import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
+import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
 import { fetchTool, defineTool, pythonTool } from "../ml/ml-tool-factories";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
@@ -31,6 +32,14 @@ import { fetchLLM, getConfig } from "./sw-llm";
  *  run whose only worker tool they are the state their model calls are metered into from the start. */
 export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate"]);
 
+/** What a run's python_exec asks of the worker's vision (worker-media.ts), handed in by whoever builds the run's tools
+ *  (sw-local-tools.ts), so this module does not reach the vision host: an `image` shot from the worker's own capture
+ *  with its crop transform, and a `cast`'s token minted in the page's registry. */
+export interface WorkerPyMedia {
+    image(image: string, margin: number): Promise<{ image: string; imageBox: ShotBox | null; documentId: string }>;
+    mint: MintToken;
+}
+
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
 interface RunCtx {
     runId: string; tabId: number; tabUrl: () => string; python: boolean; cache: Map<string, FetchResult>; spent: SubcallUsage;
@@ -41,6 +50,8 @@ interface RunCtx {
     /** What the python_exec call now running was approved for: external sheet ids, and full-mode code. Set around the
      *  one call (`grantRunPython`), never on the tab. */
     pyCall?: { sheets: Set<string>; code: string | null };
+    /** Its python_exec's image and cast (none: a call with an `image` is refused). */
+    media?: WorkerPyMedia;
 }
 
 const runs = new Map<string, RunCtx>();   // state: plumbing — per run, dropped with its local tools
@@ -121,15 +132,32 @@ export function pageOnlyFetch(args: Record<string, unknown> | undefined, tabUrl:
     return !!args?.credentials && !!args?.rendered && typeof args?.url === "string" && !!tabUrl && isCurrentPage(args.url, tabUrl);
 }
 
-/** Whether a python_exec send needs the page: a screenshot (`image`), a page table by CSS selector, or `current` (the
- *  page's own sheet or table). A table by value, a URL the run fetched and an external sheet do not, and neither does a
- *  `@tool:` table pointer: the loop resolves it to a table by value before the call is sent, but the precheck reads the
- *  args before that, so the raw pointer string must not count as a selector (agent-loop.ts `resolveTablePointers`). */
+/** Whether a python_exec send needs the page: a page table by CSS selector, or `current` (the page's own sheet or
+ *  table). A table by value, a URL the run fetched and an external sheet do not, and neither does a `@tool:` table
+ *  pointer: the loop resolves it to a table by value before the call is sent, but the precheck reads the args before
+ *  that, so the raw pointer string must not count as a selector (agent-loop.ts `resolveTablePointers`). An `image` does
+ *  not either: the worker shoots it from its own capture (worker-media.ts). */
 export function pageOnlyPython(args: Record<string, unknown> | undefined): boolean {
-    if (args?.image) return true;
     const t = args?.tables;
     const sources = typeof t === "string" ? [t] : Array.isArray(t) ? t : t && typeof t === "object" ? Object.values(t) : [];
     return sources.some((src) => typeof src === "string" && (src === "current" || (!/^https?:\/\//i.test(src) && !/^\s*@tool:/.test(src))));
+}
+
+/**
+ * The refusal for a worker-built run's python_exec that cannot run anywhere, or null. One that needs the page (a page
+ * table by selector, or `current`) and ALSO names an external sheet: the worker cannot read the page part, and sending
+ * it to the page would put the sheet grant on the TAB, where any script on it could spend it while the call ran
+ * (red-team T3 on #442). One that needs the page and ALSO an `image`: the image is the worker's to shoot, and the page
+ * takes no screenshot for a run the worker built (site-access part 3), so it is split the same way.
+ * @param args the call's arguments
+ * @param externalSheets how many external sheets the call names (dom.ts `externalSheetIds`)
+ * @returns the sentence the model is shown, or null
+ */
+export function mixedPythonRefusalFor(args: Record<string, unknown> | undefined, externalSheets: number): string | null {
+    if (!pageOnlyPython(args)) return null;
+    if (externalSheets) return "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call.";
+    if (args?.image) return "Refused: a python_exec for this run cannot mix an `image` with a page table (a CSS selector, or \"current\"). Load the table in its own call (its result is a table you can pass back as `tables: \"@tool:<id>\"`), then call again with that and the `image`.";
+    return null;
 }
 
 /** Whether a worker tool's send of `name` with `args` must go to the page instead. */
@@ -200,7 +228,12 @@ function runMl(ctx: RunCtx): MlApi {
         },
         // No page here: python_exec's selector warning finds nothing (a send naming a selector goes to the page).
         _queryAll: () => [],
-        pythonExec: (code: string, opts: { mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
+        pythonExec: (code: string, opts: { image?: unknown; margin?: number; mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
+        // A cast's token goes into the page's registry, where a click resolves it (python-tool.ts `MintToken`).
+        _mintToken: ((q, documentId) => {
+            if (!ctx.media) return Promise.reject(new Error("no page to mint the token in."));
+            return ctx.media.mint(q, documentId);
+        }) satisfies MintToken,
         chat: (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null } = {}): Promise<string> => meteredChat(ctx, {
             messages: [{ role: "user", content: prompt }], model: opts.model ?? null, extend: opts.extend ?? null,
             numCtx: opts.numCtx ?? null, think: false, hint: { use: "agent", session: hintSession(ctx.runId) },
@@ -238,7 +271,14 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
 
 /** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
  *  caller (full mode only for the code this call was approved for), live stdout straight to the call's output. */
-async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
+async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
+    // The image first, as the page's pythonExec shoots it before loading its tables: from the worker's own capture.
+    let shot: { image: string; imageBox: ShotBox | null; documentId: string } | null = null;
+    if (opts.image != null && opts.image !== "") {
+        if (typeof opts.image !== "string") throw new Error("python_exec image — pass a CSS selector or an @pt:/@box: token.");
+        if (!ctx.media) throw new Error("python_exec image — no screenshot can be taken for this run here.");
+        shot = await ctx.media.image(opts.image, typeof opts.margin === "number" && Number.isFinite(opts.margin) ? opts.margin : 0);
+    }
     // The page's shape rule, so `[[url]]` (a list once unwrapped, its key "0" no variable name) is refused as it is there.
     const specs: [string, unknown][] = tableSpecs(opts.tables ?? null).map(({ name, src }) => [name, src]);
     const loaded = [];
@@ -246,7 +286,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly"
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
     const requestId = `wpy-${crypto.randomUUID()}`;
     const r = await runPython({
-        code, image: null, hardened: opts.mode !== "full", stream: !!opts.onStdout,
+        code, image: shot?.image ?? null, hardened: opts.mode !== "full", stream: !!opts.onStdout,
         tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i][1] === "string" ? specs[i][1] : null })),
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,
@@ -258,6 +298,8 @@ async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly"
     if (r.error !== undefined) throw new Error(r.error);
     const res = r.data as { table?: { columns: string[]; rows: unknown[][] }; valueKey?: string } & Record<string, unknown>;
     const extra: Record<string, unknown> = {};
+    // What the sandbox saw, the crop transform a cast projects through, and the document a cast mints its token in.
+    if (shot) { extra.inputImage = shot.image; extra.imageDocument = shot.documentId; if (shot.imageBox) extra.imageBox = shot.imageBox; }
     if (res?.table) extra.resultTable = { ...res.table, ...(res.valueKey ? { value: res.valueKey } : {}) };
     if (loaded.length) extra.inputTables = loaded.map((l) => ({
         name: l.name, source: l.source,
@@ -272,14 +314,16 @@ async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly"
  * @param tabId its tab
  * @param tabUrl the tab's URL now (read at each call: the run navigates)
  * @param names the run's tool names; only those in {@link WORKER_TOOL_NAMES} are built
+ * @param media python_exec's image and cast in the worker (none: an `image` is refused)
  * @returns the tools to register as the run's local tools
  */
-export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => string, names: readonly string[]): MlTool[] {
+export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => string, names: readonly string[], media?: WorkerPyMedia): MlTool[] {
     const wanted = names.filter((n) => WORKER_TOOL_NAMES.has(n));
     if (!wanted.length) return [];
     const ctx: RunCtx = runs.get(runId) ?? newRunCtx(runId, tabId, tabUrl, false);
     // State made earlier (by ensureRunState, for a verify) learns the run's tools here.
     ctx.tabId = tabId; ctx.tabUrl = tabUrl; ctx.python = names.includes("python_exec");
+    if (media) ctx.media = media;
     runs.set(runId, ctx);
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.

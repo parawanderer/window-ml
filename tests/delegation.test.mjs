@@ -314,3 +314,19 @@ test("a non-RUN_TOOL_IN_PAGE message is ignored by the reverse channel (returns 
     const r = await world.fireRuntimeMessage({ type: "SOMETHING_ELSE", payload: {} });
     assert.equal(r, undefined);
 });
+
+// --- the answer's media for a run whose vision is the worker's (worker-media.ts) ---
+
+test("an answer selector the worker asks with mediaInWorker is resolved without a capture; one without it captures as before", async () => {
+    const asked = [];
+    const answer = Object.assign(tool({ name: "answer", capabilities: ["answer"] }), {
+        selectAnswer: async (selector, index, note, show, capture) => { asked.push({ selector, note, capture }); return { count: 1, preview: "p", media: [{ image: "", kind: "element" }] }; },
+    });
+    registerRun("rsel", [answer]);
+    const env = await runDelegatedTool("rsel", "answer", {}, { answerSelect: { selector: "#a", mediaInWorker: true } });
+    await runDelegatedTool("rsel", "answer", {}, { answerSelect: { selector: "#b" } });
+    await runDelegatedTool("rsel", "answer", {}, { answerSelect: { selector: "#c", mediaInWorker: "yes" } });
+    assert.deepEqual(asked, [{ selector: "#a", note: undefined, capture: false }, { selector: "#b", note: undefined, capture: true }, { selector: "#c", note: undefined, capture: true }]);
+    assert.deepEqual(env.answerSelection, { count: 1, preview: "p", media: [{ image: "", kind: "element" }] });
+    endRun("rsel");
+});

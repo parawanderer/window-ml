@@ -38,7 +38,8 @@ import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelect
 import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { withEnv } from "./sw-current-env";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
-import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython } from "./worker-tools";
+import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython, mixedPythonRefusalFor } from "./worker-tools";
+import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -240,6 +241,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         if (!visionMemo || visionMemo.model !== model) visionMemo = { model, facts: runVision(p.rebuild, workerWroteVision(runId), model) };
         return visionMemo.facts;
     };
+    /** A worker-run python_exec's `image` and `cast`, through the worker's vision over this run's tab (worker-media.ts). */
+    const pyMedia = pyMediaFor(runId, tabId);
     const verifyHere = async (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
         workerVerify(runId, tabId, doc, req, verb, await visionFacts(), tabUrlNow);
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
@@ -274,7 +277,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             return vis || workerVision() ? withoutPageVision(env) : env;
         };
         if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
-            await ensureLocalTools(runId, p, tabId, tabUrl).catch(() => { /* answered below */ });
+            await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
             const local = await runLocalTool({ ...payload, tabUrl: tabUrl() }, onStream);
             if (local) return local;
             // A remote tool has nowhere else to run; a builtin declined here (fetch_url's render of this very page) does.
@@ -305,15 +308,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // only reading the pointer back faulted with "nothing has been captured in this run".
     const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
     const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
-    /** The refusal for a worker-built run's python_exec that names BOTH an external sheet and something only the page can
-     *  supply (an image, a selector, `current`), or null. Such a call runs nowhere safely: the worker cannot read the page
-     *  part, and sending it to the page would put the sheet grant on the TAB, where any script on it could spend it while
-     *  the call ran (red-team T3 on #442). Checked in the precheck (before the gate) and where the call is delegated
-     *  (the auto-approved path skips the precheck). */
+    /** The refusal for a worker-built run's python_exec that needs the page (a selector, `current`) and ALSO names an
+     *  external sheet or an `image`, or null (worker-tools.ts `mixedPythonRefusalFor`). Checked in the precheck (before
+     *  the gate) and where the call is delegated (the auto-approved path skips the precheck). */
     const mixedPythonRefusal = (name: string, args: Record<string, unknown>): string | null =>
-        name === "python_exec" && p.builtBy === "worker" && pageOnlyPython(args) && externalSheetIds(args).length
-            ? "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (an image, a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call."
-            : null;
+        name === "python_exec" && p.builtBy === "worker" ? mixedPythonRefusalFor(args, externalSheetIds(args).length) : null;
     const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
     // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
     // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
@@ -458,11 +457,15 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     const workerAnswer = p.builtBy === "worker" && p.tools.some((t) => t.name === "answer");
     if (workerAnswer) {
         if (!resurrected) resetAnswer(runId);
+        // The page captures nothing for it (`mediaInWorker`): each element's media is cropped by the worker from its own
+        // capture of the document the page answered in (worker-media.ts), pinned to it.
         setAnswerSelector(runId, async (a) => {
-            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: "answer", args: {}, answerSelect: a } })
+            const doc = await topDocument(tabId);
+            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: "answer", args: {}, answerSelect: { ...a, mediaInWorker: true } } }, doc ?? undefined)
                 .catch((e) => ({ result: `Error: ${(e as Error)?.message || e}` })) as Partial<import("../contract").PageToolEnvelope> | null;
-            return env?.answerSelection ?? { count: 0, error: String(env?.result || "the page did not answer").replace(/^Error: /, "") };
-        });
+            const got = env?.answerSelection ?? { count: 0, error: String(env?.result || "the page did not answer").replace(/^Error: /, "") };
+            return { ...got, documentId: doc };
+        }, (doc, selector, index, media) => workerAnswerMedia(runId, tabId, doc, selector, index, media));
     }
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
@@ -569,7 +572,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // tab's, which that page call sends.
                 const pyInWorker = name === "python_exec" && p.builtBy === "worker" && runsInWorker(p, name) && !pageOnlyPython(args as Record<string, unknown>);
                 if (pyInWorker) {
-                    await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
+                    await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
                     grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
                 }
                 // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
@@ -939,7 +942,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const grants = extractGrants(tool, args);
                 // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                 // if an eviction took it, so the decision below has somewhere to put it.
-                if (p.builtBy === "worker" && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
+                if (p.builtBy === "worker" && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
                 return new Promise<ApprovalDecision>((resolve) => {
                     pendingApprovals.set(key, {
                         resolve: (decision) => {
