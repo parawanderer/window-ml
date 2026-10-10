@@ -334,6 +334,10 @@ jobs:
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
           if [ -z "$base" ]; then echo "no merge base — skipping"; exit 0; fi
           node scripts/check-doc-links.mjs --new "$base"
+      # Every committed notebook carries nbclient's evidence that it was run as committed, and its folder's README
+      # names it (docs/dev/notebooks.md). The hook checks staged ones; this catches a commit made without the hook.
+      - name: Notebooks were run as committed
+        run: node scripts/check-notebooks.mjs
       - name: Everything this PR adds is documented
         run: |
           # No extra fetch: `fetch-depth: 0` above already has every ref, and a `--depth=1` fetch here would

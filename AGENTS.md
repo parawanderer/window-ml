@@ -154,6 +154,7 @@ learned by shipping the wrong version first.
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 | the system prompt, a tool's description, anything else the model reads | `docs/dev/prompt-review.md` (+ `docs/spec/PROMPT_BUDGET.md`) |
+| an analysis worth keeping across several files (bench sweeps, model comparisons): a notebook | `docs/dev/notebooks.md` |
 
 **The traps, one line each.** Each doc's `Traps` section has the full text and the reason.
 
@@ -277,6 +278,11 @@ driver or script you will reuse gets `.claude/skills/<name>/SKILL.md` and a one-
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
 least monthly, read what a call carries the way `docs/dev/prompt-review.md` describes (panel, bench, debrief).
 Last review: **2026-10-10** (#544). A review commit carries `Prompt-Review: <date>`; update the date here with it. `scripts/check-prompt-review.mjs` reminds.
+
+**RULE — a complex analysis worth keeping goes in a notebook, not in a reply:** one that spans several files (bench
+sweeps, model comparisons) and is not a feature of a tool lives in `notebooks/<topic>/` as a `make-<name>.py` generator
+plus the executed `.ipynb`, its inputs pinned with `wmlnb.extract`, run with `node scripts/nb.mjs`. Prose cites it rather
+than pasting its tables. `docs/dev/notebooks.md`; the `notebooks` skill.
 
 **RULE — never pad model-facing text for alignment.** A model pays for every space. Single space or a delimiter;
 assert no run of two spaces (`tests/token-pipe.test.mjs`). Human-facing surfaces align freely.

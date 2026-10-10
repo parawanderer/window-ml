@@ -175,6 +175,12 @@ if [ -n "$base" ] && ! node scripts/check-doc-links.mjs --new "$base" --staged; 
     exit 1
 fi
 
+# A staged notebook must carry nbclient's evidence that it was run as committed, and be named in its folder's README
+# (docs/dev/notebooks.md). Run it with `node scripts/nb.mjs run <path>`.
+if ! node scripts/check-notebooks.mjs --staged; then
+    exit 1
+fi
+
 # The prompt review's age, when this commit changes what the model reads: a reminder, never a failure
 # (docs/dev/prompt-review.md).
 node scripts/check-prompt-review.mjs --staged || true
