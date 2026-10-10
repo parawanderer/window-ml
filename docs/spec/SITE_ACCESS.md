@@ -446,8 +446,12 @@ Recorded as each slice lands, with the reason.
   nothing that works today breaks. Differences from the spec and the page's world, each told to the model in one line:
   - The isolated world's `ml` has only `current` (a deep-frozen copy, `currentForExec`) and `dereference` (the values
     the script names, sent with the call). `ml.*` bound to the worker, as the spec has it, is not built: anything else
-    throws a sentence. A pointer value has the page's shape (a `String` with `json`, `meta`'s facts), but `.table`,
-    `.pipe()` and `.schema()` need the worker mid-script and throw a sentence pointing at a read-only exec (part 4b).
+    throws a sentence. A pointer value is the page's own `DerefText`; since part 4b its `.pipe()` and a stored table's
+    column reads ask the worker over the call's own channel (`iso-channel.ts`; docs/dev/site-access.md), and `.schema()`
+    and a whole table read in the world. Found while building it: the read-only dialect has no `.pipe()` or `.schema()`
+    on a value, so the sentence part 4 threw ("read it in a read-only exec") sent the model to a path that refused it
+    too; and `.pipe()` in the main world answers only a pipe the script names, where the isolated world re-pipes a named
+    pointer with any stages, as a survey's `ml.dereference(ref, { pipe })` does.
   - The script runs as one source, with no `eval` in the page, so neither the page's CSP nor the world's matters. Like
     `cdpEval`, it is tried as an expression, then as a statement body: a multi-statement script's value is what it
     `return`s, where the main world's `eval` gives the last statement's.

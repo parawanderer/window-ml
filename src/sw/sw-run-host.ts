@@ -42,7 +42,8 @@ import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython, mixed
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue } from "./sw-values";
+import { claimValue, valueHolders, readStoredColumns } from "./sw-values";
+import { isoServer } from "./iso-channel";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
@@ -539,8 +540,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                         // Never unpinned: what it is given is the run's, so with no document to hold it to, it does not run.
                         if (!execDoc) return { result: "Error: could not tell which page the tab holds now, so this exec was not run. Run it again.", renderIn: execCodeIn(js) };
+                        const reads = preReadsFor(runId, js);
                         return runIsolatedExec({
-                            tabId, runId, js, how: route.how, reason: route.reason, reads: preReadsFor(runId, js), onStream, documentId: execDoc,
+                            tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc,
+                            // What the world may ask for while it runs: re-pipes of what it was sent, and those stored tables.
+                            serve: isoServer(runId, reads, { deref: () => derefByRun.get(runId), holders: valueHolders, columns: readStoredColumns }),
                             // Made only for a script that names it, as a survey's is (tryReadonly below).
                             ...(snap && execNames(js).current ? { current: async () => withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly) } : {}),
                         });
