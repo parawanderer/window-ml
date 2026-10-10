@@ -7,6 +7,7 @@ import type { MlApi } from "../contract";
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "../contract/contract-agent";
 import type { TableLike } from "../table/table-data";
+import type { PromptDisplay } from "../contract/contract-run";
 import { navTarget } from "../dom/dom";
 import { emitDebug } from "../bus";
 import { makeBackgroundTaskPromise } from "../bridge";
@@ -75,7 +76,8 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
 
     /** Run a full loop until the agent completes its turn. Call again for the next turn (same session).
      *  Rejects while a loop is in flight. No task → runs over whatever say() has queued into history. */
-    async run(task?: string, images?: (string | HTMLImageElement)[]): Promise<AgentResult> {
+    // `display` (internal, not on the contract): how the UI shows `task` when it is not what the person typed.
+    async run(task?: string, images?: (string | HTMLImageElement)[], display?: PromptDisplay): Promise<AgentResult> {
         if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
         // Flush any leftover steering into the history so it's never lost: a mid-run say() that a background
         // loop couldn't drain live (arrived after its last step) sits in the inbox — pick it up this run.
@@ -90,7 +92,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
         this.running = true;
         try {
             // images are PER-TURN (a composer paste), so they override any left on _opts.
-            const r = await this._ml.agent(task ?? "", { ...this._opts, images: images || [], signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions);
+            const r = await this._ml.agent(task ?? "", { ...this._opts, images: images || [], signal: this._opts.signal || this._ctrl.signal, _control: this, ...(display ? { _display: display } : {}) } as AgentOptions);
             // Accumulate: a handle's transcript is the WHOLE conversation's actions, not just this turn's
             // (mirrors messages/hash spanning turns). ml.agent()'s per-call transcript is unchanged.
             this._transcript.push(...r.transcript);
@@ -100,7 +102,8 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
 
     /** Put a user message into the session. Mid-run → steer (queued for the next step boundary, shown in
      *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
-    say(text: string, origin?: import("../contract/contract-run").PromptOrigin): void {
+    // `display` (internal, not on the contract): how the UI shows `text` when it is not what the person typed.
+    say(text: string, origin?: import("../contract/contract-run").PromptOrigin, display?: PromptDisplay): void {
         if (this.running) {
             // A stable id ties this steer's bubble to its later "seen" flip (page loop drains → agent-say-seen;
             // a bg loop fans the same event from the SW, keyed by this same id via INJECT_MESSAGE.sayId).
@@ -109,7 +112,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
             // there (INJECT_MESSAGE, drained at its next step); a PAGE-loop run drains the local inbox.
             if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text, sayId, ...(origin ? { origin } : {}) }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
             this.inbox.push({ id: sayId, text, ...(origin ? { origin } : {}) });   // page loop drains this; for a bg run it's the run()-flush safety net
-            if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text, sayId });
+            if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text, sayId, ...(display ? { display } : {}) });
         } else {
             this.messages.push({ role: "user", content: text });
             console.info("ml.agent: no run in flight — say() queued the message into history; call run() to have the agent process it.");

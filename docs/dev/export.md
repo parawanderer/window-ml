@@ -159,6 +159,18 @@ disclosure) AND both exports. E.g. when a tool result carries an appended `@tool
 that model-facing result — token line included — must be recoverable in the log, not silently
 dropped for the clean render.
 
+**A person's message follows the same rule.** A right-click "ask about this" folds the element's content into the
+text the model gets (`framePrompt`, `src/agent/prompts.ts`). That text stays in `task` / `says[].text` /
+`ExportMessage.text`, as it always was; beside it, `taskDisplay` / `display` (`PromptDisplay`,
+`src/contract/contract-run.ts`) keep what was typed and the element, present only when the two differ. The
+transcript and the HUD draw the typed words with the element as a chip, behind a rendered⇄raw switch; `run.json`
+carries both; `run.md` shows the typed words, an `Element` line, and the model's text in a `raw (as the model got
+it)` disclosure. A session recorded before the field existed has only the framed text, and is drawn as it always
+was. Every surface that frames goes through `framePrompt`, so the three places a message is framed (the worker's run
+recipe, its follow-up, and a page-built handle's follow-up in `injected.ts`) cannot drift apart. A run a PAGE built
+cannot attach a display to its task: the worker drops it from `START_RUN` unless it built the run. Plain chat
+sessions are not covered: an element sent into one is still drawn as the framed text.
+
 **WHICH ARTIFACT TO REACH FOR.** A run can be got out four ways and they are not interchangeable. Picking
 the wrong one costs a whole read-through, so:
 

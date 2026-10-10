@@ -9,7 +9,9 @@ import { IconChevron } from "../icons";
 import { ClickableImg, inlineText } from "../ui-kit";
 import { exportSession, exportSessionJson, printSession } from "../export/export";
 import { AnswerBody } from "../transcript/answer-render";
-import { AgentTurn, SteerSeen } from "../transcript/agent-detail";
+import { AgentTurn, PROMPT_RAW_TIPS, RawToggle, SteerSeen } from "../transcript/agent-detail";
+import { SentContext } from "../transcript/user-text";
+import type { PromptDisplay } from "../../contract/contract-run";
 import { buildRunBlocks, ensureBlockSummary, blockSummaries, blockKey, groupTurns } from "../debug-reducer";
 import type { RunTaskBlock } from "../debug-reducer";
 
@@ -39,8 +41,8 @@ export function ShowWork({ run }: { run: Session }) {
     // Answers and says share one positional base (atStep + 0.5); TS breaks the tie — see AgentRunView for
     // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
     const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
-        ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} /> })),
+        ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} display={run.taskDisplay} /> }] : []),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} display={s.display} /> })),
         ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
         ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
@@ -94,9 +96,12 @@ export function ShowWork({ run }: { run: Session }) {
 // A collapsed disclosure in the card trace for a USER PROMPT ("you asked") or a PAST ANSWER ("answered") —
 // styled like the thinking block, so Show-work reads as a scannable conversation SHAPE (ask → work → answer
 // → ask → …). Collapsed with a one-line preview; expand for the full text. This is how a multi-turn HUD run
-// stays legible: you can tell which steps belonged to which of your prompts.
-export function CardTraceMsg({ label, text, cls, images, steer, run, scope }: { label: string; text: string; cls: string; images?: string[]; steer?: { seen?: boolean }; run?: Session; scope?: readonly AgentStep[] }) {
+// stays legible: you can tell which steps belonged to which of your prompts. A prompt with a `display` (context
+// folded into `text`) shows what was typed and the attachment, with the same rendered/raw switch as the transcript.
+export function CardTraceMsg({ label, text: modelText, cls, images, steer, run, scope, display }: { label: string; text: string; cls: string; images?: string[]; steer?: { seen?: boolean }; run?: Session; scope?: readonly AgentStep[]; display?: PromptDisplay }) {
     const [open, setOpen] = useState(false);
+    const [raw, setRaw] = useState(false);
+    const text = display && !raw ? display.typed : modelText;
     return (
         <div class={`athought ${cls}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
@@ -105,7 +110,9 @@ export function CardTraceMsg({ label, text, cls, images, steer, run, scope }: { 
                 {steer ? <SteerSeen seen={!!steer.seen} /> : null}
                 {!open ? <span class="astep-preview">{inlineText(text || "")}</span> : null}
             </button>
+            {open && display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}
             {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
+            {display && !raw ? <SentContext context={display.context} /> : null}
             {/* A PAST ANSWER (given `run`) resolves its @tool citations via AnswerBody — same as the card body /
                 sidebar reply — so a `![…](@tool:…)` renders the actual output, not raw markdown. A user prompt
                 (no `run`) is plain text. AnswerBody handles the no-token case, so passing `run` is always safe. */}
@@ -137,7 +144,8 @@ export function RunTaskBlockView({ run, block, index, last }: { run: Session; bl
     // This component only MOUNTS when Show-work is open, so firing here = fire-on-open (lazy). Cached by key.
     useEffect(() => { ensureBlockSummary(run.hash, index, block.prompt, block.answer?.text || ""); }, [run.hash, index]);
     const summary = blockSummaries.get(blockKey(run.hash, index));
-    const header = summary || inlineText(block.prompt) || "(task)";
+    const typed = block.promptDisplay ? block.promptDisplay.typed : block.prompt;
+    const header = summary || inlineText(typed) || "(task)";
     return (
         <div class="run-block" data-rev={rv} data-reveal={reveal ?? ""}>
             {/* Toggling clears the reveal-forced open so a collapse actually collapses (else `stuckOpen` re-opens). */}
@@ -146,19 +154,19 @@ export function RunTaskBlockView({ run, block, index, last }: { run: Session; bl
                 {/* The summary is utility-model prose that often carries inline `$…$` (e.g. "derivative of
                     $\sin^2(x)$") — render it markdown+math so it typesets instead of showing literal syntax. */}
                 <span class={`run-block-sum${summary ? " ml-reveal" : ""}`}
-                    title={summary ? `${summary}\n\nRequest: ${block.prompt}` : block.prompt}
+                    title={summary ? `${summary}\n\nRequest: ${typed}` : typed}
                     dangerouslySetInnerHTML={{ __html: inlineMarkdown(header) }} />
                 <span class="sp" />
                 <span class="run-block-n">{block.turns.length} {block.turns.length === 1 ? "step" : "steps"}</span>
             </button>
             {open ? (
                 <div class="run-block-body">
-                    <CardTraceMsg label="you asked" text={block.prompt} cls="acard-you" images={block.promptImages} />
+                    <CardTraceMsg label="you asked" text={block.prompt} cls="acard-you" images={block.promptImages} display={block.promptDisplay} />
                     {/* Turns + any MID-RUN steers, interleaved by step so a steer sits where it was sent, not
                         appended after all the work (and never mis-nested into a different block). */}
                     {[
                         ...block.turns.map(t => ({ pos: t.step, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
-                        ...block.steers.map((s, k) => ({ pos: s.atStep + 0.5, el: <CardTraceMsg key={`st${k}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} /> })),
+                        ...block.steers.map((s, k) => ({ pos: s.atStep + 0.5, el: <CardTraceMsg key={`st${k}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} display={s.display} /> })),
                     ].sort((a, b) => a.pos - b.pos).map(x => x.el)}
                     {/* Scope the answer's @tool aliases to THIS block's steps so a prior block's `@tool:python_exec`
                         points at its OWN call, not a later turn's (buildRunBlocks already split the turns per task). */}

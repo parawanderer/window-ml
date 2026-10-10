@@ -363,6 +363,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     const startEvent = {
         kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
         task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
+        ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display } : {}),
         pageUrl: p.pageUrl, pageTitle: p.pageTitle,
         resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
         config: {

@@ -146,7 +146,7 @@ export interface DebugAgentTurn extends DebugBase { kind: "agent-turn"; step: nu
 /** `pageUrl`/`pageTitle` are where the run STARTED. Recorded because "which page" is close to a primary
  *  key when comparing runs, and was otherwise recoverable only by regexing it back out of the system
  *  prompt — prose, and only present when `env` was on. A run that navigates ends somewhere else. */
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; pageUrl?: string; pageTitle?: string; }
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; /** how the task is shown when it is not what the person typed (contract-run.ts) */ display?: import("./contract-run").PromptDisplay; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; pageUrl?: string; pageTitle?: string; }
 
 /** ONE step of an agent run: a thought, or a tool call together with its result. One event, not three -- the
  *  phases inside it are how the event lane draws where the time went, and splitting them is the arithmetic
@@ -261,7 +261,7 @@ export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: 
 
 /** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even
  *  though the model only sees it at the next step boundary. */
-export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; images?: string[]; sayId?: string; }
+export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; images?: string[]; sayId?: string; /** how `text` is shown when it is not what the person typed */ display?: import("./contract-run").PromptDisplay; }
 
 /** The agent's loop DRAINED a queued steer at a step boundary — flips the bubble's "seen" indicator.
  *  Keyed by `sayId` to the originating `agent-say`; may arrive before OR after it (cross-page replay

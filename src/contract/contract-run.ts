@@ -109,6 +109,33 @@ export interface ElementContext {
     links: { text: string; href: string }[];
 }
 
+/** Something a person attached to a message that was folded into the TEXT the model got, kept structured so the UI
+ *  can draw it as an object beside their words instead of as text they never typed. Today only a right-clicked element;
+ *  a `kind` so a selection or a tab can join it. */
+export type PromptContext = { kind: "element"; element: ElementContext };
+
+/** How a person's message is SHOWN when the text the model got is not what they typed: their own words, and what they
+ *  attached. Present only when the two differ; the message's `text`/`task` stays exactly what the model saw, which is
+ *  the "raw" view and what both exports carry. */
+export interface PromptDisplay {
+    /** what the person typed; may be "" (an element sent with no words) */
+    typed: string;
+    context: PromptContext[];
+}
+
+/**
+ * The words a LIST or a TITLE shows for a person's message: what they typed, or, sent with no words, what they
+ * attached ("About a selected article"). Never the framed text, which opens with the attachment's whole content.
+ * @param text the message as the model got it
+ * @param display how it is shown, when that differs
+ */
+export function promptLine(text: string, display?: PromptDisplay | null): string {
+    if (!display) return text;
+    if (display.typed) return display.typed;
+    const el = display.context.find((c) => c.kind === "element");
+    return el ? `About a selected ${el.element.role || "element"}` : text;
+}
+
 /** How many hex characters of a session hash are SHOWN. The rest is still copied, and still what resumes it. */
 export const HASH_SHOWN = 8;
 

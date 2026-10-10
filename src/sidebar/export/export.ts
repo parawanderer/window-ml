@@ -16,7 +16,8 @@ import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "../store";
 import { serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "../store";
-import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "../format";
+import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown, truncate } from "../format";
+import { promptLine, type PromptDisplay } from "../../contract/contract-run";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../../pointers/answer-tokens";
 import { runStats, fmtTokPerSec } from "../../contract/contract-chat";
 import { fmtDur, timedText } from "../timestamps";
@@ -244,11 +245,21 @@ function htmlSink() {
     return { sink, done: () => o.join("\n") };
 }
 
+/** The meta rows naming what a person ATTACHED to a message as context (a right-clicked element): its role, its
+ *  selector and its first line, which is how they would recognise it. */
+function attachedRows(display?: PromptDisplay): [string, string][] {
+    return (display?.context || []).map((c): [string, string] => {
+        const first = (c.element.text || "").split("\n").find((l) => l.trim())?.trim() || "";
+        return ["Element", `${c.element.role || "element"} \`${c.element.selector}\`${first ? ` · "${truncate(first, 80)}"` : ""}`];
+    });
+}
+
 // --- the walk (one per session kind), written through a Sink ---------------
 function writeAgent(s: Session, d: Sink): void {
     d.title(`Agent run · ${s.model || "default"} · ${s.hash}`);
     const meta: [string, string][] = [
-        ["Task", s.task || ""],
+        ["Task", s.taskDisplay ? promptLine(s.task || "", s.taskDisplay) : s.task || ""],
+        ...attachedRows(s.taskDisplay),
         ["Started", fullStamp(s.createdTs)],
         ["Finished", fullStamp(s.lastTs)],
         ["Steps", `${turnsRun(s.steps)}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`],
@@ -266,6 +277,8 @@ function writeAgent(s: Session, d: Sink): void {
         if (tps) meta.push(["Rate", `${tps} · ${rs.genBasis === "eval" ? "Ollama generation time (excl. network)" : rs.genBasis === "wall" ? "wall-clock per call (incl. network)" : "mixed timing"}`]);
     }
     d.meta(meta);
+    // A task with context folded in: the meta row shows what was typed, so the text the model got goes here, whole.
+    if (s.taskDisplay) d.details("Task · raw (as the model got it)", () => d.code(s.task || ""));
     // Composer attachments the user pasted with the initial task → PNG sidecars (as the sidebar shows them).
     (s.taskImages || []).forEach((img, j) => d.image(img, `task-img-${j + 1}`, `task image ${j + 1}`));
     const c = s.agentConfig;
@@ -301,7 +314,7 @@ function writeAgent(s: Session, d: Sink): void {
     // before the next turn's prompt at the same step). The LAST answer is the final one (Answer/Stopped).
     const answers = s.answers || [];
     const inter = [
-        ...(s.says || []).map((x, j) => ({ pos: x.atStep || 0, ts: x.ts, say: x.text, sayImages: x.images, sayIdx: j })),
+        ...(s.says || []).map((x, j) => ({ pos: x.atStep || 0, ts: x.ts, say: x.text, sayImages: x.images, sayDisplay: x.display, sayIdx: j })),
         ...answers.map((a, i) => ({ pos: a.atStep || 0, ts: a.ts, answer: a, last: i === answers.length - 1 })),
         // The session picked up again on ANOTHER page, drawn as the same seam the sidebar draws. Positioned at the
         // newest step that had already happened when it did, so the timestamp tie-break puts it after that turn's
@@ -319,7 +332,16 @@ function writeAgent(s: Session, d: Sink): void {
     let ii = 0;
     const emitInter = (x: typeof inter[number]) => {
         // "User Asked" (not "you") — the export is shared with the DevTools panel; "you" is HUD-only.
-        if ("say" in x) { d.head("User Asked"); (x.sayImages || []).forEach((img, k) => d.image(img, `say-${x.sayIdx}-img-${k + 1}`, `follow-up image ${k + 1}`)); d.prose(x.say || ""); return; }
+        if ("say" in x) {
+            d.head("User Asked");
+            (x.sayImages || []).forEach((img, k) => d.image(img, `say-${x.sayIdx}-img-${k + 1}`, `follow-up image ${k + 1}`));
+            if (!x.sayDisplay) { d.prose(x.say || ""); return; }
+            // Context folded in: what was typed, what was attached, and the text the model got, whole.
+            if (x.sayDisplay.typed) d.prose(x.sayDisplay.typed);
+            for (const [k, v] of attachedRows(x.sayDisplay)) d.note(`${k}: ${v}`);
+            d.details("raw (as the model got it)", () => d.code(x.say || ""));
+            return;
+        }
         // A resume names what it LOST as well as where it went: the divider is a seam a reader will stop at, and
         // "earlier references no longer hold" is the whole reason it is drawn. A static export cannot hover, so
         // what the panel puts in a tooltip is written out here.

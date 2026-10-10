@@ -2247,6 +2247,12 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .sent-tiles { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
 .sent-tiles img { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); cursor: zoom-in; display: block; }
 .msg.user.no-text { background: none; padding-top: 0; padding-bottom: 0; }
+/* WHAT YOU ATTACHED as context (`SentContext`): a right-clicked element's chip under the images, where an attachment
+   goes, instead of the block of text the model got. The bubble's rendered/raw switch sits in its header row. */
+.sent-ctx { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.sent-ctx .el-pill { margin-bottom: 0; }
+/* A message header row's rendered/raw switch (a user message with context folded in), inline after "you". */
+.mrow .rr-toggle { margin: 0 0 0 6px; }
 .errtext { color: var(--err); white-space: pre-wrap; word-break: break-word; }
 /* Page-transition marker: a horizontal rule with a centred label, drawn where a run left one document and
    re-adopted the next (a cross-page/-domain nav) — the run-log analogue of a context-compaction divider. */

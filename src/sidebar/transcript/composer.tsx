@@ -6,12 +6,9 @@ import { useState, useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
 import { loadDraft, loadDraftImages, onDraftRestored, saveDraft, saveDraftImages, sendHeld } from "../drafts";
-import type { ElementContext } from "../../contract/contract-run";
 import { config, rev } from "../store";
 import type { Session } from "../store";
-import { truncate } from "../format";
 import { IconSend, IconStop } from "../icons";
-import { clearHighlight, highlightEl } from "../ui-kit";
 import { UsageBar } from "./usage";
 import { RunStatsBar } from "./agent-detail";
 
@@ -64,20 +61,6 @@ export function ThumbStrip({ imgs, loading, onRemove }: { imgs: string[]; loadin
                 </div>
             ))}
             {Array.from({ length: loading }, (_, i) => <div class="cthumb cthumb-load" key={`l${i}`}><span class="cspin" /></div>)}
-        </div>
-    );
-}
-
-// The right-click "ask about this" reference pill: a removable chip naming the resolved container (role +
-// the leaf you clicked). Hovering it BOXES that container on the live page (reuses the hover-highlight),
-// so you see exactly what context is captured before sending.
-export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove: () => void }) {
-    const label = ctx.anchorText ? `${ctx.role || "element"} · "${truncate(ctx.anchorText, 30)}"` : (ctx.role || "element");
-    return (
-        <div class="el-pill" onPointerEnter={() => highlightEl(ctx.selector)} onPointerLeave={clearHighlight} title={ctx.selector}>
-            <span class="el-pill-ic" aria-hidden="true">📌</span>
-            <span class="el-pill-txt">{label}</span>
-            <button class="el-pill-x" onClick={onRemove} aria-label="Remove element context" title="Remove">×</button>
         </div>
     );
 }

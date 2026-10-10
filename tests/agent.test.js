@@ -1417,6 +1417,27 @@ test("createAgent: run() twice = two turns in one session; say() idle appends to
     assert.equal(last.at(-1).content, "more", "the new turn's task is the last user message");
 });
 
+test("a composer follow-up with a right-clicked element, to a page-built handle: the model gets it framed, the bubble shows what was typed", async () => {
+    // The page-side path (injected.ts __mlSessionSend): a run a page built is driven by its handle, so the framing and
+    // the display are made here, not in the worker, and must come out the same as the worker's (framePrompt).
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("first answer"), reply("it is cheap")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    const a = world.ml.createAgent({ tools: [], maxSteps: 3 });
+    await a.run("first task");
+    const el = { selector: "#price", role: "cell", text: "€4", media: [], links: [] };
+    win.postMessage({ __mlSessionSend: { hash: a.hash, text: "is this cheap?", elementContext: el } });
+    for (let i = 0; i < 50 && !events.some((e) => e.kind === "agent-result" && e.summary === "it is cheap"); i++) await new Promise((r) => setTimeout(r, 5));
+    const say = events.find((e) => e.kind === "agent-say");
+    assert.ok(say, "the follow-up was shown as a message");
+    assert.match(say.text, /SELECTED CONTENT[\s\S]*€4[\s\S]*User's question: is this cheap\?/, "the raw view is the framed text");
+    assert.deepEqual(JSON.parse(JSON.stringify(say.display)), { typed: "is this cheap?", context: [{ kind: "element", element: el }] });
+    const last = world.runtimeCalls.filter((c) => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.equal(last.at(-1).content, say.text, "the model got exactly the text the raw view shows");
+});
+
 test("follow-up run: the answer set is CLEARED between turns — a 2nd turn that designates nothing carries no stale answer", async () => {
     // The purge invariant (page loop): turn 1 designates a text answer via the `answer` tool → res.answer is
     // non-empty. Turn 2 designates NOTHING; the loop clears the answer set at the turn boundary (answerSet.clear()),

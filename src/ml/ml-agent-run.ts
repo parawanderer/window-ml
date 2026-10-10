@@ -104,7 +104,7 @@ import { validateArgs } from "../tools/validate";
  *   `elements` is the live DOM node(s) the model designated via an
  *   `answer`-capable tool: pass `answer: true` for the default kit to include one (empty otherwise).
  */
-export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, answer = false, images = [], origin = null, _control = null, _onSession = null }: {
+export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, answer = false, images = [], origin = null, _control = null, _display = null, _onSession = null }: {
     tools?: MlTool[] | null;
     extraTools?: MlTool[];
     serverTools?: string[];
@@ -136,6 +136,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     toolTokens?: boolean;   // surface `@tool:<id>` on rich tool results so the model can cite exact outputs. Default false; HUD auto-on.
     answer?: boolean;   // give the default kit the `answer` tool (and `ml.answer`), to get elements back in `.elements`. Default false.
     images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
+    _display?: import("../contract/contract-run").PromptDisplay | null;   // internal: how the UI shows `task` when it is not what the person typed (a right-clicked element folded in)
     _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
     _onSession?: ((hash: string) => void) | null;   // internal: called once, with the hash, the moment the FIRST turn mints it (a UI that started this run needs to know which session it got)
 } = {}): Promise<AgentResult> {
@@ -209,7 +210,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // `runModel` (resolved once up top) is the driver model — config default when none was passed —
     // so the sidebar shows the REAL model (not "default") and can tell when a vision sub-call reused it.
     const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
-    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
+    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, ...(_display ? { display: _display } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
         system: systemPrompt, customSystem: !!system,
         tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
         maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
@@ -219,7 +220,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     } });
     // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
     // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
-    else if (task || turnImages.length) emitDebug({ kind: "agent-say", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, text: task, images: turnImages.length ? turnImages : undefined });
+    else if (task || turnImages.length) emitDebug({ kind: "agent-say", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, text: task, images: turnImages.length ? turnImages : undefined, ...(_display ? { display: _display } : {}) });
 
     // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
     // origin (unforgeable by the page — a page-set window.confirm or a hostile approve() can't

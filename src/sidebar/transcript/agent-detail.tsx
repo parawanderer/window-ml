@@ -3,13 +3,14 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
-import { SentImages, UserActions, UserText } from "./user-text";
+import { SentContext, SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { PersistGrant } from "../../contract/contract-agent";
 import type { RenderDescriptor } from "../../contract/contract-render";
 import type { DebugAgentConfig } from "../../contract/contract-debug";
+import type { PromptDisplay } from "../../contract/contract-run";
 import { resolveOutputCap } from "../../contract/contract-pointers";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../../contract/contract-chat";
 import { externalSheetIds } from "../../dom/dom";
@@ -51,6 +52,20 @@ import type { AgentTurnGroup } from "../debug-reducer";
 const slotOf = (label: string): "in" | "out" | undefined =>
     label === "In" ? "in" : label === "Out" ? "out" : undefined;
 
+/** The RENDERED ⇄ RAW switch: a view drawn for a person, or exactly what the model sent or got. One control for a tool
+ *  step's In/Out and a user message whose text had context folded in, so "raw" means the same thing everywhere. */
+export function RawToggle({ raw, onRaw, tips, disabled }: { raw: boolean; onRaw: (raw: boolean) => void; tips: { rendered: string; raw: string }; disabled?: boolean }) {
+    return (
+        <div class={`rr-toggle${disabled ? " reserved" : ""}`}>
+            <span class="tt"><button class={raw ? "" : "on"} disabled={disabled} onClick={() => onRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{tips.rendered}</span></span>
+            <span class="tt"><button class={raw ? "on" : ""} disabled={disabled} onClick={() => onRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{tips.raw}</span></span>
+        </div>
+    );
+}
+
+/** What the two halves of a user message's switch say. */
+export const PROMPT_RAW_TIPS = { rendered: "What you wrote, and what you attached.", raw: "Exactly what the model got, with everything folded into your message." };
+
 /** ONE HALF OF A STEP — the In (what the model sent) or the Out (what it got back), each with a
  *  rendered⇄raw toggle. The raw view is the model-facing text VERBATIM and is never optional: that is
  *  the raw-view rule, and this is where it is enforced. Both views carry the slot's `data-cite` anchor,
@@ -77,10 +92,8 @@ export function IoBlock({ label, tip, preview, render, raw, rawText, marks, rese
                     same jump as the live rail, vertically. `reserve` holds its space until it's usable. */}
                 {render || reserve
                     ? <>
-                        <div class={`rr-toggle${render ? "" : " reserved"}`}>
-                            <span class="tt"><button class={showRaw ? "" : "on"} disabled={!render} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{render ? "A debug visualisation for you — not shown to the model." : "Available once this step finishes."}</span></span>
-                            <span class="tt"><button class={showRaw ? "on" : ""} disabled={!render} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{render ? "Exactly what the model sent/received. All it knows." : "Available once this step finishes."}</span></span>
-                        </div>
+                        <RawToggle raw={showRaw} onRaw={setShowRaw} disabled={!render}
+                            tips={render ? { rendered: "A debug visualisation for you — not shown to the model.", raw: "Exactly what the model sent/received. All it knows." } : { rendered: "Available once this step finishes.", raw: "Available once this step finishes." }} />
                         {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} ctx={ctx} lineMap={lineMap} remoteMs={remoteMs} failed={failed} />
                             /* RAW is shared by every tool and has no renderer-specific structure, so it
                                carries the DEFAULT anchor for the slot. A rendered view may declare a finer
@@ -819,15 +832,22 @@ export function SteerSeen({ seen }: { seen: boolean }) {
 
 // A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
 // All render as "you"; a mid-run steer additionally carries a `steer` delivery indicator (queued/seen).
-export const UserBubble = ({ text, ts, images, steer }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean } }) => (
-    <>
-        <div class={`msg user${text ? "" : " no-text"}`}>
-            <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}<span class="sp" />{text ? <UserActions text={text} /> : null}<Stamp ts={ts} /></div>
-            {text ? <UserText text={text} /> : null}
-        </div>
-        <SentImages images={images} />
-    </>
-);
+// With a `display` (context was folded into `text`), it shows what was typed and the attachment, and a
+// rendered/raw switch to the exact `text` the model got. Without one, `text` IS what was typed: no switch.
+export const UserBubble = ({ text, ts, images, steer, display }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean }; display?: PromptDisplay }) => {
+    const [raw, setRaw] = useState(false);
+    const shown = display && !raw ? display.typed : text;
+    return (
+        <>
+            <div class={`msg user${shown || display ? "" : " no-text"}`}>
+                <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
+                {shown ? <UserText text={shown} /> : null}
+            </div>
+            <SentImages images={images} />
+            {display && !raw ? <SentContext context={display.context} /> : null}
+        </>
+    );
+};
 
 // The absolute destination of a `navigate` step (the resolved URL the action render carries, else the raw arg).
 export const navTargetOf = (st: AgentStep): string => {
@@ -1026,7 +1046,7 @@ export function AgentRunView({ s }: { s: Session }) {
     const r = rev.value;
     const runLive = services().stillLive(s.hash);
     const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
-        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} /> },
+        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} display={s.taskDisplay} /> },
         // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
         // "exec" eight times, and the busy view is the developer's whole trace and keeps all of them. The fold only
         // happens once the streak has ENDED, so a live run is never collapsing out from under you.
@@ -1056,7 +1076,7 @@ export function AgentRunView({ s }: { s: Session }) {
             el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
         })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} /> })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     // Only the newest items are drawn: a long run costs as much DOM as it has steps, and a step with a screenshot or
     // a table costs several times a chat turn (transcript-window.tsx).
