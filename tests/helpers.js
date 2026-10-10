@@ -365,7 +365,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         debuggerEventListeners,
         /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */
         userScriptCalls,
-        emitUserScriptMessage: (msg, sender) => { userScriptListeners.forEach(fn => fn(msg, sender)); },
+        /** Deliver a message from a user-script world. Resolves with the answer a listener sent, or undefined when none
+         *  kept the channel open (as Chrome's `runtime.sendMessage` resolves when no one answers). */
+        emitUserScriptMessage: (msg, sender) => new Promise((resolve) => {
+            let open = false;
+            for (const fn of userScriptListeners) if (fn(msg, sender, resolve) === true) open = true;
+            if (!open) resolve(undefined);
+        }),
         emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
         /** Change synced settings the way the settings panel does: stored, then storage.onChanged with area "sync". */
         setSync: (obj) => {

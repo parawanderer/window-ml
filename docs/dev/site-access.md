@@ -170,12 +170,34 @@ rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs
   the main world with a note (owner's decision).
 
 The isolated script runs inside one wrapper built as source (`isolatedWrapper`): it binds `ml` (`current` deep-frozen,
-`dereference` answering only the reads sent with the call), captures the console, and returns plain data. Live lines
+`dereference` answering only the reads sent with the call, each the page's own `DerefText` from `src/isolated-kit.ts`),
+captures the console, and returns plain data. Live lines
 come back through `chrome.runtime.onUserScriptMessage` (reachable only from a world this extension configured), checked
 against the run's tab, the top frame and the call's nonce, or through a CDP binding added with `executionContextName`,
 so only that world has it, checked against the world's context id. The route is decided for one document (read
 before its URL, so a navigation in between fails the send rather than redirecting it) and every send is pinned to it. Every decision is in the execution log
 (`subsystem: routing`, `kind: exec-main|exec-isolated|exec-refused`, `detail.how`).
+
+A value's `.pipe()` and a stored table's `col`/`select`/`records`/long `head` need the worker while the script runs (part
+4b). The world asks over a channel only it holds, and the worker answers through `isoServer` (`src/sw/iso-channel.ts`):
+
+- The channel is the one the live lines already use. A user-script world sends `ISO_EXEC_ASK` with
+  `runtime.sendMessage`, which reaches only `onUserScriptMessage`: the page's main world and the content script cannot
+  send there, and the type is in neither `HANDLE_MAP` nor `runtime.onMessage`'s router. A CDP world calls the binding
+  named for its world (`executionContextName`); the answer goes back by `Runtime.evaluate` in that world's context id.
+- A request is answered only under the call's nonce (minted per call, written only into the world's source, deleted
+  when the call ends), from the call's tab, frame 0, its routed document and, where Chrome names it, its own world
+  (`userScriptWorldId`); an absent fact is a no. Anything else gets no answer at all, so a sender learns nothing. A CDP
+  call is taken only from the world's context id on the run's tab.
+- What it may read is the entitlement `VALUE_COLUMNS` applies: a re-pipe of a read the approved source NAMED (the world
+  sends an index into the call's reads, never a pointer), and the columns of a stored table sent with the call or handed
+  back by one of its re-pipes, with the delimiter from the worker's record, held by the run. A read that failed is not
+  re-read under another pipe.
+- At most `ISO_ASK_MAX` (256) requests a call; past it each is refused before any work, so a looping script ends on
+  that sentence.
+
+`tests/isolated-pointer.test.mjs` holds the values and errors to the read-only and main-world paths';
+`tests/redteam-isolated-channel.test.mjs` is the red-team pass on the channel.
 
 ## What the content script sends outside the gate
 
