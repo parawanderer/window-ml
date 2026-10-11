@@ -3202,3 +3202,17 @@ test("a paragraph gets the box's full width, the controls drop under it, and a s
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- the page's own text weights ---
+
+test("normal text is light and emphasis medium, not the browser's 400 and 700", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const weight = (sel) => page.evaluate((s) => getComputedStyle(document.querySelector(s)).fontWeight, sel);
+    expect(await weight("body")).toBe("300");
+    expect(await weight(".md p")).toBe("300");
+    expect(await weight(".md strong")).toBe("500");
+    // Anything with an explicit weight of its own keeps it: a title is still a title against a 300 body.
+    expect(await weight(".row-title")).toBe("500");
+    expect(errors).toEqual([]);
+    await page.close();
+});
