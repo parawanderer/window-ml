@@ -3,6 +3,13 @@
 
 /* A page is read from further away than a panel docked beside one: a larger base size. */
 :root { --fs: 14px; }
+/* THE PAGE'S OWN WEIGHTS (Shane, 2026-10-11): normal text light, emphasis medium. 300 and 500 where the browser
+   gives 400 and 700. This is the page, not the panel: chat.css loads only on the chat pages, and the page is read
+   at prose length, where the heavier pair tires. Anything with an explicit weight of its own (the badges, the
+   counters, the titles further down) overrides these, deliberately. `body` here beats sidebar.css's `font`
+   shorthand, which resets the weight to 400, by the cascade's later-wins rule: chat.css loads after it. */
+body { font-weight: 300; }
+b, strong { font-weight: 500; }
 html, body, #root { height: 100%; }
 /* The chat page's two-pane grid (the session list, then one session), one pane when `.narrow`. `dvh` is the height that
    excludes a phone's collapsing toolbars, so the composer is never under them. */
@@ -481,11 +488,11 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row .agent-badge-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* CALM WEIGHTS (Shane, 2026-10-09: "much cleaner … they don't use so much extra bold"). A list where every title,
-   machine and heading is bold has no emphasis left; medium is enough to be a title against the grey meta line. In an
-   answer, the model's own **bold** and headings keep their emphasis at semibold rather than the browser's 700. */
+   machine and heading is bold has no emphasis left; medium is enough to be a title against the grey meta line.
+   The model's own **bold** follows the page default (500, top of this file) since 2026-10-11; headings keep their
+   own 600 — two steps up from the 300 body, which is what makes a heading a heading. */
 .chat.calm .row-title, .chat.calm .chat-rt-name { font-weight: 500; }
 .chat.calm .chat-group-label { font-weight: 500; }
-.chat.calm .md strong, .chat.calm .md b { font-weight: 600; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3, .chat.calm .md h4 { font-weight: 600; }
 .chat.calm .chat-row .time { opacity: .55; }
 /* A runtime's fold chevron, calm: after EVERYTHING the heading says instead of before it, and only while the pointer
