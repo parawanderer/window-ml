@@ -3,11 +3,13 @@
 // the bottom-of-answer Result / Feedback / Reused blocks. Extracted from app.tsx; sits above ./render-panel.
 import type { ComponentChildren } from "preact";
 import { h } from "preact";
+import { useRef, useState } from "preact/hooks";
 import type { ReusedGrant } from "../../contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "../../contract/contract-render";
 import { splitAnswer, hasTokens, resolveTokenStep, answerWithoutShown } from "../../pointers/answer-tokens";
 import type { AnswerSegment } from "../../pointers/answer-tokens";
 import type { Session, AgentStep } from "../store";
+import { focusMode } from "../store";
 import { pretty, markdown, inlineMarkdown } from "../format";
 import { reveal } from "./transcript-window";
 import { IconChevron, IconEye, IconCheck } from "../icons";
@@ -15,6 +17,8 @@ import { ClickableImg, Code, SheetChip, cursorTipOn } from "../ui-kit";
 import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
 import { scrollToStepSeq } from "./step-scroll";
+import { FoldRail } from "./fold-rail";
+import { useCloseAnimation } from "../use-close";
 
 // Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click. In the
 // HUD it first EXPANDS "Show work" (the step row is otherwise not rendered); in a MULTI-TASK run the step also
@@ -198,13 +202,42 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
                 ? { node: <span dangerouslySetInnerHTML={{ __html: inlineMarkdown(standalone ? `\\[${rawText}\\]` : `\\(${rawText}\\)`) }} />, block: !!standalone }
                 : tokenRender(d, rawText, step.seq != null ? { hash: run.hash, seq: step.seq, result: step.result } : undefined);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
-    return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
-        onClick={onEmbedClick} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") jump(); };
+    if (block) return <TokBlock node={node} label={label} tip={tip} name={`${step.tool || "tool"} · step ${step.localStep ?? step.step}`} onClick={onEmbedClick} onKey={onKey} />;
+    return <span class="tok-ref tok-inline" role="button" tabIndex={0}
+        onClick={onEmbedClick} onKeyDown={onKey}>
         {node}
+        <span class="tok-tip" role="tooltip">{tip}</span>
+    </span>;
+}
+
+/** An output EMBEDDED in an answer as a block (a table, a plot, a value): the render, the model's caption under it, and
+ *  in the reading view a fold rail down its left that collapses it to one row naming it, as an open step or group
+ *  collapses. The row opens it again. Folded is this view's own state, kept while the embed is drawn. */
+function TokBlock({ node, label, tip, name, onClick, onKey }: { node: ComponentChildren; label: string; tip: string; name: string;
+    onClick: (e: MouseEvent) => void; onKey: (e: KeyboardEvent) => void }) {
+    const ref = useRef<HTMLSpanElement>(null);
+    const { closing, close, cancel } = useCloseAnimation(ref);
+    const [folded, setFolded] = useState(false);
+    // Only an embed being OPENED AGAIN eases in: one drawn with the answer must simply be there.
+    const [opening, setOpening] = useState(false);
+    const railed = focusMode.value;
+    const unfold = (): void => { cancel(); setOpening(true); setFolded(false); };
+    if (railed && folded) {
+        return <span ref={ref} class="tok-ref tok-block tok-folded" role="button" tabIndex={0} aria-expanded="false"
+            onClick={(e) => { e.stopPropagation(); unfold(); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); unfold(); } }}
+            {...cursorTipOn("Show this output again")}>
+            <span class="tri" aria-hidden="true"><IconChevron /></span>
+            {label ? <span class="tok-fold-name" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : <span class="tok-fold-name">{name}</span>}
+        </span>;
+    }
+    return <span ref={ref} class={`tok-ref tok-block${railed ? " railed" : ""}`} role="button" tabIndex={0} onClick={onClick} onKeyDown={onKey}>
+        {railed ? <FoldRail cls="fold-rail-cite" onFold={() => close(() => setFolded(true))} tip="Collapse this output" /> : null}
+        <span class={`tok-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} onAnimationEnd={() => setOpening(false)}>{node}</span>
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
             as safe as the answer prose. */}
-        {block && label ? <div class="tok-anno" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : null}
+        {label ? <div class="tok-anno" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : null}
         <span class="tok-tip" role="tooltip">{tip}</span>
     </span>;
 }

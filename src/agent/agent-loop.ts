@@ -433,6 +433,10 @@ function countedFor(msg: { usage?: unknown; reasoning?: unknown }): number | nul
 
 /** Whether a tool's output was cut BEFORE the model saw it: the render says how many characters the model
  *  received (`seen`, `valueSeen`), and the panel holds more. Absent means the model got all of it. */
+/** What a `dereference` step draws: the value it read, without the notes addressed to the model around it. An
+ *  exec's value cell, so a JSON value gets the same tree toggle a returned value does. */
+const derefRender = (text: string): RenderDescriptor => ({ type: "exec-out", value: text });
+
 function cutBeforeModel(r: RenderDescriptor | undefined): boolean {
     if (!r || (r.type !== "exec-out" && r.type !== "python-out")) return false;
     return (r.seen != null && (r.stdout?.length ?? 0) > r.seen) || (r.valueSeen != null && (r.value?.length ?? 0) > r.valueSeen);
@@ -503,7 +507,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             label: cleanLabel(`${nameOf(src)} | ${String(args?.pipe ?? "")}`),
             in: JSON.stringify(args), t: Date.now(), step, seq,
         });
-        tokenRenders.push({ id, tool: DEREF_TOOL, render: undefined, result: text });   // citable in the answer
+        tokenRenders.push({ id, tool: DEREF_TOOL, render: derefRender(text), result: text });   // citable in the answer
         // …and onto the STEP. The answer renderer resolves a citation by matching `step.token`, and this id is
         // minted outside the generic path (dereference is not `citable`), so without this the model was handed
         // a pointer, told to cite it, and the citation rendered as "unresolved @tool:…" — a handle the run had
@@ -600,7 +604,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 : via === "label"
                 ? `\n\n[this label names @tool:${v.id}. Cite it with ![label](@tool:${v.id}:out) — the id stays with this capture even if you label something else the same way later.]`
                 : "";
-            return { result: `${head}\n\n${text}${derived}${soft}${pin}` };
+            // The RENDER is the value alone. Everything around it (what the pointer is, when it was captured, how to
+            // cite the view) is said TO THE MODEL, and drawn as the step's default and as an embed in the answer it
+            // was a paragraph of instructions above and below the data a reader wanted. The raw view keeps it all.
+            return { result: `${head}\n\n${text}${derived}${soft}${pin}`, renderOut: derefRender(text) };
         } catch (e) {
             // Any stage that fails throws with an actionable message — the pipe dialect's existing contract.
             // Surface it verbatim so the model corrects the pipe rather than abandoning the pointer.

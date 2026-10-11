@@ -32,6 +32,7 @@ import { Disclosure } from "../disclosure";
 import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak } from "./step-streak";
+import { FoldRail } from "./fold-rail";
 import { CALL_TITLE } from "../../tools/tool-params";
 import { justArrived } from "./just-arrived";
 import { deepestUserLine } from "../../python/py-format";
@@ -554,6 +555,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // call. The step keeps its own state; only the live chrome is withheld.
     const cut = !!st.pending && !live;
     const inFlight = !!st.pending && !cut;
+    const railed = focusMode.value && !forcedOpen;
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
@@ -587,7 +589,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 {!open ? <span class="astep-preview">{cut ? <span class="dim">{awaiting ? "never ran" : "never finished"}</span> : awaiting ? <span class="dim">needs approval</span> : inFlight ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
-                ? <div class={`astep-body${closing ? " closing" : ""}`} ref={bodyRef}>
+                ? <div class={`astep-body${closing ? " closing" : ""}${railed ? " railed" : ""}`} ref={bodyRef}>
+                    {/* The reading view's fold rail, as an open group has: the line that says where this call ends
+                        closes it. Not on a gate held open, which cannot close. */}
+                    {railed ? <FoldRail onFold={toggle} tip="Collapse this call" /> : null}
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender

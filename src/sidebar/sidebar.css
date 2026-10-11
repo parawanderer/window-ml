@@ -3059,6 +3059,39 @@ html[data-focus] .action-verb { font-weight: 500; }
    table/image/code; inline for a short cited value so the prose flows around it. */
 .answer-rendered .tok-ref { cursor: pointer; border-radius: 2px; }
 .answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--cite); }
+/* An embed with a fold rail (the reading view): the rail draws its line where the border was, so the content stays put. */
+.answer-rendered .tok-block.railed { border-left: none; padding-left: 10px; }
+.answer-rendered .tok-body { display: block; }
+/* A FOLDED embed: one row naming it (its caption, or its tool and step), on the citation's own rail, that opens it again. */
+.answer-rendered .tok-block.tok-folded { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 8px; color: var(--fg-dim);
+    border-left-color: color-mix(in srgb, var(--cite) 55%, transparent); }
+/* A folded embedded output's row (answer-render.tsx TokBlock), which reopens it: its chevron. */
+.tok-folded .tri { flex: none; width: 12px; height: 12px; }
+.tok-folded .tri svg { width: 12px; height: 12px; }
+/* The name a folded embed shows in place of the output: the model's caption, else the tool and step. */
+.tok-fold-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+
+/* THE FOLD RAIL (fold-rail.tsx): the line down the left of an open group, call or embedded output, and the control
+   that closes it. The line is a ::before so the BUTTON can be wider than it: the thing you aim at is the gutter,
+   and the thing you see is a hairline. It brightens on hover, which is the only way a rail says it is a control.
+   DARK rather than accented: membership is structure, not status. An embed's rail is the citation colour it already
+   had as a border (`.fold-rail-cite`). The parent positions it (`position: relative`). */
+.fold-rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 11px; z-index: 1;
+    margin: 0; padding: 0; border: none; background: none; appearance: none; cursor: pointer;
+}
+.fold-rail::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px;
+    background: color-mix(in srgb, var(--fg) 12%, transparent); transition: background .15s ease;
+}
+.fold-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
+.fold-rail-cite::before { background: color-mix(in srgb, var(--cite) 70%, transparent); }
+.fold-rail-cite:hover::before { background: var(--cite); }
+@media (prefers-reduced-motion: reduce) { .fold-rail::before { transition: none; } }
+/* NOT A TAP TARGET on a phone: each place that draws one has a full-width header or row that does the same, and an
+   11px strip beside the content is a mis-tap there. The line stays; only the click goes. */
+@media (pointer: coarse) { .fold-rail { pointer-events: none; } }
+.astep-body.railed { position: relative; }
 /* Every inline citation — a plain value OR a typeset `| latex` formula — gets the green underline + a slightly
    lighter tinted box, so an inline math cite reads as a highlighted tool output, not model prose. The box is on
    the container so KaTeX (which isn't a .tok-val) is boxed too. */
