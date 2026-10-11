@@ -3214,6 +3214,8 @@ test("an embedded output's rail folds it to one row naming it, without jumping t
     await answer.locator(".tok-folded").focus();
     await page.keyboard.press("Enter");
     await expect(answer.locator(".tok-folded")).toHaveCount(0);
+ });
+ 
 // --- the input box stacks once a line would wrap beside its controls ---
 
 test("a paragraph gets the box's full width, the controls drop under it, and a short line brings them back", async () => {
@@ -3254,6 +3256,8 @@ test("the busy view draws no fold rails: it keeps the panel's own disclosures", 
     await page.locator('[data-astep-seq="1"] .astep-head').click();
     await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
     await expect(page.locator(".fold-rail")).toHaveCount(0);
+});
+    
 // --- the page's own text weights ---
 
 test("normal text is light and emphasis medium, not the browser's 400 and 700", async () => {
