@@ -3214,6 +3214,37 @@ test("an embedded output's rail folds it to one row naming it, without jumping t
     await answer.locator(".tok-folded").focus();
     await page.keyboard.press("Enter");
     await expect(answer.locator(".tok-folded")).toHaveCount(0);
+// --- the input box stacks once a line would wrap beside its controls ---
+
+test("a paragraph gets the box's full width, the controls drop under it, and a short line brings them back", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const row = page.locator(".composer .composer-row");
+    const box = row.locator(".cinput");
+    const attach = row.getByRole("button", { name: "Attach an image" });
+    const rect = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+    await box.fill("a short line");
+    await expect(row).not.toHaveClass(/stacked/);
+    const inline = await rect(box);
+
+    await box.fill("a paragraph long enough that it can no longer sit on one line beside the attach button, the model and send, so it wraps ".repeat(2));
+    await expect(row).toHaveClass(/stacked/);
+    const [wide, plus, r] = [await rect(box), await rect(attach), await rect(row)];
+    expect(wide.w).toBeGreaterThan(inline.w + 60);
+    expect(wide.w).toBeGreaterThan(r.w - 40);
+    // The text sits ABOVE the controls, and send stays at the right.
+    expect(plus.y).toBeGreaterThanOrEqual(wide.y + wide.h - 2);
+    const send = await rect(row.getByRole("button", { name: /^(Send|Stop the run)$/ }));
+    expect(send.x + send.w).toBeGreaterThan(r.x + r.w - 60);
+    // The caret stays in the box through the switch: it is reordered, never remounted.
+    await expect(box).toBeFocused();
+
+    // Back to a line that fits: one row again. And a newline stacks however short the text is.
+    await box.fill("short again");
+    await expect(row).not.toHaveClass(/stacked/);
+    await box.fill("two\nlines");
+    await expect(row).toHaveClass(/stacked/);
+    await box.fill("");
+    await expect(row).not.toHaveClass(/stacked/);
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -3223,6 +3254,16 @@ test("the busy view draws no fold rails: it keeps the panel's own disclosures", 
     await page.locator('[data-astep-seq="1"] .astep-head').click();
     await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
     await expect(page.locator(".fold-rail")).toHaveCount(0);
+// --- the page's own text weights ---
+
+test("normal text is light and emphasis medium, not the browser's 400 and 700", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const weight = (sel) => page.evaluate((s) => getComputedStyle(document.querySelector(s)).fontWeight, sel);
+    expect(await weight("body")).toBe("300");
+    expect(await weight(".md p")).toBe("300");
+    expect(await weight(".md strong")).toBe("500");
+    // Anything with an explicit weight of its own keeps it: a title is still a title against a 300 body.
+    expect(await weight(".row-title")).toBe("500");
     expect(errors).toEqual([]);
     await page.close();
 });

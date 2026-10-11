@@ -543,6 +543,67 @@ test("resource rows: a control whose leave never comes does not keep the rows' t
     assert.match(w.shadow.querySelector(".vram-rowtip")?.textContent ?? "", /qwen3\.5:35b/, "B's tip shows");
 });
 
+// --- the hover breakdown: the parts tile the band they subdivide ------------------------------------------
+// A model whose band is a LINE (stacked above a loading runner's `load:` band — which only happens when two
+// models loaded inside the visible window) turns the corner of the stepped base beneath it. The breakdown
+// drawn on hover must turn the SAME corner: its first part's floor IS the band below the model, so drawing it
+// as a plain interpolation while the band below steps opens a diagonal seam where the band has a square
+// corner. The band's floor is the truth — assert the bottom part's floor reproduces it vertex for vertex.
+
+/** The floor of a stacked polygon: the vertices after the LAST one at the max x, back to the start. The top
+ *  edge runs x ascending to the last sample, then the polygon retraces the floor (stored reversed). */
+const floorForward = (pts) => {
+    const v = pts.trim().split(/\s+/).map((p) => p.split(",").map(Number));
+    const maxX = Math.max(...v.map(([x]) => x));
+    let last = 0;
+    for (let i = 0; i < v.length; i++) if (Math.abs(v[i][0] - maxX) < 0.05) last = i;
+    return v.slice(last).reverse();
+};
+
+test("hover breakdown: a model above a loading runner tiles its floor edge for edge", async () => {
+    const GB = 1024 ** 3;
+    // A forked backend reports processes per card, so a runner's context becomes its own band — and two models
+    // loading in the window each leave a `load:` band, which is what puts a line band below the second model.
+    const procInfo = (runners) => ({ compute: {
+        system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12330946560 },
+        supported_gpus: [
+            { gpu_id: "0", name: "CUDA0", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 80 * GB,
+              runner: "CUDA", processes_scope: "all", processes: runners },
+            { gpu_id: "1", name: "CUDA1", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 94 * GB, runner: "CUDA" },
+        ],
+    } });
+    const model = (name, bytes) => ({ model: name, vramBytes: bytes, sizeBytes: bytes,
+        gpus: [{ id: "0", runner: "CUDA", vramBytes: bytes,
+            memory: { weights: Math.round(bytes * 0.6), kv_cache: Math.round(bytes * 0.25), compute: Math.round(bytes * 0.15) } }],
+        contextLength: 8192, expiresAt: null });
+    const runner = (name, bytes) => ({ pid: 1000 + name.length, used_memory: bytes, name: "llama-server", runner: { model: name, loading: false } });
+    const C = 10 * GB, D = 8 * GB;
+    let resident = [];
+    let info = procInfo([
+        { pid: 200, used_memory: 5 * GB, name: "llama-server", runner: { model: "C", loading: true } },
+        { pid: 201, used_memory: 4 * GB, name: "llama-server", runner: { model: "D", loading: true } },
+    ]);
+    const w = await loadSidebarWorld({ vram: resident, info: () => info, ...STACKED_LAYOUT });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush(); await w.flush();
+    for (let i = 0; i < 10; i++) { await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
+    resident = [model("C", C), model("D", D)];
+    info = procInfo([runner("C", C + GB), runner("D", D + GB)]);
+    w.setVram(resident);
+    for (let i = 0; i < 12; i++) { await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
+
+    const track = w.shadow.querySelector(".rc-track");
+    const bands = [...track.querySelectorAll(".rc-band")];
+    assert.equal(bands.length, 2, "two models resident: C at the bottom, D above it");
+    bands[1].dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    const parts = [...track.querySelectorAll(".rc-part")];
+    assert.equal(parts.length, 3, "weights, cache and compute — the breakdown actually draws");
+    assert.deepEqual(floorForward(parts[0].getAttribute("points")), floorForward(bands[1].getAttribute("points")),
+        "the bottom part's floor is the band's floor, corner for corner");
+});
+
 // --- the overview track: pools of different sizes compared as a share of each ----------------------------
 
 test("overview: pools of DIFFERENT sizes are compared as a share of each, not on one denominator", async () => {
