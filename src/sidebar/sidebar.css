@@ -1260,7 +1260,7 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    so these read white + bold (the conversation anchors), set apart from the dim italic "thinking" by weight,
    not hue. */
 .acard-you .who, .acard-ans .who { color: var(--fg); font-weight: 700; white-space: nowrap; flex: 0 0 auto; }
-.astep.tool { border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
+.astep.tool { padding-left: 8px; margin: 4px 0; }
 /* `font: inherit`: the head is a <button>, which takes the browser's control font instead of the page's (11px in
    WebKit, 13.3px in Chrome), and drew every tool name smaller than the text around it — tiniest on an iPhone. */
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; font: inherit; }
