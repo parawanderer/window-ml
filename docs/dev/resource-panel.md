@@ -378,8 +378,11 @@ per device, in bytes.
   **Every polygon that draws a model's memory steps — the band, the hover breakdown and the drilled-in parts.**
   It was first applied to the band edges alone, so the band held flat while the parts drawn INSIDE it still
   sloped: a flat band with diagonal lines across it, which reads as the breakdown disagreeing with the total
-  it breaks down. One helper (`stepEdge`, taking the y-mapper since the drilled-in view draws against its own
-  shared ceiling) serves all three, defined right after `x`/`y` because the drilled-in branch returns early.
+  it breaks down. The stacked band edges and the hover breakdown both go through `bandEdge` (`ptsOf` in the
+  chart), so a part drawn inside a LINE band turns the same corner the band turns rather than interpolating a
+  diagonal across the step below it; the two renderings of one edge that disagreed are now the same call.
+  Only the drilled-in parts still use `stepEdge` (taking the y-mapper, since that branch draws against its
+  own shared ceiling), defined right after `x`/`y` because the drilled-in branch returns early.
   **And so does what BELONGS to a model** (`isStep`: identity, or a tint that is not a `load:`): a runner's
   overhead band is that runner's memory, constant while it lives and gone at the same eviction. Drawn as a line
   on top of the stepped model it sloped from the last sample to the next — a `\` wedge beside the model's `|` at

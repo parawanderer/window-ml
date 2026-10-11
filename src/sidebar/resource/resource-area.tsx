@@ -85,12 +85,14 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
      *  retraces the same shape, which is how a floor is drawn without a second implementation that could
      *  disagree with this one.
      *
-     *  Defined HERE, above the drilled-in branch, because every polygon in this component needs it and that
-     *  branch returns early: the band edges, the hover breakdown AND the drilled-in parts. It was first written
-     *  for the bands alone, so a band stepped while the parts drawn INSIDE it still sloped — a flat band with
-     *  diagonal lines across it, which reads as the breakdown disagreeing with the total it breaks down. The
-     *  y-mapper is a parameter because the drilled-in view draws against its OWN shared ceiling. (After `x`/`y`,
-     *  never before: a closure here running ahead of those consts is the TDZ crash this function has had once.) */
+     *  Defined HERE, above the drilled-in branch, because that branch returns early and its polygons all need
+     *  it: the drilled-in parts and the pending/unsplit fills. The STACKED band edges and the hover breakdown go
+     *  through `ptsOf` below instead, because a line band must turn the corner of the stepped band beneath it,
+     *  which only `bandEdge` knows. It was first written for the bands alone, so a band stepped while the parts
+     *  drawn INSIDE it still sloped — a flat band with diagonal lines across it, which reads as the breakdown
+     *  disagreeing with the total it breaks down. The y-mapper is a parameter because the drilled-in view draws
+     *  against its OWN shared ceiling. (After `x`/`y`, never before: a closure here running ahead of those consts
+     *  is the TDZ crash this function has had once.) */
     const stepEdge = (series: number[], stepped: boolean, yOf: (v: number) => number): string[] => {
         const out: string[] = [];
         for (let i = 0; i < frames.length; i++) {
@@ -247,9 +249,14 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
      */
     const baseKey = [...stepKeys].at(-1) ?? null;
     const base = baseKey ? (tops[baseKey] || zeros) : zeros;
+    /** One edge as a points string, from a SERIES against the same corner-following base `edgeOf` uses. A line
+     *  band above the stepped run turns the base's corners (`bandEdge`), and a plain interpolation (`stepEdge`
+     *  with `false`) draws a diagonal where the band below steps — so every polygon in the stacked view goes
+     *  through this, never `stepEdge` alone. */
+    const ptsOf = (series: number[], stepped: boolean, corner: number[] | null): string[] =>
+        bandEdge(series, stepped, corner).map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
     const edgeOf = (k: string | null): string[] =>
-        bandEdge(k ? (tops[k] || zeros) : zeros, isStep(k), k && !isStep(k) && baseKey ? base : null)
-            .map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+        ptsOf(k ? (tops[k] || zeros) : zeros, isStep(k), k && !isStep(k) && baseKey ? base : null);
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
         const pts: string[] = [...edgeOf(key), ...edgeOf(below).reverse()];
@@ -304,23 +311,28 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
         }
         if (!seen.size) return null;
         const keys = MEMORY_PARTS.filter((p) => seen.has(p.key));
-        const base = frames.map((_f, i) => (belowKey ? (tops[belowKey]?.[i] ?? 0) : 0));
+        const floor0 = frames.map((_f, i) => (belowKey ? (tops[belowKey]?.[i] ?? 0) : 0));
         // Cumulative sub-tops, one row per part.
         const subTops = keys.map(() => new Array<number>(frames.length).fill(0));
         frames.forEach((bands, i) => {
             const p = bands.find((b) => b.key === key)?.parts;
-            let acc = base[i];
+            let acc = floor0[i];
             keys.forEach((part, pi) => {
                 if (p) acc += p[part.key];
                 subTops[pi][i] = acc;   // no parts → every sub-top is the base, so nothing is drawn here
             });
         });
+        // The breakdown must tile the band it subdivides, edge for edge. A part's top steps when the model's band
+        // steps; when the model is a LINE band (stacked on a loading runner) it turns the same corners the band turns,
+        // not a plain interpolation. The FIRST part's floor is the band beneath the model, drawn with THAT band's
+        // step-ness — two renderings of one edge that disagree open a seam between the parts and the band.
+        const splitEdge = (series: number[], k: string | null): string[] =>
+            ptsOf(series, isStep(k), k && !isStep(k) && baseKey ? base : null);
         return keys.map((part, pi) => {
-            const pts: string[] = [];
-            // Every part is this model's, so every top steps. The FIRST part's floor is the band beneath the model and
-            // takes THAT band's step-ness: it is the same edge the model's own band sits on, and two renderings of one
-            // edge that disagree open a seam between the parts and the band.
-            pts.push(...stepEdge(subTops[pi], true, y), ...stepEdge(pi === 0 ? base : subTops[pi - 1], pi === 0 ? isStep(belowKey) : true, y).reverse());
+            const pts: string[] = [
+                ...splitEdge(subTops[pi], key),
+                ...splitEdge(pi === 0 ? floor0 : subTops[pi - 1], pi === 0 ? belowKey : key).reverse(),
+            ];
             return <polygon key={`p:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
                 fill={partFill(model, part.key)} vector-effect="non-scaling-stroke" />;
         });
