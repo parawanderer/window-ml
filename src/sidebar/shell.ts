@@ -263,7 +263,9 @@ ${HIGHLIGHT_CSS}
 `;
 
 let shellHost: HTMLElement | null = null;   // shadow host in the page's light DOM
-let shadowRoot: ShadowRoot | null = null;
+/** The overlay's shadow root. Every root the shell attaches is CLOSED, so the page's `host.shadowRoot` is null and these
+ *  kept references are the only way in: our code goes through them, never `.shadowRoot`. */
+let shellRoot: ShadowRoot | null = null;
 let panel: HTMLElement | null = null;       // the sliding container, inside the shadow root
 let frame: HTMLIFrameElement | null = null;
 /** The private line to the app in `frame` (parent-channel.ts is the other end). Null until the app has said hello. */
@@ -573,7 +575,7 @@ function execCopy(text: string): void {
 }
 
 function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): void {
-    if (!cardHost || !cardHost.shadowRoot) return;
+    if (!cardHost || !cardRoot) return;
     hideCornerMenu();
     const menu = document.createElement("div");
     menu.id = `${SB_CARD}-menu`;
@@ -607,7 +609,7 @@ function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): 
     }
     // Append FIRST, then measure the REAL size and clamp so it snaps fully into the viewport — a hardcoded
     // height guess let a tall menu (many run actions) get cut off at the bottom of the page.
-    cardHost.shadowRoot.append(menu);
+    cardRoot.append(menu);
     const mw = menu.offsetWidth || 170, mh = menu.offsetHeight || 200, M = 8;
     menu.style.left = `${Math.max(M, Math.min(px, window.innerWidth - mw - M))}px`;
     menu.style.top = `${Math.max(M, Math.min(py, window.innerHeight - mh - M))}px`;
@@ -639,7 +641,7 @@ function showLightbox(src: string): void {
     // Prefer the overlay shadow root; fall back to the corner card's (off / devtools-HUD modes draw no overlay,
     // so without this an image click in the HUD card posted __mlLightbox but had nowhere to render — the
     // "not clickable in the HUD" bug). Both stylesheets carry LIGHTBOX_CSS.
-    const root = shadowRoot || cardRoot;
+    const root = shellRoot || cardRoot;
     if (!root) return;
     hideLightbox();
     lightbox = document.createElement("div");
@@ -676,12 +678,12 @@ const topLayer = topLayerKeeper(() => [hlHost, shellHost, cardHost], browserTopL
 /** Each host's own stylesheet and its rules at mount, so a shot can tell the page's edits to them (shell-shot.ts). */
 const ownSheets = new Map<ShadowRoot, { style: Element; sheet: string }>();   // state: ui — the shell's own stylesheets, dropped with their hosts
 function hlContainer(): ShadowRoot {
-    if (shadowRoot) return shadowRoot;
+    if (shellRoot) return shellRoot;
     if (hlRoot) return hlRoot;
     hlHost = document.createElement("div");
     hlHost.id = `${SB_ROOT}-hl`;
     hlHost.style.cssText = HOST_STYLE;
-    hlRoot = hlHost.attachShadow({ mode: "open" });
+    hlRoot = hlHost.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = HIGHLIGHT_CSS;
     hlRoot.append(style);
@@ -768,12 +770,22 @@ let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 
 /** Where the shell's UI is mounted now, for the worker's mask (shell-shot.ts `extensionRects`). */
 const shotRoots = (): ShotRoots => ({
-    hosts: ([[shellHost, shadowRoot, "sidebar"], [cardHost, cardRoot, "card"], [hlHost, hlRoot, "highlight"]] as const).map(([host, root, kind]) =>
+    hosts: ([[shellHost, shellRoot, "sidebar"], [cardHost, cardRoot, "card"], [hlHost, hlRoot, "highlight"]] as const).map(([host, root, kind]) =>
         ({ host, kind, root, style: root ? ownSheets.get(root)?.style ?? null : null, sheet: root ? ownSheets.get(root)?.sheet ?? "" : "", topLayer: topLayer.manages(host) })),
     owned: [panel, frame, cardWrap, lightbox, highlightEl],
     lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: chrome.runtime.getURL(""),
     topLayerStrays: topLayer.strays(),
 });
+
+/**
+ * The e2e harness's way into the shell's CLOSED shadow roots (tests/e2e/harness.mjs `inShell`), shipped in the real
+ * build because the e2e loads the real dist. It is a property of this content script's ISOLATED world's global object,
+ * a realm the page's main world shares no object with, so only code evaluated in this world can call it: the harness,
+ * over CDP `Runtime.evaluate` with this world's context id. Such code could already reach the roots through
+ * `chrome.dom.openOrClosedShadowRoot`, so the hook gives nobody anything new. Never post a root, or a node in one, to the
+ * page: that is the one way this would hand the page our UI.
+ */
+Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value: () => ({ sidebar: shellRoot, card: cardRoot, highlight: hlRoot }) });
 
 /** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
 const shot = pageShotGate({
@@ -1248,13 +1260,15 @@ function mountOverlay(): void {
     // so the page's CSS can't bleed into it (e.g. a global `div { opacity: .8 }`,
     // as example.com actually ships). `all: initial !important` on the shadow host
     // (HOST_STYLE) blocks page rules that target the host element itself, the
-    // page's `!important` ones included. Secrets still live in the iframe (its
-    // own extension origin), not in this shell.
+    // page's `!important` ones included. The root is CLOSED: the page cannot reach
+    // our nodes, the iframe or our stylesheet through the host, nor put a
+    // `:host{…!important}` rule inside it, which would beat that inline style.
+    // Secrets still live in the iframe (its own extension origin), not in this shell.
     shellHost = document.createElement("div");
     shellHost.id = SB_ROOT;
     shellHost.style.cssText = HOST_STYLE;
-    const root = shellHost.attachShadow({ mode: "open" });
-    shadowRoot = root;
+    const root = shellHost.attachShadow({ mode: "closed" });
+    shellRoot = root;
 
     const style = document.createElement("style");
     style.textContent = SHELL_CSS;
@@ -1301,7 +1315,7 @@ function mountCard(): void {
     cardHost = document.createElement("div");
     cardHost.id = SB_CARD;
     cardHost.style.cssText = HOST_STYLE;
-    const root = cardHost.attachShadow({ mode: "open" });
+    const root = cardHost.attachShadow({ mode: "closed" });
     cardRoot = root;
     const style = document.createElement("style");
     style.textContent = CARD_CSS + LIGHTBOX_CSS;   // the card shadow also styles the lightbox (drawn here in card-only modes)
@@ -1402,9 +1416,9 @@ function teardown(): void {
     hideLightbox();
     hideHighlight();
     if (hlRoot) ownSheets.delete(hlRoot);
-    if (shadowRoot) ownSheets.delete(shadowRoot);
+    if (shellRoot) ownSheets.delete(shellRoot);
     if (hlHost) { topLayer.release(hlHost); hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
-    if (shellHost) { topLayer.release(shellHost); shellHost.remove(); shellHost = panel = frame = shadowRoot = null; closeHostPort(); }
+    if (shellHost) { topLayer.release(shellHost); shellHost.remove(); shellHost = panel = frame = shellRoot = null; closeHostPort(); }
     unmountCard();
     window.removeEventListener("message", onWindowMessage);
     window.removeEventListener("keydown", relayChartKey, true);

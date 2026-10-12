@@ -16,7 +16,7 @@
 // every wait is on a run finishing, a reply arriving, or a state change.
 
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, approveOrigin } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/server.mjs";
 
@@ -449,10 +449,11 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
     });
 });
 
-// ATTACK 16, found 2026-10-07 while closing 15. The shell's shadow roots are open, so a page reaches the corner card's
-// iframe (`host.shadowRoot.querySelector("iframe")`). The app inside talks to the shell with `window.parent.postMessage`
-// and accepts whatever its parent posts, and on a web page that parent window IS the page: the page hears everything
-// the app says and can say anything to it, with the shell never involved. Closing 15 alone leaves both.
+// ATTACK 16, found 2026-10-07 while closing 15. The shell's shadow roots were open, so a page reached the corner card's
+// iframe (`host.shadowRoot.querySelector("iframe")`). The app inside talked to the shell with `window.parent.postMessage`
+// and accepted whatever its parent posted, and on a web page that parent window IS the page: the page heard everything
+// the app said and could say anything to it, with the shell never involved. Closing 15 alone left both. The app now
+// talks over a private port, and since attack 17 the roots are closed, so the page has no handle on the iframe at all.
 test.describe("@security attack 16: the page and the extension's own surfaces", () => {
     /** The corner card's frame, once it has mounted. */
     const cardFrame = (page) => page.frames().find((f) => f.url().includes("sidebar.html"));
@@ -498,10 +499,19 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
         try {
             const page = await open(ext, site.url("evil.test"));
             const hash = await finishedRun(ext, page, fake);
-            const posted = await page.evaluate((h) => window.__intoApp([
-                { kind: "agent-result", id: h, ts: Date.now() + 1000, save: false, session: { hash: h, turn: 1 }, summary: "FORGED ANSWER: sign in again at evil.test", steps: 1, hitCap: false },
-            ]), hash);
-            expect(posted, "the page found the card's iframe").toBeGreaterThan(0);
+            const forged = (h) => [{ kind: "agent-result", id: h, ts: Date.now() + 1000, save: false, session: { hash: h, turn: 1 }, summary: "FORGED ANSWER: sign in again at evil.test", steps: 1, hitCap: false }];
+            // The page holds no handle on the card's window: not through our host (the root is closed), not in
+            // `window.frames` (a frame in a shadow tree is not listed), not as the source of a message it heard.
+            const posted = await page.evaluate((events) => window.__intoApp(events), forged(hash));
+            expect(posted, "the page found the card's iframe").toBe(0);
+            // Had it one, a post as the card's parent window is still ignored. The shell's world posts it: a window post
+            // from there reaches the app with the same parent window as its source as the page's would.
+            const sent = await inShell(page, (roots, events) => {
+                const win = roots.card?.querySelector("iframe")?.contentWindow;
+                for (const ev of events) win?.postMessage({ __mlDebug: ev }, "*");
+                return !!win;
+            }, forged(hash));
+            expect(sent, "the shell's world posted into the card").toBe(true);
             if (holeOpen("slice2stream", "the card's iframe accepts any message from its parent window, the page")) {
                 await expect.poll(() => cardText(page), { timeout: 15000 }).toContain("FORGED");
                 return;
@@ -561,6 +571,142 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
             expect(await idx.status(hash)).toBe("waiting");
             await idx.cmd({ type: "session.cancel", session: { runtime: "local", hash } });
             expect(await idx.settled(hash)).not.toBe("done");
+        } finally { await close(); }
+    });
+});
+
+// ATTACK 17, decided 2026-10-10: the shell's three shadow roots were OPEN, so the page reached our nodes, our stylesheet
+// and the card's iframe through `host.shadowRoot`, and could put a `:host{…!important}` rule inside a root, which beats
+// the host's inline `all: initial !important`. The roots are CLOSED now. The page must hold no handle on any of them by
+// any path: the host's own property, a global, an expando, an event's target or path, a mutation record, a message,
+// focus, the selection, a hit test, or the shell's test hook (`__wmlShellRoots` lives on the content script's world's
+// global, which the main world cannot see). The tests' way in is that hook, through `inShell` (harness.mjs).
+test.describe("@security attack 17: the shell's shadow roots", () => {
+    const HOSTS = ["ml-sb-root", "ml-sb-card", "ml-sb-root-hl"];
+
+    /** In the page's main world: record every event, mutation and message that carries a node inside one of our roots. */
+    const watchForOurNodes = (page) => page.evaluate((ids) => {
+        const ours = (v) => {
+            try {
+                if (!(v instanceof Node)) return false;
+                const r = v instanceof ShadowRoot ? v : v.getRootNode();
+                return r instanceof ShadowRoot && ids.includes(r.host?.id);
+            } catch { return false; }
+        };
+        window.__ours = ours;
+        const seen = window.__oursSeen = [];
+        const types = ["click", "dblclick", "contextmenu", "auxclick", "pointerdown", "pointerup", "pointerover", "pointerout", "pointermove",
+            "mouseover", "mouseout", "mousemove", "mousedown", "mouseup", "focusin", "focusout", "focus", "blur", "keydown", "keyup",
+            "wheel", "selectstart", "selectionchange", "input", "beforetoggle", "toggle", "transitionstart", "animationstart", "copy"];
+        for (const type of types) for (const t of [window, document]) t.addEventListener(type, (e) => {
+            const hits = [e.target, e.relatedTarget, ...e.composedPath()].filter(ours);
+            if (hits.length) seen.push(`${type}: ${hits.map((n) => n.nodeName).join(",")}`);
+        }, true);
+        window.addEventListener("message", (e) => { if ([e.source, e.data, ...(e.ports || [])].some(ours)) seen.push("message"); }, true);
+        new MutationObserver((recs) => { for (const r of recs) if ([r.target, ...r.addedNodes, ...r.removedNodes].some(ours)) seen.push("mutation"); })
+            .observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    }, HOSTS);
+
+    /** In the page's main world: every way it found to a node inside our roots (empty is the secure answer), and which
+     *  of our hosts are in its document. */
+    const pageReach = (page) => page.evaluate((ids) => {
+        const ours = window.__ours;
+        const found = [...window.__oursSeen];
+        const hosts = ids.map((id) => document.getElementById(id)).filter(Boolean);
+        for (const h of hosts) {
+            if (h.shadowRoot !== null) found.push(`#${h.id}.shadowRoot`);
+            try { h.attachShadow({ mode: "open" }); found.push(`#${h.id}.attachShadow succeeded`); } catch { /* it has its root */ }
+            if (window.__mlClosedRoots?.get?.(h)) found.push(`#${h.id} in the page world's closed-root capture`);
+            if (h.querySelector("iframe")) found.push(`#${h.id} has an iframe in reach`);
+        }
+        if (typeof window.__wmlShellRoots !== "undefined") found.push("the shell's hook on the page's window");
+        // A message from one of our frames hands the page that frame's window as its source (evil.js records them).
+        if (window.__heard.length) found.push(`${window.__heard.length} message(s) from another window`);
+        // Every own property, string- or symbol-keyed, of the window, the document and every element.
+        for (const o of [window, document, ...document.querySelectorAll("*")]) {
+            for (const k of Reflect.ownKeys(o)) {
+                let v;
+                try { v = o[k]; } catch { continue; }
+                if (ours(v)) found.push(`${o === window ? "window" : o.nodeName}.${String(k)}`);
+            }
+        }
+        const sel = getSelection();
+        const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+        for (const n of [document.activeElement, sel?.anchorNode, sel?.focusNode, range?.startContainer, range?.endContainer]) if (ours(n)) found.push("focus or selection");
+        // A hit test over the whole viewport answers with the host, never a node inside it.
+        for (let x = 4; x < innerWidth; x += 24) for (let y = 4; y < innerHeight; y += 24) if (document.elementsFromPoint(x, y).some(ours)) { found.push(`a hit test at ${x},${y}`); x = y = 1e9; }
+        return { found, hosts: hosts.map((h) => h.id) };
+    }, HOSTS);
+
+    /** Real input on every part of `which` root a person touches: hover, click, double-click, right-click, keys. */
+    async function touch(page, which) {
+        const boxes = await inShell(page, (roots, w) => [...roots[w].querySelectorAll("*")].map((el) => el.getBoundingClientRect())
+            .filter((r) => r.width > 2 && r.height > 2 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)
+            .map((r) => ({ x: Math.min(innerWidth - 2, Math.max(1, r.left + Math.min(r.width / 2, 6))), y: Math.min(innerHeight - 2, Math.max(1, r.top + r.height / 2)) })), which);
+        expect(boxes.length, `something of the ${which} root paints`).toBeGreaterThan(0);
+        for (const b of boxes.slice(0, 12)) {
+            await page.mouse.move(b.x, b.y, { steps: 2 });
+            await page.mouse.click(b.x, b.y, { button: "right" });
+            await page.keyboard.press("Escape");
+        }
+        await page.mouse.dblclick(boxes[0].x, boxes[0].y);
+        for (let i = 0; i < 4; i++) await page.keyboard.press("Tab");
+        await page.mouse.wheel(0, 40);
+    }
+
+    test("17a: the card and the highlight (debug mode off): the page reads no root of ours, by any path", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"));
+            await watchForOurNodes(page);
+            const idx = await sessions(ext);
+            fake.setScript([{ content: "first answer" }]);
+            const hash = await userStartsRun(ext, idx, page, "say something");
+            expect(await idx.settled(hash)).toBe("done");
+            expect(await idx.cmd({ type: "page.highlight", session: { runtime: "local", hash }, ref: { selector: "#next" } })).toMatchObject({ ok: true });
+            // Both roots exist and paint, seen from the shell's world: the page's empty answer is about reach, not absence.
+            expect(await waitInShell(page, (roots) => !!roots.card?.querySelector("iframe") && !!roots.highlight?.childElementCount)).toBe(true);
+            await touch(page, "card");
+            const { found, hosts } = await pageReach(page);
+            expect(hosts.sort()).toEqual(["ml-sb-card", "ml-sb-root-hl"]);
+            expect(found).toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("17a: the overlay sidebar: the page reads no root of ours, by any path", async () => {
+        const { site, ext, close } = await setup({ debugMode: "overlay" });
+        try {
+            const page = await open(ext, site.url("evil.test"));
+            await watchForOurNodes(page);
+            await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
+            await inShell(page, (roots) => roots.sidebar.getElementById("ml-sb-tab").click());   // open it, so the panel paints too
+            await touch(page, "sidebar");
+            const { found, hosts } = await pageReach(page);
+            expect(hosts).toEqual(["ml-sb-root"]);
+            expect(found).toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("17b: the page cannot reach the card's iframe through our host", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"));
+            const idx = await sessions(ext);
+            fake.setScript([{ content: "first answer" }]);
+            const hash = await userStartsRun(ext, idx, page, "say something");
+            expect(await idx.settled(hash)).toBe("done");
+            expect(await waitInShell(page, (roots) => /sidebar\.html/.test(roots.card?.querySelector("iframe")?.src || ""))).toBe(true);
+            const reach = await page.evaluate(() => {
+                const host = document.getElementById("ml-sb-card");
+                return {
+                    host: !!host,
+                    root: host?.shadowRoot ?? null,
+                    throughHosts: window.__framesThroughHosts(),
+                    framesListed: window.length,
+                    extensionIframes: [...document.querySelectorAll("iframe")].filter((f) => f.src.startsWith("chrome-extension:")).length,
+                };
+            });
+            expect(reach).toEqual({ host: true, root: null, throughHosts: 0, framesListed: 0, extensionIframes: 0 });
         } finally { await close(); }
     });
 });

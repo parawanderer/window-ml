@@ -186,7 +186,7 @@ export interface MlApi {
      *  + accessible-name substring + state), `label="Username"` (form control by its label/accessible
      *  name). Use this instead of hand-chaining `.shadowRoot`/`.contentDocument`. Read-only. */
     /** By default EXCLUDES the extension's own injected UI (the HUD overlay/card/highlight/lightbox); pass
-     *  `includeExtensionUi: true` to reach those page elements too. */
+     *  `includeExtensionUi: true` to keep their hosts. Their shadow roots are closed, so nothing inside is reachable. */
     queryAll(selector: string, includeExtensionUi?: boolean): Element[];
     /** The screen-reader + actionable view of ONE element, as a single object — the same expertise the
      *  `interactives` tool uses, so you can COMPOSE your own finder in an `exec` survey:

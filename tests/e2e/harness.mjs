@@ -192,6 +192,116 @@ export async function waitForMl(page, { approve = true } = {}) {
     await page.waitForFunction(() => { const w = /** @type {any} */ (window); return !!(w.ml && w.ml.ready); }, null, { timeout: 15000 });
 }
 
+/** One CDP session per page and the execution contexts it has seen, for {@link inShell}. */
+const shellSessions = new WeakMap();
+
+/**
+ * The CDP session and context id of the content script's ISOLATED world in `page`'s top frame: the one non-default
+ * context whose global has the shell's `__wmlShellRoots` hook. Waits for it, since the content script loads late.
+ * @param {any} page the page
+ * @param {number} timeout ms to wait for the content script
+ * @returns {Promise<{ cdp: any, ctxs: Map<number, any>, id: number | null }>}
+ */
+async function shellContext(page, timeout) {
+    let s = shellSessions.get(page);
+    if (!s) {
+        const cdp = await page.context().newCDPSession(page);
+        /** @type {Map<number, any>} */
+        const ctxs = new Map();
+        cdp.on("Runtime.executionContextCreated", (/** @type {any} */ e) => ctxs.set(e.context.id, e.context));
+        cdp.on("Runtime.executionContextDestroyed", (/** @type {any} */ e) => ctxs.delete(e.executionContextId));
+        cdp.on("Runtime.executionContextsCleared", () => ctxs.clear());
+        await cdp.send("Runtime.enable");
+        s = { cdp, ctxs, id: null };
+        shellSessions.set(page, s);
+    }
+    const deadline = Date.now() + timeout;
+    for (;;) {
+        if (s.id != null && s.ctxs.has(s.id)) return s;
+        s.id = null;
+        const { frameTree } = await s.cdp.send("Page.getFrameTree");
+        for (const c of s.ctxs.values()) {
+            if (c.auxData?.frameId !== frameTree.frame.id || c.auxData?.isDefault) continue;
+            const r = await s.cdp.send("Runtime.evaluate", { contextId: c.id, expression: "typeof globalThis.__wmlShellRoots", returnByValue: true }).catch(() => null);
+            if (r?.result?.value === "function") { s.id = c.id; return s; }
+        }
+        if (Date.now() > deadline) throw new Error("inShell: no content-script world with the shell's hook on this page (is the extension loaded on it?)");
+        await new Promise((r) => setTimeout(r, 100));
+    }
+}
+
+/**
+ * RUN `fn` WHERE THE SHELL LIVES: the content script's isolated world of `page`'s top frame, which shares the page's DOM
+ * but none of its JS objects. `fn(roots, arg)` gets `{ sidebar, card, highlight }`, the shell's shadow roots (null when
+ * not mounted), and its result comes back by value (JSON), like `page.evaluate`'s.
+ *
+ * The roots are CLOSED, so `host.shadowRoot` is null in every world and Playwright's selectors do not enter them: this
+ * is how a test reaches our UI. It reaches the shell's `__wmlShellRoots` hook over CDP (`Runtime.evaluate` with the
+ * isolated world's context id), which the page's main world has no way to name. `fn` is serialized, so it closes over
+ * nothing: pass what it needs as `arg`.
+ * @template T
+ * @param {any} page the page
+ * @param {(roots: { sidebar: ShadowRoot | null, card: ShadowRoot | null, highlight: ShadowRoot | null }, arg: any) => T | Promise<T>} fn
+ * @param {any} [arg] JSON-serializable
+ * @param {{ timeout?: number }} [opts] how long to wait for the content script (default 15 s)
+ * @returns {Promise<T>}
+ */
+export async function inShell(page, fn, arg, { timeout = 15000 } = {}) {
+    const expression = `(async () => (${fn.toString()})(globalThis.__wmlShellRoots(), ${arg === undefined ? "undefined" : JSON.stringify(arg)}))()`;
+    for (let attempt = 0; ; attempt++) {
+        const s = await shellContext(page, timeout);
+        const r = await s.cdp.send("Runtime.evaluate", { contextId: s.id, expression, awaitPromise: true, returnByValue: true })
+            .catch((/** @type {any} */ e) => ({ lost: e }));
+        // The page navigated between finding the world and using it: find the new one, once.
+        if ("lost" in r) { if (attempt === 0 && /context/i.test(String(r.lost?.message))) { s.id = null; continue; } throw r.lost; }
+        if (r.exceptionDetails) throw new Error(`inShell: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}`);
+        return r.result.value;
+    }
+}
+
+/**
+ * Poll {@link inShell} until `fn` returns something truthy, and return it: `page.waitForFunction` for our closed roots.
+ * A throw (the shell not mounted yet) counts as "not yet".
+ * @template T
+ * @param {any} page the page
+ * @param {(roots: { sidebar: ShadowRoot | null, card: ShadowRoot | null, highlight: ShadowRoot | null }, arg: any) => T | Promise<T>} fn
+ * @param {any} [arg] JSON-serializable
+ * @param {{ timeout?: number, interval?: number }} [opts] default 15 s, polling every 100 ms
+ * @returns {Promise<T>}
+ */
+export async function waitInShell(page, fn, arg, { timeout = 15000, interval = 100 } = {}) {
+    const deadline = Date.now() + timeout;
+    /** @type {any} */
+    let last = null;
+    for (;;) {
+        try {
+            const v = await inShell(page, fn, arg, { timeout: Math.max(1, deadline - Date.now()) });
+            if (v) return v;
+        } catch (e) { last = e; }
+        if (Date.now() > deadline) throw new Error(`waitInShell: timed out after ${timeout} ms${last ? ` (last error: ${last.message})` : ""}`);
+        await new Promise((r) => setTimeout(r, interval));
+    }
+}
+
+/**
+ * CLICK an element inside one of our closed roots with a REAL mouse click at its centre (Playwright's locators cannot
+ * enter a closed root). `which` names the root, `selector` the element in it.
+ * @param {any} page the page
+ * @param {"sidebar" | "card" | "highlight"} which the root
+ * @param {string} selector a CSS selector inside that root
+ * @param {{ timeout?: number, button?: "left" | "right" | "middle" }} [opts]
+ */
+export async function clickInShell(page, which, selector, { timeout = 15000, button = "left" } = {}) {
+    const box = await waitInShell(page, (roots, /** @type {{ which: "sidebar" | "card" | "highlight", selector: string }} */ a) => {
+        const el = roots[a.which]?.querySelector(a.selector);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    }, { which, selector }, { timeout });
+    if (!box) throw new Error(`clickInShell: ${selector} never showed in the ${which} root`);
+    await page.mouse.click(box.x, box.y, { button });
+}
+
 /**
  * WATCH A TAB'S RUN EVENTS from outside the page, the way the DevTools panel does: an extension page holds the
  * `ml-devtools` port for `page`'s tab and hands every event to `onEvent`, in Node, in the order it was fanned.

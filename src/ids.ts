@@ -10,3 +10,7 @@ export const SB_LIGHTBOX = "ml-lightbox";    // full-viewport image lightbox (a 
 export const SB_LIGHTBOX_X = "ml-lightbox-x";
 export const SB_HIGHLIGHT = "ml-highlight";  // DevTools-style hover highlight box (positioned over a page element; never mutates it)
 export const SB_CARD = "ml-sb-card";         // off-mode acrylic approval CARD host (a separate shadow host from the overlay shell)
+
+/** Is `id` one the shell gives its own UI (a shadow host or a node of ours)? Tools that cross shadow boundaries skip a
+ *  host with one: our roots are closed to the page, and no tool of the page's may open them. */
+export const isOwnUiId = (id: string): boolean => /^ml-(sb-|lightbox|highlight)/.test(id);

@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -59,7 +59,8 @@ async function setup(ext, site) {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(site.url);
     await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
-    await page.evaluate(() => document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-tab").click());
+    await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
+    await inShell(page, (roots) => roots.sidebar.getElementById("ml-sb-tab").click());
     await page.waitForTimeout(400);
     await page.bringToFront();
     const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, site.url);
@@ -169,6 +170,32 @@ for (const side of ["left", "right"]) {
         });
     });
 }
+
+// Attack 17 (tests/e2e/site-access.spec.mjs): our roots are CLOSED, so the page cannot put that `:host` rule inside one.
+// It tries every way in a script has: the host's `shadowRoot` (a stylesheet, an adopted sheet, our own sheet through the
+// CSSOM) and a second root on the host. Nothing moves the host, and the shot is clean rather than refused.
+test("a :host rule the page tries to put inside our root does not get in: the host does not move and the shot is clean", async () => {
+    await withShell(async (s) => {
+        const before = await s.page.evaluate(() => { const r = document.getElementById("ml-sb-root").getBoundingClientRect(); return { x: r.x, y: r.y }; });
+        const tried = await s.page.evaluate(() => {
+            const host = document.getElementById("ml-sb-root");
+            const rule = ":host{-webkit-box-reflect:left 0px !important;translate:-300px 0 !important;display:block !important}";
+            const got = [];
+            try { const st = document.createElement("style"); st.textContent = rule; host.shadowRoot.append(st); got.push("style"); } catch { /* no root in reach */ }
+            try { const sh = new CSSStyleSheet(); sh.replaceSync(rule); host.shadowRoot.adoptedStyleSheets = [sh]; got.push("adopted"); } catch { /* no root in reach */ }
+            try { host.shadowRoot.querySelector("style").sheet.insertRule(rule, 0); got.push("cssom"); } catch { /* no root in reach */ }
+            try { host.attachShadow({ mode: "open" }).innerHTML = `<style>${rule}</style>`; got.push("second root"); } catch { /* it has its root */ }
+            return got;
+        });
+        expect(tried, "a way into our root").toEqual([]);
+        await s.page.waitForTimeout(150);
+        expect(await s.page.evaluate(() => getComputedStyle(document.getElementById("ml-sb-root")).webkitBoxReflect)).toBe("none");
+        expect(await s.page.evaluate(() => { const r = document.getElementById("ml-sb-root").getBoundingClientRect(); return { x: r.x, y: r.y }; })).toEqual(before);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
 
 // A `:host` rule in a stylesheet inside our open root is the one page rule that beats the host's inline `!important`
 // (for `!important`, the inner context wins), so the host checks stay: it is refused, for the stylesheet and for the paint.

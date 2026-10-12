@@ -4,6 +4,7 @@
 // background.ts verbatim; it owns its own attach lifecycle and shares no state with the rest of the worker.
 // Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
 import { clipOut } from "../dom/dom";
+import { isOwnUiId } from "../ids";
 import { OUTPUT_CEILING, ceilingNote } from "../agent/output-clip";
 import { noteRunMechanic } from "./sw-runs";
 
@@ -228,6 +229,12 @@ const CDP_SHADOW_DESC_FN = `function () {
     return { line: tag + id + cls + (own ? (' "' + own + '"') : ''), cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height) };
 }`;
 
+/** Does a CDP node's flat `[name, value, …]` attribute list carry an id of the shell's own UI ({@link isOwnUiId})? */
+const ownUiHost = (attrs: string[] | undefined): boolean => {
+    for (let i = 0; attrs && i + 1 < attrs.length; i += 2) if (attrs[i] === "id" && isOwnUiId(attrs[i + 1])) return true;
+    return false;
+};
+
 /** Resolve a `>>>` selector across ALL shadow boundaries — OPEN, closed-programmatic, AND the declarative/native
  *  CLOSED roots the page's own JS (and our attachShadow capture) can NOT enter — using the CDP DOM domain, which
  *  pierces every boundary. This is the ONE thing page-world JS structurally can't do, and it's used ONLY when
@@ -236,7 +243,8 @@ const CDP_SHADOW_DESC_FN = `function () {
  *  roots (describeNode `pierce` → the closed root's node → push it to the frontend so the next hop can query it).
  *  Each final match is resolved to a live JS handle (resolveNode) and callFunctionOn runs the describe fn ON it —
  *  so we get the element's real describe line + viewport centre for a coordinate click. Read-only: it never
- *  mutates; clicking is a SEPARATE cdpClick the caller makes with the returned centre. */
+ *  mutates; clicking is a SEPARATE cdpClick the caller makes with the returned centre. It never descends into the
+ *  shell's own hosts (`isOwnUiId`): a page sends this message, and our closed roots are not the page's to read. */
 export async function cdpShadowResolve(tabId: number, selector: string, cap = 25): Promise<{ ok: true; matches: CdpShadowMatch[] } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);
     if ("error" in at) return { error: at.error, ...(at.needsPermission ? { needsPermission: true } : {}) };
@@ -261,8 +269,10 @@ export async function cdpShadowResolve(tabId: number, selector: string, cap = 25
                 if (isLast) { next.push(...nodeIds); continue; }
                 // Not the last hop → each match is a HOST; descend into its shadow roots (open + closed).
                 for (const hostId of nodeIds) {
-                    let node: { shadowRoots?: { nodeId?: number; backendNodeId?: number }[] } | undefined;
+                    let node: { attributes?: string[]; shadowRoots?: { nodeId?: number; backendNodeId?: number }[] } | undefined;
                     try { ({ node } = await send<{ node?: typeof node }>("DOM.describeNode", { nodeId: hostId, depth: 0, pierce: true })); } catch { continue; }
+                    // Never into the shell's own hosts: their roots are closed to the page, and this message is page-started.
+                    if (ownUiHost(node?.attributes)) continue;
                     for (const sr of node?.shadowRoots || []) {
                         let srId = sr.nodeId;
                         if (!srId && sr.backendNodeId != null) {
