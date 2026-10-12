@@ -353,7 +353,7 @@ Note the difference from `log.text`, which IS a wrapper of a sort and is kept: t
 ordinary Array, so it stays structurally a plain value the dialect already understands. A String subclass is not
 structurally a string in the same way, which is the line between the two.
 
-## The runtime and the client (agreed 2026-10-12, not built yet)
+## The runtime and the client (agreed 2026-10-12; `runtime` built, `client` not yet)
 
 Two questions a model cannot answer today, and both change what a good answer looks like. **Where am I running**: can
 this runtime open tabs, take screenshots, keep the session, run Python, call a utility model? **Who is talking to me,
@@ -374,6 +374,10 @@ ml.current.meta[i].client   // the same, on every USER message, so a model can s
 ```
 
 ### 1. `runtime` is the runtime's own description, projected by a rule rather than a list
+
+Built: `runtimeOf` (`src/agent/current-runtime.ts`) over `localDescription()` (`sw-sessions.ts`), added where `env` is
+(`sw-current-runtime.ts`); an attention code crosses only as a short slug, so a URL or an id reported as one is dropped.
+Tests: `tests/redteam-current-runtime.test.mjs`.
 
 The runtime already describes itself: `localRuntime()` (`sw-sessions.ts`) builds the `RuntimeInfo` that `runtime.info`
 serves to every client, from live worker state (whether a utility model is set, whether the session store exists,

@@ -129,6 +129,12 @@ function localRuntime(): RuntimeInfo {
     };
 }
 
+/** What this runtime is and can do, as it describes itself here: before `remoteDescription` rewrites it for the hub. */
+export function localDescription(): Pick<RuntimeInfo, "kind" | "capabilities"> {
+    const { kind, capabilities } = localRuntime();
+    return { kind, capabilities };
+}
+
 /** Where a blank run goes, and whether this browser may open it — the PRECISE answer the coarse `site-access`
  *  attention code cannot give, since that one asks only whether `<all_urls>` is held. Read from a cache the
  *  permission listeners refresh, because assembling a runtime's description must not await anything. */

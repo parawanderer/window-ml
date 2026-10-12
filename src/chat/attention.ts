@@ -198,6 +198,19 @@ const KNOWN: Record<AttentionCode, Known> = {
 // both because it is a progress report, not a request.
 const RANK: Record<AttentionLevel, number> = { blocks: 0, ready: 1, limits: 2, working: 3, suggests: 4 };
 
+/**
+ * The inbox's line for a code, as the person first reads it: the one wording `ml.current.runtime` hands the model too,
+ * so the model's account of a problem and the person's list name it the same way.
+ * @param code a runtime's attention code
+ * @returns its title, or the inbox's general words for a code this build does not know
+ */
+export function attentionTitle(code: string): string {
+    return KNOWN[code as AttentionCode]?.title ?? UNKNOWN_TITLE;
+}
+
+/** The title of a code this build does not know. */
+const UNKNOWN_TITLE = "Something needs attention";
+
 /** The list's order, shared by everything that contributes to it: level first, then the order it was added in
  *  (`Array#sort` is stable, which is what keeps a runtime's own codes grouped as they were built). */
 export function sortAttention<T extends AttentionItem>(items: T[]): T[] {
@@ -233,7 +246,7 @@ export function attentionItems(
             if ((level === "suggests" || hideable) && hidden.has(key)) continue;
             out.push({
                 key, runtime: rt, code, level,
-                title: words?.title ?? "Something needs attention",
+                title: words?.title ?? UNKNOWN_TITLE,
                 detail: words?.detail ?? `${rt.name} reported "${code.slice(0, 40)}", which this page does not know. Its own Settings will say more.`,
                 ...(hideable ? { hideable } : {}),
                 ...(k?.fix && canFix(rt, k.fix, code) ? { fix: k.fix } : {}),

@@ -75,7 +75,7 @@ change when it lands).
 | `hooks` | reusable functions and page hooks the run defined, behind approval (unspecified). These will also get a human-facing UI of their own; this row is the variable view of them | model | slot |
 | `grants` | every remembered approval that applies to this run, with its scope (below) | **human** | exists in the worker (`sw-consent.ts`, `site-access.ts`); nothing reads it out |
 | `debug.userWatches` | the watches you chose to SHARE (below) | model, by your choice | new |
-| `runtime` | what the runtime this run executes in can do: its own `RuntimeInfo`, projected (booleans as they are, anything else as present) | model | proposed ([`CURRENT_CONTEXT.md`](CURRENT_CONTEXT.md), "The runtime and the client"). Computed by `localRuntime()`, not stored |
+| `runtime` | what the runtime this run executes in can do: its own `RuntimeInfo`, projected (booleans as they are, anything else as present) | model | built: `runtimeOf` (`src/agent/current-runtime.ts`) over `localDescription()`, at each read, in the worker; `run.runtime` in the panel ([`CURRENT_CONTEXT.md`](CURRENT_CONTEXT.md), "The runtime and the client"). Not stored |
 | `client` | who sent the latest user message (and `meta[i].client`, each one's): the channel, the surface, whether it sees the page, the scopes it holds, optionally its own UI | model | proposed, same section. Only the SENDER of a message already in context, as a kind and booleans: no ids, labels or other devices, so the `run` row's "hub devices granted the session" stays human |
 
 ### `grants`: what the run may do without asking
