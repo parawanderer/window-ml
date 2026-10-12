@@ -49,7 +49,7 @@ the worker, and the page answers geometry only):
       envelope, an isolated world's odd return, auto-approve, the precheck, the gate and its bookkeeping) is an error
       result the model reads, or a gate for a step that only decides, and a `tool`/`threw` record in the execution log;
       it no longer ends the run. A throw while the run is cancelled still ends it (redteam-tool-throw.test.mjs,
-      agent-loop.test.mjs "a dispatch that THROWS"): #PR_B.
+      agent-loop.test.mjs "a dispatch that THROWS"): #618.
 
 ## In progress
 
