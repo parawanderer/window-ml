@@ -21,7 +21,7 @@ Wall clock, on one laptop, with other sessions sharing it. The agent runs in aut
 
 | # | date | task | estimate pre-CI | actual pre-CI | estimate post-CI | actual post-CI | human quote |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2026-10-12 | event lane on a canvas | 3 h 30 min (2-6 h) | | 4 h 15 min (2.5-7 h) | | 5-8 working days |
+| 1 | 2026-10-12 | event lane off per-bar elements (#605) | 3 h 30 min (2-6 h) | 58 min | 4 h 15 min (2.5-7 h) | | 5-8 working days |
 
 ## 1. The event lane drawn on a canvas (2026-10-12)
 
@@ -48,3 +48,20 @@ Estimate, written at the start:
 - Human developer quote: 5-8 working days, including review.
 
 Start: 2026-10-12T11:03:54+0200
+Pre-CI (PR #605 open, local tests green): 2026-10-12T12:02:19+0200, 58 min.
+
+What happened, against the estimate:
+
+- **The approach changed after 10 minutes**, and that is most of the difference. A 15-line prototype measured first showed
+  that ONE SVG removes nearly all of the lane's cost (per move 7.7 ms → 5.2 ms, against 4.6 ms with no lane) while keeping
+  what a canvas would have thrown away: pointer events, classes, focus and names. So the ~100 test references to `.rc-ev`
+  mostly kept working, and the estimate's main risk (test fallout from a canvas) never arrived. The scope above said
+  "canvas"; the deliverable is the same outcome by a different route, kept in the record as a deviation.
+- **Where the time went:** pixel fidelity (four passes against before/after screenshots: rounded ends, sub-pixel phases,
+  the hairline showing through translucent fills), two dead ends measured and dropped (a `clip-path` and `<use>` per bar
+  each cost as much as they saved), and tests: 9 unit and 10 e2e failures, two of them real bugs (hollow bars not
+  hoverable; `tabIndex` on SVG making bars unfocusable). The full e2e suite took 18.5 min wall clock at a load average
+  of 74, and its 16 timeouts needed a re-run to clear.
+- **Not counted:** a mistake at the end (a rebase that dropped the stacked-on PR's commit, undone from the reflog in a
+  minute) and re-triggering #598's CI, which GitHub had never started.
+
