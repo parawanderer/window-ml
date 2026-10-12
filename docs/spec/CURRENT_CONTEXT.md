@@ -37,6 +37,9 @@ ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.ste
 ml.current.meta       // a PARALLEL array, same length and order: what we KNOW about each message
 ml.current.log        // this run's execution log: records, carrying `.text` for ml.pipe
 ml.current.debug      // { userWatches: [{ expression, note?, value | error }] }: watches the person shared (worker-hosted runs); a note is their question
+ml.current.env        // this run's environment: page approved, isolation available, where an exec would run (sw-current-env.ts)
+ml.current.runtime    // PROPOSED: what the runtime this run executes in can do (below, "The runtime and the client")
+ml.current.client     // PROPOSED: who sent the latest user message, and what they can do and see from there
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.
@@ -349,6 +352,105 @@ context. Abridging the PRINT has neither problem, because it touches no value at
 Note the difference from `log.text`, which IS a wrapper of a sort and is kept: that one adds a property to an
 ordinary Array, so it stays structurally a plain value the dialect already understands. A String subclass is not
 structurally a string in the same way, which is the line between the two.
+
+## The runtime and the client (proposed 2026-10-12, not built)
+
+Two questions a model cannot answer today, and both change what a good answer looks like. **Where am I running**: can
+this runtime open tabs, take screenshots, keep the session, run Python, call a utility model? **Who is talking to me,
+and from what**: the person at this browser, or the same person on a phone over the hub, with no panels, no view of
+the page the run is on, and possibly no right to approve a gate? A run started in the HUD and steered from the phone
+is one session with two clients, and today the model cannot tell them apart. Worse, it is told the wrong thing: a
+steer carries no origin, so it inherits the previous message's surface, and a phone message on a HUD-started run is
+recorded as `meta[i].surface = "hud"` (`agent-loop.ts`, the steer injection; `steerRun` is called without one).
+
+The governing rule is Shane's: **derived from what the code already knows, never a mapping someone maintains.** Each
+field below is either a projection of an object the runtime or the client already builds for its own use, or a fact
+of the channel a message arrived on.
+
+```js
+ml.current.runtime    // { kind, capabilities: { chat, agent, tabs, screenshots, sideCalls, persistence, pythonBench, … } }
+ml.current.client     // the latest user message's sender: { via, surface, seesPage, may: { drive, approve, screen, admin }, ui? }
+ml.current.meta[i].client   // the same, on every USER message, so a model can see the conversation change hands
+```
+
+### 1. `runtime` is the runtime's own description, projected by a rule rather than a list
+
+The runtime already describes itself: `localRuntime()` (`sw-sessions.ts`) builds the `RuntimeInfo` that `runtime.info`
+serves to every client, from live worker state (whether a utility model is set, whether the session store exists,
+whether the Python wheels are bundled, the archive's and the blank-start page's state). `ml.current.runtime` is that
+object, as this runtime describes itself locally (before `remoteDescription` rewrites it for the hub), passed through
+ONE projection:
+
+- `kind` as it is (`browser` | `desktop` | `headless`).
+- each member of `capabilities`: a boolean stays itself; **anything else becomes `true`** (present). RESERVED flags
+  are absent, as they are on the wire.
+
+No field is named in the projection, so a capability added to `RuntimeCapabilities` reaches the model with no edit
+here, and one removed disappears. The rule also decides what cannot cross: the non-boolean capabilities are exactly
+the ones that carry inventories or identifiers (`blankStart`'s URL, extension id and granted origins; `boxes`;
+`archive`'s folder state; `attention`'s codes), so the model learns that they exist and nothing about their contents.
+`grants`, `clockOffsetMs` and `mayRevoke` are left out: the first is the CLIENT's question (below), the other two are
+plumbing.
+
+### 2. `client` comes from the channel, not from the sender's say-so
+
+Who sent a message is a fact of the transport, which the contract already says (SESSION_CONTRACT.md: "it takes the
+principal from the authenticated command"), and which the build drops: `HubRuntime.answer` verifies the seal's sender,
+checks its scope, revocation and the allowlist, and then calls `side.command(command)` without it. The proposal makes
+that a second argument all the way to the handlers (`runSessionCommand(command, from)`, the local port's equivalent),
+and stamps it on every path a user message takes: `agent.start`, `session.send` as a steer, `session.send` as a new
+turn, and the panel's own sends. `PromptOrigin.remote`, typed and never set, is then set.
+
+| Field | From | Trust |
+| --- | --- | --- |
+| `via` | `"this browser"` for the local port, the panel and the HUD; `"hub"` for a sealed command | the channel |
+| `surface` | `PromptSurface` as today, now stamped on every path (fixes the steer mislabel) | the channel |
+| `seesPage` | the same function that writes `promptSurfaceNote` ("the chat app on another device … cannot see the page"), so the prose and the field cannot disagree | derived |
+| `may` | one boolean per scope name: the verified certificate's scopes narrowed by this runtime's allowlist (`DeviceRegistry.allowed`), and every scope for `this browser`. Keyed by the `Scope` union, so a new scope appears with no edit | the signature |
+| `ui` | OPTIONAL, the client's own description of what it can show: the names of the optional members its `ClientPlatform` has (`printDoc`, `pairing`, …) and of the panel slots it renders. Sent inside the sealed command body, so the hub cannot alter it | **a claim**: the device may say what it likes about its own screen, which only affects how an answer is presented |
+
+`ml.current.client` is the latest user message's; `meta[i].client` is each user message's own. A run started in the HUD
+and continued from the phone reads `via: "this browser"` on the first and `via: "hub"` on the second.
+
+### 3. What the model may use it for, and what it must not
+
+The point is presentation and expectation, not authority: answer a phone in short text rather than "see the resource
+panel"; do not say "look at the page" to a client that cannot see it; do not stop and wait on a gate the sender cannot
+approve when another device could. **No field here grants anything.** Every gate is still decided by the scope the
+transport checked, never by what `ml.current` says, so a model reading `may.approve: true` gains no power and a forged
+value (there is none: the dialect hands the model a frozen copy) would change nothing.
+
+### 4. What it must never carry
+
+Principal ids (the 64-hex device id, `localRuntimeId()`), certificate labels, the hub's URL or name, the account, the
+list of other devices or who else is watching (STATE_INSPECTOR.md keeps "hub devices granted the session" `human`, and
+this does not move it: only the SENDER of a message the model already received is described, as a kind and booleans),
+and none of the non-boolean capability contents above. A value the projection would pass that looks like an
+identifier is a bug in the projection, and the tests below say so by pattern.
+
+### 5. What it owes before it ships
+
+- **Red-team**, as `tests/redteam-current-env.test.mjs` does for `env`: the page never receives `runtime` or `client`;
+  no page-started type returns either (enumerated from `page-relay.ts`); neither appears outside the run's own tab;
+  and neither holds a string matching a 64-hex id, a URL or an origin, over every `RuntimeCapabilities` value the
+  fixtures can build.
+- **The steer mislabel fixed first**, with a test that a hub `session.send` on a HUD-started run records `via: "hub"`
+  and the chat surface, not `hud`.
+- **The upgrade**: a stored session whose user messages have no `client` reads as unknown (absent), never as
+  `this browser`.
+- **The prompt**: nothing new in it. `CURRENT_SIGNATURE` is generated from `CurrentSnapshot`, so the two members appear in
+  the existing `currentClause` line, and `agent_api_docs` documents them from their JSDoc. Whether the model uses them
+  unprompted is a bench question, measured before any text is added.
+
+### Open
+
+- Whether `ui` is worth having. Without it the model still knows `via` and `seesPage`, which covers "the phone cannot
+  see the page"; with it, it also knows "this client cannot print" or "has no resource panel". It costs the phone app
+  (`mobile/`) sending a description too, so it lands on both surfaces or not at all.
+- Whether `attention` codes (the runtime's own warnings, like "spend is on with no electricity price") should reach the
+  model as names rather than presence. They are not identifiers, and a model could relay one to the person.
+- A run on a REMOTE runtime, where `runtime` would describe a machine other than the one the client is on: the shape
+  holds (it describes where the run executes), the plumbing is the open item above.
 
 ## What it must never expose
 
