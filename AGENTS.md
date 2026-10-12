@@ -309,6 +309,9 @@ assert no run of two spaces (`tests/token-pipe.test.mjs`). Human-facing surfaces
 - **Several sessions at once? Each gets its own CLONE** as a sibling directory, with `.env` and `pyodide-wheels`
   symlinked, `git config core.hooksPath .githooks` (it does not clone, and its absence is silent), and `npm ci`.
   Never `git add -A` in a shared tree. The commands: `docs/dev/working-in-the-repo.md`.
+- **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
+  nothing unpushed. One you did not create (or are unsure of) is never removed without asking; `~/git/window-ml` and
+  `~/git/window-ml-hub` never. The checks: `docs/dev/working-in-the-repo.md`, "Cleaning up a clone".
 - **Four absences are silent:** `node_modules`, `pyodide-wheels/` (fails at run time as `No module named
   'numpy'`), `.env` (`USE_ENV=1` dies on ENOENT), and the `wmlhub` binary (thirty hub tests SKIP; `npm run
   fetch-hub`).
