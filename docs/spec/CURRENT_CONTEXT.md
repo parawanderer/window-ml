@@ -368,7 +368,7 @@ field below is either a projection of an object the runtime or the client alread
 of the channel a message arrived on.
 
 ```js
-ml.current.runtime    // { kind, capabilities: { chat, agent, tabs, screenshots, sideCalls, persistence, pythonBench, … } }
+ml.current.runtime    // { kind, capabilities: { chat, agent, tabs, screenshots, sideCalls, persistence, pythonBench, …, attention?: [{ code, title }] } }
 ml.current.client     // the latest user message's sender: { via, surface, seesPage, may: { drive, approve, screen, admin }, ui? }
 ml.current.meta[i].client   // the same, on every USER message, so a model can see the conversation change hands
 ```
@@ -386,9 +386,19 @@ ONE projection:
   are absent, as they are on the wire.
 
 No field is named in the projection, so a capability added to `RuntimeCapabilities` reaches the model with no edit
-here, and one removed disappears. The rule also decides what cannot cross: the non-boolean capabilities are exactly
-the ones that carry inventories or identifiers (`blankStart`'s URL, extension id and granted origins; `boxes`;
-`archive`'s folder state; `attention`'s codes), so the model learns that they exist and nothing about their contents.
+here, and one removed disappears. The rule also decides what cannot cross: the non-boolean capabilities are the ones
+that carry inventories or identifiers (`blankStart`'s URL, extension id and granted origins; `boxes`; `archive`'s
+folder state), so the model learns that they exist and nothing about their contents.
+
+**One stated exception: `attention`.** Its values are the runtime's own warnings (`spend-no-electricity-price`,
+`archive-folder-lapsed`): a closed vocabulary defined in code, not an inventory, and already shown to the person in
+the inbox. A model told only that something is flagged can neither act on it nor pass it on, so `attention` crosses
+as `[{ code, title }]`, the title being the inbox's own line for that code (`src/chat/attention.ts`, the table the
+inbox renders), so the model's wording and the person's match. What a page could learn from it, through an approved
+isolated exec writing it into the DOM, is a fact like "spend tracking is on": accepted (Shane, 2026-10-12).
+
+Scope: the runtime the run EXECUTES on, the local "kernel". A run hosted by a remote runtime is not covered (Shane,
+2026-10-12); the shape would hold, since it describes where the run executes, but nothing here plumbs it.
 `grants`, `clockOffsetMs` and `mayRevoke` are left out: the first is the CLIENT's question (below), the other two are
 plumbing.
 
@@ -407,7 +417,13 @@ turn, and the panel's own sends. `PromptOrigin.remote`, typed and never set, is 
 | `surface` | `PromptSurface` as today, now stamped on every path (fixes the steer mislabel) | the channel |
 | `seesPage` | the same function that writes `promptSurfaceNote` ("the chat app on another device … cannot see the page"), so the prose and the field cannot disagree | derived |
 | `may` | one boolean per scope name: the verified certificate's scopes narrowed by this runtime's allowlist (`DeviceRegistry.allowed`), and every scope for `this browser`. Keyed by the `Scope` union, so a new scope appears with no edit | the signature |
-| `ui` | OPTIONAL, the client's own description of what it can show: the names of the optional members its `ClientPlatform` has (`printDoc`, `pairing`, …) and of the panel slots it renders. Sent inside the sealed command body, so the hub cannot alter it | **a claim**: the device may say what it likes about its own screen, which only affects how an answer is presented |
+| `ui` | the client's own description of what it can show: the names of the optional members its `ClientPlatform` has (`printDoc`, `pairing`, …) and of the panel slots it renders, generated where `src/chat` builds the command, so the phone app's WebView (`native-embed.tsx`, `nativePlatform`) sends its own with no code in `mobile/`. Absent from an older client | **a claim**: the device may say what it likes about its own screen, which only affects how an answer is presented |
+
+**No hub change.** `ui` is part of the session command, which the hub's `CommandBody.body` carries as opaque, signed
+and sealed bytes (`seal.proto`: "as the session contract encodes it; opaque here"), so the hub can neither read nor
+alter it and `wmlhub` needs no matching change. An older runtime ignores the field; an older client sends none.
+To check when building: that a message typed in the phone app's NATIVE composer reaches the runtime through the same
+send in `src/chat`, or the native side builds its own description.
 
 `ml.current.client` is the latest user message's; `meta[i].client` is each user message's own. A run started in the HUD
 and continued from the phone reads `via: "this browser"` on the first and `via: "hub"` on the second.
@@ -442,15 +458,11 @@ identifier is a bug in the projection, and the tests below say so by pattern.
   the existing `currentClause` line, and `agent_api_docs` documents them from their JSDoc. Whether the model uses them
   unprompted is a bench question, measured before any text is added.
 
-### Open
+### Decided (Shane, 2026-10-12)
 
-- Whether `ui` is worth having. Without it the model still knows `via` and `seesPage`, which covers "the phone cannot
-  see the page"; with it, it also knows "this client cannot print" or "has no resource panel". It costs the phone app
-  (`mobile/`) sending a description too, so it lands on both surfaces or not at all.
-- Whether `attention` codes (the runtime's own warnings, like "spend is on with no electricity price") should reach the
-  model as names rather than presence. They are not identifiers, and a model could relay one to the person.
-- A run on a REMOTE runtime, where `runtime` would describe a machine other than the one the client is on: the shape
-  holds (it describes where the run executes), the plumbing is the open item above.
+- `ui` is in: worth the client's half, and it needs no hub change.
+- `attention` crosses by name, with the inbox's title for each code (above).
+- Scope is the local runtime the run executes on; remote runtimes are out.
 
 ## What it must never expose
 
