@@ -76,6 +76,21 @@ for (const mode of ["tps", "shepard"]) {
     });
 }
 
+test("freeform lines: the shader matches the reference, through the flattening", async ({ page }) => {
+    const errors = await open(page);
+    const scene = await page.evaluate(() => {
+        const r = rng(8);
+        const pt = () => ({ x: 0.1 + 1.1 * r(), y: 0.1 + 0.8 * r(), value: [r(), r(), r()] });
+        return { kind: "freeform", fill: { mode: "tps", smoothing: 1e-4, points: [pt(), pt()], lines: [{ stops: [pt(), pt(), pt()], samples: 6 }, { stops: [pt(), pt()] }] } };
+    });
+    const res = await page.evaluate(compare, { scene, W: 80, H: 60 });
+    expect(errors).toEqual([]);
+    test.skip(!!res.skipped, res.skipped);
+    expect(res.coverMismatch).toBe(0);
+    expect(res.compared).toBe(res.total);
+    expect(res.worst).toBeLessThan(2e-3);
+});
+
 // --- the Gradient Mesh ------------------------------------------------------------------------------------------------
 
 for (const values of ["bilinear", "bicubic"]) {

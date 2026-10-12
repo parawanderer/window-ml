@@ -1,6 +1,6 @@
 # Spec: gradient fills (Freeform gradient and Gradient Mesh) on WebGL2, with a differentiable CPU reference
 
-**Status: agreed direction, being built** (Shane, 2026-10-12). Branch `feat/component-gallery`. Its first host is the
+**Status: built** (Shane, 2026-10-12; Lines added later the same day). Its first host is the
 component gallery ([`COMPONENT_GALLERY.md`](COMPONENT_GALLERY.md)), as a custom entry with its own canvas.
 
 ## What it is
@@ -93,11 +93,56 @@ f(x) = Σ_i ω_i c_i / Σ_i ω_i,     ω_i(x) = s_i (‖x − p_i‖² + ε²)^(
 ∂ω_i/∂s_i = ω_i / s_i
 ```
 
+### Lines: values along curves, as sampled constraints
+
+Illustrator's Freeform "Lines" mode pins values along a curve rather than at a point. A **line** is an ordered list of
+stops (each a `FreeformPoint`: position, value, spread). This is the cheap version: each line is sampled into
+constraint points, which join the free points, and the fill is interpolated from all of them by `tps` or `shepard` as
+before. Nothing else about the interpolant changes.
+
+- **The curve** through the stops `P_0 … P_{M−1}` is a uniform Catmull-Rom spline. Segment `i` (from `P_i` to `P_{i+1}`)
+  at `t ∈ [0, 1]` is
+
+  ```
+  C_i(t) = ½ [ (−t³ + 2t² − t) P_{i−1} + (3t³ − 5t² + 2) P_i + (−3t³ + 4t² + t) P_{i+1} + (t³ − t²) P_{i+2} ]
+  ```
+
+  with the ends extended by reflection, `P_{−1} = 2P_0 − P_1` and `P_M = 2P_{M−1} − P_{M−2}`. UNIFORM, not centripetal:
+  centripetal knots depend on the distances between stops, which would make a sample's position nonlinear in them.
+- **Values and spreads** run linearly in `t` between consecutive stops, `c(t) = (1 − t) c_i + t c_{i+1}`, so a value
+  never overshoots along the line.
+- **Samples.** Each segment gives `samples` points (default 8) at `t = s / samples`, `s = 0 … samples − 1`, and the line's
+  last stop closes it. A line of one stop is that point; a line of none adds nothing.
+
+Every sample is a FIXED linear combination of its line's stops, `x_j = Σ_m α_jm P_m` and `c_j = Σ_m γ_jm c_m` (spread
+as `c`). So the gradient with respect to a stop is the gradient with respect to the samples pulled back through the
+transpose:
+
+```
+∂L/∂P_m = Σ_j α_jm ∂L/∂x_j        ∂L/∂c_m = Σ_j γ_jm ∂L/∂c_j        ∂L/∂s_m = Σ_j γ_jm ∂L/∂s_j
+```
+
+`flattenFreeform` returns the expanded fill (points only) and these weights. `evalFreeform`, `vjpFreeform` and the
+renderer go through it; `solveTps` takes points only. `samples` is a hyperparameter and gets no gradient.
+
+What the cheap version costs:
+
+- **The line holds only at its samples.** Between two samples the thin-plate surface bends freely, so a sharp change
+  of value across a line leaks between them. Space the samples well under the size of the features you care about.
+- **N grows** by `samples` per segment, and the `tps` solve is O(N³): ten lines of four segments at 8 samples is 330
+  points, the size of the stress test.
+- **Conditioning.** Two lines crossing, or a free point on a line, with different values there, put two near-equal
+  rows into the system with different right-hand sides. `smoothing` keeps it solvable; `tps` falls back to `shepard`
+  only when it is exactly singular.
+- **`shepard` weighs a line by its sample density**: a line of 33 samples outweighs a free point nearby. Lower the
+  stops' spread to compensate.
+- **Uniform Catmull-Rom can loop or cusp** when neighbouring stops are spaced very unevenly.
+
 ### Not in the first build
 
-- **Lines mode** (values along curves). The cheap version samples each curve densely into constraint points for `tps`;
-  the faithful one is diffusion curves (Orzan et al. 2008): rasterise the curves as boundary conditions and solve
-  Laplace/biharmonic by multigrid on ping-pong textures. Undecided which.
+- **Faithful Lines**: diffusion curves (Orzan et al. 2008), where the curves are boundary conditions held everywhere
+  along them: rasterise the curves and solve Laplace/biharmonic by multigrid on ping-pong textures. Its gradient goes
+  through the solver (the adjoint is another solve of the same system).
 - A per-point spread for `tps`. It has no natural one; a Gaussian or Wendland RBF with a radius per point would give
   one, at the price of a non-symmetric system.
 

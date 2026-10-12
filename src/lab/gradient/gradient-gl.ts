@@ -3,7 +3,7 @@
 // It draws to the canvas for display and to a float target for reading values back unclamped, which is how a test holds
 // the shader to the CPU reference. The maths: docs/spec/GRADIENT_FILLS.md.
 
-import { FREEFORM_DEFAULTS, freeformChannels, solveTps, type Freeform } from "./gradient-freeform";
+import { FREEFORM_DEFAULTS, flattenFreeform, freeformChannels, solveTps, type Freeform } from "./gradient-freeform";
 import { meshChannels, type Mesh } from "./gradient-mesh";
 
 /** What to draw: one fill and the colour behind it. */
@@ -229,7 +229,7 @@ export function createGradientRenderer(canvas: HTMLCanvasElement | OffscreenCanv
         gl.clearColor(raw ? 0 : bg[0], raw ? 0 : bg[1], raw ? 0 : bg[2], raw ? 0 : bg[3]);
         gl.clear(gl.COLOR_BUFFER_BIT);
         if (scene.kind === "freeform") {
-            const ff = scene.fill, n = ff.points.length, k = freeformChannels(ff);
+            const ff = flattenFreeform(scene.fill).fill, n = ff.points.length, k = freeformChannels(ff);
             if (!n || !k) return { solveMs: now() - t0, uploadMs: 0, submitMs: 0, mode: "empty" };
             const sol = (ff.mode ?? "tps") === "tps" ? solveTps(ff) : null;
             const t1 = now();

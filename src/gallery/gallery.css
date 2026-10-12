@@ -90,3 +90,4 @@
 /* A tangent handle and the line to its node. */
 .gx-handle { cursor: grab; opacity: .85 }
 .gx-handle-line { stroke: var(--fg); stroke-width: .002; opacity: .6 }
+.gx-line { fill: none; stroke: var(--fg); stroke-width: .003; stroke-dasharray: .01 .008; opacity: .7; pointer-events: none }

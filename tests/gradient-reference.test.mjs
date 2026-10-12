@@ -3,7 +3,7 @@
 // finite differences. The maths these hold the code to: docs/spec/GRADIENT_FILLS.md.
 import { test } from "node:test";
 import assert from "node:assert";
-import { evalFreeform, vjpFreeform, freeformMse, solveTps } from "../src/lab/gradient/gradient-freeform.ts";
+import { evalFreeform, vjpFreeform, freeformMse, solveTps, flattenFreeform } from "../src/lab/gradient/gradient-freeform.ts";
 import { evalMesh, vjpMesh, gridMesh, locate, patchPoint, patchValue } from "../src/lab/gradient/gradient-mesh.ts";
 
 /** A seeded generator (mulberry32), so a failure reproduces. */
@@ -151,6 +151,61 @@ test("freeformMse descends: a small step along −∇ lowers the loss", () => {
     const next = { points: ff.points.map((p, i) => ({ ...p, x: p.x - step * grad.points[i].x, y: p.y - step * grad.points[i].y, value: p.value.map((v, c) => v - step * grad.points[i].value[c]) })) };
     assert.ok(freeformMse(next, xs, targets).loss < loss);
 });
+
+// --- the Freeform gradient: Lines mode ---------------------------------------------------------------------------------------
+
+const randomLine = (r, m, k, samples) => ({ stops: randomPoints(r, m, k), ...(samples ? { samples } : {}) });
+
+test("a line's samples start at each stop and end at the last, carrying the stops' values there", () => {
+    const r = rng(21);
+    const line = randomLine(r, 4, 3, 5);
+    const { fill, samples } = flattenFreeform({ points: [], lines: [line] });
+    assert.strictEqual(fill.points.length, 3 * 5 + 1);
+    assert.strictEqual(fill.lines, undefined, "the flattened fill is points only");
+    for (const [m, at] of [[0, 0], [1, 5], [2, 10], [3, 15]]) {
+        const p = fill.points[at], st = line.stops[m];
+        assert.ok(Math.hypot(p.x - st.x, p.y - st.y) < 1e-12, `sample ${at} is stop ${m}`);
+        st.value.forEach((v, c) => assert.ok(Math.abs(p.value[c] - v) < 1e-12));
+    }
+    for (const smp of samples) {
+        assert.ok(Math.abs(smp.at.reduce((a, [, w]) => a + w, 0) - 1) < 1e-12, "position weights are affine");
+        assert.ok(Math.abs(smp.mix.reduce((a, [, w]) => a + w, 0) - 1) < 1e-12, "value weights are affine");
+    }
+});
+
+test("a two-stop line samples the straight segment between them, evenly", () => {
+    const { fill } = flattenFreeform({ points: [], lines: [{ stops: [{ x: 0.1, y: 0.2, value: [0] }, { x: 0.9, y: 0.6, value: [1] }], samples: 4 }] });
+    fill.points.forEach((p, s) => {
+        assert.ok(Math.abs(p.x - (0.1 + 0.2 * s)) < 1e-12 && Math.abs(p.y - (0.2 + 0.1 * s)) < 1e-12, `sample ${s} at ${p.x}, ${p.y}`);
+        assert.ok(Math.abs(p.value[0] - s / 4) < 1e-12);
+    });
+});
+
+test("a fill with lines is exact at every sample under tps, and a fill without lines flattens to itself", () => {
+    const r = rng(22);
+    const ff = { points: randomPoints(r, 4, 2), lines: [randomLine(r, 3, 2, 4), randomLine(r, 1, 2)] };
+    const flat = flattenFreeform(ff).fill;
+    assert.strictEqual(flat.points.length, 4 + 9 + 1);
+    const { values, mode } = evalFreeform(ff, flat.points.flatMap((p) => [p.x, p.y]));
+    assert.strictEqual(mode, "tps");
+    flat.points.forEach((p, i) => p.value.forEach((v, c) => assert.ok(Math.abs(values[i * 2 + c] - v) < 1e-7)));
+    const plain = { points: ff.points };
+    assert.deepStrictEqual(flattenFreeform(plain), { fill: plain, samples: [] });
+});
+
+for (const mode of ["tps", "shepard"]) {
+    test(`freeform VJP through line stops matches finite differences: ${mode}`, () => {
+        for (const seed of [23, 24]) {
+            const r = rng(seed), k = 3;
+            const ff = { mode, smoothing: mode === "tps" ? 1e-3 : undefined, points: randomPoints(r, 3, k), lines: [randomLine(r, 3, k, 3), randomLine(r, 2, k, 2)] };
+            const xs = randomSamples(r, 40), g = Float64Array.from({ length: 40 * k }, () => r() - 0.5);
+            const skip = new Set(["mode", "smoothing", "samples", ...(mode === "tps" ? ["spread"] : [])]);
+            const grad = vjpFreeform(ff, xs, g);
+            assert.strictEqual(grad.lines.length, 2);
+            checkFd(ff, (p) => evalFreeform(p, xs).values, grad, g, { skip, tol: 1e-4 });
+        }
+    });
+}
 
 // --- the Gradient Mesh: forward map and inverse ------------------------------------------------------------------------
 

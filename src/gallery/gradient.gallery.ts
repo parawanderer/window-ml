@@ -4,7 +4,7 @@
 
 import type { EntryApi, GalleryEntry, MountedEntry } from "./gallery-entry";
 import { createGradientRenderer, type GradientRenderer, type GradientScene } from "../lab/gradient/gradient-gl";
-import { tpsDegenerate, type Freeform } from "../lab/gradient/gradient-freeform";
+import { flattenFreeform, tpsDegenerate, type Freeform } from "../lab/gradient/gradient-freeform";
 import { gridMesh, type Mesh } from "../lab/gradient/gradient-mesh";
 
 /** The entry's props: which fill, both fills' parameters, and how to draw and time it. */
@@ -46,6 +46,17 @@ const FREEFORM: Freeform = {
     ],
 };
 
+/** Lines mode: a warm curve and a cool one, with two free points between. */
+const LINES: Freeform = {
+    mode: "tps",
+    smoothing: 1e-5,
+    points: [{ x: 0.66, y: 0.5, value: [0.95, 0.95, 0.9] }, { x: 1.2, y: 0.9, value: [0.2, 0.25, 0.35] }],
+    lines: [
+        { stops: [{ x: 0.12, y: 0.2, value: [0.95, 0.3, 0.25] }, { x: 0.5, y: 0.12, value: [0.98, 0.75, 0.2] }, { x: 0.95, y: 0.28, value: [0.95, 0.45, 0.6] }] },
+        { stops: [{ x: 0.15, y: 0.85, value: [0.2, 0.4, 0.95] }, { x: 0.55, y: 0.72, value: [0.25, 0.85, 0.75] }, { x: 0.85, y: 0.9, value: [0.55, 0.35, 0.9] }, { x: 1.2, y: 0.55, value: [0.3, 0.8, 0.4] }], samples: 12 },
+    ],
+};
+
 /** A 3 × 3 mesh with its middle bent, so the handles have something to show. */
 function demoMesh(rows = 3, cols = 3, values: Mesh["values"] = "bilinear"): Mesh {
     const m = gridMesh(rows, cols, [0.08, 0.08, ASPECT - 0.08, 0.92], (i, j) => [
@@ -76,6 +87,7 @@ const NOTES = `**What to know before fitting with these** (docs/spec/GRADIENT_FI
 - **Folds.** Where the mesh overlaps itself the later patch wins, and the reference resolves it the same way; at a fold edge the gradient is discontinuous.
 - **Tessellation.** The renderer interpolates (u, v) linearly across each triangle: an O(1/T²) error in where a value lands. The reference inverts the patch exactly.
 - **Bilinear values are C⁰ across patch edges** (as PDF and Illustrator draw them): kinks along the edges, and a gradient with a jump. \`bicubic\` is C¹ and better for fitting.
+- **Lines hold only at their samples** (the cheap version: each curve is sampled into thin-plate points, \`samples\` per segment). Between samples the surface bends freely, every sample adds a row to the O(N³) solve, and two lines crossing with different values need \`smoothing\`. Under Shepard a line outweighs a free point by its sample count.
 - **Shepard has flat spots** at every point (zero slope) and is not exact unless \`soften\` is 0, where its gradient is singular.`;
 
 /** The phases a draw reports, bottom of the chart first. */
@@ -127,7 +139,7 @@ function mount(el: HTMLElement, initial: unknown, api: EntryApi): MountedEntry {
         size();
         const t = renderer.draw(scene(), { sync: props.sync && !renderer.gpuTimer });
         if (t.mode !== lastMode) {
-            const degenerate = props.kind === "freeform" && (props.freeform.mode ?? "tps") === "tps" && tpsDegenerate(props.freeform.points);
+            const degenerate = props.kind === "freeform" && (props.freeform.mode ?? "tps") === "tps" && tpsDegenerate(flattenFreeform(props.freeform).fill.points);
             api.log(`mode ${t.mode}${degenerate ? " (thin-plate is degenerate here: fell back to Shepard)" : ""}`);
             lastMode = t.mode;
         }
@@ -152,7 +164,7 @@ function mount(el: HTMLElement, initial: unknown, api: EntryApi): MountedEntry {
         frames++;
         const now = performance.now();
         if (props.continuous && now - lastReport > 1000) {
-            const n = props.kind === "mesh" ? `${props.mesh.rows}×${props.mesh.cols} patches, T=${props.mesh.tessellation ?? 24}` : `${props.freeform.points.length} points`;
+            const n = props.kind === "mesh" ? `${props.mesh.rows}×${props.mesh.cols} patches, T=${props.mesh.tessellation ?? 24}` : `${flattenFreeform(props.freeform).fill.points.length} points`;
             api.log(`${frames} frames in ${((now - lastReport) / 1000).toFixed(1)} s (${n}): ${(frames * 1000 / (now - lastReport)).toFixed(0)} fps, GPU mean ${(gpuSum / Math.max(1, frames)).toFixed(2)} ms`);
             frames = 0; gpuSum = 0; lastReport = now;
         }
@@ -173,6 +185,12 @@ function mount(el: HTMLElement, initial: unknown, api: EntryApi): MountedEntry {
         c.addEventListener("pointerdown", (e) => { e.preventDefault(); svg.setPointerCapture(e.pointerId); drag = { set }; });
         svg.append(c);
     }
+    function polyline(pts: { x: number; y: number }[]): void {
+        const l = document.createElementNS(SVG, "polyline");
+        l.setAttribute("points", pts.map((p) => `${p.x},${p.y}`).join(" "));
+        l.setAttribute("class", "gx-line");
+        svg.append(l);
+    }
     function line(x1: number, y1: number, x2: number, y2: number): void {
         const l = document.createElementNS(SVG, "line");
         for (const [k, v] of Object.entries({ x1, y1, x2, y2 })) l.setAttribute(k, String(v));
@@ -187,6 +205,16 @@ function mount(el: HTMLElement, initial: unknown, api: EntryApi): MountedEntry {
                 const points = props.freeform.points.slice(); points[i] = { ...points[i], x, y };
                 change({ freeform: { ...props.freeform, points } });
             }));
+            // Lines: the sampled curve (what the fill is actually held to), and its stops to drag.
+            const { fill, samples } = flattenFreeform(props.freeform), n0 = props.freeform.points.length;
+            props.freeform.lines?.forEach((l, li) => {
+                polyline(fill.points.slice(n0).filter((_, j) => samples[j].line === li));
+                l.stops.forEach((p, si) => dot(p.x, p.y, 0.014, rgb(p.value), "gx-point", (x, y) => {
+                    const lines = props.freeform.lines!.slice(), stops = lines[li].stops.slice();
+                    stops[si] = { ...stops[si], x, y }; lines[li] = { ...lines[li], stops };
+                    change({ freeform: { ...props.freeform, lines } });
+                }));
+            });
             return;
         }
         const m = props.mesh;
@@ -244,6 +272,7 @@ export const gallery: GalleryEntry[] = [{
     phases: PHASES,
     variants: {
         "freeform: thin-plate": BASE,
+        "freeform: lines": { ...BASE, freeform: LINES },
         "freeform: Shepard": { ...BASE, freeform: { ...FREEFORM, mode: "shepard", points: FREEFORM.points.map((p, i) => ({ ...p, spread: i === 2 ? 3 : 1 })) } },
         "mesh: bilinear": { ...BASE, kind: "mesh" },
         "mesh: bicubic": { ...BASE, kind: "mesh", mesh: demoMesh(3, 3, "bicubic") },
