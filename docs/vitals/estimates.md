@@ -21,7 +21,7 @@ Wall clock, on one laptop, with other sessions sharing it. The agent runs in aut
 
 | # | date | task | estimate pre-CI | actual pre-CI | estimate post-CI | actual post-CI | human quote |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2026-10-12 | event lane off per-bar elements (#605) | 3 h 30 min (2-6 h) | 58 min | 4 h 15 min (2.5-7 h) | | 5-8 working days |
+| 1 | 2026-10-12 | event lane off per-bar elements (#605) | 3 h 30 min (2-6 h) | 58 min | 4 h 15 min (2.5-7 h) | 1 h 10 min | 5-8 working days |
 
 ## 1. The event lane drawn on a canvas (2026-10-12)
 
@@ -49,6 +49,7 @@ Estimate, written at the start:
 
 Start: 2026-10-12T11:03:54+0200
 Pre-CI (PR #605 open, local tests green): 2026-10-12T12:02:19+0200, 58 min.
+Post-CI (#605's `tests` run green, first run, no fix needed): 2026-10-12T12:14:02+0200, 1 h 10 min.
 
 What happened, against the estimate:
 
