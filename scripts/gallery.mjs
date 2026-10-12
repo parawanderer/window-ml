@@ -371,7 +371,7 @@ function remind() {
     }
     const missing = [];
     for (const [f, lines] of touched) {
-        if (!existsSync(path.join(ROOT, f))) continue;
+        if (!existsSync(path.join(ROOT, f)) || f.startsWith("src/gallery/")) continue;   // the gallery's own parts are not listed
         const src = (staged ? execFileSync("git", ["show", `:${f}`], { cwd: ROOT, encoding: "utf8" }) : readFileSync(path.join(ROOT, f), "utf8")).split("\n");
         const decls = [];
         src.forEach((l, i) => { if (/^\S/.test(l) && !/^[}\])]/.test(l) && !/^\s*\/\//.test(l)) decls.push(i); });
