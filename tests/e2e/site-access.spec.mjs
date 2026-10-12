@@ -422,6 +422,9 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             const card = () => page.frames().find((f) => f.url().includes("sidebar.html"));
             const cardText = async () => { const c = card(); return c ? await c.locator("body").innerText().catch(() => "") : ""; };
             await expect.poll(cardText, { timeout: 15000 }).toContain("click the link");   // the worker's gate is in the card
+            // The index learns of the gate on its own stream, which can trail the card under load: wait for it here, so
+            // the check after the attack can only fail on a status the attack changed.
+            await expect.poll(() => idx.status(hash), { timeout: 15000 }).toBe("waiting");
             // Only now does the attack start, and it keeps going for the rest of the gate.
             await page.evaluate(() => { window.__poststart.go = true; });
             await expect.poll(() => page.evaluate(() => window.__poststart.posts.length), { timeout: 15000 }).toBeGreaterThan(0);
@@ -471,7 +474,11 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
             const page = await open(ext, site.url("evil.test"));
             await finishedRun(ext, page, fake, [{ content: "second answer" }]);
             const card = cardFrame(page);
-            await card.locator(".card-reply-open").click();
+            // The card can re-render as the run settles and swallow the first click: click until the input is open.
+            await expect(async () => {
+                await card.locator(".card-reply-open").click({ timeout: 2000 });
+                await expect(card.locator(".card-reply-in")).toBeVisible({ timeout: 1000 });
+            }).toPass({ timeout: 15000 });
             await card.locator(".card-reply-in").fill("my PIN is 9931");
             await card.locator(".card-reply-in").press("Enter");
             // The reply was delivered: the run's next model call carries it. Only then is "the page did not hear it"
