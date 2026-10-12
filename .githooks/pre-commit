@@ -175,6 +175,16 @@ if [ -n "$base" ] && ! node scripts/check-doc-links.mjs --new "$base" --staged; 
     exit 1
 fi
 
+# The gradient renderer's shaders, when a file under src/gradient/ is staged: glslangValidator as GLSL ES 3.00
+# (scripts/check-glsl.mjs). Without the validator installed it says so and passes; CI always runs it.
+if echo "$staged" | grep -q '^src/gradient/'; then
+    if ! node --import tsx scripts/check-glsl.mjs; then
+        echo ""
+        echo "pre-commit: a shader does not compile as GLSL ES 3.00."
+        exit 1
+    fi
+fi
+
 # A staged notebook must carry nbclient's evidence that it was run as committed, and be named in its folder's README
 # (docs/dev/notebooks.md). Run it with `node scripts/nb.mjs run <path>`.
 if ! node scripts/check-notebooks.mjs --staged; then

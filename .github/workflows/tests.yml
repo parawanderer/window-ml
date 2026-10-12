@@ -375,6 +375,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The gradient renderer's shaders, through Khronos's reference compiler as GLSL ES 3.00: the browser-free check
+      # (scripts/check-glsl.mjs). The e2e spec compiles them again in Chromium.
+      - name: The shaders type-check
+        run: |
+          sudo apt-get install -y --no-install-recommends glslang-tools
+          node --import tsx scripts/check-glsl.mjs
       # The artifact must include the python_exec runtime (dist/pyodide/) or the loaded extension
       # can't run python_exec — build.mjs copies pyodide-wheels/ in, so fetch them first.
       - name: Cache pyodide wheels

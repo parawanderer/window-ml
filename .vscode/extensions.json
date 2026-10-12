@@ -24,7 +24,11 @@
 
     // openwebui/*.py are real deliverables (workspace tools a user installs into OpenWebUI), and
     // python-runtime.ts embeds the Pyodide prelude as Python source.
-    "ms-python.python"
+    "ms-python.python",
+
+    // src/gradient/gradient-gl.ts writes its shaders as `/* glsl */` template literals; this highlights them as
+    // GLSL. Type errors are scripts/check-glsl.mjs's job (glslangValidator), not the editor's.
+    "boyswan.glsl-literal"
   ],
 
   // Prettier would reformat this codebase on save. The style here is deliberate and hand-maintained —

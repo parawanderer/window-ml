@@ -28,17 +28,17 @@ export interface GradientRenderer {
     destroy(): void;
 }
 
-const VS_QUAD = `#version 300 es
+const VS_QUAD = /* glsl */ `#version 300 es
 in vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }`;
 
 /** The pixel's position in the fill's coordinates: height-normalised, y down. */
-const COORD = `
+const COORD = /* glsl */ `
 uniform vec2 u_size;
 vec2 fillCoord() { return vec2(gl_FragCoord.x, u_size.y - gl_FragCoord.y) / u_size.y; }`;
 
 /** The output: raw values for the float target, clamped channels over the background for display. */
-const OUTPUT = `
+const OUTPUT = /* glsl */ `
 uniform int u_raw;
 uniform int u_k;
 uniform vec4 u_bg;
@@ -52,7 +52,7 @@ void emit(vec4 v, float covered) {
     o = vec4(mix(u_bg.rgb, c.rgb, c.a), mix(u_bg.a, 1.0, c.a));
 }`;
 
-const FS_FREEFORM = `#version 300 es
+const FS_FREEFORM = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 ${COORD}
@@ -91,7 +91,7 @@ void main() {
 }`;
 
 /** The Hermite basis, shared by the mesh's two stages. */
-const HERMITE = `
+const HERMITE = /* glsl */ `
 vec2 hermite(int a, float t, bool d) {
     if (a == 0) return d ? vec2(6.0*t*t - 6.0*t, 3.0*t*t - 4.0*t + 1.0) : vec2(2.0*t*t*t - 3.0*t*t + 1.0, t*t*t - 2.0*t*t + t);
     return d ? vec2(-6.0*t*t + 6.0*t, 3.0*t*t - 2.0*t) : vec2(-2.0*t*t*t + 3.0*t*t, t*t*t - t*t);
@@ -101,7 +101,7 @@ uniform int u_cols;
 uniform int u_rows;
 int nodeAt(int i, int j) { return i * (u_cols + 1) + j; }`;
 
-const VS_MESH = `#version 300 es
+const VS_MESH = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 in vec2 a_uv;
@@ -125,7 +125,7 @@ void main() {
     gl_Position = vec4(s.x / aspect * 2.0 - 1.0, 1.0 - 2.0 * s.y, 0.0, 1.0);
 }`;
 
-const FS_MESH = `#version 300 es
+const FS_MESH = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 ${HERMITE}
@@ -153,6 +153,12 @@ void main() {
     }
     emit(acc, 1.0);
 }`;
+
+/** Every shader the renderer compiles, assembled, by stage: what `scripts/check-glsl.mjs` hands the reference compiler. */
+export const GRADIENT_SHADERS = {
+    freeform: { vert: VS_QUAD, frag: FS_FREEFORM },
+    mesh: { vert: VS_MESH, frag: FS_MESH },
+} as const;
 
 /** Compile and link, throwing the driver's log on failure. */
 function program(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
