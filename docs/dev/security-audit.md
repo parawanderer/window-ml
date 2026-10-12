@@ -60,7 +60,7 @@ the worker, and the page answers geometry only):
             expando, event path, mutation record, focus, selection, hit test, the test hook); the card app's theme post
             to `window.parent` and the page-started `CDP_SHADOW_RESOLVE` descending into our hosts, both of which
             bypassed it, are shut (site-access.spec.mjs, attack 17; review-look.spec.mjs, "does not get in";
-            background.test.js, "never descends into the shell's own host"): #PRNUM.
+            background.test.js, "never descends into the shell's own host"): #610.
       - [ ] `<html>` (the page's own element) stays open: a timed edit to it is seen only by a frame read.
       - [x] Review of #599: a host removed and put back is restored at once (child-list watch); the page re-showing
             one of our hosts is restacked; the keeper's listeners outlive an unmount, so a page listener added between
