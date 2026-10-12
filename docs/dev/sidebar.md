@@ -81,10 +81,21 @@ does not answer within 1 s is a refusal; a mask over 60% of the shot is a refusa
 scale, translate, rotate, a host transform), the UI moving during the shot, or only otherwise what the person can put
 away (the image viewer, a near-full sidebar or card). sidebar.html is web-accessible, so a page can frame it anywhere;
 the app mounts only once the shell that framed it hands it its port (`parent-channel.ts` `awaitHost`), so the page's
-frame is empty and transparent. Residual: a page that moves our host or html with CSSOM edits (no DOM mutation), timed
-to land after the shell's frame read and be undone before the next one, is seen by no read; closing that needs our UI
-out of the page's reach (closed roots, the top layer), a product decision. The highlight's translucent tint over the
-outlined element stays in the shot.
+frame is empty and transparent. The hosts carry an inline `all: initial !important` (`HOST_STYLE`), which no page
+stylesheet beats, timed or not; a `:host` rule inside our open root still does, which is why closed roots are next. The
+highlight's translucent tint over the outlined element stays in the shot.
+
+**The hosts live in the top layer (`shell-top-layer.ts`).** Each is `popover="manual"` and shown, so no z-index of the
+page's covers it. What the page opens in the top layer after ours (a modal dialog, an element in fullscreen, a popover)
+is answered by RAISING ours again (hide and show moves a popover to the top); what it does to our host (`hidePopover()`,
+the attribute removed or changed, the show cancelled in `beforetoggle`) by RESTORING it. Both come out of one budget
+(a burst of `RAISE_BURST`, then one per `RAISE_REFILL_MS`), so a page looping either gets a bounded number. A host the
+shell put in the top layer and the page kept out is `tampered` in a shot; a page element kept ABOVE ours is not (the
+rects are right whichever is on top). Traps: our three hosts stack by SHOW order now, not z-index, so a new host goes
+into the keeper's `order` list where it belongs (highlight, sidebar, card), and is `release`d before it is removed.
+Under a page's modal dialog or fullscreen element the browser makes everything outside it inert, ours included: the UI
+is seen but takes no clicks until the page closes it. A page element opened in the top layer from a CLOSED shadow root,
+or whose toggle event the page stops before ours, is not noticed until something else asks for a raise.
 
 **The services seam (`services.ts`): the session views never call `chrome` or the parent frame themselves.**
 The session views (agent runs, chat turns, output cells, code blocks, approvals, the composer) are shared by the

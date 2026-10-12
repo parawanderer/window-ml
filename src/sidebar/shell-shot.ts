@@ -7,6 +7,8 @@
 // the page can see (when each shot happens), override (a stylesheet beats an inline style) or outwait (it holds the
 // ack); a read of rects is none of those.
 
+import { onTopLayer } from "./shell-top-layer";
+
 /**
  * The inline style of every shadow host the shell mounts. An inline `!important` declaration beats every author
  * stylesheet `!important` rule, layered or not, as well as animations and transitions, so no rule of the page's moves,
@@ -105,6 +107,8 @@ export interface ShotHost {
     style?: Element | null;
     /** {@link sheetText} of `style` at mount: a rule the page edited or inserted since differs. */
     sheet?: string;
+    /** The shell put this host in the top layer (shell-top-layer.ts): out of it now, the page took it out. */
+    topLayer?: boolean;
 }
 
 /** Where the extension's UI lives on the page, as the shell holds it at the moment of asking. */
@@ -194,6 +198,9 @@ export function extensionRects(roots: ShotRoots): ShotRects {
         // Mounted on the document's root element and nowhere else: a host the page moved (into one of its frames, its
         // own shadow root, or any element whose effects would apply to ours) paints where these rects do not say.
         if (docEl && host.parentNode !== docEl) tampered = true;
+        // Out of the top layer the shell put it in, and not put back within the budget: the page is acting on our UI.
+        // The rects would still be right (they follow the host wherever it stacks); the refusal is for the acting.
+        if (entry.topLayer && !onTopLayer(host)) tampered = true;
         const hcs = styleOf(host);
         if (foreignPaint(hcs)) tampered = true;
         if (pageSized(hcs) || set(prop(hcs, "transform")) || set(prop(hcs, "perspective"))) restyled = true;
