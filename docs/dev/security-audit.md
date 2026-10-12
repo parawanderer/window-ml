@@ -38,6 +38,9 @@ the worker, and the page answers geometry only):
       refused; `approvalRouting` confirmed unable to resolve a gate. Every START_RUN field is classified in the PR: #566.
 - [x] Answer media and python `image` in the worker; a ratchet e2e that a worker run's page sends nothing at all,
       with an in-run positive control; the e2e watcher no longer shares the run's window (it captured the watcher): #571.
+- [x] Part 5, first PR: a page-built run that navigates onto an unapproved site is handed to the worker at the browser's
+      commit (`nav-handover.ts`), and the ratchet e2e covers it; a run handed over mid-turn runs the rest of the turn as
+      a worker run (`answer`, python with an image, `fetch_url`, exec routing, grants, lifecycle): #606.
 
 ## In progress
 
@@ -76,11 +79,9 @@ the worker, and the page answers geometry only):
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
       extension surface. Proposed: clamp, and drop `origin` for page runs. Owner decision pending.
-- [ ] Part 5 must move or refuse page-built runs never handed to the worker: all their tools still use the page's
-      vision, python and fetch types. Worker runs still send `PYTHON_EXEC`/`FETCH_SHEET` for a page table and
-      `CDP_SHADOW_RESOLVE` from the page.
-- [ ] A run handed to the worker mid-turn would still run `answer` and python with an image in the page (no route
-      does this today).
+- [ ] Part 5 must move or refuse what a worker run's page still sends: `PYTHON_EXEC`/`FETCH_SHEET` for a page table,
+      `CDP_SHADOW_RESOLVE`, and `FETCH_LLM` for a `fetch_url` ask over a session render of the page; then drop
+      `RUN_TAB_TYPES`. (Page-built runs never handed over now are only ever on approved sites: #606.)
 - [ ] Site access part 4b, part 5 (drop the run-tab allowance, `RUN_TAB_TYPES`), slice 3 (`requestAccess`, wording
       needs owner approval), slice 4.
 
