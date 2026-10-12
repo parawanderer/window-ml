@@ -164,7 +164,8 @@ export function lastRunText(j: JobStatus, now: number): string {
 /**
  * THE BACKGROUND WORK SECTION: every declared job's state, pending work, last run and next start, each opening onto its
  * own housekeeping records. Read through DUMP_JOBS when the log changes and every few seconds while shown.
- * @gallery none needs the service worker's DUMP_JOBS answer; tests/background-work.test.mjs renders it with one
+ * @group panels, logs
+ * @gallery none needs the service worker's DUMP_JOBS answer; tests/job-registry.test.mjs renders it with one
  */
 export function BackgroundWork({ events }: { events: HousekeepingEvent[] }) {
     const [jobs, setJobs] = useState<JobStatus[] | null>(null);

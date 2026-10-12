@@ -48,6 +48,32 @@ in `[offscreen]` or `[page tab N]`. A cleared log shows its `log clear` line; an
 recorded since the browser started. `housekeepingText` is pure and tested in `tests/housekeeping-log.test.mjs`; the
 section itself in `tests/sidebar-settings.test.js`.
 
+## Background jobs: what is happening NOW
+
+The log says what happened. It cannot say whether a pass is running, how much waits for one, or whether the last one
+finished or was cut off when the worker stopped. A job that acts on saved data on its own is DECLARED beside its code
+with `defineJob` (`src/job-registry.ts`), the way a store is declared with `defineState`: an id, a title, when it runs
+(a sentence), which log records are its own (`subsystem`, `start?`, `done`, `failed?`, `also?`), and an optional
+`live()` returning plain data (`running`, `pending` with its unit, `nextDue`).
+
+The status is the live answer plus the log, and the whole rule is the pure `jobStatus`: running wins; else a `start`
+record with no `done`/`failed` after it is **interrupted** (the worker was stopped in the pass, and nothing had to
+survive it for that to be seen); else a last run that failed is `failed` until a later one succeeds; else pending work
+is `waiting`; else `idle`. Kinds are listed rather than matched by subsystem, because `sessions` holds two jobs. The log
+lives in `storage.session`, so a browser restart clears the history: a pass cut off by closing the browser shows as
+`waiting` (its sessions are still uncompacted), never as a wrong `interrupted`.
+
+Declared today: screenshot compaction (`sw-image-compact.ts` `compactionJob`, the only one with a start record),
+saved-session cleanup and the stored-value sweep (whose `nextDue` is its alarm's). `DUMP_JOBS` reads them all against
+one copy of the log, for extension pages only (`handleJobsDump`). The **Background work** section (`BackgroundWork`,
+`housekeeping-log.tsx`) sits at the top of the housekeeping view, so the chat page's Settings, Housekeeping shows it
+too: one fold per job with its state on the header line, opening onto the job's own records. It re-reads when the log
+changes and every 5 s while shown. Tests: `tests/job-registry.test.mjs` (registry, states, the upgrade from a log with
+no job records, the message, the section) and the compaction section of `tests/image-compaction.test.mjs`.
+
+To add a job: declare it at module load beside the job, log a start/done pair if a pass can be cut off, and give it
+a `live()` if it knows what waits.
+
 ## Adding an emitter
 
 - **In the worker:** `recordHousekeeping({ subsystem, kind, reason?, key?, bytes?, ms?, detail? })` from
