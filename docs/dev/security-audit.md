@@ -53,7 +53,7 @@ the worker, and the page answers geometry only):
             fullscreen element or popover opened after ours is answered by raising ours again, and the page's
             `hidePopover()`, attribute removal or change, or a cancelled show by restoring ours, all within one budget;
             a host kept out of the top layer refuses the shot as tampered (review-look.spec.mjs, "the top layer";
-            shell-top-layer.test.mjs): #PR.
+            shell-top-layer.test.mjs): #599.
       - [ ] Closed shadow roots: PLANNED next (owner decision 2026-10-10). A `:host{…!important}` rule the page puts
             inside our OPEN root still beats the host's inline `!important` (for `!important` the inner context wins),
             edited into our own sheet through the CSSOM or set as an adopted sheet, neither a DOM mutation, so the watch
