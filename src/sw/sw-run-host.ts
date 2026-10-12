@@ -37,6 +37,7 @@ import { routeExec, execNames } from "./exec-routing";
 import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelector } from "./worker-answer";
 import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { withEnv } from "./sw-current-env";
+import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython, mixedPythonRefusalFor } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
@@ -552,7 +553,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             // What the world may ask for while it runs: re-pipes of what it was sent, and those stored tables.
                             serve: isoServer(runId, reads, { deref: () => derefByRun.get(runId), holders: valueHolders, columns: readStoredColumns }),
                             // Made only for a script that names it, as a survey's is (tryReadonly below).
-                            ...(snap && execNames(js).current ? { current: async () => withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly) } : {}),
+                            ...(snap && execNames(js).current ? { current: async () => withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly)) } : {}),
                         });
                     }
                     execNote = route.note;
@@ -886,7 +887,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // into it (sw-shared-watches.ts), which is async, and the evaluator asks for the snapshot synchronously.
                 // A snapshot that cannot be made is not the run's end: the survey falls through to the person.
                 let current: import("../agent/current-context").CurrentSnapshot | undefined;
-                try { current = snap && wantsLog ? await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly) : undefined; } catch (e) {
+                try { current = snap && wantsLog ? withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly)) : undefined; } catch (e) {
                     recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
                     return null;
                 }

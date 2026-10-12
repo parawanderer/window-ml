@@ -125,7 +125,25 @@ export interface CurrentSnapshot {
     /** The environment the run acts in, read now: what you would otherwise learn by trying and reading the refusal.
      *  Present only where the host adds it (a worker-hosted run). */
     env?: CurrentEnv;
+    /** What the runtime this run executes in can do, read now: the same description it gives every client, with each
+     *  capability a boolean. Present only where the host adds it (a worker-hosted run). */
+    runtime?: CurrentRuntime;
 }
+
+/** The runtime a run executes in, as it describes itself to its clients: what kind it is, and what it can do. */
+export interface CurrentRuntime {
+    /** `browser`: this extension, in a browser. `desktop` and `headless` are other runtimes of the same contract. */
+    kind: "browser" | "desktop" | "headless";
+    /** One entry per capability the runtime reports, by its name in the session contract: true when it can (`tabs`,
+     *  `screenshots`, `sideCalls` for a utility model, `persistence` for kept sessions, `pythonBench`, …), false when it
+     *  says it cannot. A capability that carries details (where a blank run opens, the archive folder) is `true`: it
+     *  is there, and its details are not yours. `attention` is the setup problems the person is shown in the inbox,
+     *  each with the inbox's own title. */
+    capabilities: { [name: string]: boolean | CurrentAttention[] | undefined; attention?: CurrentAttention[] };
+}
+
+/** One setup problem a runtime reports, as the person's inbox names it: `code` is stable, `title` is the inbox's line. */
+export interface CurrentAttention { code: string; title: string }
 
 /** Where an approved `exec` runs: in the page's own world (its scripts share your globals), in an isolated world of its
  *  own (the page's DOM, not its globals; of `ml` only `current` and `dereference`), or not at all. */
