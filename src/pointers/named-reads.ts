@@ -76,7 +76,9 @@ function pipeOptionAt(src: string, i: number): { stages: string[]; end: number }
     } else {
         const s = stringAt(src, i);
         if (s === NOT_LITERAL) return NOT_LITERAL;
-        stages = pipeStages(s.value);
+        // A pipe that does not split (an unterminated quote) names nothing: the read fails at run time with the
+        // dialect's own error, as on every path, instead of the scan throwing and the exec never answering.
+        try { stages = pipeStages(s.value); } catch { return NOT_LITERAL; }
         i = s.end;
     }
     i = skipSpace(src, i);

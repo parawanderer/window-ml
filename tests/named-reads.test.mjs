@@ -37,6 +37,16 @@ test("ADVERSARIAL: a computed pointer or pipe is not named, whatever it is dress
     ]) assert.deepEqual(scan(js), [], js);
 });
 
+test("a literal pipe that does not split (an unterminated quote) names nothing and never throws, so the exec carrying it still runs and fails at that read with the dialect's own error", async () => {
+    const { execNames } = await import("../src/sw/exec-routing.ts");
+    for (const js of [`ml.dereference("x", { pipe: "grep 'a" })`, `ml.dereference("x", { pipe: "head 1 | sed 's/a/b" })`, `// ml.dereference("x", { pipe: "grep \\"a" })`]) {
+        assert.deepEqual(scan(js), [], js);
+        assert.deepEqual(execNames(js), { current: false, pointers: true }, js);
+    }
+    assert.deepEqual(scan(`ml.dereference("x", { pipe: ["grep 'a"] })`), [{ ref: "x", pipe: ["grep 'a"] }], "an array names its stages as written; the quote fails when the stage runs");
+    assert.deepEqual(scan(`ml.dereference("x", { pipe: "grep 'a" }); ml.dereference("y")`), [{ ref: "y", pipe: [] }], "positive control: the scan goes on past it");
+});
+
 test("text that looks like a call in a comment or a string counts: the person approved that text", () => {
     assert.deepEqual(scan(`// ml.dereference("noted")\nreturn "ml.dereference('quoted')"`), [{ ref: "noted", pipe: [] }, { ref: "quoted", pipe: [] }]);
 });
