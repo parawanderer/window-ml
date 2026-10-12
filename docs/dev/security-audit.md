@@ -53,7 +53,7 @@ the worker, and the page answers geometry only):
 - [x] Attack 18: the shell resolves a highlight's selector in its isolated world and takes `ML_HL_AT` only for a
       current `@pt`/`@box` token request, so the page neither hears the selector being approved nor moves the approve
       highlight or the card's note; positive control in the light DOM and the page's open and closed shadow roots
-      (site-access.spec.mjs, attack 18): #PR_A.
+      (site-access.spec.mjs, attack 18): #617.
 
 ## In progress
 
