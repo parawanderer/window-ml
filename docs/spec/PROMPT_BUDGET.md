@@ -104,6 +104,23 @@ run's own artifact, never from what the model says it did (the pointer pilot sco
 task and input tokens per call, with spread. **Decision rule**: a cut ships when pass rate does not drop on any model
 and tokens per call fall; a cut that costs one model a task it used to pass is reworked, not shipped.
 
+## Tried and dropped: "the whole `ml` surface as TypeScript" (2026-10-12)
+
+The proposal was to replace "`agent_api_docs` lists the rest." in `SELF_CLAUSE` (`src/agent/prompts.ts`) with
+"`agent_api_docs` serves the whole `ml` surface as TypeScript with JSDoc: exact signatures and every type they use."
+(+82 characters on every call), so a model would look an exact type up instead of guessing it. The panel interview
+[`tests/e2e/panel/api-docs-types.interview.ts`](../../tests/e2e/panel/api-docs-types.interview.ts) asks for the type
+of `ml.current.env` and what `ml.fetch` resolves to, then where the API is documented and which text said so.
+
+- **Without the sentence**, all 8 panel models (DeepSeek V4 Pro and Flash, Gemini 3.6 Flash, Sonnet 5.5, GPT-6 Luna,
+  Kimi K3, GLM 5.3 Flash, MiniMax M3) called `agent_api_docs` and named every `CurrentEnv` field, `FetchResult` and
+  its `table` field: 8/8, 26 calls in all. With it: 8/8, 25 calls. The per-model call counts moved both ways (one
+  run each), which is noise.
+- **What it changed** is only what the models quote when asked how they knew. Without it, half of them already
+  described the docs as TypeScript with JSDoc, from the tool's description or its first result.
+- **Not shipped**: no behaviour to buy with 82 characters per call. The interview stays, to rerun if the tool's
+  description is ever cut.
+
 ## Step 3 result, round 2: `locate`'s option texts (2026-10-10)
 
 `locate` keeps its triggers in the schema and serves its full description and parameter texts from
