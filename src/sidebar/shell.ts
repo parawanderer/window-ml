@@ -772,6 +772,7 @@ const shotRoots = (): ShotRoots => ({
         ({ host, kind, root, style: root ? ownSheets.get(root)?.style ?? null : null, sheet: root ? ownSheets.get(root)?.sheet ?? "" : "", topLayer: topLayer.manages(host) })),
     owned: [panel, frame, cardWrap, lightbox, highlightEl],
     lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: chrome.runtime.getURL(""),
+    topLayerStrays: topLayer.strays(),
 });
 
 /** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */

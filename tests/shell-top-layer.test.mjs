@@ -23,18 +23,24 @@ function topLayerWorld() {
             matches: (q) => q === ":popover-open" && stack.includes(h),
             showPopover() {
                 if (h.attrs.popover === undefined) throw new Error("not a popover");
-                if (stack.includes(h) || h.cancelShow) return;
+                if (stack.includes(h)) throw new Error("already open");
+                fire("beforetoggle", { target: h, newState: "open" });
+                if (h.cancelShow) return;
                 shows++;
                 stack.push(h);
             },
-            hidePopover() { if (!stack.includes(h)) throw new Error("not open"); stack.splice(stack.indexOf(h), 1); },
+            hidePopover() { if (!stack.includes(h)) throw new Error("not open"); fire("beforetoggle", { target: h, newState: "closed" }); stack.splice(stack.indexOf(h), 1); },
             hideSilently() { if (stack.includes(h)) stack.splice(stack.indexOf(h), 1); },
         };
         return h;
     };
-    const listeners = new Map(), observers = [];
+    const listeners = new Map(), observers = [], childWatch = [];
+    /** Dispatch to the window listeners, as the browser does synchronously for `beforetoggle`. */
+    const fire = (type, e) => { for (const fn of listeners.get(type) ?? []) fn(e); };
     let fs = null;
     const doc = {
+        supported: () => true,
+        observeChildren(target, fn) { const o = { target, fn }; childWatch.push(o); return () => childWatch.splice(childWatch.indexOf(o), 1); },
         listen(type, fn) { listeners.set(type, [...(listeners.get(type) ?? []), fn]); return () => listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)); },
         observe(target, filter, subtree, fn) { const o = { target, filter, fn }; observers.push(o); return () => observers.splice(observers.indexOf(o), 1); },
         fullscreenElement: () => fs,
@@ -50,12 +56,15 @@ function topLayerWorld() {
         clearInterval: (id) => timers.delete(id),
     };
     return {
-        host, doc, clock, stack, timers, listeners, observers,
+        host, doc, clock, stack, timers, listeners, observers, childWatch,
         shows: () => shows,
         /** A page element entering the top layer: on the stack above ours, and its toggle event. */
         pageOpens(el = { nodeName: "DIALOG" }) { stack.push(el); for (const fn of listeners.get("toggle") ?? []) fn({ target: el, newState: "open" }); },
         /** The page's element entering fullscreen. */
         fullscreen(el) { fs = el; stack.push(el); for (const fn of listeners.get("fullscreenchange") ?? []) fn({ target: el }); },
+        /** The page removing our host and putting it back: it leaves the top layer with no event (removal hides a popover
+         *  silently), and a child-list mutation of the root element is the one trace. */
+        reattach(h) { h.hideSilently(); for (const o of [...childWatch]) o.fn(); },
         /** Fire the attribute observers watching `target`. */
         mutate(target) { for (const o of [...observers]) if (o.target === target || (o.filter.includes("open") && target.nodeName === "DIALOG")) o.fn([target]); },
         /** The toggle event the browser queues for one of our hosts. */
@@ -97,7 +106,7 @@ test("a host the shell mounts goes into the top layer as a manual popover, and o
 
 test("a browser without the popover API (jsdom) leaves the host alone and installs nothing", () => {
     const w = topLayerWorld();
-    const k = topLayerKeeper(() => [], w.doc, w.clock);
+    const k = topLayerKeeper(() => [], { ...w.doc, supported: () => false }, w.clock);
     const plain = { isConnected: true, getAttribute: () => null };
     k.promote(plain);
     assert.equal(k.manages(plain), false);
@@ -184,6 +193,109 @@ test("our own raises fire our own toggle events, which cost nothing: no loop of 
     k.stop();
 });
 
+// --- what a page can do that the first version missed (review of #599) ---
+
+test("the keeper listens from its construction, before any host is mounted, and keeps listening after the last host goes, so a page listener added between two mounts does not run before ours; timers wait for a host", () => {
+    const w = topLayerWorld();
+    const k = topLayerKeeper(() => [], w.doc, w.clock);
+    for (const type of ["toggle", "beforetoggle", "fullscreenchange"]) assert.equal(w.listeners.get(type)?.length, 1, type);
+    assert.equal(w.timers.size, 0, "no poll before a host");
+    const sb = w.host("sidebar");
+    k.promote(sb);
+    k.release(sb);
+    assert.equal(w.timers.size, 0, "no poll after the last host");
+    assert.equal(w.listeners.get("beforetoggle")?.length, 1, "the listeners stay, so a later mount is still first");
+    k.stop();
+});
+
+test("our host removed by the page and put back (out of the top layer with no event) is restored at once, not at the next poll", async () => {
+    const w = topLayerWorld();
+    const sb = w.host("sidebar");
+    const k = topLayerKeeper(() => [sb], w.doc, w.clock);
+    k.promote(sb);
+    await settle();
+    w.reattach(sb);
+    assert.equal(onTopLayer(sb), false);
+    await settle();
+    assert.ok(onTopLayer(sb), "restored with no clock advance");
+    k.stop();
+});
+
+test("the page showing one of our hosts itself (above the others) is answered by restacking them in order: the page does not choose how ours stack", async () => {
+    const w = topLayerWorld();
+    const hl = w.host("hl"), sb = w.host("sidebar"), card = w.host("card");
+    const k = topLayerKeeper(() => [hl, sb, card], w.doc, w.clock);
+    k.promote(hl); k.promote(sb); k.promote(card);
+    for (const h of [sb, hl]) {
+        h.hidePopover(); h.showPopover();
+        assert.equal(ids(w.stack).at(-1), h.name, "the page put it on top");
+        await settle();
+        assert.deepEqual(ids(w.stack), ["hl", "sidebar", "card"], `${h.name} put back under the card`);
+    }
+    k.stop();
+});
+
+test("`strays` counts a host left out of the top layer past the task the page took it out in (budget spent, a cancelled show, the poll), and not one restored before the task ended", async () => {
+    const w = topLayerWorld();
+    const sb = w.host("sidebar");
+    const k = topLayerKeeper(() => [sb], w.doc, w.clock);
+    k.promote(sb);
+    sb.hidePopover();
+    await settle();
+    assert.ok(onTopLayer(sb));
+    assert.equal(k.strays(), 0, "restored in the task it was taken out in: never painted out");
+    for (let i = 1; i < RAISE_BURST; i++) { sb.hidePopover(); await settle(); }
+    assert.equal(k.strays(), 0, "every restore inside the burst");
+    sb.hidePopover();
+    await settle();
+    assert.equal(onTopLayer(sb), false, "the budget is spent");
+    assert.equal(k.strays(), 1, "left out past the task");
+    // While the retry is pending: the page puts it back itself and takes it out again, each time for one frame.
+    for (let i = 0; i < 3; i++) { w.stack.push(sb); sb.hidePopover(); await settle(); }
+    assert.equal(k.strays(), 4, "each take-out while the retry waits is counted too");
+    await w.tick(RAISE_REFILL_MS);
+    assert.ok(onTopLayer(sb), "restored by the retry");
+    const n = k.strays();
+    sb.cancelShow = true;
+    await w.tick(RAISE_REFILL_MS * 3);
+    sb.hidePopover();
+    await settle();
+    assert.ok(k.strays() > n, "a show the page cancels");
+    sb.cancelShow = false;
+    await w.tick(RAISE_REFILL_MS * RAISE_BURST * 2);
+    const m = k.strays();
+    w.reattach(sb); sb.hideSilently();
+    sb.attrs.popover = "manual";
+    await w.tick(TOP_LAYER_POLL_MS);
+    assert.ok(onTopLayer(sb));
+    assert.ok(k.strays() > m, "found out by the poll: out since an earlier task");
+    k.stop();
+});
+
+test("a showPopover that throws (the host disconnected from the page's beforetoggle, a document no longer fully active) throws nothing out of the keeper: the host counts as a stray, the shot is refused, and the retries stay in the budget", async () => {
+    const w = topLayerWorld();
+    const sb = w.host("sidebar");
+    let calls = 0;
+    sb.showPopover = () => { calls++; throw new Error("InvalidStateError"); };
+    const k = topLayerKeeper(() => [sb], w.doc, w.clock);
+    k.promote(sb);
+    assert.ok(k.manages(sb) && !onTopLayer(sb));
+    await w.tick(RAISE_REFILL_MS * 5);
+    assert.ok(calls <= RAISE_BURST + 6, `bounded (${calls})`);
+    assert.ok(k.strays() > 0);
+    k.stop();
+});
+
+test("a document with no root element to watch still gets one poll, however many hosts are mounted", () => {
+    const w = topLayerWorld();
+    const sb = w.host("sidebar"), card = w.host("card");
+    const k = topLayerKeeper(() => [sb, card], { ...w.doc, root: () => null }, w.clock);
+    k.promote(sb); k.promote(card); k.promote(card);
+    assert.equal(w.timers.size, 1, "one interval");
+    k.stop();
+    assert.equal(w.timers.size, 0);
+});
+
 // --- the budget ---
 
 test("a page hiding our host in a loop gets the burst, then one restore per refill, and nothing between", async () => {
@@ -231,7 +343,7 @@ test("a show the page cancels (beforetoggle) is retried within the same budget, 
     assert.equal(onTopLayer(sb), false);
     k.release(sb);
     assert.equal(w.timers.size, 0, "no poll, no retry");
-    assert.equal(w.listeners.get("toggle")?.length ?? 0, 0, "no listener");
+    assert.equal(w.observers.length + w.childWatch.length, 0, "no observer (the window listeners stay, by design)");
 });
 
 // --- the shot: a host the shell put in the top layer and the page kept out is refused ---

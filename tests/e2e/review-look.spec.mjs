@@ -369,6 +369,73 @@ test("a page cancelling our host's show in beforetoggle keeps it out of the top 
     });
 });
 
+// What the first version missed (review of #599): a host taken out with no event, events a page listener stops, and a
+// host out for one painted frame that no read of the shot's watch lands on.
+test("our host removed by the page and put back (removal takes a popover out of the top layer and fires nothing) is back on top within the task, not at the next poll", async () => {
+    await withShell(async (s) => {
+        const back = await s.page.evaluate(async () => {
+            const h = document.getElementById("ml-sb-root");
+            h.remove();
+            document.documentElement.append(h);
+            const outAfterAppend = !h.matches(":popover-open");
+            await new Promise((r) => setTimeout(r, 0));
+            return { outAfterAppend, open: h.matches(":popover-open") };
+        });
+        expect(back.outAfterAppend, "the re-add left it out of the top layer").toBe(true);
+        expect(back.open, "restored by the child-list watch, before any poll").toBe(true);
+    });
+});
+
+test("a page listener that stops our host's toggle events, added while our UI is unmounted, still runs after ours once it is mounted again: a hidePopover is undone at once", async () => {
+    await withShell(async (s, ext) => {
+        await s.page.evaluate(() => {
+            for (const t of ["beforetoggle", "toggle"]) addEventListener(t, (e) => { if (String(e.target?.id).startsWith("ml-sb")) e.stopImmediatePropagation(); }, true);
+        });
+        await configureExtension(ext.sw, { debugMode: "devtools" });
+        await s.page.waitForSelector("#ml-sb-root", { state: "detached", timeout: 10000 });
+        await configureExtension(ext.sw, { debugMode: "overlay" });
+        await s.page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 10000 });
+        await s.page.waitForTimeout(200);
+        const open = await s.page.evaluate(async () => {
+            const h = document.getElementById("ml-sb-root");
+            h.hidePopover();
+            await new Promise((r) => setTimeout(r, 0));
+            return h.matches(":popover-open");
+        });
+        expect(open, "restored by our beforetoggle listener, which the page's could not stop").toBe(true);
+    });
+});
+
+// The page takes our host out in a ResizeObserver callback, which runs after every animation-frame callback (the watch's
+// read included) and before the paint, spends the restores in that frame's microtasks, and puts the host back itself in
+// the first task after the paint. The watch's reads (each frame's, and each of the worker's messages) then see the host
+// on top, though every frame paints it out.
+test("a page that keeps our host out of the top layer only for the paint of each frame (between the watch's reads) gets the shot refused as tampered", async () => {
+    const { RAISE_BURST } = await import("../../src/sidebar/shell-top-layer.ts");
+    await withShell(async (s) => {
+        await s.page.evaluate((burst) => {
+            const h = document.getElementById("ml-sb-root");
+            const probe = document.createElement("div");
+            probe.style.cssText = "position:fixed;left:0;top:0;height:1px;width:1px;background:#00ff00";
+            document.body.append(probe);
+            window.__outFrames = 0;
+            new ResizeObserver(async () => {
+                for (let i = 0; i < 2 * burst + 2; i++) { if (h.matches(":popover-open")) h.hidePopover(); await Promise.resolve(); }
+                if (!h.matches(":popover-open")) window.__outFrames++;
+                ch.port2.postMessage(0);
+            }).observe(probe);
+            // Put back in the first task after the paint, before the shell's handling of the worker's next message.
+            const ch = new MessageChannel();
+            ch.port1.onmessage = () => { try { if (!h.matches(":popover-open")) h.showPopover(); } catch { /* raced a restore */ } };
+            const tick = () => { probe.style.width = probe.style.width === "1px" ? "2px" : "1px"; requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+        }, RAISE_BURST);
+        await s.page.waitForTimeout(1500);
+        expect(await s.page.evaluate(() => window.__outFrames), "frames painted with our host out").toBeGreaterThan(10);
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
+
 // The other storm: the page closes and reopens its own modal in a loop, each one landing above ours. The re-raises are
 // bounded the same way; the page's dialog then stays above our UI, which is not a leak: the rects are right whichever
 // is on top, so the shot is still taken and clean.

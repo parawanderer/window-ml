@@ -94,8 +94,15 @@ shell put in the top layer and the page kept out is `tampered` in a shot; a page
 rects are right whichever is on top). Traps: our three hosts stack by SHOW order now, not z-index, so a new host goes
 into the keeper's `order` list where it belongs (highlight, sidebar, card), and is `release`d before it is removed.
 Under a page's modal dialog or fullscreen element the browser makes everything outside it inert, ours included: the UI
-is seen but takes no clicks until the page closes it. A page element opened in the top layer from a CLOSED shadow root,
-or whose toggle event the page stops before ours, is not noticed until something else asks for a raise.
+is seen but takes no clicks until the page closes it. The keeper's window listeners go on when the content script
+loads and stay for the page's life, so a page listener added later cannot stop an event before ours; one an inline
+script added earlier can, which leaves the attribute and child-list watches (a host removed and put back fires no event)
+and the 1 s poll. The page showing one of OUR hosts itself is answered by restacking all three, so it cannot reorder
+them. A host found out of the top layer after the task the page took it out in (the budget spent, a cancelled show, the
+poll) counts as a stray (`strays`), and a shot's watch over which that count moved is `tampered`: a host out only for the
+paint of each frame is between every two of the watch's reads. A page element opened in the top layer from a CLOSED
+shadow root of the page's, or whose toggle event an earlier page listener stops, is not noticed until something else
+asks for a raise.
 
 **The services seam (`services.ts`): the session views never call `chrome` or the parent frame themselves.**
 The session views (agent runs, chat turns, output cells, code blocks, approvals, the composer) are shared by the

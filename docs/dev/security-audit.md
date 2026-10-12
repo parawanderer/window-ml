@@ -59,8 +59,13 @@ the worker, and the page answers geometry only):
             edited into our own sheet through the CSSOM or set as an adopted sheet, neither a DOM mutation, so the watch
             refuses it only when a frame read sees it.
       - [ ] `<html>` (the page's own element) stays open: a timed edit to it is seen only by a frame read.
-      - [ ] A page element put in the top layer from a CLOSED shadow root of the page's, or whose `toggle` event the
-            page stops before ours, is not noticed until something else asks for a raise. It paints over our UI with
+      - [x] Review of #599: a host removed and put back is restored at once (child-list watch); the page re-showing
+            one of our hosts is restacked; the keeper's listeners outlive an unmount, so a page listener added between
+            two mounts runs after ours; a host out of the top layer only for each frame's paint refuses the shot
+            (`strays`). review-look.spec.mjs, "What the first version missed".
+      - [ ] A page element put in the top layer from a CLOSED shadow root of the page's, or whose `toggle` event a
+            page listener added before the content script loaded stops, is not noticed until something else asks for a
+            raise. It paints over our UI with
             `pointer-events: none` and the clicks reach ours (clickjacking the card). Proposed: an occlusion check on
             the approval controls (IntersectionObserver v2 `trackVisibility`), refusing a click while they are covered.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only).

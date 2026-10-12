@@ -301,3 +301,19 @@ test("a shot's watch reports every place the UI was seen from its begin to its e
         assert.equal(got.moved, true);
     } finally { Object.assign(globalThis, saved); }
 });
+
+test("a shot's watch is `tampered` when the top-layer keeper found one of our hosts out past a task while it ran, though every read saw the host on top: out for one painted frame between two reads is seen by none of them", () => {
+    const saved = { requestAnimationFrame: globalThis.requestAnimationFrame };
+    globalThis.requestAnimationFrame = () => 0;
+    try {
+        const panel = { tagName: "DIV", id: "", getBoundingClientRect: () => ({ left: 700, top: 0, width: 300, height: 700, right: 1000, bottom: 700 }), closest: () => null };
+        let strays = 3;
+        const r = () => ({ ...roots([{ host: host([panel]), kind: "sidebar" }]), topLayerStrays: strays });
+        beginWatch("t1", r);
+        assert.equal(endWatch("t1", r).tampered, undefined, "nothing found out while it ran");
+        beginWatch("t2", r);
+        strays++;
+        assert.equal(endWatch("t2", r).tampered, true, "found out while it ran");
+        assert.equal(extensionRects(r()).tampered, undefined, "a single read (no watch) has nothing to compare with");
+    } finally { Object.assign(globalThis, saved); }
+});
