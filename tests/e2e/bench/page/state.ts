@@ -168,7 +168,16 @@ export interface SpendReport {
     currency: string; calls: number; runsWithCalls: number; runsWithout: number;
     /** what each column means (spend.mjs `SPEND_ABOUT`) */
     about: Record<string, string>;
-    models: { model: string; runs: number; calls: number; computed: number; computedCalls: number; reported: number; reportedCalls: number; local: number; unpriced: number; why: string | null }[];
+    models: { model: string; runs: number; calls: number; computed: number; computedCalls: number; reported: number; reportedCalls: number; local: number; unpriced: number; why: string | null; energy?: EnergyTally | null }[];
+    /** how the energy was measured, when the box log was read (electricity.mjs `BASIS_WORDS` keys) */
+    energyBases?: string[];
+}
+
+/** What the box drew for one model's runs and what that cost (electricity.mjs `energyByModel`); cost null with no price. */
+export interface EnergyTally {
+    runs: number; Wh: number; aboveWh: number | null; cost: number | null; costAbove: number | null; currency: string | null;
+    /** runs with no electricity price: energy only */
+    unpriced: number; basis: string;
 }
 
 /** A posterior from the regression fit: the estimate, its spread and interval, P(> 0), and P(> the smallest counted shift). */

@@ -12,6 +12,7 @@
 // edited task is a new one.
 
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -343,10 +344,19 @@ export function sweepScores(board, drivers, info, href) {
 /** The tasks of a spec with no pass/fail predicate, whose runs therefore count for tokens but not for a score. */
 export const unscoredTasks = (spec) => spec.tasks.filter((t) => typeof t.succeeded !== "function" && !(t.asks?.length || t.followUps?.length || t.expect)).map((t) => t.id);
 
+/** The box log beside a scores log (box-stream.mjs writes it), read-only; null when there is none. */
+async function openBoxReadOnly(file) {
+    if (!existsSync(file)) return null;
+    try { const { DatabaseSync } = await import("node:sqlite"); return new DatabaseSync(file, { readOnly: true }); } catch { return null; }
+}
+
 /** Write scores.md, scores.json and scores.html beside the log; returns the board. */
 export async function writeScoreFiles(db, { dir = SCORES_DIR, dbFile = SCORES_DB } = {}) {
     const rows = readRuns(db);
-    const board = { ...scoreboard(rows, { db: dbFile }), spend: spendReport(db, rows, modelKey) };
+    const box = await openBoxReadOnly(path.join(path.dirname(dbFile), "box.sqlite"));
+    let spend;
+    try { spend = spendReport(db, rows, modelKey, { box }); } finally { box?.close(); }
+    const board = { ...scoreboard(rows, { db: dbFile }), spend };
     const { scoresPage } = await import("./serve.mjs");
     await writeFile(path.join(dir, "scores.md"), scoresText(board));
     await writeFile(path.join(dir, "scores.json"), JSON.stringify(board, null, 2));
