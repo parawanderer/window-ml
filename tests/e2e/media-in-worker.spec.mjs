@@ -20,6 +20,8 @@ import { startFakeLlm } from "./fake-llm.mjs";
 test.describe.configure({ mode: "default" });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** A hostname the browser resolves to the page's server, so the same page is served from an origin nobody approved. */
+const ELSEWHERE = "elsewhere.test";
 
 /** What a page must not send for a run whose vision is the worker's (the part-3 goal, docs/spec/SITE_ACCESS.md). */
 const FORBIDDEN = ["CAPTURE_TAB", "FETCH_LLM", "MODEL_CAPS", "GET_CONFIG", "FETCH_IMAGE_B64"];
@@ -66,8 +68,8 @@ const startCounting = (sw) => sw.evaluate(() => {
     if (g.__ratchetOn) return;
     g.__ratchetOn = true;
     const own = (s) => String(s?.url || s?.origin || "").startsWith("chrome-extension://");
-    chrome.runtime.onMessage.addListener((m, s) => { if (s.tab && !own(s)) g.__ratchet.push({ type: String(m?.type), tab: s.tab.id, frame: s.frameId, ts: Date.now() }); return false; });
-    chrome.runtime.onConnect.addListener((p) => { const s = p.sender; if (s?.tab && !own(s)) g.__ratchet.push({ type: `PORT:${p.name}`, tab: s.tab.id, frame: s.frameId, ts: Date.now() }); });
+    chrome.runtime.onMessage.addListener((m, s) => { if (s.tab && !own(s)) g.__ratchet.push({ type: String(m?.type), tab: s.tab.id, frame: s.frameId, url: s.url, ts: Date.now() }); return false; });
+    chrome.runtime.onConnect.addListener((p) => { const s = p.sender; if (s?.tab && !own(s)) g.__ratchet.push({ type: `PORT:${p.name}`, tab: s.tab.id, frame: s.frameId, url: s.url, ts: Date.now() }); });
 });
 const counted = (sw, tabId) => sw.evaluate((id) => globalThis.__ratchet.filter((m) => m.tab === id), tabId);
 /** The forbidden sends among `msgs`: a FORBIDDEN type, or a model stream port. */
@@ -152,7 +154,8 @@ const toolResults = (fake) => (fake.calls().filter((c) => c.tools?.length).at(-1
 async function setup() {
     const fake = await startFakeLlm({ model: "fake-model" });
     const site = await servePage();
-    const ext = await launchExtension();
+    // A second hostname for the same server: another origin, which nobody approves (the hand-over on navigation).
+    const ext = await launchExtension({ args: [`--host-resolver-rules=MAP ${ELSEWHERE} 127.0.0.1`] });
     const subs = [];
     fake.setSide((body) => {
         subs.push(body);
@@ -185,11 +188,12 @@ async function openPage(r, approve) {
  * What the run did, as the model and the person were given it, held to the page's own pixels: look and locate
  * answered, each verify a picture, python's image #b's 200×100 blue crop, its cast's token clickable in the page, and
  * the HUD card's media each cropped from the capture (the `<img>` at its drawn 120×80, green, never its 240×160 file).
+ * `skip` leaves out the tool results of calls a variant makes before the script (the navigation onto the unapproved site).
  */
-async function expectTheRun(r, page, result) {
+async function expectTheRun(r, page, result, skip = 0) {
     expect(result, "the run finished").toBeTruthy();
     expect(result.error, "the run did not fail").toBeFalsy();
-    const out = toolResults(r.fake);
+    const out = toolResults(r.fake).slice(skip);
     expect(out.length, JSON.stringify(out)).toBe(SCRIPT_LENGTH - 1);
     expect(out[0]).toContain("Screenshot of the viewport captured");
     expect(out[1]).toContain('Matched "a red rectangle" → #1 [button] "Red" → #a');
@@ -274,4 +278,35 @@ test("a page-built run handed to the worker (an eviction's durable resume): afte
         await expectTheRun(r, page, result);
         expectNothingSent((await counted(r.ext.sw, tabId)).slice(before), ["CONTENT_READY", "RUN_READOPTED"]);
     } finally { await stopApprover?.(); await r.close(); }
+});
+
+// --- the ratchet: a page-built run handed to the worker when it navigates onto a site nobody approved ---
+
+test("a page-built run that navigates onto an unapproved site is handed to the worker there: that page sends nothing but the in-run probe and its own two messages", async () => {
+    test.setTimeout(150000);
+    const r = await setup();
+    const stopApprover = approveAll(r.ext);
+    try {
+        // The run is built by the approved page (127.0.0.1); the same page on another hostname is another origin.
+        const { page, tabId } = await openPage(r, true);
+        const there = r.site.url.replace("127.0.0.1", ELSEWHERE);
+        const thereOrigin = new URL(there).origin;
+        r.fake.setScript([{ tool: "navigate", args: { url: there } }, ...script(sendProbe(page))]);
+        const events = [];
+        const watch = await watchRunEvents(r.ext, page, (ev) => events.push(ev));
+        await startCounting(r.ext.sw);
+        await page.evaluate(() => { window.ml.agent("look around and hand me the picture", { env: false, maxSteps: 20, crossOrigin: true, approvalRouting: "external", answer: true, extraTools: [window.ml.pythonTool()] }); return true; });
+        const result = await untilResult(events);
+        await watch.close();
+        expect(new URL(page.url()).origin, "the run moved to the unapproved site").toBe(thereOrigin);
+        // The navigate step's result, then the rest of the script, held to the same page as the other variants.
+        expect(toolResults(r.fake)[0]).toContain("You are now on the new page");
+        await expectTheRun(r, page, result, 1);
+        // Counted from the unapproved document only: what the builder page sent before the navigation is its own.
+        const sent = (await counted(r.ext.sw, tabId)).filter((m) => m.url && new URL(m.url).origin === thereOrigin);
+        expectNothingSent(sent, ["CONTENT_READY", "RUN_READOPTED"]);
+        // And the run was the worker's from the commit on: its execution log says why.
+        const log = await r.ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).filter((x) => x.kind === "handed-to-worker").map((x) => x.reason));
+        expect(log).toEqual(["navigated-to-unapproved-site"]);
+    } finally { await stopApprover(); await r.close(); }
 });

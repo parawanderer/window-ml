@@ -70,6 +70,19 @@ a PAGE built goes to the page while that page's site may use window.ml. Once the
 run navigated off its builder's origin), `userRunAction` hands the run to the worker (`makeWorkerRun`) instead of
 leaving it to a refused `RESUME_RUN`.
 
+**A page-built run that navigates onto a site that may not use window.ml is the worker's from that commit**
+(`src/sw/nav-handover.ts`, part 5; owner's decision 2026-10-10). `handOverOnCommit` runs at the browser's
+`webNavigation.onCommitted` for the tab's top frame, which no page can stop or fake, and hands every page-built run on
+the tab (live, or settled and resumable there) to the worker when the new URL is not approved (`pageApproved`: an
+unreadable URL, a sender that can never be granted, or an origin not on the lists). The destination's `CONTENT_READY`
+asks again from its own sender URL (a worker that missed the commit) and waits for the decision, so the re-adopt it
+answers is the worker's (`pageRebuild`: no model, no vision fact), and every tool send of the run waits for it too
+(`handOverSettled` in `sendTool` and `delegateTool`). The run host reads who drives a run at each decision
+(`byWorker()`), never from `p`, the turn's start payload, so the rest of a turn handed over in its middle runs as a
+worker run: its worker tools, the run's grants, its answer set, isolated exec, worker vision, and the lifecycle events
+the page-side caller can no longer fan. One way: a run back on an approved site stays the worker's. Each hand-over is an
+execution-log record (`routing`, `handed-to-worker`, reason `navigated-to-unapproved-site`, the origin).
+
 ## The lists
 
 `site-access.ts` is pure: `originOf`, `grantableOrigin`, `decide` (a denial beats an approval), `applyEdit`,

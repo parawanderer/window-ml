@@ -39,6 +39,7 @@ import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { withEnv } from "./sw-current-env";
 import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
+import { handOverSettled } from "./nav-handover";
 import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython, mixedPythonRefusalFor } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
@@ -239,6 +240,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
      *  Its verifies are taken here, and a page's envelope cannot carry a picture, a reply or a spend into it. A run handed
      *  over during its first turn is not in `bgRuns` yet, so `isWorkerRun` misses it; its rebuild record says so. */
     const workerVision = (): boolean => p.builtBy === "worker" || isWorkerRun(runId) || runRebuilds.get(runId)?.builtBy === "worker";
+    /** Whether the worker drives this run NOW: it built it, or was handed it, during this turn included (a navigation onto
+     *  a site that may not use window.ml, nav-handover.ts; a person's message from such a site, `userRunAction`). Read at
+     *  each decision, never from `p`, which is the turn's start payload: everything the worker does for a run it built
+     *  (its tools in the worker, the run's grants, its answer set, an isolated exec) applies from the hand-over on. */
+    const byWorker = workerVision;
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
     /** Take a verify in the worker, pinned to `doc`, with the run's vision facts (carried in its rebuild config). */
     /** The run's vision facts for the worker's look, locate and verify: the worker's own for a run it built, a handed-over
@@ -257,6 +263,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         const tabUrl = tabUrlNow;
+        // Nothing goes to the tab while a navigation's hand-over is undecided (nav-handover.ts): the send is routed by it.
+        await handOverSettled(tabId);
         // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
         // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
@@ -284,7 +292,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
             return vis || workerVision() ? withoutPageVision(env) : env;
         };
-        if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
+        if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
             const local = await runLocalTool({ ...payload, tabUrl: tabUrl() }, onStream);
             if (local) return local;
@@ -320,7 +328,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
      *  external sheet or an `image`, or null (worker-tools.ts `mixedPythonRefusalFor`). Checked in the precheck (before
      *  the gate) and where the call is delegated (the auto-approved path skips the precheck). */
     const mixedPythonRefusal = (name: string, args: Record<string, unknown>): string | null =>
-        name === "python_exec" && p.builtBy === "worker" ? mixedPythonRefusalFor(args, externalSheetIds(args).length) : null;
+        name === "python_exec" && byWorker() ? mixedPythonRefusalFor(args, externalSheetIds(args).length) : null;
     const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
     // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
     // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
@@ -420,7 +428,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // lifecycle is ALSO emitted page-side here, so relaying it below early would DOUBLE in the panel.
         // A run the WORKER built (or was handed: a durable resume, `makeWorkerRun`) has no page-side caller at all, on
         // any surface, so it fans its own from the start.
-        if (p.surface !== "off" && !hasNavigated && p.builtBy !== "worker") return;
+        if (p.surface !== "off" && !hasNavigated && !byWorker()) return;
         chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
         // We're the SOLE fanner in this branch (off, or overlay/devtools post-nav), so feed a connected panel
         // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
@@ -461,9 +469,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // A run the worker built keeps its curated answer here (worker-answer.ts): a new turn starts it empty (a run resurrected
     // after an eviction continues its turn, so keeps it), and its `answer` tool asks this tab for a selector's elements.
     // Only a run that has `answer` has a set to send: without it `ml.answer` is absent (ml-member-tools.ts), and a shape
-    // would hand the page script an `AnswerLog` the run never offered.
-    const workerAnswer = p.builtBy === "worker" && p.tools.some((t) => t.name === "answer");
-    if (workerAnswer) {
+    // would hand the page script an `AnswerLog` the run never offered. A page-built run's set is the page's until the run is
+    // handed to the worker (nav-handover.ts), when this one takes over: so it is set up, empty, for that run's turn too.
+    const hasAnswer = p.tools.some((t) => t.name === "answer");
+    const workerAnswer = (): boolean => hasAnswer && byWorker();
+    if (hasAnswer) {
         if (!resurrected) resetAnswer(runId);
         // The page captures nothing for it (`mediaInWorker`): each element's media is cropped by the worker from its own
         // capture of the document the page answered in (worker-media.ts), pinned to it.
@@ -524,6 +534,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // This call's own key for the grants it mints on the tab (sw-consent.ts): another run on the same tab
                 // ending its call drops only its own.
                 const callKey = {};
+                // Every routing decision below reads `byWorker()`: a navigation's hand-over must be decided first.
+                await handOverSettled(tabId);
                 // The mixed-call refusal again, for the call the precheck never saw: one AUTO-approved because an
                 // earlier call got its sheet approved skips the gate and the precheck with it. Refused before any
                 // grant is minted or anything is sent, with the same two-call steer (the tab grant staying unminted,
@@ -532,7 +544,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 if (mixed) return { result: mixed };
                 // Where an approved exec of a run the worker built runs (exec-routing.ts): the page's world, an isolated
                 // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
-                const js = name === "exec" && p.builtBy === "worker" && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
+                const js = name === "exec" && byWorker() && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
                 let execNote: string | undefined, execDoc: string | undefined;
                 if (js !== undefined) {
                     // The document FIRST, then its URL: the call is pinned to that document, so a navigation after this
@@ -581,7 +593,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
                 // page could use while the call ran. One that needs the page (an image, a selector) still mints the
                 // tab's, which that page call sends.
-                const pyInWorker = name === "python_exec" && p.builtBy === "worker" && runsInWorker(p, name) && !pageOnlyPython(args as Record<string, unknown>);
+                const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name) && !pageOnlyPython(args as Record<string, unknown>);
                 if (pyInWorker) {
                     await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
                     grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
@@ -589,7 +601,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                 // fetch URLs, a server tool's exact call, a page-run python_exec's full-mode code, and its sheets only for a
                 // run the page built. Minted only when there is something to mint, so a call with none holds no entry.
-                const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: p.builtBy === "worker", pyInWorker,
+                const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: byWorker(), pyInWorker,
                     ...(remote ? { remoteKey: serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>) } : {}) });
                 if (minted.fetchUrls) grantsFor(tabId, callKey).fetchUrls = new Set(minted.fetchUrls);
                 if (minted.serverTools.length || minted.sheets.length || minted.pyCode.length) {
@@ -621,7 +633,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     try {
                         // A worker-built run's answer set is the worker's: the script is sent its shape, and what it changed
                         // comes back to be replayed (worker-answer.ts).
-                        const answerShape = js !== undefined && workerAnswer ? await answerShapeFor(runId) : undefined;
+                        const answerShape = js !== undefined && workerAnswer() ? await answerShapeFor(runId) : undefined;
                         env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc) as Partial<import("../contract").PageToolEnvelope>;
                         if (answerShape && env?.answerOps !== undefined) await replayOps(env.answerOps);
                     } catch (e) {
@@ -905,7 +917,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // discard: it finds no sink.
                 if (live) delegateStreams.set(runId, live.push);
                 try {
-                    const answerShape = workerAnswer ? await answerShapeFor(runId) : undefined;
+                    const answerShape = workerAnswer() ? await answerShapeFor(runId) : undefined;
                     const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live, ...(answerShape ? { answerShape } : {}) }, live?.push)
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                     // Only an answered survey's changes count: a refused try leaves nothing behind, as on the page.
@@ -953,7 +965,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const grants = extractGrants(tool, args);
                 // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                 // if an eviction took it, so the decision below has somewhere to put it.
-                if (p.builtBy === "worker" && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
+                if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
                 return new Promise<ApprovalDecision>((resolve) => {
                     pendingApprovals.set(key, {
                         resolve: (decision) => {
@@ -974,7 +986,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                                 // script on the tab can use it (worker-tools.ts `grantRunFetch`), and it is NEVER minted
                                 // on the tab, even when this worker lost the run's state (an eviction): then nothing is
                                 // granted and the call is refused, rather than lent to the page. Else the tab's.
-                                if (u && p.builtBy === "worker" && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
+                                if (u && byWorker() && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
                                 else if (u) { if (cred) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
                             }
                             // button #3: "Approve + remember" — also persist the exec's static ml.fetch
@@ -1103,11 +1115,13 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Close the inbox FIRST: a message sent while the page is asked for the answer must not be reported as a
             // steer into an inbox nothing reads any more (it reads as "busy", and the person sends it again).
             runInboxes.delete(runId);
-            const fin = p.builtBy === "worker"
+            await handOverSettled(tabId);
+            const workerNow = byWorker();
+            const fin = workerNow
                 ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null
                 : null;
             // A worker-built run's answer is the worker's set (worker-answer.ts); the page's finish only ends its registration.
-            const own = p.builtBy === "worker" ? await answerFor(runId) : undefined;
+            const own = workerNow ? await answerFor(runId) : undefined;
             const answer = own ? (finalizeAnswer(own, res.summary) || undefined) : typeof fin?.answer === "string" && fin.answer ? fin.answer : undefined;
             if (own) { const m = own.media(); answerMedia = m.length ? m : undefined; }
             emitLifecycle({

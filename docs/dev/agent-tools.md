@@ -301,7 +301,9 @@ arguments leave the machine. When a turn ends the worker asks the page for the t
 `RUN_TOOL_IN_PAGE` with `finish`: `endRun` + `runAnswer`, what a page-built run's own caller does) and puts it on the
 `agent-result`; a follow-up re-adopts first, so each turn starts with a fresh answer set. A DURABLE RESUME (after an eviction) is driven
 by the worker too, and hands the run to the worker (`makeWorkerRun`): it always meets a fresh document, so nothing
-page-side is left to own it. A worker-built run's remote tools are rebuilt on demand (`ensureLocalTools`) when this
+page-side is left to own it. So does a NAVIGATION onto a site that may not use window.ml (`src/sw/nav-handover.ts`, at
+the browser's `webNavigation.onCommitted`): from there the run is the worker's, mid-turn included, since the run host
+reads who drives the run at each decision (`byWorker()`), never from the turn's start payload. A worker-built run's remote tools are rebuilt on demand (`ensureLocalTools`) when this
 worker does not hold them, from the server's bundles, kept to exactly the names the run already offers.
 
 **HUD replay-across-nav:** the fresh page's card rebuilds MID-run with its history — the background buffers a
