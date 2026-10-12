@@ -754,6 +754,60 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
             expect(out).toEqual({ control: 1, byId: [], renamed: [], noId: [], hl: [], grabbed: 0 });
         } finally { await close(); }
     });
+
+    test("17d: dragging the image in our lightbox hands the page neither its address, its markup nor the file", async () => {
+        // A drag's data is readable by every dragstart listener on the way out, the page's capture one first, and a closed
+        // root retargets the event but not its dataTransfer. The lightbox shows a run's images: screenshots of pages.
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"));
+            const idx = await sessions(ext);
+            fake.setScript([{ content: "first answer" }]);
+            const hash = await userStartsRun(ext, idx, page, "say something");
+            expect(await idx.settled(hash)).toBe("done");
+            expect(await waitInShell(page, (roots) => !!roots.card?.querySelector("iframe"))).toBe(true);
+            await page.evaluate(() => {
+                window.__drags = [];
+                for (const type of ["dragstart", "drag", "dragend", "dragenter", "dragover", "drop"]) window.addEventListener(type, (e) => {
+                    const d = e.dataTransfer;
+                    window.__drags.push({ type, types: [...(d?.types || [])], uri: d?.getData("text/uri-list") || "", html: d?.getData("text/html") || "", files: d?.files?.length || 0 });
+                }, true);
+            });
+            const mark = "SECRET-SHOT-7731";
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><rect width="300" height="300" fill="teal"/><desc>${mark}</desc></svg>`;
+            const src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+            const drag = async (x, y) => { await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 40, y + 40, { steps: 6 }); await page.mouse.move(x + 60, y + 60, { steps: 6 }); await page.mouse.up(); };
+            // The control: a drag of the page's own image carries its address, so the harness's drag is a real one.
+            await page.evaluate((s) => { const img = Object.assign(document.createElement("img"), { src: s, id: "own" }); img.style.cssText = "position:fixed;left:0;top:0;width:150px;height:150px;z-index:1"; document.body.append(img); }, src.replace(mark, "PAGE-OWN"));
+            await page.waitForFunction(() => document.getElementById("own").complete);
+            await drag(75, 75);
+            expect(await page.evaluate(() => window.__drags.some((d) => d.type === "dragstart" && d.uri.includes("PAGE-OWN"))), "a drag of the page's own image").toBe(true);
+            await page.evaluate(() => { document.getElementById("own").remove(); window.__drags.length = 0; });
+            // Open our lightbox the way the card does, over the shell's port: the card's frame takes a port of its own.
+            const card = page.frames().find((f) => f.url().includes("sidebar.html"));
+            await card.evaluate((s) => new Promise((resolve) => {
+                const nonce = crypto.randomUUID();
+                addEventListener("message", (e) => {
+                    if (e.data?.__mlHostPort !== nonce || !e.ports[0]) return;
+                    e.ports[0].postMessage({ __mlPortAck: nonce });
+                    e.ports[0].postMessage({ __mlLightbox: s });
+                    resolve(true);
+                });
+                chrome.tabs.getCurrent((tab) => chrome.tabs.sendMessage(tab.id, { type: "ML_HOST_HELLO", nonce }, { frameId: 0 }));
+            }), src);
+            const at = await waitInShell(page, (roots) => {
+                const img = roots.card?.querySelector("#ml-lightbox img");
+                if (!img?.complete) return null;
+                const r = img.getBoundingClientRect();
+                return r.width > 50 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+            });
+            await drag(at.x, at.y);
+            const drags = await page.evaluate(() => window.__drags);
+            expect(JSON.stringify(drags), "the page read our image from a drag").not.toContain(mark);
+            expect(JSON.stringify(drags)).not.toContain("ml-lightbox");
+            expect(drags.filter((d) => d.files).length, "the page was handed the image file").toBe(0);
+        } finally { await close(); }
+    });
 });
 
 // PART 4b: an approved exec of a worker-built run on a page that is not approved runs in a CDP isolated world (the

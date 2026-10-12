@@ -51,6 +51,11 @@ const HIGHLIGHT_CSS = `
 // something to show. The iframe is transparent so the acrylic (a blurred translucent surface here in
 // the shell's shadow root) shows through; the app draws its content over it. Three states drive the
 // size/reveal, transitioned for a soft expand: hidden (gone) · toast (collapsed) · expanded.
+/** Nothing in our roots starts a drag or a text selection. A drag's data (an image's address and file, a selection's
+ *  markup) is readable by the page's own dragstart listener, which runs first, and a closed root retargets the event but
+ *  not its dataTransfer (attack 17d). First in each of the shell's stylesheets. */
+const NO_DRAG_CSS = `*, *::before, *::after { -webkit-user-drag: none; user-select: none; }\n`;
+
 // Full-window image lightbox rules — shared by the overlay shadow root AND the corner-card shadow root, so an
 // image click opens the lightbox in card-only modes (off / devtools) too, where the overlay isn't mounted.
 const LIGHTBOX_CSS = `
@@ -648,6 +653,7 @@ function showLightbox(src: string): void {
     lightbox.id = SB_LIGHTBOX;
     lightbox.addEventListener("click", hideLightbox);   // click anywhere (incl. the image) closes
     const img = document.createElement("img");
+    img.draggable = false;   // a drag would hand the page the image (NO_DRAG_CSS)
     img.src = src;
     const x = document.createElement("button");
     x.id = SB_LIGHTBOX_X; x.textContent = "✕";
@@ -686,7 +692,7 @@ function hlContainer(): ShadowRoot {
     hlRoot = hlHost.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.id = SB_STYLE;   // the mark sw-cdp.ts tells our root by (ids.ts)
-    style.textContent = HIGHLIGHT_CSS;
+    style.textContent = NO_DRAG_CSS + HIGHLIGHT_CSS;
     hlRoot.append(style);
     (document.documentElement || document.body).append(hlHost);
     ownSheets.set(hlRoot, { style, sheet: sheetText(style) });
@@ -1273,7 +1279,7 @@ function mountOverlay(): void {
 
     const style = document.createElement("style");
     style.id = SB_STYLE;   // the mark sw-cdp.ts tells our root by (ids.ts)
-    style.textContent = SHELL_CSS;
+    style.textContent = NO_DRAG_CSS + SHELL_CSS;
     root.append(style);
 
     panel = document.createElement("div");
@@ -1321,7 +1327,7 @@ function mountCard(): void {
     cardRoot = root;
     const style = document.createElement("style");
     style.id = SB_STYLE;   // the mark sw-cdp.ts tells our root by (ids.ts)
-    style.textContent = CARD_CSS + LIGHTBOX_CSS;   // the card shadow also styles the lightbox (drawn here in card-only modes)
+    style.textContent = NO_DRAG_CSS + CARD_CSS + LIGHTBOX_CSS;   // the card shadow also styles the lightbox (drawn here in card-only modes)
     root.append(style);
 
     cardWrap = document.createElement("div");
