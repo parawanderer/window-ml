@@ -79,6 +79,8 @@ export interface RunAgentHostDeps {
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];
     precheck?(name: string, args: Record<string, unknown>): Promise<string | null>;   // doomed-action skip (click/type)
+    /** A tool's dispatch threw and the loop turned it into an error result (agent-loop.ts `toolThrew`): the host records it. */
+    toolThrew?: AgentLoopDeps["toolThrew"];
     // The approval gate — the sidebar, in design A (origin-authed; the decision never crosses the page).
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
     // Whether an external Google spreadsheet was already approved this run (trusted, background-side) —
@@ -213,6 +215,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         }) : undefined,
         emitTurn: deps.emitTurn,
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
+        toolThrew: deps.toolThrew,
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
     return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, ...(cfg.origin ? { origin: cfg.origin } : {}), tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue }, loopDeps)

@@ -79,6 +79,7 @@ any new mechanism reports.
 | `tab` | `pinned` (`hosting`) | `autoDiscardable: false` while a run is hosted here |
 | `tab` | `released` | and let go again, which is the half that is easy to forget |
 | `tab` | `replaced` | `chrome.tabs.onReplaced` re-filed the run under a new tab id |
+| `tool` | `threw` (`run`/`readonly`/`auto-approve`/`precheck`/`approve`) | a tool call's dispatch threw (a page's malformed answer, an argument that cannot be read); the loop turned it into an error result, or for a step that only decides, into asking. Level `error`, the message in `key`, the tool in `detail.tool` |
 
 ### Levels
 
