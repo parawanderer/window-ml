@@ -910,6 +910,75 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
     });
 });
 
+// ATTACK 18, found 2026-10-12. The shell resolved a highlight it could not match with `document.querySelectorAll` (a
+// selector inside a shadow root, or in ml's dialect) by posting ML_HL_RESOLVE, the selector included, onto the page's
+// window, and drew whatever ML_HL_AT came back from that window with the current sequence number. The page's own posts
+// have that source too, so it heard the selector the person was being asked to approve and could move the "approve"
+// highlight, and the card's "where on the page" note with it, onto a spot of its choosing.
+test.describe("@security attack 18: the approval highlight", () => {
+    /** Put a button at the top right of the page: in the light DOM, or inside a shadow root of the page's own. */
+    const addTarget = (page, where) => page.evaluate((w) => {
+        const btn = Object.assign(document.createElement("button"), { id: "approve-me", textContent: "Shadow button" });
+        btn.style.cssText = "display:block;width:120px;height:40px";
+        const host = document.createElement("div");
+        host.id = "target-host";
+        host.style.cssText = "position:fixed;top:16px;right:16px;z-index:1";
+        if (w === "light") host.append(btn);
+        else host.attachShadow({ mode: w }).append(btn);
+        document.body.append(host);
+    }, where);
+
+    /** The highlight box the shell drew, in viewport pixels, or null. */
+    const drawn = (page) => inShell(page, (roots) => {
+        const el = (roots.highlight || roots.sidebar)?.querySelector("#ml-highlight");
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+    });
+
+    for (const where of ["light", "open", "closed"])
+    test(`18 (${where === "light" ? "light DOM" : `the page's own ${where} shadow root`}): the page neither hears the selector being approved nor moves its highlight`, async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"));
+            await addTarget(page, where);
+            const idx = await sessions(ext);
+            fake.setScript([{ tool: "click", args: { selector: "#approve-me" } }, { content: "done" }]);
+            const hash = await userStartsRun(ext, idx, page, "click the shadow button");
+            await expect.poll(() => idx.status(hash), { timeout: 15000 }).toBe("waiting");
+            const cardText = async () => {
+                const card = page.frames().find((f) => f.url().includes("sidebar.html"));
+                return card ? (await card.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ") : "";
+            };
+            // Positive control: the approve highlight lands on the button and the card names where it is.
+            await expect.poll(cardText, { timeout: 15000 }).toContain("Highlighted on the page · top-right");
+            const real = await page.evaluate((w) => {
+                const host = document.getElementById("target-host");
+                const btn = w === "light" ? host.querySelector("#approve-me") : host.firstElementChild ?? host;
+                const r = (w === "closed" ? host : btn).getBoundingClientRect();
+                return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+            }, where);
+            await expect.poll(() => drawn(page), { timeout: 15000 }).toEqual(real);
+            // The page never heard the request: no resolve message, so no selector, crossed its window.
+            const asked = await page.evaluate(() => window.__seen.filter((m) => m && m.type === "ML_HL_RESOLVE"));
+            expect(asked, "the page heard the selector being approved").toEqual([]);
+            // The forgery: an answer for every sequence number the shell could be on, placing the box at the bottom left.
+            await page.evaluate(() => new Promise((resolve) => {
+                const box = { left: 10, top: innerHeight - 60, right: 60, bottom: innerHeight - 10 };
+                for (let seq = 0; seq <= 2000; seq++) window.postMessage({ type: "ML_HL_AT", seq, point: null, box }, "*");
+                // Window messages are delivered in order, to every world's listeners: once this marker arrives, the shell has
+                // handled every forged answer.
+                const marker = `done-${Math.random()}`;
+                window.addEventListener("message", function on(e) { if (e.data === marker) { removeEventListener("message", on); resolve(true); } });
+                window.postMessage(marker, "*");
+            }));
+            expect(await drawn(page), "a forged ML_HL_AT moved the approve highlight").toEqual(real);
+            await expect.poll(cardText, { timeout: 5000 }).toContain("Highlighted on the page · top-right");
+            expect(await cardText(), "a forged ML_HL_AT moved the card's note").not.toContain("bottom-left");
+        } finally { await close(); }   // abandons the still-gated run
+    });
+});
+
 // PART 4b: an approved exec of a worker-built run on a page that is not approved runs in a CDP isolated world (the
 // e2e browser has no "Allow User Scripts"), and its pointer reads reach the worker mid-script over a binding named for
 // that world. Only a real browser shows which world a binding and an answer land in.
