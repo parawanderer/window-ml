@@ -7,7 +7,7 @@
 // be drawn on the panel's white.
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { configureExtension, launchExtension } from "./harness.mjs";
+import { configureExtension, launchExtension, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -19,9 +19,9 @@ async function openSidebar(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-    await page.evaluate(() => {
-        const root = document.getElementById("ml-sb-root").shadowRoot;
+    await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+    await inShell(page, (roots) => {
+        const root = roots.sidebar;
         const host = root.getElementById("ml-sb-host");
         host.style.width = "600px";
         host.classList.add("open");

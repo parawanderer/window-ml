@@ -6,7 +6,7 @@
 
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, inShell, clickInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -1103,7 +1103,7 @@ test("cross-page: the inline sidebar renders the run's history (incl. pre-nav st
     // Open the collapsed overlay panel (its tab handle lives in the shell shadow root), then open the session
     // row from INSIDE the poll (the fresh iframe can miss an early click while it's still handshaking) → the
     // detail shows the STEPS, incl. the PRE-NAV navigate step (replayed) AND the far-page findByText step.
-    await page.locator("#ml-sb-tab").click();
+    await clickInShell(page, "sidebar", "#ml-sb-tab");
     await expect.poll(async () => {
         const f = liveSidebar();
         if (!f) return 0;
@@ -1192,7 +1192,7 @@ test("cross-domain: the destination-origin sidebar shows the ANSWER and clears '
     // The overlay sidebar iframe on the DESTINATION ORIGIN. After a cross-origin nav the old origin's iframe
     // detaches, so re-find the LIVE one each poll (a stale reference reads an empty body → false failures).
     const liveSidebar = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
-    await page.locator("#ml-sb-tab").click();   // open the collapsed overlay panel
+    await clickInShell(page, "sidebar", "#ml-sb-tab");   // open the collapsed overlay panel
     // The finished run's ANSWER shows on the destination origin. Open the session row from INSIDE the poll: the
     // freshly-mounted cross-origin app can miss a single early click (it's still handshaking/replaying), so keep
     // clicking the row until the detail (with the answer) is up — idempotent once we're in the detail (no .row).
@@ -1235,7 +1235,7 @@ test("cross-page: the composer Stop cancels a background run blocked on an appro
     const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
     expect(sb, "the overlay sidebar iframe is present on the destination page").toBeTruthy();
     await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
-    await page.locator("#ml-sb-tab").click();     // open the collapsed overlay panel
+    await clickInShell(page, "sidebar", "#ml-sb-tab");     // open the collapsed overlay panel
     // Blocked on the gate → the composer shows Stop (running + empty box). The freshly re-adopted destination
     // page can miss a single early .row click (still handshaking/replaying), so re-click INSIDE the poll until
     // the detail — and its Stop button — is up (idempotent once we're in the detail). Mirrors the XDOMAIN test.
@@ -1296,7 +1296,7 @@ test("button #3 (overlay UI): clicking 'Approve + remember' persists the URL —
     const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
     expect(sb, "the overlay sidebar iframe is present").toBeTruthy();
     await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
-    await page.locator("#ml-sb-tab").click();     // open the collapsed overlay panel
+    await clickInShell(page, "sidebar", "#ml-sb-tab");     // open the collapsed overlay panel
 
     // Open the run's detail + wait for the button #3 control — clicking the row from INSIDE the poll, because
     // the freshly-mounted app can miss a single early click while it's still handshaking (same as the
@@ -1354,7 +1354,7 @@ test("backend offline (overlay panel): a dead backend surfaces the top offline b
     await page.evaluate(() => { window.ml.agent("Say hi.", { env: false }).catch(() => {}); return true; });
 
     const sb = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
-    await page.locator("#ml-sb-tab").click();   // open the overlay panel (banner is in the app body regardless)
+    await clickInShell(page, "sidebar", "#ml-sb-tab");   // open the overlay panel (banner is in the app body regardless)
     await expect.poll(async () => { const f = sb(); try { return f ? await f.locator(".backend-offline").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(1);
     await expect(sb().locator(".backend-offline")).toContainText("Backend unreachable");
 
@@ -1376,7 +1376,7 @@ test("backend offline (mid-run): a server that dies after a step surfaces offlin
     const sb = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
     // The run started (a session materialised) and then the box died → the offline state surfaces instead of
     // the run hanging silently. (Step-level preservation is covered deterministically by the jsdom mid-run test.)
-    await page.locator("#ml-sb-tab").click().catch(() => {});
+    await clickInShell(page, "sidebar", "#ml-sb-tab", { timeout: 5000 }).catch(() => {});
     await expect.poll(async () => { const f = sb(); try { return f ? await f.locator(".row").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(1);
     await expect.poll(async () => { const f = sb(); try { return f ? await f.locator(".backend-offline").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(1);
 
@@ -1411,7 +1411,7 @@ test("answer → HUD: designated elements' screenshots render in the completion 
 
 // HUD maximise (#2b): a button on the completion card grows it into a near-full-page CORNER WINDOW (a margin
 // left so the page shows through — NOT a full-page override), and back. The button lives in the card iframe;
-// the shell sizes the container (#ml-sb-card-wrap, in an OPEN shadow root Playwright pierces).
+// the shell sizes the container (#ml-sb-card-wrap, in a CLOSED shadow root: the test reads it with inShell).
 test("HUD maximise: the completion card grows to a near-full-page corner window and back", async () => {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/step3");
@@ -1423,8 +1423,9 @@ test("HUD maximise: the completion card grows to a near-full-page corner window 
     const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
     await expect.poll(async () => { const f = card(); try { return f ? await f.locator('.card-icon[aria-label="Maximise"]').count() : 0; } catch { return 0; } }, { timeout: 20000 }).toBe(1);
 
-    const wrap = page.locator("#ml-sb-card-wrap");
-    await expect.poll(async () => await wrap.getAttribute("data-state"), { timeout: 5000 }).toBe("expanded");
+    const wrapState = () => inShell(page, (roots) => roots.card?.getElementById("ml-sb-card-wrap")?.getAttribute("data-state") ?? null);
+    const wrapWidth = () => inShell(page, (roots) => roots.card.getElementById("ml-sb-card-wrap").getBoundingClientRect().width);
+    await expect.poll(async () => await wrapState(), { timeout: 5000 }).toBe("expanded");
     const vw = await page.evaluate(() => window.innerWidth);
 
     // Maximise → a corner window ~90% of the viewport width (wide, but a margin remains — not full-page).
@@ -1434,11 +1435,11 @@ test("HUD maximise: the completion card grows to a near-full-page corner window 
         try {
             const f = card();
             if (f) await f.locator('.card-icon[aria-label="Maximise"]').click({ timeout: 500 }).catch(() => {});
-            return await wrap.getAttribute("data-state");
+            return await wrapState();
         } catch { return null; }
     }, { timeout: 8000 }).toBe("maximized");
-    await expect.poll(async () => await wrap.evaluate((el) => el.getBoundingClientRect().width), { timeout: 3000 }).toBeGreaterThan(vw * 0.8);
-    const w = await wrap.evaluate((el) => el.getBoundingClientRect().width);
+    await expect.poll(async () => await wrapWidth(), { timeout: 3000 }).toBeGreaterThan(vw * 0.8);
+    const w = await wrapWidth();
     expect(w, "a corner window, not a full-page override").toBeLessThan(vw);
 
     // Minimise → back to the compact expanded card. Re-click INSIDE the poll: a single click can race the
@@ -1447,7 +1448,7 @@ test("HUD maximise: the completion card grows to a near-full-page corner window 
         try {
             const f = card();
             if (f) await f.locator('.card-icon[aria-label="Minimise"]').click({ timeout: 500 }).catch(() => {});
-            return await wrap.getAttribute("data-state");
+            return await wrapState();
         } catch { return null; }
     }, { timeout: 8000 }).toBe("expanded");
     await page.close();

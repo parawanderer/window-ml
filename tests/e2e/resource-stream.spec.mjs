@@ -10,7 +10,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -25,9 +25,9 @@ async function openPanel(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-    await page.evaluate(() => {
-        const root = document.getElementById("ml-sb-root").shadowRoot;
+    await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+    await inShell(page, (roots) => {
+        const root = roots.sidebar;
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = "560px";
         panel.classList.add("open");
@@ -582,9 +582,9 @@ test("the event lane is collapsed on a fresh panel, and its header opens it", as
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "560px";
             panel.classList.add("open");

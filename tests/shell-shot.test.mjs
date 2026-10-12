@@ -67,7 +67,8 @@ const el = (rect, { id = "", tag = "DIV", within = [], visibility } = {}) => ({
     closest: (sel) => (id === sel.slice(1) || within.includes(sel.slice(1)) ? {} : null),   // like the real one, the element itself first
 });
 const host = (children, connected = true) => ({ isConnected: connected, shadowRoot: { querySelectorAll: () => children } });
-const roots = (hosts) => ({ hosts, lightboxId: "ml-lightbox", highlightId: "ml-highlight", extensionOrigin: "chrome-extension://ext-id/" });
+/** The question for `hosts`; an entry that gives its root on the fake host (`shadowRoot`) has it passed as the entry's `root`, which `ShotHost` now requires. */
+const roots = (hosts) => ({ hosts: hosts.map((e) => (e.root === undefined ? { ...e, root: e.host?.shadowRoot ?? null } : e)), lightboxId: "ml-lightbox", highlightId: "ml-highlight", extensionOrigin: "chrome-extension://ext-id/" });
 
 test("every painted element in the shell's shadow roots is reported in viewport px, with its surface; style elements, hidden and empty ones are not", () => {
     const sidebar = host([el([0, 0, 0, 0], { tag: "STYLE" }), el([700, 0, 300, 700]), el([690, 300, 10, 40]), el([0, 0, 0, 0]), el([5, 5, 50, 50], { visibility: "hidden" })]);
@@ -141,7 +142,7 @@ const sel = (rect, cs = {}, extra = {}) => Object.assign(el(rect, extra), { cs }
 /** A fake host mounted on `docEl`, its root holding `children` and `style` (our <style>) plus any `extraStyles`. */
 const mounted = (docEl, children, { style = { tagName: "STYLE" }, extraStyles = [], adopted = [], hostCs = {} } = {}) => {
     const root = { adoptedStyleSheets: adopted, querySelectorAll: (q) => (q === "style, link" ? [style, ...extraStyles] : [style, ...extraStyles, ...children]) };
-    return { host: { isConnected: true, parentNode: docEl, shadowRoot: root, cs: hostCs }, root, style };
+    return { host: { isConnected: true, parentNode: docEl, cs: hostCs }, root, style };
 };
 
 test("an answer is `tampered` when the page has moved a host off the root element, put a stylesheet of its own into a root (an element or an adopted sheet), or given the UI a reflection, a filter or a text shadow", () => {

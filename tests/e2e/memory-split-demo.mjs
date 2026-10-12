@@ -14,7 +14,7 @@
 // HOLD=0 exits instead of holding the browser open. The assertions are in resource-panel.spec.mjs.
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { launchExtension, configureExtension, narrate, narrateDone } from "./harness.mjs";
+import { launchExtension, configureExtension, narrate, narrateDone, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -82,9 +82,9 @@ const main = async () => {
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1500, height: 1000 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "620px";
             panel.classList.add("open");

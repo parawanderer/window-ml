@@ -4,7 +4,7 @@
 // scripted fake-LLM, whose SSE stream is PACED (streamDelayMs) so the reasoning phase lasts long enough to
 // observe the count mid-stream. Off-mode → the run is background-hosted and the orb lives in the corner card.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -29,7 +29,7 @@ test("HUD orb (streaming): a live token count ticks in the corner-card orb durin
         await page.evaluate(() => { window.__run = window.ml.agent("compute the answer", { stream: true }); });
 
         // The corner card mounts on the first agent event; find its sidebar iframe.
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-card")?.shadowRoot, null, { timeout: 20000 });
+        await waitInShell(page, (roots) => !!roots.card, null, { timeout: 20000 });
         const cardFrame = await (async () => {
             for (let i = 0; i < 100; i++) {
                 const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
@@ -84,7 +84,7 @@ test("HUD orb (streaming): the engine's own count is shown exact, and keeps clim
         await page.goto(site.url + "/");
         await waitForMl(page);
         await page.evaluate(() => { window.__run = window.ml.agent("find it", { stream: true }); });
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-card")?.shadowRoot, null, { timeout: 20000 });
+        await waitInShell(page, (roots) => !!roots.card, null, { timeout: 20000 });
         const cardFrame = await (async () => {
             for (let i = 0; i < 100; i++) {
                 const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));

@@ -359,8 +359,9 @@ test("a shot's answer is `tampered` when a host the shell put in the top layer i
     });
     try {
         const w = topLayerWorld();
-        const h = Object.assign(w.host("sidebar"), { parentNode: docEl, shadowRoot: { querySelectorAll: () => [] } });
-        const answer = (topLayer) => extensionRects({ hosts: [{ host: h, kind: "sidebar", topLayer }], lightboxId: "l", highlightId: "hl", extensionOrigin: "chrome-extension://x/" });
+        const h = Object.assign(w.host("sidebar"), { parentNode: docEl });
+        const root = { querySelectorAll: () => [] };
+        const answer = (topLayer) => extensionRects({ hosts: [{ host: h, kind: "sidebar", root, topLayer }], lightboxId: "l", highlightId: "hl", extensionOrigin: "chrome-extension://x/" });
         h.attrs.popover = "manual"; h.showPopover();
         assert.equal(answer(true).tampered, undefined, "on top");
         h.hidePopover();

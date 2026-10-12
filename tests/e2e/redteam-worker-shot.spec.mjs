@@ -10,7 +10,7 @@
 
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server. */
 async function greenSite() {
@@ -98,11 +98,11 @@ test("a page's own CSS cannot put the sidebar back into the worker's shot", asyn
         // A stylesheet rule that would beat an inline hide on the host (what the hide this replaced was).
         await page.evaluate(() => { const s = document.createElement("style"); s.textContent = "#ml-sb-root{visibility:visible!important}"; document.head.append(s); });
         const viaSheet = await offGreen(page, (await shot()).dataUrl);
-        // And without touching the host: a node inside the OPEN shadow root set visible overrides an inherited hidden.
-        await page.evaluate(() => { document.head.lastElementChild.remove(); document.getElementById("ml-sb-root").shadowRoot.querySelector("#ml-sb-host").style.setProperty("visibility", "visible", "important"); });
+        // And without touching the host: a node inside the (closed) shadow root, set from the shell's own world, set visible overrides an inherited hidden.
+        await inShell(page, (roots) => { document.head.lastElementChild.remove(); roots.sidebar.querySelector("#ml-sb-host").style.setProperty("visibility", "visible", "important"); });
         const viaShadow = await offGreen(page, (await shot()).dataUrl);
         // And moved and scaled with a transform: the shell reads rects with getBoundingClientRect, which includes it.
-        await page.evaluate(() => { document.getElementById("ml-sb-root").shadowRoot.querySelector("#ml-sb-host").style.transform = "translateX(-200px) scale(1.15)"; });
+        await inShell(page, (roots) => { roots.sidebar.querySelector("#ml-sb-host").style.transform = "translateX(-200px) scale(1.15)"; });
         const viaTransform = await offGreen(page, (await shot()).dataUrl);
         expect(viaSheet, "the sidebar is in the worker's shot through a page stylesheet").toBe(0);
         expect(viaTransform, "the sidebar is in the worker's shot through a transform").toBe(0);
@@ -145,15 +145,21 @@ test("with the debugger on, a page that blocks past the debugger's 5 s bound doe
 test("the page does not learn when the worker takes a screenshot of it: nothing the extension owns changes on the page", async () => {
     const { page, shot, close } = await setup();
     try {
+        // What the page itself can watch (its document, our hosts included), from its own world.
         await page.evaluate(() => {
             window.__seen = [];
             const mo = new MutationObserver((l) => { for (const m of l) window.__seen.push(`${m.type}:${m.attributeName ?? ""}`); });
-            const all = { attributes: true, childList: true, subtree: true, characterData: true };
-            mo.observe(document.documentElement, all);
-            mo.observe(document.getElementById("ml-sb-root").shadowRoot, all);
+            mo.observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
+        });
+        // Inside our closed root, which the page cannot observe any more, from the shell's world: still nothing changes.
+        await inShell(page, (roots) => {
+            globalThis.__seen = [];
+            const mo = new MutationObserver((l) => { for (const m of l) globalThis.__seen.push(`${m.type}:${m.attributeName ?? ""}`); });
+            mo.observe(roots.sidebar, { attributes: true, childList: true, subtree: true, characterData: true });
         });
         await shot();
         await page.waitForTimeout(100);
         expect(await page.evaluate(() => window.__seen)).toEqual([]);
+        expect(await inShell(page, () => globalThis.__seen)).toEqual([]);
     } finally { await close(); }
 });

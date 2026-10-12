@@ -359,15 +359,13 @@ export async function watchRunEvents(ext, page, onEvent) {
  */
 export async function openRunInSidebar(page, { width, task, timeout = 20000 } = {}) {
     const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
-    await page.waitForFunction(
-        () => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"),
-        null, { timeout });
-    await page.evaluate((/** @type {number|undefined} */ w) => {
-        const root = /** @type {any} */ (document.getElementById("ml-sb-root")).shadowRoot;
-        const panel = root.getElementById("ml-sb-host");
+    await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout });
+    await inShell(page, (roots, /** @type {number|undefined} */ w) => {
+        const root = /** @type {ShadowRoot} */ (roots.sidebar);
+        const panel = /** @type {HTMLElement} */ (root.getElementById("ml-sb-host"));
         panel.style.width = `${w || Math.round(window.innerWidth * 0.55)}px`;
         panel.classList.add("open");
-        (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
+        (panel.classList.remove("open"), /** @type {HTMLElement} */ (root.getElementById("ml-sb-tab")).click());
     }, width);
     const frame = await (async () => {
         for (let i = 0; i < Math.ceil(timeout / 100); i++) {

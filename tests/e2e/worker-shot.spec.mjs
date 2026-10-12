@@ -5,7 +5,7 @@
 // page is one flat green and the mask one flat grey (MASK_FILL), so any other pixel is the extension's UI.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server (content scripts run on http, not on about:blank). */
 async function greenSite() {
@@ -66,13 +66,13 @@ test("the worker's shot has no sidebar pixels and most of the page, the page see
         const bare = await ext.sw.evaluate((id) => globalThis.__mlWorkerVisionForTest.captureRunTab(id), tabId);
         expect(await offGreen(page, bare.dataUrl), "the sidebar shows in a capture that does not mask it").toBeGreaterThan(50);
 
-        // The page watches everything it can: its document and the shell's open shadow root, every attribute and node.
-        await page.evaluate(() => {
-            window.__mutations = 0;
-            const mo = new MutationObserver((l) => { window.__mutations += l.length; });
+        // Everything watched: the page's document and the shell's (closed) shadow root, every attribute and node. The observer lives in the shell's world, since only it can name the root; a page-side observer on the document sees the same records.
+        await inShell(page, (roots) => {
+            globalThis.__mutations = 0;
+            const mo = new MutationObserver((l) => { globalThis.__mutations += l.length; });
             const all = { attributes: true, childList: true, subtree: true, characterData: true };
             mo.observe(document.documentElement, all);
-            mo.observe(document.getElementById("ml-sb-root").shadowRoot, all);
+            mo.observe(roots.sidebar, all);
         });
         const shot = await shoot();
         expect(shot.w).toBeGreaterThan(0);
@@ -80,7 +80,7 @@ test("the worker's shot has no sidebar pixels and most of the page, the page see
         const left = await greenPx(page, shot.dataUrl);
         expect(left.green / left.total, "the mask blanked the page, not just the sidebar").toBeGreaterThan(0.5);
         await page.waitForTimeout(100);
-        expect(await page.evaluate(() => window.__mutations), "the page saw the shot as a DOM change").toBe(0);
+        expect(await inShell(page, () => globalThis.__mutations), "the page saw the shot as a DOM change").toBe(0);
 
         // A page posting the page handshake's "show" on every frame has nothing to undo.
         await page.evaluate(() => { const tick = () => { window.postMessage({ __mlSidebarShot: "show" }, "*"); requestAnimationFrame(tick); }; tick(); });

@@ -34,7 +34,7 @@ const MANIFEST_VERSION = await import("node:fs/promises")
     .then((fs) => fs.readFile(new URL("../../manifest.json", import.meta.url), "utf8"))
     .then((t) => JSON.parse(t).version).catch(() => undefined);
 
-import { launchExtension, configureExtension, waitForMl, watchRunEvents, setWindow, screencast } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, setWindow, screencast, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage, lanePrelude } from "./viewer.mjs";
@@ -296,14 +296,14 @@ async function captureBrowserState(context, artDir, label) {
 /**
  * WATCH/focus: slide the overlay sidebar open, size it to HALF the viewport, and click into the session
  * that was just launched — so a human sees the run in the real extension UI without clicking. The shell
- * mounts an OPEN shadow root (#ml-sb-root), so the top frame can reach the panel + iframe; the app inside
+ * mounts a CLOSED shadow root (#ml-sb-root), reached through `inShell`; the app inside
  * the iframe is a normal Playwright frame, so its session row (button.row) is clickable.
  */
 export async function openSidebarAndFocus(page, artDir, log = () => {}) {
     const shot = (name) => (artDir ? page.screenshot({ path: path.join(artDir, name) }).catch(() => {}) : Promise.resolve());
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 10000 });
-    await page.evaluate(() => {
-        const root = document.getElementById("ml-sb-root").shadowRoot;
+    await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout: 10000 });
+    await inShell(page, (roots) => {
+        const root = roots.sidebar;
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
         panel.classList.add("open");

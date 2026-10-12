@@ -18,7 +18,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -145,9 +145,9 @@ try {
     });
 
     // Slide the overlay open and click into the live session.
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 15000 });
-    await page.evaluate(() => {
-        const root = document.getElementById("ml-sb-root").shadowRoot;
+    await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout: 15000 });
+    await inShell(page, (roots) => {
+        const root = roots.sidebar;
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
         panel.classList.add("open");

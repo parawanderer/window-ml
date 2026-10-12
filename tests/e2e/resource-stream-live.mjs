@@ -14,7 +14,7 @@
 //   HOLD=1       keep the browser OPEN at the end instead of tearing down, so a human can watch the lane
 //                fill in (close the window, or Ctrl+C, to exit). Implies headful.
 //   HEADFUL=1    show the browser without holding it open
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { loadDotEnv } from "../helpers.js";
 
 loadDotEnv();   // populates process.env from .env; it returns nothing
@@ -38,9 +38,9 @@ try {
     // shell owns the container, so the host has to be given a width and the `open` class, and the message has
     // to reach the IFRAME. A collapsed panel's buttons exist but are not clickable.
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-    await page.evaluate(() => {
-        const root = document.getElementById("ml-sb-root").shadowRoot;
+    await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+    await inShell(page, (roots) => {
+        const root = roots.sidebar;
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = "460px";
         panel.classList.add("open");
