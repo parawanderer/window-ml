@@ -9,7 +9,7 @@ import { JSDOM } from "jsdom";
 import { staticPage } from "../tests/e2e/bench/serve.mjs";
 import { renderMarkdownPage, lanePrelude } from "../tests/e2e/viewer.mjs";
 import { runLaneScript } from "../tests/e2e/bench/page/bundle.mjs";
-const { barPaint, phaseFill } = await import("../src/sidebar/resource/lane-paint.ts");
+const { barShape, phasePaint, phaseFill, paintCss } = await import("../src/sidebar/resource/lane-paint.ts");
 
 /** The saved dashboard for a state, with its script run. */
 async function dashboard(state) {
@@ -147,8 +147,8 @@ test("the timeline draws each run that has events as its own lane, on one shared
     assert.deepEqual([...tl.querySelectorAll(".who")].map((w) => w.textContent), ["t · a · r0", "t · b · r0"]);
     assert.match(tl.textContent, /1 cached run/);
     // One axis for both: the first run's 4 s run bar starts at 0% and is 40% wide; the second starts at 60%.
-    const lefts = [...tl.querySelectorAll(".rc-ev-run")].map((b) => [b.style.left, b.style.width]);
-    assert.deepEqual(lefts, [["0%", "40%"], ["60%", "40%"]]);
+    const lefts = [...tl.querySelectorAll(".rc-ev-run")].map((b) => [+b.dataset.x, +b.dataset.w]);
+    assert.deepEqual(lefts, [[0, 40], [60, 40]]);
     assert.match(tl.querySelector(".rc-ev-gen").getAttribute("aria-label"), /gen 0 \(m:1\) · 2\.0s/);
     assert.equal(tl.querySelectorAll("[title]").length, 0, "the panel's tooltip, never the browser's");
     // Hovering a bar shows the panel's own event tooltip (event-tip.tsx), with what the event was and how long it took.
@@ -322,26 +322,30 @@ test("a run page draws its lane from inert data, with its script admitted by has
 
 // --- one bar's paint, shared by the panel's lane and these pages ---
 
-test("barPaint: a load keeps its dots and no overlays; a run takes its colour only through --model", () => {
-    const load = barPaint(ev("load", 0, 1000, { phases: [{ kind: "weights", until: 600 }, { kind: "context", until: 1000 }] }));
-    assert.match(load.style.background, /^radial-gradient/);
-    assert.deepEqual(load.overlays.map((o) => o.cls), ["rc-ev-ctxphase"], "a load's context half is the one overlay");
-    const run = barPaint(ev("run", 0, 1000));
-    assert.equal(run.style.background, undefined, "an inline background would reset the checkerboard .rc-ev-run draws");
-    assert.ok(run.style["--model"]);
+test("barShape: a load keeps its dots for the whole span, its context half drawn over it; a run is its model's colour at half height", () => {
+    const load = barShape(ev("load", 0, 1000, { phases: [{ kind: "weights", until: 600 }, { kind: "context", until: 1000 }] }));
+    assert.equal(load.segs.length, 1);
+    assert.ok("dots" in load.segs[0].paint, "dotted: a load is a wait, not work");
+    assert.deepEqual(load.over.map((o) => [o.cls, o.start, o.end]), [["rc-ev-ctxphase", 0.6, 1]], "the context half is the one overlay");
+    const run = barShape(ev("run", 0, 1000));
+    assert.equal(run.half, true, "a container, at half height");
+    assert.equal(run.segs[0].paint.color, run.model, "in its model's colour");
     assert.equal(run.cls, "rc-ev-run linked");
 });
 
-test("barPaint: a pattern never becomes a gradient stop, for every phase kind", () => {
-    // A pattern in a linear-gradient's stop list makes the whole declaration invalid: the block draws as nothing.
+test("barShape: every phase kind is one segment with a paint the lane can draw, in phase order", () => {
     const kinds = ["model", "wait", "tool", "think", "answer", "call", "queue", "net", "boot", "dispatch", "weights", "context", "prefill", "decode", "other", "swap", "load"];
     for (const k of kinds) {
-        const p = barPaint(ev("tool", 0, 1000, { phases: [{ kind: "model", until: 400 }, { kind: k, until: 1000 }] }));
-        assert.ok(!/linear-gradient\([^]*(repeating-|radial-gradient\()/.test(p.style.background), `${k}: ${p.style.background}`);
-        const fill = phaseFill(k, "m:1");
-        const patterned = fill.startsWith("repeating-") || fill.startsWith("radial-gradient(");
-        if (patterned && k !== "wait" && k !== "context") assert.ok(p.overlays.some((o) => o.cls === "rc-ev-pattern" && o.background === fill), `${k} is drawn as an overlay`);
+        const p = barShape(ev("tool", 0, 1000, { phases: [{ kind: "model", until: 400 }, { kind: k, until: 1000 }] }));
+        assert.deepEqual(p.segs.map((sg) => [sg.start, sg.end]), [[0, 0.4], [0.4, 1]], k);
+        const paint = p.segs[1].paint;
+        assert.ok("color" in paint || "dots" in paint || "stripes" in paint, `${k}: ${JSON.stringify(paint)}`);
+        // The tooltip's swatch and the phase strip draw the same paint as CSS.
+        if (k !== "wait" && k !== "context") assert.equal(paintCss(paint), phaseFill(k, "m:1"), `${k}: the lane and the swatch agree`);
+        if (!("color" in paint) && k !== "wait" && k !== "context") assert.equal(p.segs[1].cls, "rc-ev-pattern", `${k} is named as a pattern`);
     }
+    assert.equal(barShape(ev("tool", 0, 1000, { phases: [{ kind: "model", until: 400 }, { kind: "wait", until: 1000 }] })).segs[1].cls, "rc-ev-wait");
+    assert.ok(phasePaint("boot").stripes, "a cold start is striped");
 });
 
 // --- folding cards, cloud shades, the spec's links, the chart's window and keys ---
@@ -416,7 +420,7 @@ test("a finished sweep's live view is the whole sweep up to its end, never the w
     assert.equal(d.querySelector(".tlchart .rc-scrub-win")?.getAttribute("style"), "left: 0%; width: 100%;", "the strip boxes the whole sweep");
     assert.match(d.querySelector(".tlchart .rc-scrub-live").className, /\bon\b/, "and that is live");
     // The run (6 s to 20 s) on an axis from the first reading (1 s) to the last (39 s): it starts about 13% in.
-    const left = parseFloat(d.querySelector(".tlchart .wml-lane .rc-ev-run").style.left);
+    const left = +d.querySelector(".tlchart .wml-lane .rc-ev-run").dataset.x;
     assert.ok(left > 10 && left < 16, `run bar at ${left}%`);
     // And the window says how wide it is: the default, all 38 s of readings, as a reading rather than a control.
     const chip = d.querySelector("#timeline .vram-zoom, .card .vram-zoom");

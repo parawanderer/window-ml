@@ -459,90 +459,40 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    its divider already use. It brightens on hover, which is the whole affordance. */
 .rc-lane-grip { flex: 0 0 auto; height: 9px; margin-top: -5px; cursor: ns-resize; touch-action: none; }
 .rc-lane-grip:hover + *, .rc-lane-rows:has(+ .rc-lane-grip:hover) { border-bottom-color: var(--fg-faint); }
-/* One row of the lane, on the chart's axis: bars are placed by time (left/width inline) and clipped at the edges, so a
-   bar scrolling in or out is cut by the plot's edge rather than squeezed against it. */
-.rc-lane-row { position: relative; height: 9px; overflow: hidden; }
-.rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;
-         cursor: default; background: var(--fg-faint); opacity: .75;
-         /* A hairline in the panel's own colour, so two bars that end up adjacent read as TWO. */
-         box-shadow: 0 0 0 1px var(--panel); }
+/* THE LANE'S BARS, in ONE SVG (lane-bars.tsx): a `<g class="rc-lane-row">` per row and a `<g class="rc-ev">` per bar.
+   An element per bar was a layer each, re-layerized and hit-tested on every repaint anywhere on the page. The box
+   carries the brush's drag; the SVG clips a bar running past either edge, as the rows used to. */
+.rc-lane-bars { position: relative; flex: 0 0 auto; }
+.rc-lane-svg { display: block; overflow: hidden; }
+.rc-ev { cursor: default; outline: none; }
 .rc-ev.linked { cursor: pointer; }
+/* A hairline in the panel's own colour around every bar, so two bars packed flush read as TWO. */
+/* Its AREA is also what the pointer hits, the bar's box and half a pixel (`pointer-events: fill` hit-tests an area painted or not):
+   a shape is otherwise hit only where it is painted, so a hollow bar (an aside, a session) answered on its outline alone,
+   and a click on the 1px cut between two phases fell through to the lane. */
+.rc-ev-gap { fill: none; stroke: var(--panel); stroke-width: 1; stroke-opacity: .75; pointer-events: fill; }
+/* Every fill at three quarters, as the bars always were. FILL-opacity, never `opacity`: on a shape that makes it a layer
+   of its own, which is the cost this SVG exists to remove. */
+.rc-ev-seg, .rc-ev-over, .rc-ev-edge { fill-opacity: .75; }
+.rc-ev-outline { fill: none; stroke-width: 1; stroke-opacity: .75; }
+.rc-ev-outline.dash { stroke-dasharray: 3 2; }
 /* Outside the hovered event's lineage: still there, but out of the way. A sub-call means something only
    beside the step that spawned it, so hovering one leaves that chain lit and drops everything else back. */
-.rc-ev.away { opacity: .18; }
+.rc-ev.away .rc-ev-seg, .rc-ev.away .rc-ev-over, .rc-ev.away .rc-ev-edge { fill-opacity: .18; }
+.rc-ev.away .rc-ev-outline, .rc-ev.away .rc-ev-gap { stroke-opacity: .18; }
+/* The hovered block at full strength, with a ring INSIDE it, over its fills, so it reads the same on every fill: the
+   one thing the ring is for is telling you where this block ENDS when several abut. Focus draws the same ring. */
+.rc-ev:hover .rc-ev-seg, .rc-ev:hover .rc-ev-over, .rc-ev:hover .rc-ev-edge { fill-opacity: 1; }
+.rc-ev:hover .rc-ev-outline, .rc-ev:hover .rc-ev-gap { stroke-opacity: 1; }
+.rc-ev-ring { fill: none; stroke: var(--fg-dim); stroke-width: 1; stroke-opacity: 0; pointer-events: none; }
+.rc-ev:hover .rc-ev-ring, .rc-ev:focus-visible .rc-ev-ring { stroke-opacity: 1; }
 /* An OPEN span has not finished: its right edge is where it had REACHED when this frame was drawn, not where
-   it ended. So it does not get one — the fill dissolves, and a slow pulse says the thing is still moving.
-   Without this a live bar is indistinguishable from a measured one and reads as a finished 12-second call. */
-.rc-ev.open { -webkit-mask-image: linear-gradient(to right, #000 60%, transparent 100%);
-    mask-image: linear-gradient(to right, #000 60%, transparent 100%); animation: rc-ev-live 1.4s ease-in-out infinite; }
+   it ended. So it does not get one — the fill dissolves (the `rc-ev-open` mask), and a slow pulse says the thing is
+   still moving. Without this a live bar is indistinguishable from a measured one and reads as a finished call. */
+.rc-ev.open { mask: url(#rc-ev-open); animation: rc-ev-live 1.4s ease-in-out infinite; }
 @keyframes rc-ev-live { 0%, 100% { opacity: .95; } 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .rc-ev.open { animation: none; } }
-.rc-ev { transition: opacity .12s ease; }
-/* The hovered block draws ABOVE its neighbours, so a bar packed hard against the next one keeps its edge — the one
-   thing the ring is for is telling you where this block ENDS when several abut.
-   The ring is drawn INSIDE the bar, on a pseudo-element over its content. It was an `outline`, which sits outside the
-   box, and `.rc-lane-row` clips to its 9px height: the top and bottom edges were cut away and only the ends showed,
-   and a bar running past the plot's edge lost those too. Inside, over the pattern overlays, it is the same on every
-   fill: flat, gradient, dotted or striped. */
-.rc-ev:hover { opacity: 1; z-index: 5; }
-.rc-ev::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 1;
-                box-shadow: inset 0 0 0 1px var(--fg-dim); opacity: 0; }
-.rc-ev:hover::after { opacity: 1; }
-/* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
-   own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The
-   fallback here only matters if an event arrives with no phases. */
-.rc-ev-tool { background: linear-gradient(to right, var(--model, var(--accent)) 0 50%,
-              color-mix(in srgb, var(--model, var(--accent)) 38%, transparent) 50% 100%); }
-/* The WAIT phase is drawn as a hollow neutral stop in that same gradient (see phaseGradient), so a step that
-   sat at an approval gate can never read as work: the bar is wide because a person was deciding. */
-.rc-ev-gen { background: var(--accent); }
-/* AN ASIDE — a model call YOU triggered while reading, not part of the run. OUTLINED rather than filled,
-   because the filled bars beside it are the agent's work and this is not: it spent tokens on this box (so
-   it is drawn) but it belongs to your reading session (so it must not read as a step). */
-.rc-ev-aside {
-    background: transparent;
-    border: 1px dashed color-mix(in srgb, var(--model, var(--fg-faint)) 70%, transparent);
-    opacity: 0.9;
-}
-/* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
-   quieter and reads as something happening underneath. */
-.rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
-/* A run is the CONTAINER the other blocks sit inside, and it is the widest bar in the lane — as a full-height
-   solid fill it read as the heaviest piece of work rather than as the thing holding it. HEIGHT carries that
-   distinction instead of texture: the top row is always a run wrapper and never anything else, so a solid bar
-   at half height says "this is the span everything below happens within" more plainly than a pattern did, and
-   it keeps the model colour the rest of the lane reads by. */
-.rc-ev-run, .rc-ev-session {
-    top: 50%; height: 50%; transform: translateY(-50%);
-    background: var(--model, var(--fg-dim));
-}
-/* A SESSION container is not a run: nothing was driven, it is just the stretch some `ml.chat()` or
-   `ml.embed()` calls happened in. Drawn HOLLOW — a bracket around its own spans rather than a bar of work —
-   so a glance tells the two apart without reading the chip counts. */
-.rc-ev-session {
-    background: none;
-    border: 1px solid var(--model, var(--fg-dim));
-    border-radius: 3px;
-    opacity: .85;
-}
-/* A load is the wait before a token — DOTTED, because it is time spent NOT generating (stripes drew it as X's). The real fill is
-   built inline from the model's colour (loadStripes); this is what it falls back to. */
-.rc-ev-load { background: radial-gradient(circle, var(--warn, #f59e0b) 1.2px, transparent 1.7px) 0 0 / 5px 5px, var(--panel);
-              outline: 1px solid var(--border); outline-offset: -1px; }
-/* The CONTEXT half of a load, over the dotted span: the KV cache and compute buffers being allocated. A
-   tighter, denser dot grid than the weights half, with a hairline at the boundary, so the split reads as a
-   change of texture. Drawn as an overlay rather than as a gradient stop, because a stop takes a colour and a
-   stripe is a pattern — the same reason the approval wait is an overlay. */
-.rc-ev-ctxphase { position: absolute; top: 0; bottom: 0; pointer-events: none;
-  background: radial-gradient(circle, color-mix(in srgb, var(--model, var(--warn, #f59e0b)) 80%, transparent) 0.8px, transparent 1.3px) 0 0 / 3px 3px, var(--panel);
-  border-left: 1px solid color-mix(in srgb, var(--model, var(--fg)) 70%, transparent); }
 
-/* SERVING: the box working, from the server's own view — so it covers requests this browser never made,
-   which is the reason it is worth drawing at all. Solid (unlike a load, which is a wait) and in the model's
-   own colour, at half weight so it reads as a backdrop to the steps drawn against it rather than competing
-   with them. */
-.rc-ev-serve { background: color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
-               outline: 1px solid color-mix(in srgb, var(--model, var(--accent)) 35%, transparent); outline-offset: -1px; }
 /* A phase row is a name, a chip of counts and a duration. At the shared 300px cap those ran past the box, so the
    event tip is wider and its rows WRAP: the chip drops under the name rather than spilling over the chart. */
 .rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; width: max-content; max-width: min(420px, 94vw); }
@@ -3228,19 +3178,6 @@ code .expanded:hover { background: color-mix(in srgb, var(--cite) 12%, transpare
 .tt.tt-code { display: inline; }
 .tt-layer code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em; }
 
-/* Time spent WAITING at the approval gate — the step's wall clock, none of the machine's work. Striped for
-   exactly the reason a model load is: flat, a wide block reads as a lot of work having happened. The gaps
-   are transparent so the neutral fill beneath still shows through. */
-/* A striped phase inside a lane block (a load inside a step, a cache swap, a cold start), drawn over the block's
-   flat stop because a pattern cannot be a gradient stop. The stripes come inline from phaseFill. */
-.rc-ev-pattern { position: absolute; top: 0; bottom: 0; pointer-events: none; border-radius: inherit; }
-
-.rc-ev-wait {
-    position: absolute; top: 0; bottom: 0; pointer-events: none; border-radius: inherit;
-    background: repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--fg-faint) 60%, transparent) 0 3px, transparent 3px 8px);
-}
-
 /* A step outside the lineage hovered in the event lane. The lane dims its own bars the same way, so the two
    surfaces pick out the same work together rather than each highlighting on its own terms. */
 .astep.away { opacity: .35; transition: opacity .12s ease; }
@@ -3322,9 +3259,8 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 @keyframes rcEvPulse { 0% { opacity: 1; } 100% { opacity: 0; } }
 /* Drawn inside the bar like the hover ring, and for the same reason (the row clips anything outside it); it must
    beat the hover ring: a pulse says 'this is the one you clicked'. */
-.rc-ev.pulse { z-index: 6; }
-.rc-ev.pulse::after { box-shadow: inset 0 0 0 2px var(--accent); animation: rcEvPulse 1.4s ease-out forwards; }
-@media (prefers-reduced-motion: reduce) { .rc-ev.pulse::after { animation: none; opacity: 1; } }
+.rc-ev.pulse .rc-ev-ring { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; animation: rcEvPulse 1.4s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) { .rc-ev.pulse .rc-ev-ring { animation: none; opacity: 1; } }
 
 /* THE HOUSEKEEPING LOG VIEW (header ⋮ → Housekeeping log): a toolbar, one line about what this is, then the log's
    output cell taking the rest of the height (it rides `.view-bench`'s non-scrolling column, like the full bench). */

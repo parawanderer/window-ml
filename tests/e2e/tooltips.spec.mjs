@@ -513,7 +513,8 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         // a hover at its centre lands outside what is visible.
         {
             const bar = await frame.locator(".rc-ev-tool").last().boundingBox();
-            const row = await frame.locator(".rc-ev-tool").last().locator("xpath=..").boundingBox();
+            // The lane's SVG is what clips a bar (a row is a group only as wide as its bars).
+            const row = await frame.locator(".rc-lane-svg").first().boundingBox();
             const left = Math.max(bar.x, row.x), right = Math.min(bar.x + bar.width, row.x + row.width);
             await page.mouse.move((left + right) / 2, bar.y + bar.height / 2 + 12);
             await page.mouse.move((left + right) / 2, bar.y + bar.height / 2, { steps: 3 });

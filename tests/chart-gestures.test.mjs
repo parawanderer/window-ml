@@ -50,8 +50,8 @@ async function chart(t, { running = false, readings = 20, freeGiB = () => 20 } =
             const text = [...c.childNodes].filter((n) => !n.classList?.contains("tt-pop")).map((n) => n.textContent).join("").trim();
             return { text, kind: c.className.match(/at-default|pinned|resized/)?.[0], el: c };
         },
-        /** Where run `i`'s bar starts and how wide it is, in % of the lane. */
-        bar: (i) => { const b = d.querySelectorAll(".tlchart .wml-lane .rc-ev-run")[i]; return b ? [parseFloat(b.style.left), parseFloat(b.style.width)] : null; },
+        /** Where run `i`'s bar starts and how wide it is, in % of the lane (`data-x`/`data-w`: the lane is one SVG). */
+        bar: (i) => { const b = d.querySelectorAll(".tlchart .wml-lane .rc-ev-run")[i]; return b ? [+b.dataset.x, +b.dataset.w] : null; },
         tip: () => d.querySelectorAll(".tlchart .rc-tip-keys").length,
         /** A drag from x0 to x1 that starts on `el`, as a hand makes one: down, moves on the window, up. */
         drag: async (el, x0, x1) => {

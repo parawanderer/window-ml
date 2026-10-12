@@ -735,8 +735,9 @@ test("a step whose call waited for a load is drawn, with the wait striped over i
         });
         const block = frame.locator(".rc-ev-tool").first();
         await expect(block).toBeVisible({ timeout: 15000 });
-        const bg = await block.evaluate((el) => getComputedStyle(el).backgroundImage);
-        expect(bg, "the block has a background at all").toContain("linear-gradient");
+        const fills = await block.locator(".rc-ev-seg").evaluateAll((els) => els.map((el) => getComputedStyle(el).fill));
+        expect(fills.length, "the block is drawn in its phases").toBeGreaterThanOrEqual(2);
+        expect(fills.every((f) => f && f !== "none"), `every phase is filled (${fills.join(" | ")})`).toBe(true);
         await expect(block.locator(".rc-ev-pattern"), "and its load stretch is striped over it").toHaveCount(1);
     } finally { await ext.context.close(); await fake.stop(); }
 });
@@ -1319,7 +1320,8 @@ test("the phase ribbon draws each model's prefill and decode along its card, and
         const bars = frame.locator(".rc-ev-gen");
         const hitBar = await bars.evaluateAll((els) => els.findIndex((e) => {
             const r = e.getBoundingClientRect();
-            return r.width > 0 && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === e;
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return r.width > 0 && !!hit && e.contains(hit);   // a shape inside the bar's <g> (the lane is one SVG)
         }));
         expect(hitBar, "some lane generation can be hovered").toBeGreaterThanOrEqual(0);
         await bars.nth(hitBar).hover();
