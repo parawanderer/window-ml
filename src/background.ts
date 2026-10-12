@@ -29,7 +29,7 @@ import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./s
 import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
-import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw/sw-housekeeping";
+import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, handleJobsDump, senderOrigin } from "./sw/sw-housekeeping";
 import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
@@ -845,6 +845,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     } else if (message.type === "DUMP_HOUSEKEEPING") {
         // `ml.__housekeeping()` and the DevTools panel. A page sees another tab's events without their key/detail.
         handleHousekeepingDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "DUMP_JOBS") {
+        // The Background work section: what each self-acting job is doing now. Extension pages only (sw-housekeeping.ts).
+        handleJobsDump(sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "SESSION_TITLE") {

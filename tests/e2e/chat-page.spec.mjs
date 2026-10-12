@@ -982,6 +982,11 @@ test("the start page holds through a worker restart, and its tab list is fresh a
         await chat.getByRole("menuitem", { name: "Settings" }).click();
         await chat.getByRole("tab", { name: "Housekeeping" }).click();
         await expect(chat.locator(".chat-set-hk .hk-view")).toBeVisible();
+        // …with the Background work section above it: the worker's declared jobs, read through DUMP_JOBS.
+        const bgw = chat.getByRole("region", { name: "Background work" });
+        await expect(bgw.locator(".disc-label")).toHaveText(["Screenshot compaction", "Saved-session cleanup", "Stored-value sweep"]);
+        await bgw.getByRole("button", { name: /Screenshot compaction/ }).click();
+        await expect(bgw).toContainText("Runs 15 s after saved sessions stop changing");
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });

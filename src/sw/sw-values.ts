@@ -12,6 +12,7 @@ import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
 import { defineState } from "../state-registry";
+import { defineJob } from "../job-registry";
 
 defineState({
     id: "run.values", scope: "session", realm: "worker", audience: "model", lostOn: [],
@@ -97,6 +98,16 @@ export function releaseSessionValues(session: string): void {
  */
 export function startValueSweeps(): void {
     if (!values()) return;
+    defineJob({
+        id: "value-store.sweep",
+        title: "Stored-value sweep",
+        trigger: "when the worker starts and every hour",
+        log: { subsystem: "value-store", done: ["evict"] },
+        live: async () => {
+            const a = await chrome.alarms?.get(SWEEP_ALARM).catch(() => undefined);
+            return a ? { nextDue: a.scheduledTime } : {};
+        },
+    });
     const sweep = () => { void values()?.sweep().catch(() => {}); };
     sweep();
     if (!chrome.alarms) return;
