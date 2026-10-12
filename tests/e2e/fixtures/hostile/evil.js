@@ -59,21 +59,35 @@
      *  a web page the parent is this page. Attack 16. */
     const heard = [];
     window.__heard = heard;
-    window.addEventListener("message", (e) => { if (e.source !== window) heard.push(e.data); }, true);
+    /** The windows those messages came from. */
+    const heardFrom = new Set();
+    window.addEventListener("message", (e) => { if (e.source !== window) { heard.push(e.data); if (e.source) heardFrom.add(e.source); } }, true);
 
-    /** The extension's iframes on this page, found the way any script can: through the open shadow roots of the
-     *  elements the shell adds. */
-    const extensionFrames = () => [...document.querySelectorAll("*")].flatMap((el) => el.shadowRoot ? [...el.shadowRoot.querySelectorAll("iframe")] : []);
+    /** The extension's iframes on this page reached through the shadow roots of the elements the shell adds: the way
+     *  any script could while those roots were open (attack 17 closed them). */
+    const framesThroughHosts = () => [...document.querySelectorAll("*")].flatMap((el) => el.shadowRoot ? [...el.shadowRoot.querySelectorAll("iframe")] : []);
+    window.__framesThroughHosts = () => framesThroughHosts().length;
+
+    /** Every window of an extension iframe this page holds a handle to, by every path a script has: an iframe element
+     *  through a shadow root, `window.frames`, and the `source` of a message one of them sent here. */
+    const extensionWindows = () => {
+        const wins = new Set(framesThroughHosts().map((f) => f.contentWindow).filter(Boolean));
+        for (let i = 0; i < window.length; i++) wins.add(window[i]);
+        for (const w of heardFrom) wins.add(w);
+        // The page's own frames (its light-DOM iframes, sidebar.html included in 16d) are not the extension's.
+        for (const el of document.querySelectorAll("iframe")) wins.delete(el.contentWindow);
+        return [...wins];
+    };
 
     /**
      * Post events STRAIGHT into the extension's iframes, skipping the shell, as their parent window. Attack 16.
      * @param {object[]} events session events
-     * @returns {number} how many iframes were posted to
+     * @returns {number} how many extension windows were posted to
      */
     window.__intoApp = (events) => {
-        const frames = extensionFrames();
-        for (const f of frames) for (const ev of events) f.contentWindow?.postMessage({ __mlDebug: ev }, "*");
-        return frames.length;
+        const wins = extensionWindows();
+        for (const w of wins) for (const ev of events) w.postMessage({ __mlDebug: ev }, "*");
+        return wins.length;
     };
 
     // ?redress=1: when a REAL run's step on this page waits for the person's approval, re-post that same step (same run,

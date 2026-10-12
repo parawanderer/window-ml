@@ -7,7 +7,7 @@
 // What is pinned here: the tooltip is always FULLY ON SCREEN, never CLIPPED by the scrolling panel it was
 // triggered from, and never sitting UNDER the pointer.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -41,10 +41,10 @@ test("tooltips: always fully on screen, never clipped, never under the cursor", 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         // Deliberately NARROW and hard against the right edge: that is where a tooltip runs off screen.
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "380px";
             panel.classList.add("open");
@@ -180,9 +180,9 @@ test("cursor tooltips: one at a time, never under the pointer, never clipped", a
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "380px";     // narrow, hard against the right edge
             panel.classList.add("open");
@@ -276,9 +276,9 @@ for (const width of [360, 900]) {
             const page = await ext.context.newPage();
             await page.setViewportSize({ width: 1100, height: 760 });
             await page.goto(`${fake.url}/api/version`);
-            await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-            await page.evaluate((w) => {
-                const root = document.getElementById("ml-sb-root").shadowRoot;
+            await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+            await inShell(page, (roots, w) => {
+                const root = roots.sidebar;
                 const panel = root.getElementById("ml-sb-host");
                 panel.style.width = `${w}px`;
                 panel.classList.add("open");
@@ -311,8 +311,8 @@ for (const width of [360, 900]) {
             // A rect measured INSIDE the iframe is frame-relative; page.mouse is page-relative. Comparing the
             // two directly is how a placement test can report a tooltip under a cursor that is nowhere near
             // it — and pass in a narrow panel for the same reason.
-            const off = await page.evaluate(() => {
-                const r = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-frame").getBoundingClientRect();
+            const off = await inShell(page, (roots) => {
+                const r = roots.sidebar.getElementById("ml-sb-frame").getBoundingClientRect();
                 return { x: r.x, y: r.y };
             });
             const failures = [];
@@ -387,9 +387,9 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "560px";
             panel.classList.add("open");
@@ -567,9 +567,9 @@ test("tooltips: a dashed event rule answers alone, not under the plot's own read
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "560px";
             panel.classList.add("open");
@@ -634,9 +634,9 @@ test("tooltips: a tip whose trigger disappears under a still pointer disappears 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const host = root.getElementById("ml-sb-host");
             host.style.width = "560px";
             host.classList.add("open");
@@ -697,9 +697,9 @@ test("tooltips: moving straight off the panel onto the page takes every kind of 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
         await page.goto(`${fake.url}/api/version`);
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "420px";
             // Opened through its own tab, as a person does: a message posted into the frame from the page no longer

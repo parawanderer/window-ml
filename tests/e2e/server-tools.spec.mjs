@@ -5,7 +5,7 @@
 // grant is minted by the background loop's approval, and the frames cross SW → content → page. Every one of
 // those is the thing under test, so a mocked version would test a mock.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -166,9 +166,9 @@ test("a server tool's streamed output survives the step landing, beside its resu
         }));
 
         // Open the overlay and drop into the live session, so the step's rendered Out is on screen.
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "700px";
             panel.classList.add("open");

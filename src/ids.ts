@@ -10,3 +10,12 @@ export const SB_LIGHTBOX = "ml-lightbox";    // full-viewport image lightbox (a 
 export const SB_LIGHTBOX_X = "ml-lightbox-x";
 export const SB_HIGHLIGHT = "ml-highlight";  // DevTools-style hover highlight box (positioned over a page element; never mutates it)
 export const SB_CARD = "ml-sb-card";         // off-mode acrylic approval CARD host (a separate shadow host from the overlay shell)
+/** The id of the shell's own stylesheet, the first child of each of its shadow roots: the mark a tool that crosses shadow
+ *  boundaries tells our root by. The page can neither put a node into a closed root of ours nor take one out, whereas the
+ *  HOST's id is an attribute in the page's document that it can change or remove. */
+export const SB_STYLE = "ml-sb-style";
+
+/** Is `id` one the shell gives its own UI (a shadow host or a node of ours)? Tools that cross shadow boundaries skip a
+ *  host with one, and a root holding a child with one ({@link SB_STYLE}): our roots are closed to the page, and no tool of
+ *  the page's may open them. */
+export const isOwnUiId = (id: string): boolean => /^ml-(sb-|lightbox|highlight)/.test(id);

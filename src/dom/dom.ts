@@ -518,7 +518,9 @@ const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$
 // The extension's OWN injected UI — the overlay shell, corner card, hover-highlight, lightbox (ids.ts) — all
 // use an `ml-sb-*` / `ml-lightbox*` / `ml-highlight*` id. A page query / composition shouldn't pick it up (it's
 // not page content): `ml.queryAll("button")` was finding the HUD's own controls (in the overlay shadow root,
-// which deepQueryAll pierces). We skip those subtrees by default; re-include with `includeExtensionUi: true`.
+// which deepQueryAll pierced while it was open). Those roots are CLOSED now and attached in the content script's
+// isolated world, whose attachShadow shadow-patch.ts never wraps, so `traversableRoot` returns null for them and
+// nothing inside is reachable with or without `includeExtensionUi`. The skip stays for the light-DOM hosts.
 const EXT_UI_SEL = '[id^="ml-sb-"], [id^="ml-lightbox"], [id^="ml-highlight"]';
 /** Is `el` itself an extension-UI ROOT host (so its subtree — incl. its shadow — is our own UI)? */
 export const isExtUiRoot = (el: Element): boolean => { try { return el.matches(EXT_UI_SEL); } catch { return false; } };
@@ -853,7 +855,8 @@ const evalExtHop = (seg: string, scopes: ParentNode[], deepFirst: boolean): Elem
 
 /** Public entry: resolve a selector in the jQuery-tolerant dialect above (`>>>` shadow hops, `:contains`
  *  /`:has-text`/`:eq`, and the dead-`:nth-of-type` reinterpretation), EXCLUDING the extension's own injected
- *  UI by default — pass `includeExtensionUi: true` to reach it (e.g. to inspect the HUD itself). One post-filter
+ *  UI by default — pass `includeExtensionUi: true` to keep its hosts (their shadow roots are CLOSED and created in
+ *  the content script's world, so neither `.shadowRoot` nor the closed-root capture reaches inside). One post-filter
  *  point over the raw engine catches every path (the multi-hop raw querySelectorAll, evalExtHop, deepQueryAll). */
 export const queryAll = (selector: string, includeExtensionUi = false): Element[] => {
     const els = queryAllRaw(selector, includeExtensionUi);

@@ -5,7 +5,7 @@
 // /api/info + /api/ps over time: capacity refreshing as models load, and a GAP appearing because polling
 // really did stop while the panel was closed. The narrated version of the same script is resource-demo.mjs.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { TOPOLOGIES, pci } from "../fixtures/boxes.mjs";
 
@@ -47,9 +47,9 @@ async function openPanel(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
-    await page.evaluate(() => {
-        const root = document.getElementById("ml-sb-root").shadowRoot;
+    await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
+    await inShell(page, (roots) => {
+        const root = roots.sidebar;
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = "460px";
         panel.classList.add("open");
@@ -727,8 +727,8 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
         expect(narrow.distinctRows, "a narrow panel stacks them").toBe(3);
 
         // Drag the sidebar out to a full page.
-        await page.evaluate(() => {
-            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "1200px";
+        await inShell(page, (roots) => {
+            roots.sidebar.getElementById("ml-sb-host").style.width = "1200px";
         });
         await sleep(600);
         const wide = await rows();
@@ -740,8 +740,8 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
 
         // In BETWEEN, it fits what it can and wraps the rest — the layout decides, so there is no breakpoint
         // to keep in sync with the panel's real width.
-        await page.evaluate(() => {
-            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "760px";
+        await inShell(page, (roots) => {
+            roots.sidebar.getElementById("ml-sb-host").style.width = "760px";
         });
         await sleep(600);
         const mid = await rows();
@@ -760,8 +760,8 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
 
         // And the panel can now be SHORTER than it could when narrow: tiling needs less height, and the floor
         // is keyed by width so it comes back down instead of ratcheting.
-        await page.evaluate(() => {
-            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "1200px";
+        await inShell(page, (roots) => {
+            roots.sidebar.getElementById("ml-sb-host").style.width = "1200px";
         });
         await sleep(600);
         const floorAt = async () => {
@@ -776,8 +776,8 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
             return h;
         };
         const wideFloor = await floorAt();
-        await page.evaluate(() => {
-            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "460px";
+        await inShell(page, (roots) => {
+            roots.sidebar.getElementById("ml-sb-host").style.width = "460px";
         });
         await sleep(800);
         const narrowFloor = await floorAt();
@@ -834,8 +834,8 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
 
         // Every bar is INSIDE the plot's horizontal span — the lane mirrors the chart's segments, so a bar
         // that drifted off them would be pointing at a moment the trace doesn't cover.
-        const frameOrigin = await page.evaluate(() => {
-            const r = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-frame").getBoundingClientRect();
+        const frameOrigin = await inShell(page, (roots) => {
+            const r = roots.sidebar.getElementById("ml-sb-frame").getBoundingClientRect();
             return { x: r.x, y: r.y };
         });
         const inFrameX = frameOrigin.x, inFrameY = frameOrigin.y;
@@ -4267,7 +4267,7 @@ test("resource panel: a narrow row folds its badges into +N, whose popover keeps
         await expect(row.locator(".fold-pop.open")).toHaveCount(0);
 
         // WIDE, nothing folds: the row is exactly what it was before folding existed.
-        await page.evaluate(() => { document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "1240px"; });
+        await inShell(page, (roots) => { roots.sidebar.getElementById("ml-sb-host").style.width = "1240px"; });
         await expect(chip).toHaveCount(0, { timeout: 5000 });
         await expect(row.locator(".vram-quant")).toBeVisible();
         await row.screenshot({ path: "test-results/fold-row-wide.png" });

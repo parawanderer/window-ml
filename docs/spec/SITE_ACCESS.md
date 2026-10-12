@@ -311,10 +311,17 @@ The attacks, each its own test:
     step's result (15a), and a page could post its own events tagged as the worker's, drawing a fake run in the card
     (15b) or rewriting the call a real approval prompt shows while the person decides (15c). Found by the session
     building `ml.current`.
-16. **Talk to the extension's own iframe.** The shell's shadow roots are open, so a page reaches the card's iframe;
+16. **Talk to the extension's own iframe.** The shell's shadow roots were open, so a page reached the card's iframe;
     the app inside talked to its parent window, which on a web page IS the page. The page heard what the person typed
     into the card (16a) and could post events straight into it (16b). Separately, the session index let a page write
     into a background run's session on its own tab, since that run's owner is the tab (16c). Found while closing 15.
+17. **Reach into the shell's shadow roots.** Open roots gave the page our nodes, our stylesheet and the card's iframe,
+    and let it put a `:host{…!important}` rule inside a root, which beats the hosts' inline `all: initial !important`.
+    The roots are closed (owner decision 2026-10-10), and the tests assert the page has no handle on one by any path,
+    nor on the card's window (17a, 17b). Closing it found two bypasses: the card app posted its theme to its parent
+    window, and the page-started `CDP_SHADOW_RESOLVE` walked into our hosts. The review of #610 found two more: that
+    resolver keyed on the host's id, which the page can rename (17c), and a drag out of our lightbox handed the page the
+    image's address, markup and file at `dragstart` (17d).
 
 The suite was written before any slice landed, against a build that every attack beats. While a slice is open its
 tests assert that the attack SUCCEEDS; the slice that closes it flips that, and the same tests then assert the secure

@@ -8,7 +8,7 @@
 //
 // A real browser, because every one of these is about layout, drag, or persistence across a remount.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, inShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -880,8 +880,8 @@ test("the bench's timestamps toggle hides the gutter, and remembers it", async (
 test("the bench header fits at every panel width down to the 280px minimum, and the default gives up only the title and version", async () => {
     const { fake, ext, page, frame } = await setup();
     try {
-        const setWidth = (w) => page.evaluate((w) => {
-            const host = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+        const setWidth = (w) => inShell(page, (roots, w) => {
+            const host = roots.sidebar.getElementById("ml-sb-host");
             host.style.width = `${w}px`;
         }, w);
         await setWidth(760);

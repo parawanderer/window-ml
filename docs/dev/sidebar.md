@@ -72,7 +72,8 @@ screen holds nothing painted before the watch. The worker paints every place see
 not hide: an inline hide is page-owned DOM, so a stylesheet overrides it, a MutationObserver times every shot, and a page
 that blocks its main thread holds the ack.
 
-The roots are open and the hosts sit in the page's document, so the page can style our UI. What the shell cannot bound
+The roots are closed (below), but the hosts sit in the page's document, so the page can still act on the hosts, their
+ancestors and the top layer. What the shell cannot bound
 is `tampered` and refused with one fixed sentence: a host moved off the root element (into a frame of the page's), an
 element of ours carried out of its root, a stylesheet in a root that is not ours (an element or an adopted sheet), a rule
 of ours edited through the CSSOM, and a reflection, filter or text shadow on our UI (our styles use none); on the html
@@ -82,8 +83,35 @@ scale, translate, rotate, a host transform), the UI moving during the shot, or o
 away (the image viewer, a near-full sidebar or card). sidebar.html is web-accessible, so a page can frame it anywhere;
 the app mounts only once the shell that framed it hands it its port (`parent-channel.ts` `awaitHost`), so the page's
 frame is empty and transparent. The hosts carry an inline `all: initial !important` (`HOST_STYLE`), which no page
-stylesheet beats, timed or not; a `:host` rule inside our open root still does, which is why closed roots are next. The
-highlight's translucent tint over the outlined element stays in the shot.
+stylesheet beats, timed or not; a `:host` rule inside our root would, and the closed roots keep the page from putting one
+there. The checks for a stylesheet or rule in our root stay as a second line. The highlight's translucent tint over the
+outlined element stays in the shot.
+
+**The shadow roots are CLOSED.** All three (`#ml-sb-root`, `#ml-sb-card`, `#ml-sb-root-hl`) are attached with `mode:
+"closed"` in the content script's isolated world, and the shell keeps its own reference to each (`shellRoot`,
+`cardRoot`, `hlRoot`): our code never reads `.shadowRoot`, which is null in every world. What the page cannot get, each a
+test in `tests/e2e/site-access.spec.mjs` (attack 17): a root through the host, a global or an expando, an event's target
+or `composedPath()`, a mutation record, focus, the selection or a hit test; the card's iframe (a frame in a shadow tree is
+not in `window.frames` either); a `:host` rule inside a root (`review-look.spec.mjs`). Two paths that bypassed the
+closed root are shut with it: the app posting its theme to `window.parent` (the page heard it and got the frame's window
+as the message source; it goes through `toHost` now, 16e), and the page-started `CDP_SHADOW_RESOLVE`, which pierces closed
+roots and now skips a root whose host has one of our ids (`isOwnUiId`, `ids.ts`) or which holds the shell's stylesheet
+(`SB_STYLE`): the host's id is the page's to rename, the inside of our root is not (17c). Nothing in our roots starts a
+drag or a text selection (`NO_DRAG_CSS`, and the lightbox image is not draggable): the page's capture listener reads a
+drag's `dataTransfer` at `dragstart`, which a closed root does not retarget (17d). The DOM tools never see inside our UI either:
+they pierce open roots and the closed roots `shadow-patch.ts` captures in the MAIN world, and ours are attached in the
+isolated world, whose `attachShadow` that patch does not wrap. That is what they want: they skipped our hosts by id before
+(`isExtUiRoot`), and `queryAll(sel, true)` now reaches the hosts only.
+
+**Reaching the roots in a test.** Playwright's selectors do not enter a closed root, so `page.locator("#ml-sb-tab")` finds
+nothing. The e2e harness runs code where the shell lives: `inShell(page, (roots, arg) => …, arg)` evaluates in the
+content script's isolated world of the top frame, with `roots` = `{ sidebar, card, highlight }`; `waitInShell` polls it;
+`clickInShell(page, "card", sel)` clicks an element in a root with the real mouse. They call `__wmlShellRoots`, a
+function the shell defines on its isolated world's global and ships in the real build, through CDP `Runtime.evaluate`
+with that world's context id. The page's main world shares no object with that world, so it cannot call it; code that can
+evaluate there could already reach the roots with `chrome.dom.openOrClosedShadowRoot`. The function is serialized: pass
+what it needs as `arg`, and keep state for a later call on that world's `globalThis`, not the page's `window`. The app
+inside the iframe is unaffected: `page.frames()` finds `sidebar.html` as before.
 
 **The hosts live in the top layer (`shell-top-layer.ts`).** Each is `popover="manual"` and shown, so no z-index of the
 page's covers it. What the page opens in the top layer after ours (a modal dialog, an element in fullscreen, a popover)
@@ -150,12 +178,15 @@ A future page-input channel would follow the pattern.
 
 - **The app talks to its host only through `parent-channel.ts`** (`toHost`, `onHostMessage`), never
   `window.parent.postMessage` or a `message` listener of its own. On a web page the overlay's and the card's parent
-  window IS the page, and the shell's shadow roots are open, so a page can reach the iframe, read what it posts to its
-  parent and post into it (docs/spec/SITE_ACCESS.md, attack 16). There the app and the shell share a `MessagePort`,
-  set up by a nonce the app sends through `chrome.tabs.sendMessage`; the DevTools panel, an extension page, keeps plain
-  window messages. A run's events reach the shell over `chrome.runtime` (`ML_DEBUG_TO_PAGE`), never the page's window,
+  window IS the page, which hears what the app posts to its parent (and gets the frame's window as the source) and can
+  post into it (docs/spec/SITE_ACCESS.md, attack 16; the closed roots of attack 17 took away the other handle). There
+  the app and the shell share a `MessagePort`, set up by a nonce the app sends through `chrome.tabs.sendMessage`; the
+  DevTools panel, an extension page, keeps plain window messages. A run's events reach the shell over `chrome.runtime` (`ML_DEBUG_TO_PAGE`), never the page's window,
   and a page's events are admitted by `pageMayWrite` (`src/event-admission.ts`). A test opens the sidebar by clicking
   its tab and watches a background run with `watchRunEvents` (e2e harness), not by posting into the frame.
+- **Our shadow roots are CLOSED.** Shell code uses its kept reference (`shellRoot`, `cardRoot`, `hlRoot`), never
+  `host.shadowRoot`, which is null; a new host is attached `mode: "closed"` and added to `__wmlShellRoots`. Never post a
+  root or a node in one to the page. A test reaches them with `inShell`/`waitInShell`/`clickInShell`, not a locator.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
   that acts back on the page needs the reverse channel (panel → background → content shell). The shared session
   views call `services()` (`services.ts`), never `chrome.*` or the parent frame, because the chat page and a phone app

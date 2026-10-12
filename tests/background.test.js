@@ -936,6 +936,43 @@ test("CDP_SHADOW_RESOLVE reads inside a SEALED closed shadow root via CDP (read-
     assert.ok(bg.debuggerCalls.some(c => c[0] === "attach"), "attached the debugger to read");
 });
 
+// Attack 17: the shell's own roots are CLOSED to the page, and CDP pierces closed roots. A page sends this message, so
+// the resolver must not walk into one of our hosts: `#ml-sb-card >>> *` would read the card's DOM (describe lines, text,
+// coordinates) that `host.shadowRoot` no longer gives.
+for (const id of ["ml-sb-root", "ml-sb-card", "ml-sb-root-hl"]) {
+    test(`CDP_SHADOW_RESOLVE never descends into the shell's own host #${id} (a page's selector cannot read our closed root)`, async () => {
+        const cdp = (m, p) => (m === "DOM.describeNode" && p.nodeId === 10)
+            ? { node: { attributes: ["style", "all: initial !important;", "id", id], shadowRoots: [{ nodeId: 20 }] } }
+            : shadowCdp(m, p);
+        const bg = loadBackground({ config: baseConfig({ cdp: true }), onDebuggerCommand: cdp });
+        const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner" } }, { tab: { id: 7, url: "https://x.test/" } });
+        assert.deepEqual(res.data, [], "nothing inside our root is resolved");
+        assert.ok(!bg.debuggerCalls.some((c) => c[2] === "DOM.querySelectorAll" && c[3]?.nodeId === 20), "never queried inside our root");
+    });
+}
+test("CDP_SHADOW_RESOLVE never descends into our root under a host the page renamed (the root holds the shell's stylesheet)", async () => {
+    // The host's id is the page's to change; what is inside our closed root is not.
+    const cdp = (m, p) => (m === "DOM.describeNode" && p.nodeId === 10) ? { node: { attributes: ["id", "renamed"], shadowRoots: [{ nodeId: 20 }] } }
+        : (m === "DOM.describeNode" && p.nodeId === 20) ? { node: { children: [{ attributes: ["id", "ml-sb-style"] }, { attributes: ["id", "ml-sb-card-wrap"] }] } }
+        : shadowCdp(m, p);
+    const bg = loadBackground({ config: baseConfig({ cdp: true }), onDebuggerCommand: cdp });
+    const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner" } }, { tab: { id: 7, url: "https://x.test/" } });
+    assert.deepEqual(res.data, [], "nothing inside our root is resolved");
+    assert.ok(!bg.debuggerCalls.some((c) => c[2] === "DOM.querySelectorAll" && c[3]?.nodeId === 20), "never queried inside our root");
+});
+test("CDP_SHADOW_RESOLVE skips a root it cannot describe (fails closed)", async () => {
+    const cdp = (m, p) => { if (m === "DOM.describeNode" && p.nodeId === 20) throw new Error("No node with given id found"); return shadowCdp(m, p); };
+    const bg = loadBackground({ config: baseConfig({ cdp: true }), onDebuggerCommand: cdp });
+    const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner" } }, { tab: { id: 7, url: "https://x.test/" } });
+    assert.deepEqual(res.data, []);
+});
+test("CDP_SHADOW_RESOLVE still descends into a page host whose id only resembles ours", async () => {
+    const cdp = (m, p) => (m === "DOM.describeNode" && p.nodeId === 10) ? { node: { attributes: ["id", "my-ml-sb-root"], shadowRoots: [{ nodeId: 20 }] } } : shadowCdp(m, p);
+    const bg = loadBackground({ config: baseConfig({ cdp: true }), onDebuggerCommand: cdp });
+    const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner" } }, { tab: { id: 7, url: "https://x.test/" } });
+    assert.equal(res.data.length, 1);
+});
+
 test("CDP_SHADOW_RESOLVE is refused when the cdp flag is off (never attaches)", async () => {
     const bg = loadBackground({ config: baseConfig({ cdp: false }) });
     const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner", tabId: 7 } }, { tab: { id: 7 } });

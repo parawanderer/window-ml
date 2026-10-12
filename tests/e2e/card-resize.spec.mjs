@@ -5,7 +5,7 @@
 // the card is anchored to, and the anchored edge staying put is a fact about computed geometry, not about
 // state. jsdom reports every element as zero-sized, so none of it is observable there.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -13,15 +13,15 @@ import { startPageServer } from "../../examples/cross-page/serve.mjs";
 async function cardOnScreen(page, fake) {
     fake.setScript([{ content: "done." }]);
     await page.evaluate(() => { window.__run = window.ml.agent("say something"); });
-    await page.waitForFunction(() => !!document.getElementById("ml-sb-card")?.shadowRoot, null, { timeout: 20000 });
+    await waitInShell(page, (roots) => !!roots.card, null, { timeout: 20000 });
     // The card starts as an orb; the width handle exists ONLY in the fully expanded state, which is the one
     // state whose width is a reading measure worth choosing. So wait for that rather than measuring a circle.
-    await page.waitForFunction(() => {
-        const w = document.getElementById("ml-sb-card")?.shadowRoot?.getElementById("ml-sb-card-wrap");
+    await waitInShell(page, (roots) => {
+        const w = roots.card?.getElementById("ml-sb-card-wrap");
         return w?.dataset.state === "expanded";
-    }, null, { timeout: 20000 });
-    const once = () => page.evaluate(() => {
-        const w = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-wrap");
+    }, undefined, { timeout: 20000 });
+    const once = () => inShell(page, (roots) => {
+        const w = roots.card.getElementById("ml-sb-card-wrap");
         const r = w.getBoundingClientRect();
         return { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), corner: w.dataset.corner };
     });
@@ -42,8 +42,8 @@ async function cardOnScreen(page, fake) {
 
 /** Grab the width handle and drag it by `dx` page pixels. */
 async function dragWidth(page, dx) {
-    const box = await page.evaluate(() => {
-        const h = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-resize-x");
+    const box = await inShell(page, (roots) => {
+        const h = roots.card.getElementById("ml-sb-card-resize-x");
         const r = h.getBoundingClientRect();
         return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
     });
@@ -99,8 +99,8 @@ test("corner card: the width handle exists ONLY on the expanded card", async () 
         await page.goto(site.url + "/");
         await waitForMl(page);
         await cardOnScreen(page, fake);
-        const visible = () => page.evaluate(() => {
-            const sr = document.getElementById("ml-sb-card").shadowRoot;
+        const visible = () => inShell(page, (roots) => {
+            const sr = roots.card;
             const el = sr.getElementById("ml-sb-card-resize-x");
             return { state: sr.getElementById("ml-sb-card-wrap").dataset.state, shown: el.getBoundingClientRect().width > 0 };
         });
@@ -108,21 +108,21 @@ test("corner card: the width handle exists ONLY on the expanded card", async () 
 
         // Collapse to the orb. The drag does nothing there — the orb is a circle sized by what it contains —
         // so the handle must not be grabbable either: an affordance that does nothing is worse than none.
-        await page.evaluate(() => {
-            const sr = document.getElementById("ml-sb-card").shadowRoot;
+        await inShell(page, (roots) => {
+            const sr = roots.card;
             sr.getElementById("ml-sb-card-wrap").dataset.state = "orb";
         });
         expect((await visible()).shown).toBe(false);
 
         // The HEIGHT handle has the same rule and had the same gap: `cardH` reads the dragged height only for
         // the expanded card, so outside it the top edge was grabbable and inert.
-        const heightShown = () => page.evaluate(() => {
-            const sr = document.getElementById("ml-sb-card").shadowRoot;
+        const heightShown = () => inShell(page, (roots) => {
+            const sr = roots.card;
             return sr.getElementById("ml-sb-card-resize").getBoundingClientRect().height > 0;
         });
         expect(await heightShown()).toBe(false);
-        await page.evaluate(() => {
-            document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-wrap").dataset.state = "expanded";
+        await inShell(page, (roots) => {
+            roots.card.getElementById("ml-sb-card-wrap").dataset.state = "expanded";
         });
         expect(await heightShown()).toBe(true);
     } finally {
@@ -155,8 +155,8 @@ test("corner card: the width SURVIVES a reload, and double-click restores the de
         expect(Math.abs((await read()).width - chosen)).toBeLessThanOrEqual(4);
 
         // Double-click is the way back, matching the height handle's own reset.
-        const h = await page.evaluate(() => {
-            const el = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-resize-x");
+        const h = await inShell(page, (roots) => {
+            const el = roots.card.getElementById("ml-sb-card-resize-x");
             const r = el.getBoundingClientRect();
             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
         });
@@ -189,8 +189,8 @@ test("corner card: dragging is instant, and a programmatic resize still animates
         const read = await cardOnScreen(page, fake);
         await read();
 
-        const durations = () => page.evaluate(() => {
-            const w = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-wrap");
+        const durations = () => inShell(page, (roots) => {
+            const w = roots.card.getElementById("ml-sb-card-wrap");
             const cs = getComputedStyle(w);
             // The longest transition-duration that is actually in effect. `transition: none` collapses the
             // whole list, so this reads 0 exactly when nothing will animate.
@@ -204,8 +204,8 @@ test("corner card: dragging is instant, and a programmatic resize still animates
         expect(atRest.anim).toBe(false);
 
         // MID-DRAG: hold the button down and read the computed style with the pointer still down.
-        const h = await page.evaluate(() => {
-            const el = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-resize-x");
+        const h = await inShell(page, (roots) => {
+            const el = roots.card.getElementById("ml-sb-card-resize-x");
             const r = el.getBoundingClientRect();
             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
         });

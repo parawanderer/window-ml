@@ -20,7 +20,7 @@
 // Screenshots land in tests/e2e/artifacts/resource-demo/ (BOX=metal → …/resource-demo-metal/).
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { BOXES, GiB } from "../fixtures/boxes.mjs";
 
@@ -235,12 +235,12 @@ async function main() {
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto("about:blank");
         await page.goto(`${fake.url}/api/version`);   // any page the content script can attach to
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
 
         // Slide the overlay open and switch to the VRAM monitor. A reload re-mounts the shell, so this is a
         // function rather than a one-off.
-        const openOverlay = () => page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        const openOverlay = () => inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "460px";
             panel.classList.add("open");
@@ -493,7 +493,7 @@ async function main() {
         // 11. The real degrade: a box that has NEVER answered. Fresh page, since that is a different state.
         log("a box that never answers /api/info — capacity unknown, so no ceiling is invented.");
         await page.reload();
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await openOverlay();
         frame = await findFrame();
         await setPanel(true);

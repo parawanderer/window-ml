@@ -5,6 +5,7 @@
 // code-theme-css.ts (the stylesheets) and code-themes.ts (presets + the VS Code converter).
 import katexCss from "katex/dist/katex.min.css";
 import { signal } from "@preact/signals";
+import { toHost } from "./parent-channel";
 import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS, codeTheme, codeThemeCustom, codeThemeUi } from "./store";
 import { activeCodeTheme, convertStored } from "./code/code-theme-css";
 import { PANEL_TOKENS, VSCODE_THEME_ID, type ConvertedTheme } from "../code-themes";
@@ -48,8 +49,10 @@ export const applyTheme = (): void => {
     // from the CONTENT-SCRIPT window's matchMedia, which is unreliable on some hosts
     // (GitHub reports light there) — that split-brain painted a white acrylic behind
     // our transparent card. This iframe's resolution is the correct one; the shell
-    // ignores the message unless it's the card frame. See shell.ts onMessage.
-    try { window.parent?.postMessage({ __mlSidebarCardTheme: t }, "*"); } catch { /* not framed */ }
+    // ignores the message unless it's the card frame. See shell.ts fromApp. Over the host channel: a plain
+    // `window.parent.postMessage` on a web page reaches the page, and hands it this frame's window as the
+    // message's source, the one handle on the card's iframe the closed shadow roots leave (attack 17).
+    toHost({ __mlSidebarCardTheme: t });
 };
 themeMedia.addEventListener("change", applyTheme);
 

@@ -459,9 +459,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // discovery half of the sealed-shadow reach (describeElement inside a host the JS path can't enter).
         // Gated on the off-by-default `cdp` flag (the debugger banner is the visible signal); a page targets
         // only its OWN tab. NOT senderTrust-gated: it only READS same-document, same-origin content the page's
-        // own server authored (no cross-origin gain), and its output (describe lines + coordinates) is not
-        // actionable on its own — CDP_CLICK stays untrusted-refused, and a synthetic click on a sealed host
-        // can't reach the inner control. The privileged CLICK still flows through the trusted envelope path.
+        // own server authored (no cross-origin gain; the shell's own closed roots are skipped, sw-cdp.ts), and
+        // its output (describe lines + coordinates) is not actionable on its own — CDP_CLICK stays
+        // untrusted-refused, and a synthetic click on a sealed host can't reach the inner control. The privileged CLICK still flows through the trusted envelope path.
         (async () => {
             const cfg = await getConfig();
             if (!cfg.cdp) { sendResponse({ error: "Debugger-based actions (CDP) are off — enable them in window.ml Settings → Advanced to reach sealed shadow roots." }); return; }

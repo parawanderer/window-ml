@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -59,7 +59,8 @@ async function setup(ext, site) {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(site.url);
     await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
-    await page.evaluate(() => document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-tab").click());
+    await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
+    await inShell(page, (roots) => roots.sidebar.getElementById("ml-sb-tab").click());
     await page.waitForTimeout(400);
     await page.bringToFront();
     const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, site.url);
@@ -79,11 +80,12 @@ async function withShell(fn) {
     try { await fn(await setup(ext, site), ext, site); } finally { await ext.close(); await site.close(); }
 }
 
-/** Put `text` in a stylesheet inside our open shadow root, as a page can. */
-const shadowCss = (page, text) => page.evaluate((t) => { const st = document.createElement("style"); st.textContent = t; document.getElementById("ml-sb-root").shadowRoot.append(st); }, text);
-/** Set `decls` as `!important` inline styles on the element `id` inside our open shadow root, as a page can. */
-const inlineCss = (page, id, decls) => page.evaluate(({ id, decls }) => {
-    const e = document.getElementById("ml-sb-root").shadowRoot.getElementById(id) ?? document.getElementById("ml-sb-root").shadowRoot.querySelector(`#${id}`);
+/** Put `text` in a stylesheet inside our shadow root, from the shell's own world (the page no longer can: attack 17). */
+const shadowCss = (page, text) => inShell(page, (roots, t) => { const st = document.createElement("style"); st.textContent = t; roots.sidebar.append(st); }, text);
+/** Set `decls` as `!important` inline styles on the element `id` inside our shadow root, from the shell's own world
+ *  (the page no longer can: attack 17). */
+const inlineCss = (page, id, decls) => inShell(page, (roots, { id, decls }) => {
+    const e = roots.sidebar.getElementById(id) ?? roots.sidebar.querySelector(`#${id}`);
     for (const [k, v] of Object.entries(decls)) e.style.setProperty(k, v, "important");
 }, { id, decls });
 
@@ -124,8 +126,8 @@ for (const [what, rule] of [
 // Inline on our elements (a stylesheet of the page's in our root is refused outright, below), so what is tested is the
 // measurement: getBoundingClientRect follows each of these.
 for (const [what, id, decls] of [
-    ["the individual transform properties on our panel (through the open shadow root)", "ml-sb-host", { scale: "1.2", translate: "-300px 20px", rotate: "5deg" }],
-    ["zoom on our panel (through the open shadow root)", "ml-sb-host", { zoom: "1.3" }],
+    ["the individual transform properties on our panel (set from inside our root)", "ml-sb-host", { scale: "1.2", translate: "-300px 20px", rotate: "5deg" }],
+    ["zoom on our panel (set from inside our root)", "ml-sb-host", { zoom: "1.3" }],
     ["content-visibility: hidden on our panel's body", "ml-sb-body", { "content-visibility": "hidden" }],
 ]) {
     test(`${what}: the extension's pixels stay inside the mask`, async () => {
@@ -170,9 +172,36 @@ for (const side of ["left", "right"]) {
     });
 }
 
-// A `:host` rule in a stylesheet inside our open root is the one page rule that beats the host's inline `!important`
-// (for `!important`, the inner context wins), so the host checks stay: it is refused, for the stylesheet and for the paint.
-test("a :host reflection rule the page puts in a stylesheet inside our root (it beats the host's inline !important): the shot is refused", async () => {
+// Attack 17 (tests/e2e/site-access.spec.mjs): our roots are CLOSED, so the page cannot put that `:host` rule inside one.
+// It tries every way in a script has: the host's `shadowRoot` (a stylesheet, an adopted sheet, our own sheet through the
+// CSSOM) and a second root on the host. Nothing moves the host, and the shot is clean rather than refused.
+test("a :host rule the page tries to put inside our root does not get in: the host does not move and the shot is clean", async () => {
+    await withShell(async (s) => {
+        const before = await s.page.evaluate(() => { const r = document.getElementById("ml-sb-root").getBoundingClientRect(); return { x: r.x, y: r.y }; });
+        const tried = await s.page.evaluate(() => {
+            const host = document.getElementById("ml-sb-root");
+            const rule = ":host{-webkit-box-reflect:left 0px !important;translate:-300px 0 !important;display:block !important}";
+            const got = [];
+            try { const st = document.createElement("style"); st.textContent = rule; host.shadowRoot.append(st); got.push("style"); } catch { /* no root in reach */ }
+            try { const sh = new CSSStyleSheet(); sh.replaceSync(rule); host.shadowRoot.adoptedStyleSheets = [sh]; got.push("adopted"); } catch { /* no root in reach */ }
+            try { host.shadowRoot.querySelector("style").sheet.insertRule(rule, 0); got.push("cssom"); } catch { /* no root in reach */ }
+            try { host.attachShadow({ mode: "open" }).innerHTML = `<style>${rule}</style>`; got.push("second root"); } catch { /* it has its root */ }
+            return got;
+        });
+        expect(tried, "a way into our root").toEqual([]);
+        await s.page.waitForTimeout(150);
+        expect(await s.page.evaluate(() => getComputedStyle(document.getElementById("ml-sb-root")).webkitBoxReflect)).toBe("none");
+        expect(await s.page.evaluate(() => { const r = document.getElementById("ml-sb-root").getBoundingClientRect(); return { x: r.x, y: r.y }; })).toEqual(before);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
+// A `:host` rule in a stylesheet inside our root is the one rule that beats the host's inline `!important` (for
+// `!important`, the inner context wins). The page can no longer put one there (attack 17); the check stays as a second
+// line, so the shell's world puts it there: it is refused, for the stylesheet and for the paint.
+test("a :host reflection rule in a stylesheet inside our root (the page can no longer put one there: attack 17; it beats the host's inline !important): the shot is refused", async () => {
     await withShell(async (s) => {
         await shadowCss(s.page, ":host{-webkit-box-reflect:left 0px !important;translate:-300px 0 !important;display:block !important}");
         await s.page.waitForTimeout(150);
@@ -181,9 +210,9 @@ test("a :host reflection rule the page puts in a stylesheet inside our root (it 
     });
 });
 
-// The panel inside the shadow root is the page's to style too (the root is open), and there a filter or a reflection
-// paints copies of it past its box. Our own styles use neither, so the shell reports either as `tampered`, whether a
-// stylesheet the page put in our root (refused for being one) or an inline style on our element sets it.
+// The panel inside the shadow root is no longer the page's to style (the root is closed); styled from inside the root,
+// a filter or a reflection paints copies of it past its box. Our own styles use neither, so the shell reports either as
+// `tampered`, whether a stylesheet put in our root (refused for being one) or an inline style on our element sets it.
 for (const [what, decls] of [
     ["-webkit-box-reflect on our panel (a mirrored copy of the sidebar to its left)", { "-webkit-box-reflect": "left 0px" }],
     ["filter: blur(100px) on our panel (the sidebar smeared far past its box)", { filter: "blur(100px)" }],
@@ -205,17 +234,17 @@ for (const [what, decls] of [
     }
 }
 
-test("a rule the page edits into our own stylesheet through the CSSOM (no DOM mutation, no new stylesheet) is refused", async () => {
+test("a rule edited into our own stylesheet through the CSSOM from inside our root (the page can no longer reach it: attack 17; no DOM mutation, no new stylesheet) is refused", async () => {
     await withShell(async (s) => {
-        await s.page.evaluate(() => { const st = document.getElementById("ml-sb-root").shadowRoot.querySelector("style"); st.sheet.insertRule("#ml-sb-host{translate:-600px 0 !important}", st.sheet.cssRules.length); });
+        await inShell(s.page, (roots) => { const st = roots.sidebar.querySelector("style"); st.sheet.insertRule("#ml-sb-host{translate:-600px 0 !important}", st.sheet.cssRules.length); });
         await s.page.waitForTimeout(150);
         expect((await s.shoot()).error).toBe(TAMPERED);
     });
 });
 
-test("our panel carried by the page out of our shadow root into its own document is refused (nothing measures it there)", async () => {
+test("our panel carried out of our shadow root into the page's document by something in our root (the page can no longer reach it: attack 17) is refused (nothing measures it there)", async () => {
     await withShell(async (s) => {
-        await s.page.evaluate(() => { const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host"); const d = document.createElement("div"); document.body.append(d); d.append(p); });
+        await inShell(s.page, (roots) => { const p = roots.sidebar.getElementById("ml-sb-host"); const d = document.createElement("div"); document.body.append(d); d.append(p); });
         await s.page.waitForTimeout(800);
         expect((await s.shoot()).error).toBe(TAMPERED);
     });
@@ -466,7 +495,7 @@ test("a page reopening its modal in a loop gets a bounded number of re-raises, a
 
 // --- the skip rule: an element whose own style paints nothing is left out, and nothing that paints is ---
 
-test("the skip rule: a page hiding our panel (visibility, opacity 0) through the open shadow root while its frame stays visible leaves no frame pixels unmasked", async () => {
+test("the skip rule: our panel hidden (visibility, opacity 0) from inside our root while its frame stays visible leaves no frame pixels unmasked", async () => {
     await withShell(async (s) => {
         await inlineCss(s.page, "ml-sb-host", { visibility: "hidden" });
         await inlineCss(s.page, "ml-sb-frame", { visibility: "visible" });
@@ -512,10 +541,10 @@ test("the approval highlight's pulse (a box-shadow animating out to 13 px) stays
     });
 });
 
-// The page can set the highlight's outline-offset through the open shadow root: inline, the band follows the outline
-// out (or in) to wherever it is drawn; as a stylesheet in our root, the shot is refused.
+// The highlight's outline-offset set from inside our root (the page can no longer reach it): inline, the band follows
+// the outline out (or in) to wherever it is drawn; as a stylesheet in our root, the shot is refused.
 for (const offset of ["40px", "-30px"]) {
-    test(`a page-set outline-offset of ${offset} on the highlight (an inline style through the open shadow root) stays inside the highlight's band`, async () => {
+    test(`an outline-offset of ${offset} on the highlight (an inline style set from inside our root) stays inside the highlight's band`, async () => {
         await withShell(async (s, ext) => {
             await highlight(ext, s.tabId);
             await s.page.waitForTimeout(300);
@@ -530,7 +559,7 @@ for (const offset of ["40px", "-30px"]) {
     });
 }
 
-test("a page-set outline-offset on the highlight by a stylesheet in our root refuses the shot", async () => {
+test("an outline-offset on the highlight by a stylesheet in our root (the page can no longer put one there: attack 17) refuses the shot", async () => {
     await withShell(async (s, ext) => {
         await highlight(ext, s.tabId);
         await shadowCss(s.page, "#ml-highlight{outline-offset:40px !important}");
@@ -539,7 +568,7 @@ test("a page-set outline-offset on the highlight by a stylesheet in our root ref
     });
 });
 
-// --- our host moved by the page ---
+// --- our host moved by the page (and our panel moved from inside our root, which the page can no longer reach) ---
 
 // A host the page adopted into one of its own frames has rects in that frame's viewport, not the top one (the mask would
 // land 300,200 px off the UI): a host off the root element the shell mounted it on is refused.
@@ -563,15 +592,16 @@ test("our host moved by the page into a same-origin iframe it placed at (300,200
 // page makes to our hosts and roots (a MutationObserver runs before the next paint, so a write undone before the next
 // frame is still seen). The mask is every place it was seen: a panel cycling across most of the page is refused with a
 // sentence saying it moved, and a smaller cycle is masked everywhere it went.
-/** Move our panel by the page every frame through `xs` (px), as an inline translate. */
-const cycle = (page, xs) => page.evaluate((xs) => {
-    const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+/** Move our panel every frame through `xs` (px), as an inline translate, from inside our root (the page no longer
+ *  can). */
+const cycle = (page, xs) => inShell(page, (roots, xs) => {
+    const p = roots.sidebar.getElementById("ml-sb-host");
     let i = 0;
     const tick = () => { p.style.setProperty("translate", `${xs[i++ % xs.length]}px 0`, "important"); requestAnimationFrame(tick); };
     tick();
 }, xs);
 
-test("our panel moved by the page every frame across most of the page (0, -300, -600 px) is never left unmasked: each shot is refused as moving, or masked where it went", async () => {
+test("our panel moved from inside our root (the page can no longer reach it: attack 17) every frame across most of the page (0, -300, -600 px) is never left unmasked: each shot is refused as moving, or masked where it went", async () => {
     await withShell(async (s) => {
         await cycle(s.page, [0, -300, -600]);
         expect(await offGreen(s.page, (await s.bare()).dataUrl), "the panel paints").toBeGreaterThan(500);
@@ -587,7 +617,7 @@ test("our panel moved by the page every frame across most of the page (0, -300, 
     });
 });
 
-test("our panel moved by the page every frame within a bound (0, -40, -80 px) is masked at every place it went, and the shots are taken", async () => {
+test("our panel moved from inside our root (the page can no longer reach it: attack 17) every frame within a bound (0, -40, -80 px) is masked at every place it went, and the shots are taken", async () => {
     await withShell(async (s) => {
         await cycle(s.page, [0, -40, -80]);
         let leaked = 0, taken = 0;
@@ -602,10 +632,10 @@ test("our panel moved by the page every frame within a bound (0, -40, -80 px) is
     });
 });
 
-test("our panel moved by the page after every frame read and put back before the next (a move no once-per-frame read sees) is still masked where it was painted", async () => {
+test("our panel moved from inside our root (the page can no longer reach it: attack 17) after every frame read and put back before the next (a move no once-per-frame read sees) is still masked where it was painted", async () => {
     await withShell(async (s) => {
-        await s.page.evaluate(() => {
-            const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+        await inShell(s.page, (roots) => {
+            const p = roots.sidebar.getElementById("ml-sb-host");
             // A ResizeObserver callback runs after every frame callback and layout, just before the paint: the panel is
             // painted at -80 px, and a task puts it back before the next frame's callbacks run.
             const probe = document.createElement("div");
@@ -656,8 +686,8 @@ const paintBox = (page, dataUrl) => page.evaluate(async (src) => {
     }
     return x1 < 0 ? null : { left: x0 / s, top: y0 / s, width: (x1 + 1 - x0) / s, height: (y1 + 1 - y0) / s };
 }, dataUrl);
-/** The sidebar panel's viewport rect inside our open shadow root. */
-const panelRect = (page) => page.evaluate(() => { const r = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+/** The sidebar panel's viewport rect inside our shadow root. */
+const panelRect = (page) => inShell(page, (roots) => { const r = roots.sidebar.getElementById("ml-sb-host").getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
 
 // The page's rule targets our host by id. The host is an inline box, which ignores a transform, so most rules also set
 // `display:block`. Each one moved, copied, refused or hid the UI on 771cb650.
@@ -731,15 +761,15 @@ test("the page's own hide handshake still hides our pinned host, and its show br
 // rule, so the test shows the edit really applied in the frames it painted: the decoy moved, our panel did not.
 /** Start the timed edit: `#ml-sb-root, #decoy {display:block !important;translate:-600px 0 !important}` (an inline
  *  host ignores a translate, hence the display) applied at `when` and deleted after it. */
-const timedEdit = (page, when) => page.evaluate((when) => {
+const timedEdit = (page, when) => inShell(page, (roots, when) => {
     const st = document.createElement("style");
     document.head.append(st);
     const decoy = document.createElement("div");
     decoy.id = "decoy";
     decoy.style.cssText = "position:fixed;left:900px;top:10px;width:10px;height:10px";
     document.body.append(decoy);
-    const panel = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
-    const stats = (window.__atk = { applied: 0, decoyMoved: 0, panelMoved: 0, panelX: panel.getBoundingClientRect().x });
+    const panel = roots.sidebar.getElementById("ml-sb-host");
+    const stats = (globalThis.__atk = { applied: 0, decoyMoved: 0, panelMoved: 0, panelX: panel.getBoundingClientRect().x });
     const apply = () => {
         if (st.sheet.cssRules.length) return;
         st.sheet.insertRule("#ml-sb-root, #decoy {display:block !important;translate:-600px 0 !important}", 0);
@@ -780,7 +810,7 @@ for (const when of ["raf", "resize-observer"]) {
                 taken++;
                 leaked = Math.max(leaked, await offGreen(s.page, shot.dataUrl));
             }
-            const stats = await s.page.evaluate(() => window.__atk);
+            const stats = await inShell(s.page, () => globalThis.__atk);
             expect(stats.applied, "the edit ran").toBeGreaterThan(10);
             expect(stats.decoyMoved, "the rule applied: the decoy it also matches moved").toBe(stats.applied);
             expect(stats.panelMoved, "our panel never moved").toBe(0);
@@ -847,7 +877,7 @@ test("a page that holds its main thread past the shell's bound gets a refusal th
     });
 });
 
-// `zoom:4` on our panel through the open shadow root (a page stylesheet's zoom on the host no longer applies): the
+// `zoom:4` on our panel from inside our root (a page stylesheet's zoom on the host no longer applies): the
 // refusal names the page's styles, not a sidebar the person never widened.
 test("a page that enlarges our sidebar past the refusal share gets a refusal that does not tell the person to narrow a sidebar they never widened", async () => {
     await withShell(async (s) => {
@@ -961,7 +991,7 @@ test("after a back navigation the worker's shot of the tab is still leak-free, w
 // rule paints nothing outside the host in this engine, even with `overflow:visible` forced on the tab and the panel.
 // The case therefore HOLDS today and stays a test: if text-shadow ever starts painting there, the shot must not go
 // out under-covered. (The panel's body is an iframe and text does not inherit across it, hence the tab, whose
-// "ml · debug" is real text in our open shadow root.)
+// "ml · debug" is real text in our shadow root.)
 test("text-shadow 500 px off our shadow-root tab paints nothing outside the host, and the shot stays leak-free", async () => {
     await withShell(async (s) => {
         await shadowCss(s.page, "#ml-sb-tab{text-shadow:-500px 0 0 #ff00ff,-500px 0 25px #ff00ff !important}");
@@ -973,7 +1003,7 @@ test("text-shadow 500 px off our shadow-root tab paints nothing outside the host
 });
 
 // A `filter: url(#...)` SVG reference has no px lengths, and feOffset MOVES the panel 200 px left at paint time, where
-// getBoundingClientRect (what the shell measures) does not follow. The svg goes into our open shadow root, so the
+// getBoundingClientRect (what the shell measures) does not follow. The svg goes into our shadow root, so the
 // paint-server reference resolves in-tree; the filter region is widened (default objectBoundingBox would clip the shifted
 // copy). The panel itself is the filtered box: a filter on the OUTER host would also make it the containing block of the
 // fixed panel and relayout it (measured 2026-10-09). STRIP excludes the sidebar's honest area: the control counts only
@@ -984,8 +1014,8 @@ const STRIP = { left: 760, top: 0, width: 520, height: 720 };
 for (const how of ["a stylesheet in our root", "an inline style on our panel"]) {
     test(`an SVG feOffset filter on our panel moves the UI 200 px left of every rect: the shot is refused, not under-covered (${how})`, async () => {
         await withShell(async (s) => {
-            await s.page.evaluate((inline) => {
-                const root = document.getElementById("ml-sb-root").shadowRoot;
+            await inShell(s.page, (roots, inline) => {
+                const root = roots.sidebar;
                 const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
                 svg.setAttribute("width", "0"); svg.setAttribute("height", "0");
                 svg.innerHTML = `<filter id="ml-shift" x="-100%" y="-10%" width="300%" height="120%"><feOffset in="SourceGraphic" dx="-200" dy="0"/></filter>`;

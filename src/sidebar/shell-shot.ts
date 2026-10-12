@@ -16,8 +16,8 @@ import { onTopLayer } from "./shell-top-layer";
  * between two of the watch's reads and deleted before the next (a change no read sees and no MutationObserver reports).
  * `all` rather than a list: the hosts need no property off its initial value, and a property CSS adds later is covered
  * without anyone remembering it. It leaves out `direction`, `unicode-bidi` and custom properties, none of which moves
- * the UI. A stylesheet INSIDE our open root (a `:host` rule) still wins over it (an inner context's `!important` beats
- * the outer one's), which is why the watch keeps refusing one as tampered.
+ * the UI. A stylesheet INSIDE our root (a `:host` rule) would still win over it (an inner context's `!important` beats
+ * the outer one's); the roots are CLOSED so the page cannot put one there, and the watch still refuses one as tampered.
  */
 export const HOST_STYLE = "all: initial !important;";
 
@@ -101,8 +101,8 @@ export interface ShotRects { vw: number; vh: number; rects: ShotRect[]; tampered
 export interface ShotHost {
     host: Element | null;
     kind: ShotRectKind;
-    /** The root the shell attached (the host's `shadowRoot` when omitted). */
-    root?: ShadowRoot | null;
+    /** The root the shell attached. It is CLOSED, so the host's `shadowRoot` is null: only the shell's own reference. */
+    root: ShadowRoot | null;
     /** The shell's own <style> in that root: any other stylesheet there is the page's. */
     style?: Element | null;
     /** {@link sheetText} of `style` at mount: a rule the page edited or inserted since differs. */
@@ -161,8 +161,8 @@ const set = (v: string): boolean => !!v && v !== "none" && v !== "normal";
  * page element, so it is reported as four strips round its edge (its label as a box), not as the element it outlines,
  * which masking would blank.
  *
- * The page shares the DOM with these roots (they are open, and the hosts sit in its document), so before any rect is
- * trusted the answer checks the page has not put its own paint into them: a host moved out of where the shell mounted
+ * The hosts sit in the page's document (their roots are closed, but the host, its ancestors and the top layer are the
+ * page's to act on), so before any rect is trusted the answer checks the page has not put its own paint into them: a host moved out of where the shell mounted
  * it (into a frame of the page's, say: its rects would be in that frame's viewport), an element the shell made carried
  * out of its root, a stylesheet in a root that is not the shell's or a rule of the shell's that changed, and a reflection,
  * a filter or a text shadow on the UI (the shell's own styles use none: each paints copies of the UI where no box says).
@@ -195,7 +195,7 @@ export function extensionRects(roots: ShotRoots): ShotRects {
     for (const entry of roots.hosts) {
         const { host, kind } = entry;
         if (!host?.isConnected) continue;
-        const root = entry.root ?? host.shadowRoot;
+        const root = entry.root;
         if (!root) continue;
         roots_.push(root);
         // Mounted on the document's root element and nowhere else: a host the page moved (into one of its frames, its
@@ -387,7 +387,7 @@ export function beginWatch(id: string, roots: () => ShotRoots, maxMs = SHOT_WATC
         if (document.documentElement) mo.observe(document.documentElement, { attributes: true, childList: true });
         for (const h of r.hosts) {
             if (h.host) mo.observe(h.host, { attributes: true });
-            const root = h.root ?? h.host?.shadowRoot;
+            const root = h.root;
             if (root) mo.observe(root, opts);
         }
     }

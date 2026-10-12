@@ -6,7 +6,7 @@
 //   3. scrolled to the MIDDLE → new output does NOT snap you back down;
 //   4. scrolled back to the bottom → following resumes.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -59,9 +59,9 @@ test("output cell: tail-follows at the bottom, holds still when scrolled up", as
         }
 
         // Open the overlay and expand the running step so its live Out (the output cell) is on screen.
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
@@ -188,9 +188,9 @@ test("output cell: the Out content does not shift when streaming stops", async (
             if (n) break;
             await sleep(150);
         }
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
@@ -264,9 +264,9 @@ test("output cell (real layout): cap clips, grip drags to resize, matches actual
             if (n) break;
             await sleep(150);
         }
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
@@ -376,9 +376,9 @@ test("output cell (real layout): the find scrolls SIDEWAYS to a match past the f
             if (n) break;
             await sleep(150);
         }
-        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 20000 });
-        await page.evaluate(() => {
-            const root = document.getElementById("ml-sb-root").shadowRoot;
+        await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-host"), undefined, { timeout: 20000 });
+        await inShell(page, (roots) => {
+            const root = roots.sidebar;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
