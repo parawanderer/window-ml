@@ -7,6 +7,8 @@
 // the page can see (when each shot happens), override (a stylesheet beats an inline style) or outwait (it holds the
 // ack); a read of rects is none of those.
 
+import { onTopLayer } from "./shell-top-layer";
+
 /**
  * The inline style of every shadow host the shell mounts. An inline `!important` declaration beats every author
  * stylesheet `!important` rule, layered or not, as well as animations and transitions, so no rule of the page's moves,
@@ -105,6 +107,8 @@ export interface ShotHost {
     style?: Element | null;
     /** {@link sheetText} of `style` at mount: a rule the page edited or inserted since differs. */
     sheet?: string;
+    /** The shell put this host in the top layer (shell-top-layer.ts): out of it now, the page took it out. */
+    topLayer?: boolean;
 }
 
 /** Where the extension's UI lives on the page, as the shell holds it at the moment of asking. */
@@ -120,6 +124,9 @@ export interface ShotRoots {
     highlightId: string;
     /** The extension's own URL prefix (`chrome-extension://<id>/`): a page may embed one of its frames itself. */
     extensionOrigin: string;
+    /** The top-layer keeper's count of hosts found out of the top layer past a task (shell-top-layer.ts `strays`): a
+     *  watch over which it moved refuses the shot, since a host out for one frame between two reads is in neither. */
+    topLayerStrays?: number;
 }
 
 /** The most rects one answer carries; past it, each kind's rects are merged into their bounding box. */
@@ -194,6 +201,9 @@ export function extensionRects(roots: ShotRoots): ShotRects {
         // Mounted on the document's root element and nowhere else: a host the page moved (into one of its frames, its
         // own shadow root, or any element whose effects would apply to ours) paints where these rects do not say.
         if (docEl && host.parentNode !== docEl) tampered = true;
+        // Out of the top layer the shell put it in, and not put back within the budget: the page is acting on our UI.
+        // The rects would still be right (they follow the host wherever it stacks); the refusal is for the acting.
+        if (entry.topLayer && !onTopLayer(host)) tampered = true;
         const hcs = styleOf(host);
         if (foreignPaint(hcs)) tampered = true;
         if (pageSized(hcs) || set(prop(hcs, "transform")) || set(prop(hcs, "perspective"))) restyled = true;
@@ -320,6 +330,8 @@ interface ShotWatch {
     first: string;
     vw: number; vh: number;
     tampered: boolean; restyled: boolean; moved: boolean; broken: boolean;
+    /** The keeper's stray count at the begin. */
+    strays: number | undefined;
     stop(): void;
 }
 
@@ -352,8 +364,9 @@ const unionOf = (w: ShotWatch): ShotRect[] => { const all = [...w.union.values()
  */
 export function beginWatch(id: string, roots: () => ShotRoots, maxMs = SHOT_WATCH_MS): ShotRects {
     watches.get(id)?.stop();
-    const firstRead = extensionRects(roots());
-    const w: ShotWatch = { union: new Map(), first: JSON.stringify(firstRead.rects), vw: firstRead.vw, vh: firstRead.vh, tampered: false, restyled: false, moved: false, broken: false, stop: () => {} };
+    const firstRoots = roots();
+    const firstRead = extensionRects(firstRoots);
+    const w: ShotWatch = { union: new Map(), first: JSON.stringify(firstRead.rects), vw: firstRead.vw, vh: firstRead.vh, tampered: false, restyled: false, moved: false, broken: false, strays: firstRoots.topLayerStrays, stop: () => {} };
     const take = (r: ShotRects): void => {
         if (r.tampered) w.tampered = true;
         if (r.restyled) w.restyled = true;
@@ -397,7 +410,8 @@ export function endWatch(id: string, roots: () => ShotRoots): ShotRects {
     if (!w) return extensionRects(roots());
     watches.delete(id);
     let last: ShotRects | null = null;
-    try { last = extensionRects(roots()); } catch { w.broken = true; }
+    // The keeper's count only grows, so comparing the end with the begin covers every frame between.
+    try { const at = roots(); last = extensionRects(at); if (at.topLayerStrays !== w.strays) w.tampered = true; } catch { w.broken = true; }
     w.stop();
     if (last) {
         if (last.vw !== w.vw || last.vh !== w.vh) w.broken = true;

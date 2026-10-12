@@ -21,6 +21,7 @@ import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
 import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
+import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -669,6 +670,9 @@ let hlSeq = 0;   // monotonic — a later hover/clear invalidates a still-pendin
 // hover can still outline the page. Torn down with everything else in teardown().
 let hlHost: HTMLElement | null = null;
 let hlRoot: ShadowRoot | null = null;
+/** The shell's hosts in the browser's top layer, lowest first, raised again after the page puts something of its own
+ *  there and restored after it takes one out, within a budget (shell-top-layer.ts). */
+const topLayer = topLayerKeeper(() => [hlHost, shellHost, cardHost], browserTopLayerDoc(), browserClock);   // state: ui — which hosts are in the top layer, dropped with them
 /** Each host's own stylesheet and its rules at mount, so a shot can tell the page's edits to them (shell-shot.ts). */
 const ownSheets = new Map<ShadowRoot, { style: Element; sheet: string }>();   // state: ui — the shell's own stylesheets, dropped with their hosts
 function hlContainer(): ShadowRoot {
@@ -683,6 +687,7 @@ function hlContainer(): ShadowRoot {
     hlRoot.append(style);
     (document.documentElement || document.body).append(hlHost);
     ownSheets.set(hlRoot, { style, sheet: sheetText(style) });
+    topLayer.promote(hlHost);
     return hlRoot;
 }
 let hlKind: "" | "approve" = "";   // "approve" → the pulsing-green variant + report the on-page position
@@ -764,9 +769,10 @@ let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 /** Where the shell's UI is mounted now, for the worker's mask (shell-shot.ts `extensionRects`). */
 const shotRoots = (): ShotRoots => ({
     hosts: ([[shellHost, shadowRoot, "sidebar"], [cardHost, cardRoot, "card"], [hlHost, hlRoot, "highlight"]] as const).map(([host, root, kind]) =>
-        ({ host, kind, root, style: root ? ownSheets.get(root)?.style ?? null : null, sheet: root ? ownSheets.get(root)?.sheet ?? "" : "" })),
+        ({ host, kind, root, style: root ? ownSheets.get(root)?.style ?? null : null, sheet: root ? ownSheets.get(root)?.sheet ?? "" : "", topLayer: topLayer.manages(host) })),
     owned: [panel, frame, cardWrap, lightbox, highlightEl],
     lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: chrome.runtime.getURL(""),
+    topLayerStrays: topLayer.strays(),
 });
 
 /** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
@@ -1282,6 +1288,7 @@ function mountOverlay(): void {
     root.append(panel);
     (document.documentElement || document.body).append(shellHost);
     ownSheets.set(root, { style, sheet: sheetText(style) });
+    topLayer.promote(shellHost);
 
     chrome.storage.local.get({ [WIDTH_KEY]: DEFAULT_W }, (d: any) => setWidth(d[WIDTH_KEY] || DEFAULT_W));
 }
@@ -1330,11 +1337,13 @@ function mountCard(): void {
     root.append(cardWrap);
     (document.documentElement || document.body).append(cardHost);
     ownSheets.set(root, { style, sheet: sheetText(style) });
+    topLayer.promote(cardHost);
     layoutCard();   // position the (hidden) card at its corner up front, so the first reveal FLIES from there
 }
 function unmountCard(): void {
     if (!cardHost) return;
     hideCornerMenu();
+    topLayer.release(cardHost);
     cardHost.remove();
     closeHostPort();
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
@@ -1394,8 +1403,8 @@ function teardown(): void {
     hideHighlight();
     if (hlRoot) ownSheets.delete(hlRoot);
     if (shadowRoot) ownSheets.delete(shadowRoot);
-    if (hlHost) { hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
-    if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; closeHostPort(); }
+    if (hlHost) { topLayer.release(hlHost); hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
+    if (shellHost) { topLayer.release(shellHost); shellHost.remove(); shellHost = panel = frame = shadowRoot = null; closeHostPort(); }
     unmountCard();
     window.removeEventListener("message", onWindowMessage);
     window.removeEventListener("keydown", relayChartKey, true);

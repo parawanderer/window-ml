@@ -233,6 +233,237 @@ test("our host put in the top layer by the page (popover) is still masked where 
     });
 });
 
+// Our hosts are `popover="manual"` and shown (src/sidebar/shell-top-layer.ts), so the page's z-index cannot cover them;
+// what the page puts in the top layer after them (a modal dialog, an element in fullscreen) is answered by raising ours
+// again, and what it does to our popover itself (hidePopover, the attribute removed or changed) by putting it back.
+// Every re-raise and restore comes out of one bounded budget. Each cover here is the page's own green, so a bare capture
+// that still shows the UI where it was shows it is on top, and the worker's shot must still hold none of it.
+/** Whether our host is in the top layer now. */
+const hostOnTop = (page) => page.evaluate(() => { const h = document.getElementById("ml-sb-root"); return h.getAttribute("popover") === "manual" && h.matches(":popover-open"); });
+/** Count our host's own shows (`beforetoggle` to open, which fires once per showPopover, uncoalesced) from now on. */
+const countShows = (page) => page.evaluate(() => { window.__shows = 0; document.getElementById("ml-sb-root").addEventListener("beforetoggle", (e) => { if (e.newState === "open") window.__shows++; }); });
+/** A page element covering the whole viewport in the page's own green, at the highest z-index there is. */
+const GREEN_COVER = "position:fixed;inset:0;z-index:2147483647;background:#00ff00";
+
+test("a page element at the highest z-index over the whole viewport does not cover our sidebar: it paints where it did, takes the clicks there, and the shot is clean", async () => {
+    await withShell(async (s) => {
+        const before = await paintBox(s.page, (await s.bare()).dataUrl);
+        const plain = await offGreen(s.page, (await s.bare()).dataUrl);
+        expect(before, "the UI paints").not.toBeNull();
+        await s.page.evaluate((css) => { const d = document.createElement("div"); d.id = "cover"; d.style.cssText = css; document.body.append(d); }, GREEN_COVER);
+        await s.page.waitForTimeout(150);
+        expect(await hostOnTop(s.page), "our host is in the top layer").toBe(true);
+        const r = await panelRect(s.page);
+        expect(await s.page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, { x: r.x + r.w / 2, y: r.y + r.h / 2 }), "a click on the panel reaches our host, not the cover").toBe("ml-sb-root");
+        const bare = (await s.bare()).dataUrl;
+        expect(await paintBox(s.page, bare), "the UI paints in the same box, over the cover").toEqual(before);
+        expect(Math.abs(await offGreen(s.page, bare) - plain), "the same pixels paint").toBeLessThan(plain * 0.02);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
+test("a page's modal dialog over the whole viewport, opened after our hosts, is answered by raising ours over it again, and the shot is clean", async () => {
+    await withShell(async (s) => {
+        const before = await paintBox(s.page, (await s.bare()).dataUrl);
+        const plain = await offGreen(s.page, (await s.bare()).dataUrl);
+        await s.page.evaluate(() => {
+            const st = document.createElement("style");
+            st.textContent = "#dlg{position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;outline:none;background:#00ff00}#dlg::backdrop{background:#00ff00}";
+            document.head.append(st);
+            const d = document.createElement("dialog");
+            d.id = "dlg";
+            document.body.append(d);
+            d.showModal();
+        });
+        await s.page.waitForTimeout(300);
+        expect(await s.page.evaluate(() => document.getElementById("dlg").matches(":modal")), "the dialog is modal").toBe(true);
+        const bare = (await s.bare()).dataUrl;
+        expect(await paintBox(s.page, bare), "the UI paints in the same box, over the dialog").toEqual(before);
+        expect(Math.abs(await offGreen(s.page, bare) - plain), "the same pixels paint").toBeLessThan(plain * 0.02);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
+test("a page element taken to fullscreen after our hosts is answered by raising ours over it again, and the shot is clean", async () => {
+    await withShell(async (s) => {
+        const plain = await offGreen(s.page, (await s.bare()).dataUrl);
+        await s.page.evaluate(() => {
+            const b = document.createElement("button");
+            b.id = "fsgo";
+            b.style.cssText = "position:fixed;left:10px;top:10px;width:40px;height:20px;background:#00ff00;border:0";
+            const f = document.createElement("div");
+            f.id = "fs";
+            f.style.cssText = "background:#00ff00;width:10px;height:10px";
+            b.onclick = () => f.requestFullscreen();
+            document.body.append(b, f);
+        });
+        await s.page.click("#fsgo");
+        await s.page.waitForFunction(() => document.fullscreenElement?.id === "fs", null, { timeout: 5000 });
+        await s.page.waitForTimeout(400);
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the UI paints over the fullscreen element").toBeGreaterThan(plain * 0.5);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+        await s.page.evaluate(() => document.exitFullscreen());
+    });
+});
+
+for (const how of ["hidePopover()", "the popover attribute removed", "the popover attribute set to auto"]) {
+    test(`the page taking our host out of the top layer (${how}) is undone: it is back on top of a highest-z-index cover, and the shot is clean`, async () => {
+        await withShell(async (s) => {
+            const before = await paintBox(s.page, (await s.bare()).dataUrl);
+            await s.page.evaluate((css) => { const d = document.createElement("div"); d.style.cssText = css; document.body.append(d); }, GREEN_COVER);
+            await s.page.evaluate((how) => {
+                const h = document.getElementById("ml-sb-root");
+                if (how === "hidePopover()") h.hidePopover();
+                else if (how === "the popover attribute removed") h.removeAttribute("popover");
+                else h.setAttribute("popover", "auto");
+            }, how);
+            await s.page.waitForTimeout(300);
+            expect(await hostOnTop(s.page), "back in the top layer, as manual").toBe(true);
+            expect(await paintBox(s.page, (await s.bare()).dataUrl), "the UI paints in the same box, over the cover").toEqual(before);
+            const shot = await s.shoot();
+            expect(shot.error).toBeUndefined();
+            expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+        });
+    });
+}
+
+// A page that answers every restore with another hidePopover (or cancels our show in `beforetoggle`) would turn an
+// unbounded restore into a loop. The restores come out of the budget; past it the host stays out, and a shot taken
+// with our host out of the top layer is refused as tampered: the page is acting on our UI and won.
+test("a page hiding our host in a loop gets a bounded number of restores, and the shot is refused as tampered", async () => {
+    const { RAISE_BURST, RAISE_REFILL_MS } = await import("../../src/sidebar/shell-top-layer.ts");
+    await withShell(async (s) => {
+        await countShows(s.page);
+        await s.page.evaluate(() => {
+            const h = document.getElementById("ml-sb-root");
+            const ch = new MessageChannel();
+            ch.port1.onmessage = () => { if (h.matches(":popover-open")) h.hidePopover(); ch.port2.postMessage(0); };
+            ch.port2.postMessage(0);
+        });
+        await s.page.waitForTimeout(3000);
+        const shows = await s.page.evaluate(() => window.__shows);
+        expect(shows, "we restored at least once").toBeGreaterThan(0);
+        expect(shows, "within the budget: the burst plus one per refill").toBeLessThanOrEqual(RAISE_BURST + Math.ceil(3000 / RAISE_REFILL_MS) + 2);
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
+
+test("a page cancelling our host's show in beforetoggle keeps it out of the top layer: bounded retries, and the shot is refused as tampered", async () => {
+    const { RAISE_BURST, RAISE_REFILL_MS } = await import("../../src/sidebar/shell-top-layer.ts");
+    await withShell(async (s) => {
+        await countShows(s.page);
+        await s.page.evaluate(() => {
+            addEventListener("beforetoggle", (e) => { if (e.target.id === "ml-sb-root" && e.newState === "open") e.preventDefault(); }, true);
+            document.getElementById("ml-sb-root").hidePopover();
+        });
+        await s.page.waitForTimeout(3000);
+        expect(await hostOnTop(s.page)).toBe(false);
+        expect(await s.page.evaluate(() => window.__shows), "within the budget").toBeLessThanOrEqual(RAISE_BURST + Math.ceil(3000 / RAISE_REFILL_MS) + 2);
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
+
+// What the first version missed (review of #599): a host taken out with no event, events a page listener stops, and a
+// host out for one painted frame that no read of the shot's watch lands on.
+test("our host removed by the page and put back (removal takes a popover out of the top layer and fires nothing) is back on top within the task, not at the next poll", async () => {
+    await withShell(async (s) => {
+        const back = await s.page.evaluate(async () => {
+            const h = document.getElementById("ml-sb-root");
+            h.remove();
+            document.documentElement.append(h);
+            const outAfterAppend = !h.matches(":popover-open");
+            await new Promise((r) => setTimeout(r, 0));
+            return { outAfterAppend, open: h.matches(":popover-open") };
+        });
+        expect(back.outAfterAppend, "the re-add left it out of the top layer").toBe(true);
+        expect(back.open, "restored by the child-list watch, before any poll").toBe(true);
+    });
+});
+
+test("a page listener that stops our host's toggle events, added while our UI is unmounted, still runs after ours once it is mounted again: a hidePopover is undone at once", async () => {
+    await withShell(async (s, ext) => {
+        await s.page.evaluate(() => {
+            for (const t of ["beforetoggle", "toggle"]) addEventListener(t, (e) => { if (String(e.target?.id).startsWith("ml-sb")) e.stopImmediatePropagation(); }, true);
+        });
+        await configureExtension(ext.sw, { debugMode: "devtools" });
+        await s.page.waitForSelector("#ml-sb-root", { state: "detached", timeout: 10000 });
+        await configureExtension(ext.sw, { debugMode: "overlay" });
+        await s.page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 10000 });
+        await s.page.waitForTimeout(200);
+        const open = await s.page.evaluate(async () => {
+            const h = document.getElementById("ml-sb-root");
+            h.hidePopover();
+            await new Promise((r) => setTimeout(r, 0));
+            return h.matches(":popover-open");
+        });
+        expect(open, "restored by our beforetoggle listener, which the page's could not stop").toBe(true);
+    });
+});
+
+// The page takes our host out in a ResizeObserver callback, which runs after every animation-frame callback (the watch's
+// read included) and before the paint, spends the restores in that frame's microtasks, and puts the host back itself in
+// the first task after the paint. The watch's reads (each frame's, and each of the worker's messages) then see the host
+// on top, though every frame paints it out.
+test("a page that keeps our host out of the top layer only for the paint of each frame (between the watch's reads) gets the shot refused as tampered", async () => {
+    const { RAISE_BURST } = await import("../../src/sidebar/shell-top-layer.ts");
+    await withShell(async (s) => {
+        await s.page.evaluate((burst) => {
+            const h = document.getElementById("ml-sb-root");
+            const probe = document.createElement("div");
+            probe.style.cssText = "position:fixed;left:0;top:0;height:1px;width:1px;background:#00ff00";
+            document.body.append(probe);
+            window.__outFrames = 0;
+            new ResizeObserver(async () => {
+                for (let i = 0; i < 2 * burst + 2; i++) { if (h.matches(":popover-open")) h.hidePopover(); await Promise.resolve(); }
+                if (!h.matches(":popover-open")) window.__outFrames++;
+                ch.port2.postMessage(0);
+            }).observe(probe);
+            // Put back in the first task after the paint, before the shell's handling of the worker's next message.
+            const ch = new MessageChannel();
+            ch.port1.onmessage = () => { try { if (!h.matches(":popover-open")) h.showPopover(); } catch { /* raced a restore */ } };
+            const tick = () => { probe.style.width = probe.style.width === "1px" ? "2px" : "1px"; requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+        }, RAISE_BURST);
+        await s.page.waitForTimeout(1500);
+        expect(await s.page.evaluate(() => window.__outFrames), "frames painted with our host out").toBeGreaterThan(10);
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
+
+// The other storm: the page closes and reopens its own modal in a loop, each one landing above ours. The re-raises are
+// bounded the same way; the page's dialog then stays above our UI, which is not a leak: the rects are right whichever
+// is on top, so the shot is still taken and clean.
+test("a page reopening its modal in a loop gets a bounded number of re-raises, and the shot is still clean", async () => {
+    const { RAISE_BURST, RAISE_REFILL_MS } = await import("../../src/sidebar/shell-top-layer.ts");
+    await withShell(async (s) => {
+        await countShows(s.page);
+        await s.page.evaluate(() => {
+            const st = document.createElement("style");
+            st.textContent = "#loop{background:#00ff00;border:0;outline:none;width:10px;height:10px;padding:0}#loop::backdrop{background:transparent}";
+            document.head.append(st);
+            const d = document.createElement("dialog");
+            d.id = "loop";
+            document.body.append(d);
+            const ch = new MessageChannel();
+            ch.port1.onmessage = () => { if (d.open) d.close(); d.showModal(); setTimeout(() => ch.port2.postMessage(0), 0); };
+            ch.port2.postMessage(0);
+        });
+        await s.page.waitForTimeout(3000);
+        const shows = await s.page.evaluate(() => window.__shows);
+        expect(shows, "we re-raised at least once").toBeGreaterThan(0);
+        expect(shows, "within the budget").toBeLessThanOrEqual(RAISE_BURST + Math.ceil(3000 / RAISE_REFILL_MS) + 2);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
 // --- the skip rule: an element whose own style paints nothing is left out, and nothing that paints is ---
 
 test("the skip rule: a page hiding our panel (visibility, opacity 0) through the open shadow root while its frame stays visible leaves no frame pixels unmasked", async () => {

@@ -48,11 +48,26 @@ the worker, and the page answers geometry only):
 - [ ] Stylesheet timing: a page can move our host or `<html>` through a CSSOM edit made after one frame read and undone
       before the next. Closed for the HOSTS by their inline `all: initial !important` (`HOST_STYLE`, shell-shot.ts),
       which beats every page stylesheet `!important` rule, layered or not, and animations: no page rule moves, zooms,
-      filters, reflects, clips, blends or hides a host, timed or not (review-look.spec.mjs, "our hosts pinned"). Still
-      open: `<html>` (the page's own element), and a `:host` rule the page puts inside our open root, whose `!important`
-      beats the host's inline one (inner context wins): edited into our own sheet through the CSSOM or set as an adopted
-      sheet, neither is a DOM mutation, so the watch refuses it only when a frame read sees it. Next: hosts in the top
-      layer; closed shadow roots stay a documented gap.
+      filters, reflects, clips, blends or hides a host, timed or not (review-look.spec.mjs, "our hosts pinned"): #581.
+      - [x] Top layer: the hosts are `popover="manual"` and shown, so no page z-index covers them; a page modal,
+            fullscreen element or popover opened after ours is answered by raising ours again, and the page's
+            `hidePopover()`, attribute removal or change, or a cancelled show by restoring ours, all within one budget;
+            a host kept out of the top layer refuses the shot as tampered (review-look.spec.mjs, "the top layer";
+            shell-top-layer.test.mjs): #599.
+      - [ ] Closed shadow roots: PLANNED next (owner decision 2026-10-10). A `:host{…!important}` rule the page puts
+            inside our OPEN root still beats the host's inline `!important` (for `!important` the inner context wins),
+            edited into our own sheet through the CSSOM or set as an adopted sheet, neither a DOM mutation, so the watch
+            refuses it only when a frame read sees it.
+      - [ ] `<html>` (the page's own element) stays open: a timed edit to it is seen only by a frame read.
+      - [x] Review of #599: a host removed and put back is restored at once (child-list watch); the page re-showing
+            one of our hosts is restacked; the keeper's listeners outlive an unmount, so a page listener added between
+            two mounts runs after ours; a host out of the top layer only for each frame's paint refuses the shot
+            (`strays`). review-look.spec.mjs, "What the first version missed".
+      - [ ] A page element put in the top layer from a CLOSED shadow root of the page's, or whose `toggle` event a
+            page listener added before the content script loaded stops, is not noticed until something else asks for a
+            raise. It paints over our UI with
+            `pointer-events: none` and the clicks reach ours (clickjacking the card). Proposed: an occlusion check on
+            the approval controls (IntersectionObserver v2 `trackVisibility`), refusing a click while they are covered.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
