@@ -202,19 +202,22 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows, en
                     looked lost exactly its opening steps, leaving the strip blank on the left while the lane
                     below still drew them. Clamped into the strip instead, so a span that began earlier starts
                     at the edge rather than disappearing. */}
-                {events.filter((e) => e.kind !== "run" && (e.until ?? e.t) >= ex.from && e.t <= ex.to).map((e, i) => {
-                    // A SPAN, not a tick. Drawing every event at its start made a step that ran for seconds
-                    // look identical to an instant, so a busy stretch read as two hairlines instead of as the
-                    // block of activity it was. A genuine instant (an eviction) still gets a minimum width so
-                    // it stays visible.
-                    const from = Math.max(0, (e.t - ex.from) / span);
-                    const to = Math.min(1, ((e.until ?? e.t) - ex.from) / span);
-                    return (
-                        <i class="rc-scrub-ev" key={i}
-                            style={{ left: `${from * 100}%`, width: `${Math.max(0.35, (to - from) * 100)}%`,
-                                     ...(e.model ? { background: colorFor(e.model) } : {}) }} />
-                    );
-                })}
+                {/* ONE SVG, not a positioned element per event: a long sweep puts thousands of them on the strip, and each
+                    positioned element is a layer the browser re-layerizes and hit-tests on every repaint the chart's
+                    tooltip causes, though none of them changes during a hover. Rects with `fill-opacity` are neither,
+                    and overlapping spans still compound, so a busy stretch reads denser. */}
+                <svg class="rc-scrub-ticks" viewBox="0 0 1000 1" preserveAspectRatio="none" aria-hidden="true">
+                    {events.filter((e) => e.kind !== "run" && (e.until ?? e.t) >= ex.from && e.t <= ex.to).map((e, i) => {
+                        // A SPAN, not a tick. Drawing every event at its start made a step that ran for seconds
+                        // look identical to an instant, so a busy stretch read as two hairlines instead of as the
+                        // block of activity it was. A genuine instant (an eviction) still gets a minimum width so
+                        // it stays visible.
+                        const from = Math.max(0, (e.t - ex.from) / span);
+                        const to = Math.min(1, ((e.until ?? e.t) - ex.from) / span);
+                        return <rect class="rc-scrub-ev" key={i} x={(from * 1000).toFixed(1)} y="0" height="1"
+                            width={Math.max(3.5, (to - from) * 1000).toFixed(1)} style={e.model ? { fill: colorFor(e.model) } : undefined} />;
+                    })}
+                </svg>
                 <div class="rc-scrub-win" style={{ left: `${ex.windowFrom * 100}%`,
                     width: `${Math.max(1, (ex.windowTo - ex.windowFrom) * 100)}%` }} />
             </div>

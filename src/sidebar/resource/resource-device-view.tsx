@@ -12,8 +12,9 @@ import { formatBytes, type ResourceSample, formatShare } from "../../resource/re
 import { type ResourceEvent } from "../../resource/resource-timeline";
 import { type DeviceCapacity } from "../../resource/resource-capacity";
 import { linkBetween, isBridge, linkPhrase } from "../../resource/resource-topology";
-import { noteRuns, eventHover, trackCursor, hoverAt, snapUnder } from "./chart-interaction";
-import { bandFill } from "./chart-paint";
+import { live, noteRuns, eventHover, trackCursor, hoverAt, snapUnder } from "./chart-interaction";
+import { bandFill, plotPx, runColumns } from "./chart-paint";
+import { thinStack } from "../../resource/resource-decimate";
 import { capacity, sampleGapMs, streamLive } from "./panel-state";
 import { StackedArea, KvFill } from "./resource-area";
 import { startBrush, BrushOverlay, EventTip } from "./resource-lane-ui";
@@ -214,6 +215,20 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
     const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
+    // WHAT EACH RUN DRAWS, thinned to the columns it spans (`thinStack`) and kept across renders: every pointer move
+    // re-renders this track, and rebuilding each sample's bands for edges that came out the same was what a move cost
+    // on a long history. The readings (the tooltip, the snapped marks) still come from the full run.
+    // Every sample's bands, once per change of data: the band tip reads them as its history, and the drawing below
+    // takes its frames from them.
+    const history = useMemo(() => samples.map(bandsOf), [samples, label]);
+    const frameOf = useMemo(() => new Map(samples.map((sm, k) => [sm, history[k]])), [history]);
+    const axis = live.axis;
+    const drawn = useMemo(() => runs.map((run) => {
+        const frames = run.map((sm) => frameOf.get(sm) ?? bandsOf(sm));
+        const times = run.map((sm) => sm.t);
+        const keep = thinStack(frames, times, runColumns(run));
+        return keep.length === run.length ? { frames, times, all: frames } : { frames: keep.map((k) => frames[k]), times: keep.map((k) => times[k]), all: frames };
+    }), [runs, frameOf, axis?.from, axis?.to, plotPx.value]);
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(events);
     // WHAT THIS CARD WAS DOING — its phase ribbon, from the same (kind-filtered) events the rules come from.
@@ -262,6 +277,13 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
         }
         return mine > 0 && most > 0 ? { model: deepModel, ceiling: most } : null;
     })();
+    /** The sample under the crosshair when it is in run `i`, for the marks on its band edges. */
+    const snapAt = (run: ResourceSample[], i: number) => {
+        const sn = snapUnder(runs);
+        if (sn?.run !== i || !run.length) return null;
+        const sm = run[Math.min(run.length - 1, Math.max(0, sn.index))];
+        return { bands: bandsOf(sm), t: sm.t };
+    };
     return (
         <div class={`rc-track${deepModel ? " deep" : ""}${deepModel && !deep ? " away" : ""}`}>
             <div class="rc-head">
@@ -314,9 +336,9 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 }}>
                 <TimeGrid />
                 {onAxis(runs, samples, scope, (run, i) => (<>
-                        <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
+                        <StackedArea frames={drawn[i]?.frames ?? []} all={drawn[i]?.all} times={drawn[i]?.times ?? []} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
-                            snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
+                            snap={snapAt(run, i)} />
                         {deep && laneGen && laneGen.model === deep.model
                             ? <KvFill run={run} bandsOf={bandsOf} deep={deep} ev={laneGen} /> : null}
                         {predictView.value && !deep && device
@@ -329,7 +351,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
                 <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
-                    history={samples.map(bandsOf)} samples={samples} ceiling={ceiling} scope={scope} label={label}
+                    history={history} samples={samples} ceiling={ceiling} scope={scope} label={label}
                     cardId={device?.id} hidden={hidden} at={hoverSample} />
                 {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
                     header answers for the present: how full was this pool, then. Without it the free area

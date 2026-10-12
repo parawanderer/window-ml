@@ -3248,11 +3248,9 @@ code .expanded:hover { background: color-mix(in srgb, var(--cite) 12%, transpare
 /* Where the work is, marked on the scrub strip. A hairline rather than a block: the strip's job is to say
    which stretch you are looking at, and a dense run of events must not turn it into a solid bar that hides
    the window. Under .rc-scrub-win, so the window box still reads clearly on top of them. */
-.rc-scrub-ev {
-    position: absolute; top: 1px; bottom: 1px; min-width: 2px;
-    border-radius: 1px; opacity: .55; pointer-events: none;
-    background: var(--fg-dim);
-}
+.rc-scrub-ticks { position: absolute; left: 0; top: 1px; width: 100%; height: calc(100% - 2px); pointer-events: none; }
+/* One event's span in the strip (`.rc-scrub-ticks`): a model's own colour, or this for the rest. */
+.rc-scrub-ev { fill: var(--fg-dim); fill-opacity: .55; }
 
 /* Where a model is, beside its name rather than under it: it is part of identifying the thing, not a third
    fact of equal weight to the residency and cost lines below. Normal weight, so the name still leads. */
@@ -3913,8 +3911,10 @@ pre.code.dlines > code.hljs { display: block; }
    lighter, a swap striped). Hovering a stretch answers like the lane: the event's tooltip, and everything else dimmed. */
 .rc-strip { position: relative; flex: 0 0 auto; }
 .rc-strip > .rc-seg { border-radius: 2px; }
-/* One timed phase in a card's phase strip. */
-.rc-ribbon-seg { position: absolute; height: 5px; border-radius: 1px; cursor: default; transition: opacity .12s ease; }
+/* One timed phase in a card's phase strip. NO opacity transition: hovering an event rule dims every strip's segments
+   at once, and a fade on each made Chrome re-layerize the page on every frame of it, most of what a pointer move over a
+   stacked track cost on a long sweep. */
+.rc-ribbon-seg { position: absolute; height: 5px; border-radius: 1px; cursor: default; }
 .rc-ribbon-seg.away { opacity: .22; }
 /* WHAT ONE GENERATION LEFT IN THE KV CACHE (`KvFill`), over the drilled-in cache part while its lane span is
    hovered. The layers are told apart by TEXTURE and weight of the model's own colour, the same weights its lane

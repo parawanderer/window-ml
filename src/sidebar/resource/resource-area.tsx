@@ -70,11 +70,23 @@ export function KvFill({ run, bandsOf, deep, ev }: { run: ResourceSample[]; band
     );
 }
 
-/** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
-export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, deep = null, loads = [] }: { frames: Band[][]; times: number[]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null; loads?: { t: number; until?: number }[] }) {
-    const order = useMemo(() => bandOrder(frames), [frames]);
-    const identity = useMemo(() => bandIdentity(frames), [frames]);
-    const tint = useMemo(() => bandTint(frames), [frames]);
+/** Each drawing's band edges, built once per frames array and reused by every render that only moved the pointer
+ *  (`StackedArea`). Weak, so a drawing the chart has moved past takes its entry with it. */
+const stackCache = new WeakMap<Band[][], { key: string; times: number[]; geo: {
+    tops: Record<string, number[]>; isStep: (k: string | null) => boolean; baseKey: string | null; base: number[];
+    ptsOf: (series: number[], stepped: boolean, corner: number[] | null) => string[]; edge: (k: string | null) => string[] } }>();   // state: cache
+
+/** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample DRAWN (a long run
+ *  arrives thinned to its columns, `thinStack`), and `all` is every sample's, which the stack's order is read from;
+ *  `snap` is the sample under the crosshair, which may be one of those the thinning left out, so its marks are read
+ *  from it rather than from `frames`. */
+export function StackedArea({ frames, all = frames, times, ceiling, hidden, scope, snap = null, deep = null, loads = [] }: { frames: Band[][]; all?: Band[][]; times: number[]; ceiling: number; hidden: Set<string>; scope: string; snap?: { bands: Band[]; t: number } | null; deep?: { model: string; ceiling: number } | null; loads?: { t: number; until?: number }[] }) {
+    // Read from EVERY frame of the run, not only the ones drawn: which band stacks where, and whose it is, depend on
+    // frames the thinning can leave out (the one a load began in), and a stack ordered from the drawn ones alone moved
+    // a band to the floor.
+    const order = useMemo(() => bandOrder(all), [all]);
+    const identity = useMemo(() => bandIdentity(all), [all]);
+    const tint = useMemo(() => bandTint(all), [all]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
     // LINEAR IN TIME across the run (`runFrac`), the axis every other mapping on the chart uses.
     const tr = times.map((t) => ({ t }));
@@ -184,82 +196,95 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
         );
     }
 
-    // Cumulative tops per key, so each band is drawn between its own top and the one below it.
-    const tops: Record<string, number[]> = {};
-    frames.forEach((bands, i) => {
-        let acc = 0;
-        for (const key of order) {
-            if (key === "free") continue;
-            const b = bands.find((x2) => x2.key === key);
-            // A hidden model drops out of the STACK entirely (and so out of every earlier frame too), which is
-            // why the whole series is recomputed on toggle rather than only new points.
-            if (b && !hidden.has(b.model ?? "")) acc += b.bytes;
-            (tops[key] ||= [])[i] = acc;
-        }
-    });
+    // THE EDGES DO NOT DEPEND ON THE POINTER, so they are built once per drawing (`stackCache`) and every hover render
+    // reuses them: the dimming, the breakdown and the marks are what a move changes.
+    const hiddenKey = [...hidden].join("\n");
+    const cached = stackCache.get(frames);
+    const geo = cached && cached.key === `${ceiling}|${hiddenKey}` && cached.times === times ? cached.geo : (() => {
+        // Cumulative tops per key, so each band is drawn between its own top and the one below it.
+        const tops: Record<string, number[]> = {};
+        frames.forEach((bands, i) => {
+            let acc = 0;
+            for (const key of order) {
+                if (key === "free") continue;
+                const b = bands.find((x2) => x2.key === key);
+                // A hidden model drops out of the STACK entirely (and so out of every earlier frame too), which is
+                // why the whole series is recomputed on toggle rather than only new points.
+                if (b && !hidden.has(b.model ?? "")) acc += b.bytes;
+                (tops[key] ||= [])[i] = acc;
+            }
+        });
 
-    /**
-     * A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS EDGE IS A STEP.
-     *
-     * A resident model does not drift: the runner appears holding its whole footprint, and the KV cache is
-     * preallocated for the FULL context window at load and never grows — verified on the box, byte-identical
-     * before and after 4,217 tokens went through it. So a straight line between two samples was drawing a
-     * decay that cannot happen, and on an eviction it drew the worst version of it: samples 14 seconds apart
-     * (the stream's idle cadence) with the model resident at one end and gone at the other, rendered as
-     * fourteen seconds of memory gently draining away. The `unload` edge sits at the true instant, so the
-     * dashed rule and the descent disagreed by up to a whole sample interval, which reads as the lane being
-     * misaligned with the chart rather than as the chart interpolating.
-     *
-     * Held at its last measured value and dropped where the next reading says, the descent lands on the
-     * sample that reported it — 2 ms after the edge in the capture that prompted this — so the two agree
-     * without either being moved to suit the other.
-     *
-     * THE DEVICE'S OWN BANDS STAY LINES, and that difference is the point rather than an inconsistency. A
-     * card's free memory really does fall progressively while weights land — the server describes it as a
-     * continuous progress signal during the long half of a load — so stepping it would be the same error
-     * pointed the other way. A band is drawn stepped when its top is a MODEL's, which is what `identity`
-     * already answers for the fill.
-     *
-     * Adjacent bands SHARE an edge (this band's floor is the one below's ceiling), so the floor is drawn with
-     * the step-ness of the band BELOW, never its own. Get that wrong and the two disagree by a step's height
-     * and the stack opens a seam. It also means a residual sitting on models is exactly right: its base jumps
-     * when a model goes, while its own thickness still varies smoothly.
-     */
-    // A RESIDUAL THAT BELONGS TO A MODEL steps with it: a runner's overhead (`ctx:`) and a runner `/api/ps` has not
-    // caught up with (`runner:`) are that runner's memory, piecewise-constant like the model's, and they leave at
-    // the same eviction. Drawn as lines, the overhead stacked on a stepped model sloped from the last sample to
-    // the next — a `\\` wedge beside the model's `|` at every eviction. A LOADING runner (`load:`) stays a line:
-    // its memory really does climb as the weights land, which is the device-band rule, not the model one.
-    //
-    // AND ONLY ON A STEPPED STACK. Cumulative tops are what the edges draw, so a band's floor is the top of the band
-    // below. A stepped band holds its previous top until the next sample; stacked on a band drawn as a LINE (a
-    // loading runner, climbing) its floor rose with that line while its top waited — for that stretch the floor
-    // was above the top, and the inverted polygon filled as a wedge in the wrong colour. So step-ness runs up from
-    // the bottom and stops at the first band that is a line: models and their overhead sit at the bottom and keep
-    // stepping, and whatever is stacked on a climbing load is drawn as a line with it.
-    const stepKeys = stepBands(order, identity, tint);
-    const isStep = (k: string | null): boolean => !!k && stepKeys.has(k);
-    /**
-     * A LINE BAND RIDES ON THE STEPS BELOW IT. Above the stepped run, a band's top is the stepped BASE (the top of
-     * the highest stepped band, held until the next sample) plus the band's own thickness above it, interpolated —
-     * so it turns the same corner the steps turn and only its thickness varies smoothly. Interpolating the
-     * CUMULATIVE top instead climbed toward a model's arrival before it happened (a pale wedge just ahead of each
-     * step up) and fell below its floor at an eviction (an inverted one) — "its base jumps, its thickness varies
-     * smoothly" was the stated rule, and the edge did not implement it.
-     */
-    const baseKey = [...stepKeys].at(-1) ?? null;
-    const base = baseKey ? (tops[baseKey] || zeros) : zeros;
-    /** One edge as a points string, from a SERIES against the same corner-following base `edgeOf` uses. A line
-     *  band above the stepped run turns the base's corners (`bandEdge`), and a plain interpolation (`stepEdge`
-     *  with `false`) draws a diagonal where the band below steps — so every polygon in the stacked view goes
-     *  through this, never `stepEdge` alone. */
-    const ptsOf = (series: number[], stepped: boolean, corner: number[] | null): string[] =>
-        bandEdge(series, stepped, corner).map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-    const edgeOf = (k: string | null): string[] =>
-        ptsOf(k ? (tops[k] || zeros) : zeros, isStep(k), k && !isStep(k) && baseKey ? base : null);
+        /**
+         * A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS EDGE IS A STEP.
+         *
+         * A resident model does not drift: the runner appears holding its whole footprint, and the KV cache is
+         * preallocated for the FULL context window at load and never grows — verified on the box, byte-identical
+         * before and after 4,217 tokens went through it. So a straight line between two samples was drawing a
+         * decay that cannot happen, and on an eviction it drew the worst version of it: samples 14 seconds apart
+         * (the stream's idle cadence) with the model resident at one end and gone at the other, rendered as
+         * fourteen seconds of memory gently draining away. The `unload` edge sits at the true instant, so the
+         * dashed rule and the descent disagreed by up to a whole sample interval, which reads as the lane being
+         * misaligned with the chart rather than as the chart interpolating.
+         *
+         * Held at its last measured value and dropped where the next reading says, the descent lands on the
+         * sample that reported it — 2 ms after the edge in the capture that prompted this — so the two agree
+         * without either being moved to suit the other.
+         *
+         * THE DEVICE'S OWN BANDS STAY LINES, and that difference is the point rather than an inconsistency. A
+         * card's free memory really does fall progressively while weights land — the server describes it as a
+         * continuous progress signal during the long half of a load — so stepping it would be the same error
+         * pointed the other way. A band is drawn stepped when its top is a MODEL's, which is what `identity`
+         * already answers for the fill.
+         *
+         * Adjacent bands SHARE an edge (this band's floor is the one below's ceiling), so the floor is drawn with
+         * the step-ness of the band BELOW, never its own. Get that wrong and the two disagree by a step's height
+         * and the stack opens a seam. It also means a residual sitting on models is exactly right: its base jumps
+         * when a model goes, while its own thickness still varies smoothly.
+         */
+        // A RESIDUAL THAT BELONGS TO A MODEL steps with it: a runner's overhead (`ctx:`) and a runner `/api/ps` has not
+        // caught up with (`runner:`) are that runner's memory, piecewise-constant like the model's, and they leave at
+        // the same eviction. Drawn as lines, the overhead stacked on a stepped model sloped from the last sample to
+        // the next — a `\\` wedge beside the model's `|` at every eviction. A LOADING runner (`load:`) stays a line:
+        // its memory really does climb as the weights land, which is the device-band rule, not the model one.
+        //
+        // AND ONLY ON A STEPPED STACK. Cumulative tops are what the edges draw, so a band's floor is the top of the band
+        // below. A stepped band holds its previous top until the next sample; stacked on a band drawn as a LINE (a
+        // loading runner, climbing) its floor rose with that line while its top waited — for that stretch the floor
+        // was above the top, and the inverted polygon filled as a wedge in the wrong colour. So step-ness runs up from
+        // the bottom and stops at the first band that is a line: models and their overhead sit at the bottom and keep
+        // stepping, and whatever is stacked on a climbing load is drawn as a line with it.
+        const stepKeys = stepBands(order, identity, tint);
+        const isStep = (k: string | null): boolean => !!k && stepKeys.has(k);
+        /**
+         * A LINE BAND RIDES ON THE STEPS BELOW IT. Above the stepped run, a band's top is the stepped BASE (the top of
+         * the highest stepped band, held until the next sample) plus the band's own thickness above it, interpolated —
+         * so it turns the same corner the steps turn and only its thickness varies smoothly. Interpolating the
+         * CUMULATIVE top instead climbed toward a model's arrival before it happened (a pale wedge just ahead of each
+         * step up) and fell below its floor at an eviction (an inverted one) — "its base jumps, its thickness varies
+         * smoothly" was the stated rule, and the edge did not implement it.
+         */
+        const baseKey = [...stepKeys].at(-1) ?? null;
+        const base = baseKey ? (tops[baseKey] || zeros) : zeros;
+        /** One edge as a points string, from a SERIES against the same corner-following base `edgeOf` uses. A line
+         *  band above the stepped run turns the base's corners (`bandEdge`), and a plain interpolation (`stepEdge`
+         *  with `false`) draws a diagonal where the band below steps — so every polygon in the stacked view goes
+         *  through this, never `stepEdge` alone. */
+        const ptsOf = (series: number[], stepped: boolean, corner: number[] | null): string[] =>
+            bandEdge(series, stepped, corner).map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+        const edgeOf = (k: string | null): string[] =>
+            ptsOf(k ? (tops[k] || zeros) : zeros, isStep(k), k && !isStep(k) && baseKey ? base : null);
+        const edges = new Map<string | null, string[]>();
+        const edge = (k: string | null): string[] => { let e = edges.get(k); if (!e) edges.set(k, e = edgeOf(k)); return e; };
+        const g = { tops, isStep, baseKey, base, ptsOf, edge };
+        stackCache.set(frames, { key: `${ceiling}|${hiddenKey}`, times, geo: g });
+        return g;
+    })();
+    const { tops, isStep, baseKey, base, ptsOf } = geo;
+    const edgeOf = geo.edge;
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
-        const pts: string[] = [...edgeOf(key), ...edgeOf(below).reverse()];
+        const pts: string[] = [...edgeOf(key), ...[...edgeOf(below)].reverse()];   // a COPY reversed: the edges are cached
         // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
         // similar colours resolves into one identifiable shape.
         const model = identity[key];
@@ -349,7 +374,17 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
      * The FREE band is excluded: its boundary is the ceiling, which is a constant and not a reading.
      */
     const dots = (() => {
-        if (snapIndex == null || snapIndex < 0 || snapIndex >= frames.length) return null;
+        if (!snap) return null;
+        // The snapped sample's own cumulative tops, stacked as `tops` stacks every frame: it need not be a frame drawn.
+        const snapTops: Record<string, number> = {};
+        let acc = 0;
+        for (const key of order) {
+            if (key === "free") continue;
+            const b = snap.bands.find((x2) => x2.key === key);
+            if (b && !hidden.has(b.model ?? "")) acc += b.bytes;
+            snapTops[key] = acc;
+        }
+        const sx = runFrac(tr, snap.t) * W;
         // HOVERING ONE BAND narrows this to that band alone. Every boundary marked is an OVERVIEW — right
         // when the pointer is on the plot's background and nothing is picked out — but once a band is
         // hovered the panel has already dimmed its neighbours to say "this one", and a full set of dots
@@ -359,7 +394,7 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
             .filter((k) => !focus || identity[k] === focus);
         const seen = new Set<number>();
         return keys.map((key) => {
-            const v = tops[key]?.[snapIndex];
+            const v = snapTops[key];
             if (v == null) return null;
             const cy = y(v);
             // Two boundaries at the same height are one line on screen, and two dots on it read as a
@@ -382,7 +417,7 @@ export function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex =
             // circle inside it draws as an ELLIPSE whose eccentricity depends on the plot's current size.
             // Percentages of the same box put it in exactly the same place and keep it round.
             return <i key={`d:${key}`} class="rc-snapdot" aria-hidden="true"
-                style={{ left: `${(x(snapIndex) / W) * 100}%`, top: `${(cy / H) * 100}%`,
+                style={{ left: `${(sx / W) * 100}%`, top: `${(cy / H) * 100}%`,
                          ...(model ? { background: colorFor(model) } : {}) }} />;
         });
     })();
