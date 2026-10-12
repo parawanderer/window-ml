@@ -58,7 +58,7 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     assert.ok(tool, "a tool step is ONE block…");
     // Phased by who was working, and carrying the MODEL's own colour — the same one its row and bands use,
     // so the lane reads against the model list without needing a legend of its own.
-    assert.match(tool.getAttribute("style") || "", /linear-gradient/, "…drawn with a stop where the model handed over");
+    assert.ok(tool.querySelectorAll(".rc-ev-seg").length >= 2, "…drawn with a cut where the model handed over");
     assert.match(tool.getAttribute("style") || "", /--model:/, "…in that model's colour");
     // NOTHING IS ASSERTED ABOUT THE LOAD SPAN HERE. It ends where the step starts, ~1.6 s before `now`, so
     // whether it overlaps the sampled window depends on how long the setup above took on this machine — it
@@ -84,9 +84,39 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     assert.ok(tip.querySelector(".sep"), "the two halves are separated, not run together");
     assert.equal(tip.querySelector(".rc-tip-rule"), null, "…and not by a floating line");
 
+    // A bar is a button to a keyboard and a screen reader: focusable, named by its event. (It is a shape in the lane's
+    // one SVG, not a <button>, so this is asserted rather than given.)
+    assert.equal(tool.getAttribute("role"), "button");
+    assert.equal(tool.getAttribute("tabindex"), "0");
+    assert.ok(tool.getAttribute("aria-label"), "named");
     // Clicking goes to the step that produced it.
-    tool.click();
+    tool.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
     await w.flush();
+    assert.match(w.shadow.body.innerHTML, /astep|agent/, "it navigated into the run");
+});
+
+test("event lane: Enter on a focused bar opens its step, as a click does", async () => {
+    const w = await loadSidebarWorld({
+        local: { ml_lane_scope: false },
+        vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    await w.dispatch(agentStart("ev9", "do it", "qwen3.8:27b"));
+    await w.dispatch({ ...agentStep("ev9", 1, { seq: 1, tool: "python_exec", toolMs: 900,
+        usage: { promptTokens: 500, completionTokens: 60, totalTokens: 560, genMs: 700 } }), ts: Date.now() });
+    await w.flush(); await w.flush();
+    const tool = w.shadow.querySelector(".rc-ev-tool");
+    assert.ok(tool, "a step in the lane");
+    const key = new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    tool.dispatchEvent(key);
+    await w.flush();
+    assert.ok(key.defaultPrevented, "the key is the bar's, not the page's");
     assert.match(w.shadow.body.innerHTML, /astep|agent/, "it navigated into the run");
 });
 

@@ -614,7 +614,7 @@ per device, in bytes.
 what memory was doing while it did. Nothing new is collected — `src/sidebar/resource/model-stats.ts` derives it from what
 sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
 delegated sub-calls charged to the READER); `eventsFrom` builds the timeline. **The bars are `LaneBars`
-(`lane-bars.tsx`), painted by `barPaint` (`lane-paint.ts`)**, and the bench draws its runs with the same two
+(`lane-bars.tsx`), painted by `barShape` (`lane-paint.ts`)**, and the bench draws its runs with the same two
 (its sweep timeline and each run's page, `tests/e2e/bench/page/`), styled by the lane's own rules lifted out of
 sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `EventLane` only adds the panel's wiring
 (hover lineage, brush, click and double-click).
@@ -713,8 +713,8 @@ sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `Event
   `MIN_EV_SPAN` of a narrow lane let two bars at CSS `min-width` overlap. It may start FLUSH against the bar before it,
   though. The packer used to keep a pixel between bars, and a run's steps follow each other within 2 to 40 ms (a gen
   hands straight to its tool) while a pixel of a five-minute lane is ~170 ms, so every other step was refused the row
-  and a strictly sequential run drew its steps alternating between two rows, which claims they overlapped. `.rc-ev`'s
-  hairline in the panel colour is what keeps two touching bars reading as two.
+  and a strictly sequential run drew its steps alternating between two rows, which claims they overlapped. The bar's
+  hairline in the panel colour (`.rc-ev-gap`) is what keeps two touching bars reading as two.
 - **The chart draws with the samples EITHER SIDE of the window** (`windowSamples(…, { edges: true })`), always. Without
   them the stretch from the last reading before the left edge to the first one inside was not drawn, so scrolling
   back made each stretch pop in only when its first reading crossed the edge. The plot clips; a far neighbour is still
@@ -754,8 +754,16 @@ sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `Event
   another model) started earlier, took the row under the step, and pushed the load below itself. A child packed before
   its parent (a load that begins before the aside it is claimed by) had no floor to respect, so children wait for
   their parent in the order.
-  **The hover and pulse rings are drawn INSIDE the bar** (`.rc-ev::after`, an inset shadow over the pattern overlays).
-  As an `outline` they sat outside the box, and `.rc-lane-row` clips to its height, so only the bar's ends showed.
+  **The hover and pulse rings are drawn INSIDE the bar** (`.rc-ev-ring`, over its fills), so they read the same on every
+  fill and are not cut by the lane's edge.
+- **The lane is ONE SVG** (`LaneBars`): a `<g class="rc-lane-row">` per row, a `<g class="rc-ev rc-ev-<kind>">` per bar
+  holding a `<path>` per phase (`.rc-ev-seg`, each an exact slice of the bar's rounded outline, so only the bar's two ends
+  are rounded and a phase under a pixel still shows), `<pattern>` defs for dots and stripes (`Paint` in lane-paint.ts,
+  which `phaseFill` turns into CSS for the phase strip and the tooltip's swatches), and the hairline, outline and ring
+  rects. Drawn in pixels at the lane's measured width. It was a positioned element per bar in a clipping row each, and
+  on a long sweep (~2,800 bars) re-layerizing and hit-testing those on every repaint was most of what a pointer move over
+  the memory chart cost (7 ms → 5 ms per move, against 4.6 ms with no lane at all). Tests read a bar's place from
+  `data-x`/`data-w`.
 - **Double-clicking any block scopes the panel to it** (`scopeToSpan`, pure/tested), widening a block too
   short to frame around its own centre — a 40ms window contains no samples and draws as an empty plot. An
   open block has no end, so `now` stands in. A single click still navigates to the step: framing the time
@@ -832,9 +840,8 @@ sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `Event
   very narrow one is not all handle; a resize reads from the window captured AT the grab, so the fixed edge
   does not drift as each move rewrites the range it is measured from.
 - **A person at the approval gate is STRIPED, like a model load** — it is the step's wall time but none of
-  the machine's work, and flat, a wide block reads as a lot of work having happened. Drawn as an overlay
-  element over the flat neutral (`phaseSpans` → `.rc-ev-wait`) rather than into the phase gradient, because
-  a gradient stop takes a colour and a stripe is a pattern.
+  the machine's work, and flat, a wide block reads as a lot of work having happened. Drawn as a
+  segment of its own (`.rc-ev-wait`): stripes on the flat neutral.
 - **Cursor tooltips share `useTipPlacement`** and are placed against the VIEWPORT from their own MEASURED
   size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
   pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which
@@ -875,6 +882,10 @@ test would have passed the day the feature broke.
   `optional` field is sent at zero, so absent means not reported; an `unload` says why in `reason`, never assume idle.
 - **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases; a load is its own
   event. Phases are drawn only where something TIMED them.
+- **The lane's bars are shapes in one SVG.** Dim them with `fill-opacity`/`stroke-opacity`, never `opacity`, a
+  `transform`, a `clip-path` or a `<use>` per bar: each of those is per-element compositing state, the cost the SVG
+  removed. A shape is hit only where painted, so the bar's hit area is `.rc-ev-gap` with `pointer-events: fill`. An
+  SVG attribute keeps its case: `tabindex`, never `tabIndex`.
 
 **A cloud model has its own shade.** `colorFor` (palette.ts) mixes a name in `cloudModels` toward `--fg`: the same
 hue, lighter on a dark theme and darker on a light one, so a cloud model is never read as the local model that hashed

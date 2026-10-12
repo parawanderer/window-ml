@@ -854,17 +854,21 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         }
 
         // A tool step is one block with hard stops where the work changes hands.
+        // (The lane is one SVG: a bar is a <g>, its phases <path> segments filled with a colour or a <pattern>.)
         const toolBar = frame.locator(".rc-ev-tool").first();
-        const toolBg = await toolBar.evaluate((e) => getComputedStyle(e).backgroundImage);
-        expect(toolBg).toContain("gradient");
+        expect(await toolBar.locator(".rc-ev-seg").count(), "one segment per phase").toBeGreaterThanOrEqual(2);
+        /** Whether any of a bar's segments is filled with a pattern of DOTS. */
+        const dotted = (bar) => bar.evaluate((e) => [...e.querySelectorAll(".rc-ev-seg")].some((sg) => {
+            const id = /url\("?#([^")]+)"?\)/.exec(getComputedStyle(sg).fill)?.[1];
+            return !!id && !!e.ownerSVGElement.getElementById(id)?.querySelector("circle");
+        }));
 
         // A LOAD is time spent NOT generating, so it is DOTTED rather than a solid block of the model's time —
         // but it is that model's wait, so it keeps the colour. (An inline model-colour once overrode the patterned
         // class entirely, which is the exact confusion the pattern exists to prevent. It was cross-hatched stripes
         // until they drew as a row of X's.)
-        const loadBg = await frame.locator(".rc-ev-load").first().evaluate((e) => getComputedStyle(e).backgroundImage);
-        expect(loadBg, "the load is dotted").toContain("radial-gradient");
-        expect(toolBg, "…and the tool block is not, so the two can't be confused").not.toContain("radial-gradient");
+        expect(await dotted(frame.locator(".rc-ev-load").first()), "the load is dotted").toBe(true);
+        expect(await dotted(toolBar), "…and the tool block is not, so the two can't be confused").toBe(false);
 
         // FREEZE the chart first. The panel keeps sampling, so the window slides and every bar moves left
         // underneath a stationary pointer — the hover then belongs to the bar that was entered while the
@@ -890,13 +894,17 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         // lane re-packs and the bars slide left underneath a stationary cursor — measuring the two separately
         // let the pointer end up over a neighbour between the hover and the assertion, which is what failed
         // in CI (a dimmed sub-call) and never locally, where the timing differed.
+        // A bar is a <g> in the lane's one SVG, dimmed by its shapes' fill-opacity (never `opacity`, which would make
+        // each a layer), so its strength is read off its first filled shape.
         const shot = await frame.evaluate(({ x, y }) => {
             const el = document.elementFromPoint(x, y);
             const bar = el?.closest?.(".rc-ev") ?? null;
+            const strength = (e) => { const f = e.querySelector(".rc-ev-seg, .rc-ev-outline"); if (!f) return 1;
+                const cs = getComputedStyle(f); return Number(f.classList.contains("rc-ev-outline") ? cs.strokeOpacity : cs.fillOpacity); };
             return {
-                under: bar ? bar.className : String(el?.className || "none"),
-                underOpacity: bar ? Number(getComputedStyle(bar).opacity) : null,
-                all: [...document.querySelectorAll(".rc-ev")].map((e) => ({ cls: e.className, o: Number(getComputedStyle(e).opacity) })),
+                under: bar ? bar.getAttribute("class") : String(el?.getAttribute?.("class") || "none"),
+                underOpacity: bar ? strength(bar) : null,
+                all: [...document.querySelectorAll(".rc-ev")].map((e) => ({ cls: e.getAttribute("class"), o: strength(e) })),
             };
         }, { x: at.x + at.width / 2 - inFrameX, y: at.y + at.height / 2 - inFrameY });
 
@@ -1103,7 +1111,7 @@ test("resource panel: no two lane bars overlap on the same row", async () => {
         const rows = await frame.evaluate(() => [...document.querySelectorAll(".rc-lane-row")].map((row) =>
             [...row.querySelectorAll(".rc-ev")].map((e) => {
                 const r = e.getBoundingClientRect();
-                return { cls: e.className.replace("rc-ev ", ""), x: Math.round(r.x), right: Math.round(r.right) };
+                return { cls: e.getAttribute("class").replace("rc-ev ", ""), x: Math.round(r.x), right: Math.round(r.right) };
             }).sort((a, b) => a.x - b.x)));
 
         const clashes = [];
@@ -2019,14 +2027,15 @@ test("resource panel: dragging the event lane shows the selection box, and a tin
         });
         await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 20000 }).toBeGreaterThanOrEqual(3);
 
-        const row = await frame.locator(".rc-lane-row").first().boundingBox();
-        const y = row.y + row.height / 2;
+        // The lane's box, across its first row (a row is a group in the lane's SVG, as wide as its bars).
+        const row = await frame.locator(".rc-lane-bars").first().boundingBox();
+        const y = row.y + 4.5;
         // Hold the drag OPEN and look: the box has to be visible WHILE selecting, which is the whole point.
         await page.mouse.move(row.x + row.width * 0.25, y);
         await page.mouse.down();
         await page.mouse.move(row.x + row.width * 0.65, y, { steps: 8 });
-        await expect(frame.locator(".rc-lane-row .rc-brush").first()).toBeVisible({ timeout: 4000 });
-        const w = await frame.locator(".rc-lane-row .rc-brush").first().evaluate((el) => el.getBoundingClientRect().width);
+        await expect(frame.locator(".rc-lane-bars .rc-brush").first()).toBeVisible({ timeout: 4000 });
+        const w = await frame.locator(".rc-lane-bars .rc-brush").first().evaluate((el) => el.getBoundingClientRect().width);
         expect(w, "the box spans what is being selected, not a sliver").toBeGreaterThan(20);
         await page.mouse.up();
         await sleep(600);
