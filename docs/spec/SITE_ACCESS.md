@@ -322,6 +322,16 @@ The attacks, each its own test:
     window, and the page-started `CDP_SHADOW_RESOLVE` walked into our hosts. The review of #610 found two more: that
     resolver keyed on the host's id, which the page can rename (17c), and a drag out of our lightbox handed the page the
     image's address, markup and file at `dragstart` (17d).
+18. **Read and move the approval highlight.** The shell resolved a highlight selector it could not match natively (one
+    inside a shadow root, or in ml's dialect) by posting `ML_HL_RESOLVE`, the selector included, onto the page's window,
+    and drew any `ML_HL_AT` from that window carrying the current sequence number. The page's own posts have that source,
+    so it heard which selector the person was asked to approve and could move the approve highlight, and the card's
+    "where on the page" note with it, anywhere, by answering every sequence number. The shell now resolves a selector in
+    its isolated world (the DOM tools' `queryAll`, `chrome.dom.openOrClosedShadowRoot` for the page's closed roots), so
+    nothing crosses the window, and takes `ML_HL_AT` only as the answer to a current `@pt`/`@box` token request. A
+    token stays on the window because its coordinates exist only in the main world's registry, which the click reads
+    too: a page lying about its own token moves the click with it, so the highlight cannot be more truthful than the
+    action. Found 2026-10-12.
 
 The suite was written before any slice landed, against a build that every attack beats. While a slice is open its
 tests assert that the attack SUCCEEDS; the slice that closes it flips that, and the same tests then assert the secure

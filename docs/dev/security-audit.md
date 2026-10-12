@@ -50,6 +50,10 @@ the worker, and the page answers geometry only):
       result the model reads, or a gate for a step that only decides, and a `tool`/`threw` record in the execution log;
       it no longer ends the run. A throw while the run is cancelled still ends it (redteam-tool-throw.test.mjs,
       agent-loop.test.mjs "a dispatch that THROWS"): #618.
+- [x] Attack 18: the shell resolves a highlight's selector in its isolated world and takes `ML_HL_AT` only for a
+      current `@pt`/`@box` token request, so the page neither hears the selector being approved nor moves the approve
+      highlight or the card's note; positive control in the light DOM and the page's open and closed shadow roots
+      (site-access.spec.mjs, attack 18): #PR_A.
 
 ## In progress
 

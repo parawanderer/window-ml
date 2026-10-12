@@ -319,10 +319,18 @@ export const setPierceClosedShadow = (on: boolean): void => {
     (window as unknown as Record<string, unknown>).__mlPierceClosed = on;
 };
 
+/** How a CLOSED root is read in a world that has a better way than the main world's load-time capture: the content
+ *  script's isolated world, which has `chrome.dom.openOrClosedShadowRoot` (declarative and native roots included). Set
+ *  only there (sidebar/shell.ts), so the main world's bundle never has one. */
+let closedRootReader: ((el: Element) => ShadowRoot | null) | null = null;   // state: plumbing — set once by the shell at load
+/** Read closed roots with `fn` from now on, instead of the main world's capture; the reader applies the pierce setting. */
+export const setClosedRootReader = (fn: (el: Element) => ShadowRoot | null): void => { closedRootReader = fn; };
+
 /** The CLOSED shadow root the document_start patch captured for `el`, IF piercing is enabled and it grabbed
  *  it. null when the flag is off, the patch is absent (shadow-patch.js didn't run), or the root is one it
  *  can't see (a declarative `shadowrootmode="closed"` or native root). */
 export const capturedClosedRoot = (el: Element): ShadowRoot | null => {
+    if (closedRootReader) return closedRootReader(el);
     const w = window as unknown as { __mlPierceClosed?: boolean; __mlClosedRoots?: WeakMap<Element, ShadowRoot> };
     if (!w.__mlPierceClosed) return null;
     return w.__mlClosedRoots?.get(el) ?? null;

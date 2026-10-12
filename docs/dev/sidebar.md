@@ -172,6 +172,9 @@ the panel routes `panel → background → content-script shell`, keyed by the i
 forwards it to the background as `ML_HL_REMOTE {tabId, ref}`, which `chrome.tabs.sendMessage`s
 to the tab's `shell.ts`, which draws the box (in devtools mode it lazily mounts a
 highlight-only shadow host, since no overlay is present). `SET_APPROVAL` is the same shape.
+The shell resolves a highlight's SELECTOR itself, in its isolated world, with the DOM tools' `queryAll` and
+`chrome.dom.openOrClosedShadowRoot` for the page's closed roots (`setClosedRootReader`); only an `@pt`/`@box` token,
+whose coordinates live in the main world's registry, is asked of `injected.ts` over the window (attack 18 in the spec).
 A future page-input channel would follow the pattern.
 
 ## Traps
