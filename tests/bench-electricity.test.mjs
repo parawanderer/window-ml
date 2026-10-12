@@ -8,7 +8,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { reading, intervals, measured, attribute, genSpan, rateAt, priceShare, runEnergy, energyByModel, MAX_GAP_MS } from "../tests/e2e/bench/electricity.mjs";
+import { JSDOM } from "jsdom";
+import { reading, intervals, measured, attribute, genSpan, rateAt, priceShare, runEnergy, energyByModel, sweepEnergy, energyLine, MAX_GAP_MS } from "../tests/e2e/bench/electricity.mjs";
+import { statusText } from "../tests/e2e/bench/status.mjs";
+import { staticPage } from "../tests/e2e/bench/serve.mjs";
 import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
 import { openScores } from "../tests/e2e/bench/scores.mjs";
 import { callsOf, logCalls, spendReport, spendText } from "../tests/e2e/bench/spend.mjs";
@@ -127,6 +130,60 @@ test("UPGRADE: a box log from before power was reported gives no energy, never 0
     const db = await boxWith([...samples.map((t) => [t0 + t, { v: 1, kind: "sample", info: { compute: { supported_gpus: [{ id: "0" }] } } }]), genEnd(t0 + 64_000, `wml-${A}`)]);
     assert.equal(runEnergy(db, [{ run: A, price: null }]).size, 0);
     db.close();
+});
+
+test("a sweep's electricity: per driver model and per run index, from the sweep's own time; none when the box drew for no run", async () => {
+    const t0 = Date.UTC(2026, 9, 5, 12, 0);
+    const db = await boxWith([...sampleFrames(t0), genEnd(t0 + 64_000, `wml-${A}`)]);
+    const e = sweepEnergy(db, [{ index: 3, run: A, price: null }, { index: 4, run: B, price: null }], (i) => (i === 3 ? "glm" : "cloud"), { since: t0 });
+    assert.deepEqual([Object.keys(e.models), Object.keys(e.runs), e.total.runs, e.total.unpriced], [["glm"], ["3"], 1, 1]);
+    assert.equal(energyLine(e.total), "0.72 Wh over 1 run (0.67 above rest); 1 run with no electricity price (energy only; set one in DevTools Settings > Spend); measured as GPUs only");
+    assert.equal(sweepEnergy(db, [{ index: 3, run: A, price: null }], () => "glm", { since: t0 + 3_600_000 }), null, "generations before `since` are not the sweep's");
+    db.close();
+});
+
+test("UPGRADE: a box log written before the (kind, at) index gains it on open, its frames intact, and the live read uses it", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const file = path.join(mkdtempSync(path.join(os.tmpdir(), "bench-elec-")), "box.sqlite");
+    const old = new DatabaseSync(file);
+    old.exec(`CREATE TABLE frames (id INTEGER PRIMARY KEY, box TEXT NOT NULL, server_at INTEGER, at INTEGER NOT NULL, kind TEXT NOT NULL, frame TEXT NOT NULL, digest TEXT NOT NULL, UNIQUE (box, server_at, kind, digest));
+        CREATE INDEX frames_at ON frames (box, at);`);
+    old.prepare("INSERT INTO frames (box, server_at, at, kind, frame, digest) VALUES ('b', 1, 1, 'gen.end', '{}', 'd')").run();
+    old.close();
+    const db = await openBoxLog(file);
+    assert.equal(db.prepare("SELECT count(*) n FROM frames").get().n, 1);
+    const plan = db.prepare("EXPLAIN QUERY PLAN SELECT at FROM frames WHERE kind = 'gen.end' AND at >= ?").all(0).map((r) => r.detail).join(" ");
+    assert.match(plan, /frames_kind_at/);
+    db.close();
+});
+
+// --- on the sweep page and in status.md ---
+
+const ENERGY = { total: { runs: 2, Wh: 1.5, aboveWh: 1.2, cost: 0.0004, costAbove: 0.0003, currency: "EUR", unpriced: 1, basis: "gpu+cpu" } };
+ENERGY.models = { glm: ENERGY.total };
+ENERGY.runs = { 0: ENERGY.total };
+const EFORE = { currency: "EUR", perKwh: 0.25, spentWh: 1.5, remainingWh: 2, totalWh: 3.5, left: 2, unknown: 0, remainingCost: 0.0005, basis: { item: 2, task: 0, model: 0, none: 0 } };
+EFORE.models = { glm: { ...EFORE } };
+const SWEEP = { name: "s", dims: ["model"], runs: [{ combo: { model: "glm" }, taskId: "t", repeat: 0, state: "running", who: "glm", models: { driver: "glm" } }], rows: [], jobs: 1, started: 1_760_000_000_000 };
+
+test("status.md says what the box drew and what it is estimated to draw, as the page does", () => {
+    const md = statusText({ ...SWEEP, energy: ENERGY, energyForecast: EFORE }, 1_760_000_001_000);
+    assert.match(md, /## Electricity \(this invocation, from the box's power readings; re-read every 30 s\)\n\n1\.50 Wh over 2 runs \(1\.20 above rest\); 0\.0004 EUR; 1 run with no electricity price/);
+    assert.match(md, /- glm: 1\.50 Wh over 2 runs/);
+    assert.match(md, /## Electricity estimate \(narrows as runs finish\)\n\nelectricity 1\.50 Wh so far; about 3\.50 Wh by the end/);
+    assert.doesNotMatch(statusText(SWEEP, 1_760_000_001_000), /Electricity/, "no box energy: no section");
+});
+
+test("the header badge and the model's pill show the power drawn, its cost, a warning for unpriced runs, and the estimate", async () => {
+    const w = new JSDOM(await staticPage({ ...SWEEP, energy: ENERGY, energyForecast: EFORE }), { url: "http://localhost/", runScripts: "dangerously", pretendToBeVisual: true }).window;
+    await new Promise((r) => w.setTimeout(r, 10));
+    const badge = w.document.querySelector(".badge.spend");
+    assert.match(badge.textContent, /power 1\.50 Wh 0\.0004 EUR · est\. 3\.50 Wh/);
+    assert.ok(badge.querySelector(".warn-price svg"), "the warning icon");
+    assert.match(badge.querySelector(".warn-price").getAttribute("data-tip"), /1 run had no electricity price.*DevTools Settings > Spend/);
+    assert.match(badge.querySelector(".power .tt").getAttribute("data-tip"), /GPUs \+ CPU package/);
+    assert.match(w.document.querySelector(".role.spend").textContent, /power 1\.50 Wh/);
+    w.close();
 });
 
 // --- in the scores report ---

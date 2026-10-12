@@ -2,7 +2,7 @@
 // push): `status.md` (text) and `status.json` (that object, less the timeline and the box's samples, which have files of
 // their own), rewritten at most every `everyMs` while the sweep runs and once more at its end. A model that started the
 // sweep in the background reads these instead of opening the page: how far along it is, what is running, what it has
-// spent and is estimated to spend by its end, what the bench holds in memory against its budget (with the chart's
+// spent and is estimated to spend by its end, what the box drew for it in electricity, what the bench holds in memory against its budget (with the chart's
 // readings as a table), the held runs with the commands for each, and whether it paused. Nothing here waits on anything:
 // a read is a file read.
 
@@ -10,7 +10,8 @@ import { writeFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { fmtBytes, limitWhence } from "./memory-budget.mjs";
 import { spendLine } from "./live-spend.mjs";
-import { forecastText } from "./spend-predict.mjs";
+import { forecastText, energyForecastText } from "./spend-predict.mjs";
+import { energyLine } from "./electricity.mjs";
 
 /** What status.json keeps of the page's state: everything but the timeline and the box's samples (timeline.md, memory.md). */
 export const statusJson = ({ timeline: _t, resources: _r, ...s }) => s;
@@ -41,6 +42,12 @@ export function statusText(s, now = Date.now()) {
         for (const [m, t] of Object.entries(s.spend.models ?? {})) out.push(`| ${m} | ${t.calls} | ${t.computedCalls ? `${money(t.computed)} (${t.computedCalls})` : ""} | ${t.reportedCalls ? `${money(t.reported)} (${t.reportedCalls})` : ""} | ${t.local || ""} | ${t.unpriced || ""} | ${t.pending || ""} |`);
         out.push("", "Computed: each call's tokens at the rates of the price snapshot it ran under. Reported: the provider's own figure. scores.md prices the logged calls the same way.", "");
     }
+    if (s.energy) {
+        out.push("## Electricity (this invocation, from the box's power readings; re-read every 30 s)", "", energyLine(s.energy.total), "");
+        for (const [m, t] of Object.entries(s.energy.models ?? {})) out.push(`- ${m}: ${energyLine(t)}`);
+        out.push("", "A run's draw: everything the box drew while generating for it, plus its draw above rest in the 30 s after each generation.", "");
+    }
+    if (s.energyForecast?.left) out.push("## Electricity estimate (narrows as runs finish)", "", energyForecastText(s.energyForecast), "");
     if (s.forecast?.left) out.push("## Spend estimate (narrows as runs finish)", "", ...forecastText(s.forecast).map((l) => l.replace(/^ {2}/, "")), "");
     const m = s.memory;
     if (m && (m.active || m.groups?.length)) {

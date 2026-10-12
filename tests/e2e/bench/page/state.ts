@@ -98,6 +98,10 @@ export interface BenchState {
     spend?: SweepSpend | null;
     /** What the sweep will cost by its end (spend-predict.mjs): spent so far plus the estimate for the cells left. */
     forecast?: SpendForecast | null;
+    /** what the box drew for this invocation's runs, from its power readings (electricity.mjs `sweepEnergy`) */
+    energy?: SweepEnergy | null;
+    /** what the box is estimated to draw by the sweep's end (spend-predict.mjs `energyForecast`) */
+    energyForecast?: EnergyForecast | null;
     /** what the bench holds in this machine's memory, against its budget (memory-budget.mjs, hold-menu.mjs) */
     memory?: MemoryState | null;
 }
@@ -172,6 +176,18 @@ export interface SpendReport {
     /** how the energy was measured, when the box log was read (electricity.mjs `BASIS_WORDS` keys) */
     energyBases?: string[];
 }
+
+/** One electricity forecast tally: Wh so far, estimated for the cells left, and the rest's cost at the current rate. */
+export interface EnergyForecastTally {
+    spentWh: number; remainingWh: number; totalWh: number; left: number; unknown: number; remainingCost: number | null;
+    basis: { item: number; task: number; model: number; none: number };
+}
+
+/** The sweep's electricity forecast, in total and per driver model. */
+export interface EnergyForecast extends EnergyForecastTally { currency: string | null; perKwh: number | null; models: Record<string, EnergyForecastTally> }
+
+/** A sweep's electricity: the whole invocation, per driver model, and per run index. */
+export interface SweepEnergy { total: EnergyTally; models: Record<string, EnergyTally>; runs: Record<string, EnergyTally> }
 
 /** What the box drew for one model's runs and what that cost (electricity.mjs `energyByModel`); cost null with no price. */
 export interface EnergyTally {

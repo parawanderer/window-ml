@@ -86,8 +86,9 @@ import { repoUrl } from "../../../scripts/gen-build-info.mjs";
 import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, modelKey, taskHash, SCORES_DB } from "./scores.mjs";
 import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
-import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
-import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool } from "./spend-predict.mjs";
+import { liveSpend, fetchFromPriceService, spendLine, eventCalls } from "./live-spend.mjs";
+import { sweepEnergy, energyLine, runEnergy } from "./electricity.mjs";
+import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool, predictEnergy, energyForecast, energyForecastText, priceFromSettings } from "./spend-predict.mjs";
 import { headerHelp } from "./cli-help.mjs";
 import { statusWriter } from "./status.mjs";
 import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
@@ -107,6 +108,8 @@ const REGRESSION_SPEC = path.join(HERE, "specs/regression.bench.ts");
 
 /** What `--when-full` takes: what a sweep does at its memory budget. */
 const WHEN_FULL = ["pause", "stop-holding", "release-duplicates"];
+/** How often the live electricity figure is re-read from the box log. */
+const ENERGY_MS = 30_000;
 
 function parseArgv(argv) {
     const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined, hold: [], holdIdle: undefined, memoryLimit: undefined, whenFull: "pause" };
@@ -246,6 +249,31 @@ async function estimateSpend(cells, nRun, { backend, scores, driverOf, cacheCtx 
     const atStart = forecast(est, { stateOf: () => "pending", modelOf: driverOf, cachedOf: (i) => i >= nRun || !toRun[i], prices: prices.at });
     console.log(`${forecastText(atStart, { start: true }).join("\n")}\n`);
     return { cells: est, toRun, prices, atStart };
+}
+
+/**
+ * What the sweep will draw on the box (spend-predict.mjs `predictEnergy`), printed: each cell the cache will not serve
+ * from its model's past runs' energy in the box logs (this clone's and the pulled pool's), priced at the rate the runner's
+ * electricity settings give now. `priceOf` (the spend estimate's price book) says which models are local; without one,
+ * every model with no energy on record is "no estimate". Returns `{ cells, toRun, price, atStart }`, or null when no
+ * box log has any energy.
+ */
+async function estimateEnergy(cells, nRun, { backend, scores, boxLog, driverOf, cacheCtx, priceOf = null }) {
+    const pool = await openPool(path.join(ROOT, "tests/e2e/artifacts/bench-pool/scores.sqlite"));
+    const poolBox = await openPool(path.join(ROOT, "tests/e2e/artifacts/bench-pool/box.sqlite"));
+    try {
+        const history = pastRuns([scores, pool]);
+        const energyOf = new Map();
+        for (const db of [boxLog, poolBox]) for (const [run, e] of runEnergy(db, history.map((r) => ({ run: r.run, price: null })))) if (!energyOf.has(run)) energyOf.set(run, e);
+        if (!energyOf.size) return null;
+        const toRun = await Promise.all(cells.slice(0, nRun).map((c) => cacheEntry(c, cacheCtx).then((e) => !e?.hit)));
+        const est = predictEnergy(cells.map((c, i) => ({ model: driverOf(i), task: c.task.id, taskHash: taskHash(c.task, c.combo) })), history, energyOf,
+            (m) => (priceOf ? !!priceOf(m).local : true));
+        const price = priceFromSettings(backend);
+        const atStart = energyForecast(est, { stateOf: () => "pending", modelOf: driverOf, cachedOf: (i) => i >= nRun || !toRun[i], price });
+        console.log(`  ${energyForecastText(atStart, { start: true })}\n`);
+        return { cells: est, toRun, price, atStart };
+    } finally { pool?.close(); poolBox?.close(); }
 }
 
 /** Run one cell (or read it back from cache) and return its measurement. */
@@ -554,7 +582,10 @@ const main = async () => {
         const scores = backend ? await openScores() : null;
         if (scores) {
             console.log("");
-            await estimateSpend(cells, cells.length, { backend, scores, driverOf: (i) => cells[i].effects.backend?.model ?? backend.model ?? null, cacheCtx: { sweepDir, cache: args.cache, holdCli: args.hold, fingerprint } });
+            const opts = { backend, scores, driverOf: (i) => cells[i].effects.backend?.model ?? backend.model ?? null, cacheCtx: { sweepDir, cache: args.cache, holdCli: args.hold, fingerprint } };
+            const est = await estimateSpend(cells, cells.length, opts);
+            const box = await openPool(BOX_DB);
+            if (box) { await estimateEnergy(cells, cells.length, { ...opts, boxLog: box, priceOf: est?.prices?.priceOf }); box.close(); }
         }
         console.log(`\n  (dry run — nothing executed)\n`);
         return;
@@ -573,6 +604,7 @@ const main = async () => {
     // (memory readings and its own loads, evictions and serving spans, every frame also kept in box.sqlite), else polled
     // memory. For the page's memory chart and memory.md; only against a real backend.
     const boxLog = backend ? await openBoxLog() : null;
+    const boxSince = Date.now() - 60_000;
     const resPoll = backend ? startBox(backend, { db: boxLog, log: (m) => console.log(m) }) : null;
     await mkdir(sweepDir, { recursive: true });
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
@@ -766,7 +798,12 @@ const main = async () => {
     }) : null;
     // A seeded cell's first turn runs on the fake LLM (run-once): its calls are nobody's spend, up to its first answer.
     const inSeed = cells.map((c) => !!c.task.seed);
+    // Each running cell's session (the box names it on every generation it serves) and the electricity price its
+    // calls recorded: what its energy is read and priced by (electricity.mjs).
+    const runHash = [], runPrice = [];
     ctx.spendOn = (i, ev) => {
+        if (ev?.session?.hash) runHash[i] ??= ev.session.hash;
+        if (!runPrice[i]) for (const c of eventCalls(ev, null)) if (c.usage?.electricity) { runPrice[i] = c.usage.electricity; break; }
         if (inSeed[i]) { if (ev.kind === "agent-result") inSeed[i] = false; return false; }
         return spent?.add(i, ev, driverOf(i)) ?? false;
     };
@@ -774,10 +811,28 @@ const main = async () => {
     // price service's current rates (else the newest snapshot the log holds), from this clone's log and the pulled pool.
     // Printed now; on the page, in status.md and at the end it narrows as cells finish.
     const predicted = backend && scores ? await estimateSpend(cells, nRun, { backend, scores, driverOf, cacheCtx: ctx }) : null;
-    /** The spend so far and the forecast over it, for the page and status files. */
-    function spendState() {
+    const predictedPower = backend && scores && boxLog ? await estimateEnergy(cells, nRun, { backend, scores, boxLog, driverOf, cacheCtx: ctx, priceOf: predicted?.prices?.priceOf }) : null;
+    /** The spend so far, the forecast over it and the box's electricity, for the page and status files. */
+    function spendState({ final = false } = {}) {
         const spend = spent?.summary(driverOf) ?? null;
-        return { spend, forecast: forecastNow(spend) };
+        const energy = energyNow(final);
+        return { spend, forecast: forecastNow(spend), energy, energyForecast: energyForecastNow(energy) };
+    }
+    /** The electricity forecast now: measured so far plus what the unfinished cells are estimated to draw. */
+    function energyForecastNow(energy) {
+        if (!predictedPower) return null;
+        return energyForecast(predictedPower.cells, { stateOf: (i) => runsState[i]?.state ?? "pending", spentOf: (i) => energy?.runs?.[i] ?? null, modelOf: driverOf,
+            cachedOf: (i) => i >= nRun || !predictedPower.toRun[i] || !!runsState[i]?.cached, price: predictedPower.price });
+    }
+    // What the box drew for this invocation's runs, read from the box log (electricity.mjs). The read is a few queries and
+    // a parse of the sweep's samples, so it is redone at most every ENERGY_MS, and once more at the end.
+    let energyAt = 0, energy = null;
+    function energyNow(force) {
+        if (!boxLog || (!force && Date.now() - energyAt < ENERGY_MS)) return energy;
+        energyAt = Date.now();
+        const mine = runsState.map((r, i) => ({ index: i, run: runHash[i] ?? r.hash, price: runPrice[i] ?? null, cached: r.cached })).filter((r) => r.run && !r.cached);
+        try { energy = mine.length ? sweepEnergy(boxLog, mine, driverOf, { since: boxSince }) : null; } catch { /* the page does without */ }
+        return energy;
     }
     /** The forecast now, over `spend` (live spend's summary): spent so far plus what the unfinished cells are estimated to add. */
     function forecastNow(spend) {
@@ -900,7 +955,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, older, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null, ...spendState(), memory: memoryView(),
+        resources: resPoll?.resources() ?? null, ...spendState({ final: true }), memory: memoryView(),
         // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
         // run of a task that says so.
         ...(spec.sync === false || spec.tasks.some((t) => t.sync === false)
@@ -936,6 +991,8 @@ const main = async () => {
         if (none.length) console.log(`  ${none.length} of ${spec.tasks.length} task${spec.tasks.length === 1 ? "" : "s"} had no \`succeeded\` predicate, so their runs count for tokens but not for any model's score: ${none.join(", ")}`);
     } else if (backend) console.log("\n  (runs not logged for the scoreboard: this Node has no node:sqlite)");
     if (pageState.spend) console.log(`  spend: ${spendLine(pageState.spend)}`);
+    if (pageState.energy) console.log(`  electricity: ${energyLine(pageState.energy.total)}`);
+    if (predictedPower?.atStart) console.log(`  electricity estimate at the start: about ${predictedPower.atStart.remainingWh.toFixed(2)} Wh; measured ${(pageState.energy?.total.Wh ?? 0).toFixed(2)} Wh`);
     if (predicted?.atStart) console.log(`  ${estimateCheck(predicted.atStart, pageState.forecast)}`);
     if (resPoll) console.log(`  box: ${resPoll.mode === "stream" ? `its event stream, every frame kept in ${path.relative(ROOT, BOX_DB)}` : "polled memory (the server has no event stream)"}; memory.md says what it did.`);
     console.log("");
@@ -948,7 +1005,7 @@ const main = async () => {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
             runs: runsState, rows, older, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
-            resources: pageState.resources, spend: pageState.spend, forecast: pageState.forecast, memory: pageState.memory,
+            resources: pageState.resources, spend: pageState.spend, forecast: pageState.forecast, energy: pageState.energy, energyForecast: pageState.energyForecast, memory: pageState.memory,
         });
         // The page outlives the sweep, the sweep's PROCESS does not: a caller that started it in the background (an
         // agent's background task, a `&` and a wait) learns it finished by its exit, which a held-open server never gave.

@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSDOM } from "jsdom";
-import { pastRuns, repriced, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool, RECENT } from "../tests/e2e/bench/spend-predict.mjs";
+import { pastRuns, repriced, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool, RECENT, predictEnergy, energyForecast, energyForecastText, priceFromSettings } from "../tests/e2e/bench/spend-predict.mjs";
 import { openScores } from "../tests/e2e/bench/scores.mjs";
 import { logCalls, logSnapshot } from "../tests/e2e/bench/spend.mjs";
 import { statusText } from "../tests/e2e/bench/status.mjs";
@@ -177,6 +177,44 @@ test("without a price service, the newest snapshot the log holds; none when no c
     assert.equal(got.at, "2026-10-09T08:00:00Z");
     assert.equal(got.priceOf(LOCAL).local, true);
     assert.equal(await openPool(path.join(os.tmpdir(), "no-such-pool", "scores.sqlite")), null);
+});
+
+// --- electricity ---
+
+test("a cell's electricity is the mean Wh of its model's recent runs that drew on the box, at the same fallbacks", () => {
+    const hist = [run("l1", LOCAL, "t", "h1", "2026-10-10T01", []), run("l2", LOCAL, "t", "h1", "2026-10-10T02", []), run("l3", LOCAL, "u", "h9", "2026-10-10T03", []),
+        run("l0", LOCAL, "t", "h1", "2026-10-09T00", []), run("e1", EXT, "t", "h1", "2026-10-10T01", [])];
+    const energyOf = new Map([["l1", { Wh: 1 }], ["l2", { Wh: 2 }], ["l3", { Wh: 9 }]]);   // l0 predates the power readings
+    const local = (m) => m === LOCAL;
+    const got = predictEnergy([{ model: LOCAL, task: "t", taskHash: "h1" }, { model: LOCAL, task: "t", taskHash: "h2" }, { model: LOCAL, task: "v", taskHash: "x" },
+        { model: EXT, task: "t", taskHash: "h1" }, { model: "never-ran", task: "t", taskHash: "h1" }, { model: "loc2", task: "t", taskHash: "h1" }], hist, energyOf, local);
+    assert.deepEqual(got.slice(0, 3), [{ Wh: 1.5, basis: "item", n: 2 }, { Wh: 1.5, basis: "task", n: 2 }, { Wh: 4, basis: "model", n: 3 }]);
+    assert.deepEqual(got[3], { Wh: 0, basis: "none", n: 0 }, "a cloud model whose runs never drew on the box draws nothing");
+    assert.equal(got[4], null, "a model never run: no estimate");
+    const noEnergy = predictEnergy([{ model: LOCAL, task: "t", taskHash: "h1" }], [run("l0", LOCAL, "t", "h1", "x", [])], new Map(), local);
+    assert.deepEqual(noEnergy, [null], "a local model with no energy on record: no estimate, never 0");
+});
+
+test("the electricity forecast narrows as runs finish, and prices the rest at the current rate", () => {
+    const pred = [{ Wh: 2, basis: "item", n: 3 }, { Wh: 2, basis: "item", n: 3 }, { Wh: 0, basis: "none", n: 0 }, null, { Wh: 5, basis: "model", n: 1 }];
+    const states = ["done", "running", "pending", "pending", "pending"];
+    const measured = { 0: { Wh: 2.5 }, 1: { Wh: 0.5 } };
+    const f = energyForecast(pred, { stateOf: (i) => states[i], spentOf: (i) => measured[i], modelOf: (i) => (i < 2 ? LOCAL : EXT), cachedOf: (i) => i === 4,
+        price: { perKwh: 0.25, currency: "EUR" } });
+    assert.deepEqual([f.spentWh, f.remainingWh, f.totalWh, f.left, f.unknown], [3, 1.5, 4.5, 3, 1], "a finished run counts what it drew; a running one the rest of its estimate; a cached one nothing");
+    near(f.remainingCost, 1.5 / 1000 * 0.25);
+    assert.deepEqual(f.models[LOCAL].left, 1);
+    assert.match(energyForecastText(f), /^electricity 3\.00 Wh so far; about 4\.50 Wh by the end \(3 runs left, about 0\.0004 EUR for them at 0\.25 EUR\/kWh\); 1 run on a local model with no energy on record, not in it$/);
+    const bare = energyForecast(pred, { stateOf: () => "pending", modelOf: () => LOCAL });
+    assert.equal(bare.remainingCost, null);
+    assert.match(energyForecastText(bare, { start: true }), /^electricity estimate: about 9\.00 Wh for the 5 runs to run \(no electricity price set: energy only\)/);
+});
+
+test("the coming runs' electricity price comes from the runner's settings, a tariff on this device's zone", () => {
+    assert.equal(priceFromSettings({}), null);
+    assert.deepEqual(priceFromSettings({ electricityPerKwh: 0.26, electricityCurrency: "GBP" }), { perKwh: 0.26, currency: "GBP" });
+    const t = priceFromSettings({ electricityPerKwh: 0.26, electricityOffPeakPerKwh: 0.22, electricityOffPeakHours: "23-7" });
+    assert.deepEqual({ ...t.tariff, tz: typeof t.tariff.tz }, { normalPerKwh: 0.26, offPeakPerKwh: 0.22, offPeakHours: "23-7", offPeakWeekends: true, tz: "string" });
 });
 
 // --- the page ---
