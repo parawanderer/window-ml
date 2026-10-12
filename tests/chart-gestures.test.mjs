@@ -16,14 +16,15 @@ const ev = (kind, t, until) => ({ kind, t, until, label: `${kind} ${t}`, model: 
 
 /** A finished sweep with memory readings from 1 s to 39 s and two runs (6 s to 20 s, 22 s to 36 s), on the page. With
  *  `running`, the same sweep still going: its readings end at the wall clock, and the page has no end to stop at. */
-async function chart(t, { running = false } = {}) {
+async function chart(t, { running = false, readings = 20, freeGiB = () => 20 } = {}) {
     const shift = running ? Date.now() - LAST : 0;
     const { readSample, packSamples } = await import("../tests/e2e/bench/resource-poll.mjs");
     const GiB = 1024 ** 3;
-    const info = { compute: { system_compute: { cpu_cores: 8, total_memory: 64 * GiB, free_memory: 32 * GiB, free_swap: 0 }, supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 24 * GiB, free_memory: 20 * GiB, compute: "8.6", driver: "13" }] } };
-    const fetchImpl = async (url) => ({ ok: true, json: async () => (url.endsWith("/api/ps") ? { models: [] } : info) });
+    let k = 0;
+    const info = () => ({ compute: { system_compute: { cpu_cores: 8, total_memory: 64 * GiB, free_memory: 32 * GiB, free_swap: 0 }, supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 24 * GiB, free_memory: freeGiB(k) * GiB, compute: "8.6", driver: "13" }] } });
+    const fetchImpl = async (url) => ({ ok: true, json: async () => (url.endsWith("/api/ps") ? { models: [] } : info()) });
     const reads = [];
-    for (let k = 0; k < 20; k++) reads.push(await readSample({ chatUrl: "http://box/api/chat/completions" }, { fetchImpl, now: () => shift + FIRST + k * 2000 }));
+    for (k = 0; k < readings; k++) reads.push(await readSample({ chatUrl: "http://box/api/chat/completions" }, { fetchImpl, now: () => shift + FIRST + (k * SPAN) / (readings - 1) }));
     const runs = [0, 1].map((i) => ({ combo: { model: `m${i}` }, taskId: "t", repeat: 0, state: "done", who: `m${i}`, ok: true }));
     const at = (ms) => shift + ms;
     const html = await staticPage({ name: "gestures", dims: ["model"], runs, rows: [], jobs: 1, started: at(5000), finished: running ? null : 30_000, resources: packSamples(reads),
@@ -230,4 +231,33 @@ test("a line the arrow keys hold stays read when the pointer moves off, and goes
     c.d.body.dispatchEvent(new c.w.PointerEvent("pointermove", { bubbles: true, clientX: 12, clientY: 900 }));
     await c.tick();
     assert.equal(c.tip(), 0, "let go");
+});
+
+// --- drawing a long history ---
+
+/** The points of the first pool line the plot draws, as [x, y] in its viewBox. */
+const linePoints = (c) => (c.q(".rc-line")?.getAttribute("points") ?? "").split(" ").filter(Boolean).map((p) => p.split(",").map(Number));
+
+test("a history denser than the plot is drawn at most four points a column, and a one-reading spike still reaches its peak", async (t) => {
+    const n = 6000, spike = 4321;
+    const c = await chart(t, { readings: n, freeGiB: (k) => (k === spike ? 2 : 18) });
+    const pts = linePoints(c);
+    assert.ok(pts.length > 100, `a line is drawn (${pts.length} points)`);
+    assert.ok(pts.length <= 4 * W, `thinned to the 800 px plot: ${pts.length} points for ${n} readings`);
+    assert.ok(pts.length <= 2 * W + 2, `a flat line keeps two points a column of the MEASURED width: ${pts.length}`);
+    // The spike is the fullest the card ever is: the line's highest point (smallest y) is its reading.
+    const top = Math.min(...pts.map(([, y]) => y));
+    const spikeAt = pts.find(([, y]) => y === top);
+    assert.ok(Math.abs(spikeAt[0] / 300 - spike / (n - 1)) < 0.01, `the peak is drawn where it happened (${spikeAt[0]})`);
+    assert.ok(top < Math.min(...pts.filter((p) => p !== spikeAt).map(([, y]) => y)), "nothing else reaches it");
+});
+
+test("zooming in draws the readings the full view thinned away", async (t) => {
+    const n = 6000;
+    const c = await chart(t, { readings: n, freeGiB: (k) => 10 + Math.sin(k / 3) * 5 });
+    const full = linePoints(c).length;
+    // Select a tenth of the recording: the line now holds every reading in it.
+    await c.drag(c.q(".rc-plot"), xAt(FIRST + SPAN * 0.45), xAt(FIRST + SPAN * 0.55));
+    const zoomed = linePoints(c).length;
+    assert.ok(zoomed >= n / 10 - 2, `every reading in the selected tenth is drawn: ${zoomed} points (the whole view drew ${full})`);
 });
