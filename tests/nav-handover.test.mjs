@@ -239,3 +239,25 @@ test("a prerendered unapproved page the tab activates is handed the run's next t
     assert.deepEqual(leaked.map(plain), [], "the question never reached the page (the shell's own run events aside)");
     assert.ok(w.geometryAsked() > 0, "the worker's look asked the page for geometry only");
 });
+
+// --- a revoke while the run is on its builder's page, with no navigation ---
+
+test("a page-built run whose site is revoked while it runs fails closed: its page's next send is refused and reaches no backend, and the run is not handed over", T, async () => {
+    let bgRef = null, n = 0;
+    const replies = [];
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: "https://builder.example", frameId: 0, documentId: "doc-1" };
+    const pageCall = async () => replies.push(plain(await Promise.race([bgRef.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "the page's own call" }] } }, sender), sleep(3000).then(() => "no answer")])));
+    const w = await run({ calls: [{ name: "scroll", args: {} }, { name: "scroll", args: {} }],
+        onStart: (bg) => { bgRef = bg; },
+        page: async (p) => {
+            if (p.name !== "scroll") return undefined;
+            if (n++ === 0) { await pageCall(); bgRef.localStore.ml_site_always = ["https://friend.example"]; return undefined; }
+            await pageCall();
+            return undefined;
+        } });
+    assert.equal(w.driverBodies.length, 3, "the run went on to its answer");
+    assert.ok(replies[0]?.data !== undefined && !replies[0]?.error, `positive control: before the revoke the page's call was served: ${JSON.stringify(replies[0])}`);
+    assert.match(String(replies[1]?.error), /^Refused/, `after it, refused: ${JSON.stringify(replies[1])}`);
+    assert.equal(w.subs.filter((b) => JSON.stringify(b).includes("the page's own call")).length, 1, "only the call before the revoke reached the backend");
+    assert.deepEqual((await w.log()).filter((r) => r.kind === "handed-to-worker"), [], "no navigation, no hand-over (the open item)");
+});

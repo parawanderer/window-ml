@@ -116,6 +116,6 @@ export async function workerMint(runId: string, tabId: number, q: { pt: { x: num
 export function pyMediaFor(runId: string, tabId: number): WorkerPyMedia {
     return {
         image: (image, margin) => workerPythonImage(runId, tabId, image, margin), mint: (q, doc) => workerMint(runId, tabId, q, doc),
-        table: (src, raw) => workerPageTable(runId, tabId, src, raw), document: () => workerPageDocument(runId, tabId),
+        table: (src, raw) => workerPageTable(runId, tabId, src, raw), document: (url) => workerPageDocument(runId, tabId, url),
     };
 }

@@ -43,8 +43,8 @@ export interface WorkerPyMedia {
     mint: MintToken;
     /** a page table (a CSS selector, or `"current"`), as the page reads it, checked */
     table?(src: string, raw: boolean): Promise<{ label: string; data: PageTableData }>;
-    /** the HTML of the document the tab holds now, checked */
-    document?(): Promise<string>;
+    /** the HTML of the document the tab holds now, checked, refused unless the tab is on `url` */
+    document?(url: string): Promise<string>;
 }
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
@@ -184,7 +184,7 @@ function runMl(ctx: RunCtx): MlApi {
             // and runs the rest of the tool here, so an `ask` over it is the worker's model call, not the page's.
             if (credentials && rendered && tabUrl && isCurrentPage(String(url), tabUrl)) {
                 if (!ctx.media?.document) throw new Error("the page the run is on cannot be read here.");
-                const text = await ctx.media.document();
+                const text = await ctx.media.document(tabUrl);
                 const live: FetchResult = { url: tabUrl, status: 200, ok: true, type: "html", typeByHeader: null, typeByContent: "html",
                     typeByExtension: typeFromExtension(tabUrl), contentType: "text/html", text, rendered: true, live: true };
                 const md = await htmlToMarkdownOffscreen(text).catch(() => undefined);

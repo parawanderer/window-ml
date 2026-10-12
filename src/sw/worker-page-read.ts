@@ -11,11 +11,13 @@
 import type { PageReadRequest, PageToolEnvelope } from "../contract/contract-messages";
 import { delegateSend } from "./delegate-send";
 import { topDocument } from "./worker-vision";
+import { isCurrentPage } from "../dom/dom";
 
 /** How long the page has to answer: a large table is read from the DOM in well under a second. */
 export const PAGE_READ_MS = 15_000;
 /** The most columns, cells and characters a page table may have; a larger answer is refused whole. */
-export const PAGE_TABLE_CAPS = { columns: 2_000, cells: 4_000_000, cell: 100_000, html: 16_000_000 } as const;
+/** `rows` bounds the row count on its own: an empty row holds no cell, so the cell cap alone let a page send millions. */
+export const PAGE_TABLE_CAPS = { columns: 2_000, rows: 1_000_000, cells: 4_000_000, cell: 100_000, html: 16_000_000 } as const;
 /** The longest document a session render reads (characters of HTML). */
 export const PAGE_HTML_MAX = 16_000_000;
 
@@ -25,6 +27,8 @@ export const PAGE_READ_REFUSED = "the page's answer was malformed or too large, 
 export const PAGE_READ_SLOW = "the page did not answer in time, so nothing from it was used. Retry once the page settles.";
 /** The sentence for a page that changed while it was asked. */
 export const PAGE_READ_MOVED = "the page changed while it was being read (it navigated, or was reloaded), so nothing from it was used. Run it again.";
+/** The sentence for a session render whose tab is no longer on the URL the call names. */
+export const PAGE_READ_ELSEWHERE = "the tab is not on that page any more, so it was not read as it. Fetch the URL the tab is on, or navigate back first.";
 /** The sentence for a tab whose document the browser does not name. */
 export const PAGE_READ_NO_DOCUMENT = "the browser does not say which page the tab holds now, so the page was not read. Run it again.";
 
@@ -37,12 +41,17 @@ export type PageTableData = { kind: "rows"; columns: string[]; rows: (string | n
  * @param tabId its tab
  * @param req the question
  * @param ms the bound on the answer
+ * @param expectUrl a URL the tab's top frame must be on, or undefined
  * @returns the page's answer, unchecked
  * @throws a sentence when the page cannot be asked, is too slow, or changed meanwhile
  */
-async function ask(runId: string, tabId: number, req: PageReadRequest, ms: number): Promise<NonNullable<PageToolEnvelope["pageRead"]>> {
-    const documentId = await topDocument(tabId);
+async function ask(runId: string, tabId: number, req: PageReadRequest, ms: number, expectUrl?: string): Promise<NonNullable<PageToolEnvelope["pageRead"]>> {
+    const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: unknown; url?: unknown } | null;
+    const documentId = typeof frame?.documentId === "string" ? frame.documentId : null;
     if (!documentId) throw new Error(PAGE_READ_NO_DOCUMENT);
+    // The document is the browser's, and so is its URL: a page answering for a URL is answering only while the tab is on
+    // it. The worker's own record of the tab's URL can be stale (an eviction loses it, and the run's start URL stands in).
+    if (expectUrl !== undefined && !(typeof frame?.url === "string" && isCurrentPage(expectUrl, frame.url))) throw new Error(PAGE_READ_ELSEWHERE);
     const SLOW = Symbol("slow");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const sent = delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, pageRead: req } }, documentId);
@@ -73,7 +82,7 @@ export function checkPageTable(got: unknown): { label: string; data: PageTableDa
     const d = g.data as { kind?: unknown; columns?: unknown; rows?: unknown; html?: unknown } | null;
     if (label === null || !d || typeof d !== "object") return null;
     if (d.kind === "html") return typeof d.html === "string" && d.html.length <= PAGE_TABLE_CAPS.html ? { label, data: { kind: "html", html: d.html } } : null;
-    if (d.kind !== "rows" || !Array.isArray(d.columns) || !Array.isArray(d.rows) || d.columns.length > PAGE_TABLE_CAPS.columns) return null;
+    if (d.kind !== "rows" || !Array.isArray(d.columns) || !Array.isArray(d.rows) || d.columns.length > PAGE_TABLE_CAPS.columns || d.rows.length > PAGE_TABLE_CAPS.rows) return null;
     if (!d.columns.every((c) => typeof c === "string" && c.length <= PAGE_TABLE_CAPS.cell)) return null;
     const cell = (v: unknown): boolean => v === null || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && v.length <= PAGE_TABLE_CAPS.cell);
     let cells = 0;
@@ -103,19 +112,21 @@ export async function workerPageTable(runId: string, tabId: number, src: string,
     if (err !== null) throw new Error(err);
     const t = checkPageTable(r.table);
     if (!t) throw new Error(`pythonExec tables — ${PAGE_READ_REFUSED}`);
-    return t;
+    // The worker names the source, as the page's own loader would (ml-python.ts `pageTable`): the page's label is not read.
+    return { label: src === "current" ? "current page table" : src, data: t.data };
 }
 
 /**
  * The HTML of the document the run's page holds now, for a `fetch_url` session render of that page, checked here.
  * @param runId the run
  * @param tabId its tab
+ * @param url the URL the call reads as this page: the tab must be on it
  * @param ms the bound on the page's answer
  * @returns the document's HTML (its doctype first)
  * @throws a sentence when the page could not be read
  */
-export async function workerPageDocument(runId: string, tabId: number, ms = PAGE_READ_MS): Promise<string> {
-    const r = await ask(runId, tabId, { kind: "document" }, ms);
+export async function workerPageDocument(runId: string, tabId: number, url: string, ms = PAGE_READ_MS): Promise<string> {
+    const r = await ask(runId, tabId, { kind: "document" }, ms, url);
     const err = pageError(r.error);
     if (err !== null) throw new Error(err);
     if (typeof r.html !== "string" || r.html.length > PAGE_HTML_MAX) throw new Error(PAGE_READ_REFUSED);

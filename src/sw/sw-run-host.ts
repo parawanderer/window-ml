@@ -725,6 +725,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // describeElement into a SEALED shadow root, for a run the worker drives: the worker resolves the MODEL's
                     // selector through the debugger and writes the result (tools.ts `sealedDescribe`), where the page used to
                     // send CDP_SHADOW_RESOLVE itself. A page-built run's page resolves its own (an approved site's).
+                    // Only describeElement asks for it: the page's echo on another tool is dropped, so it cannot drive the debugger.
+                    if (env?.cdpShadowResolve && name !== "describeElement") { env = { ...env }; delete env.cdpShadowResolve; }
                     if (env?.cdpShadowResolve && byWorker()) {
                         const sel = typeof (args as { selector?: unknown }).selector === "string" ? (args as { selector: string }).selector : "";
                         // A `>>>` path is all the worker can check: whether its first hop is sealed is the page's DOM's to say.
