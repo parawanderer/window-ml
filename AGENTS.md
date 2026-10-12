@@ -356,7 +356,11 @@ PR is what runs CI (e2e, three Node versions, real CPython), which a green local
 - **A PR that conflicts with its base has NO checks at all.** If `gh run list` shows nothing for a pushed commit,
   suspect this first.
 - **A CANCELLED check prints as `fail`.** Resolve the JOB conclusions before blaming a change; poll a run by ID.
-- **Merge your own PR with `node scripts/merge-when-green.mjs <pr> --wait --merge`**: it applies the standing rule and
+- **RULE — every GitHub post an agent makes says WHICH SESSION made it** (any harness: comment, review, inline remark,
+  PR body). `gh` posts under the owner's name, so without it a session takes another's comment for its own. End with
+  `> *Drafted by <harness> · work: <slug> · session <id8> · <model>*` and `<!-- agent-post: harness=… work=… session=<full
+  id> model=… -->`; the work slug is session-mail's name for your work. Not in commits. `docs/dev/working-in-the-repo.md`.
+- **Merge your own PR with `node scripts/merge-when-green.mjs <pr> --wait --merge --session <id>`**: it applies the standing rule and
   refuses while a worktree on the branch holds bench results or uncommitted files (`--keep-bench`). `merge-when-green` skill.
 - **The `ci` skill is the playbook** (open, watch in the background, read only failing logs, the known-bad list);
   **the `background-work` skill** is how to run anything slow without blocking on it.

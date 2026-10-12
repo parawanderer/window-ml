@@ -7,7 +7,7 @@ description: Merge your own PR only when the standing rule holds (pipeline green
 
 ```bash
 node scripts/merge-when-green.mjs 501                  # check once: OK, or why not (exit 0 / 1)
-node scripts/merge-when-green.mjs 501 --wait --merge   # while CI runs, one API call a minute (up to 90 min; sleeps if the account's hourly API budget runs low), then squash-merge
+node scripts/merge-when-green.mjs 501 --wait --merge --session <your session id>   # while CI runs, one API call a minute (up to 90 min; sleeps if the account's hourly API budget runs low), then squash-merge
 ```
 
 Run the `--wait` form in the background (the `background-work` skill): it exits when the PR is merged or refused, so the
@@ -57,3 +57,10 @@ So run sweeps you want to keep from the main clone, or `--keep-bench` them befor
 
 The rule lives in `judge()` and the disk check in `diskOnly()`/`keepBench()`, tested by `tests/merge-when-green.test.mjs`.
 Change the rule there, here and in AGENTS.md together.
+
+## Your own comments
+
+Pass `--session <id>` (your harness's session id) so a comment YOU posted on the PR does not count as unread: the script
+recognises it by the `<!-- agent-post: … session=<id> … -->` marker every agent post ends with (AGENTS.md, "every GitHub
+post an agent makes says WHICH SESSION made it"; `docs/dev/working-in-the-repo.md`). Without the flag, or on a post with
+no marker or another session's marker, it stops and says "read them", as before.

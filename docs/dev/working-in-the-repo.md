@@ -388,6 +388,36 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   suite globs `tests/*.test.*`; E2E is `tests/e2e/*.spec.mjs`). See the fuller
   writeup below.
 
+## GitHub posts say which session made them
+
+**Every comment, review, inline remark or PR body an agent posts ends with two lines**, whatever the harness (Claude
+Code, Codex, Gemini CLI, Cursor):
+
+```markdown
+> *Drafted by Claude Code · work: gallery · session 69c70d91 · claude-opus-5-5*
+<!-- agent-post: harness=claude-code work=gallery session=69c70d91-db9e-4660-a1a6-21bc97937b5c model=claude-opus-5-5 -->
+```
+
+The first is for a person. The second does not render on GitHub and is for tools. The fields are the session-mail
+protocol's (`~/git/session-mail/README.md`), so a session has one name everywhere:
+
+- **work**: what you are working on, as a short slug (`gallery`, `site-access`, `chat-page`): the name other sessions
+  know you by. Not the clone's directory and not the model, both of which change hands mid-task.
+- **session**: your harness's session id (Claude Code: the directory name in your scratchpad path), the full id in the
+  marker and its first 8 characters in the visible line; `none` if your harness has none.
+- **harness** and **model**: the exact model id, not a family name.
+
+**Why.** Every post an agent makes through `gh` carries the owner's account name. Without a marker, a session reading
+a PR cannot tell its own note from a review, or one session's comment from another's, and sessions did take other
+sessions' comments for their own. `merge-when-green` also refused a merge over a comment the merging session had
+posted itself (#591, 2026-10-12), because it could only see the account name.
+
+**What reads it.** `merge-when-green --session <id>` skips posts whose marker names that session. A post marked by
+ANOTHER session still blocks: an agent's review is a review. An unmarked post counts as a person's, so a forgotten
+marker fails safe (the merge waits) rather than open (a review goes unread).
+
+**Not in commits.** `Co-Authored-By` already names the model, and a session knows its own branch.
+
 ## Branches, PRs and CI
 
 Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at
