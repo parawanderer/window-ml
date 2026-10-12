@@ -5,7 +5,7 @@
 import type { EntryApi, GalleryEntry, MountedEntry } from "./gallery-entry";
 import { createGradientRenderer, type GradientRenderer, type GradientScene } from "../lab/gradient/gradient-gl";
 import { flattenFreeform, tpsDegenerate, type Freeform } from "../lab/gradient/gradient-freeform";
-import { gridMesh, type Mesh } from "../lab/gradient/gradient-mesh";
+import { gridMesh, splitHandles, type Mesh, type Vec2 } from "../lab/gradient/gradient-mesh";
 
 /** The entry's props: which fill, both fills' parameters, and how to draw and time it. */
 interface GradientProps {
@@ -72,6 +72,15 @@ function demoMesh(rows = 3, cols = 3, values: Mesh["values"] = "bilinear"): Mesh
     return { ...m, values, tessellation: 24 };
 }
 
+/** The demo mesh with its middle nodes' handles broken: one side of each turned, so the patches meet at a kink. */
+function cornerMesh(): Mesh {
+    const m = splitHandles(demoMesh());
+    for (const [k, n] of m.nodes.entries()) {
+        if (k === 5 || k === 6 || k === 9 || k === 10) { n.uIn = [n.uIn![0] * 0.4, n.uIn![1] - 0.25]; n.vIn = [n.vIn![0] + 0.2, n.vIn![1] * 0.5]; }
+    }
+    return m;
+}
+
 const BASE: GradientProps = {
     kind: "freeform", freeform: FREEFORM, mesh: demoMesh(), aspect: ASPECT, pixelRatio: 1,
     overlay: true, continuous: false, sync: true, background: [0, 0, 0, 0],
@@ -84,6 +93,7 @@ const NOTES = `**What to know before fitting with these** (docs/spec/GRADIENT_FI
 - **Conditioning.** As two points approach, the thin-plate system goes singular; coincident points with no smoothing fall back to Shepard. A little \`smoothing\` (λ) keeps an optimiser that pulls points together stable.
 - **Fewer than three points, or all on one line,** have no affine part: the fill falls back to Shepard, and the gradient follows the fallback, so it jumps when a point crosses that boundary.
 - **float32 in the shader, Float64 in the reference.** They agree to ~1e-3 on the test fills; with hundreds of points and large weights the shader's sum loses more.
+- **Corner handles** (\`uIn\`/\`vIn\`, a node's near-side handles moved on their own) keep the mesh C⁰ but put a kink in it, so the gradient jumps across that edge as it does across a bilinear one. The positions are still linear in every handle, so nothing else about the gradient changes.
 - **Folds.** Where the mesh overlaps itself the later patch wins, and the reference resolves it the same way; at a fold edge the gradient is discontinuous.
 - **Tessellation.** The renderer interpolates (u, v) linearly across each triangle: an O(1/T²) error in where a value lands. The reference inverts the patch exactly.
 - **Bilinear values are C⁰ across patch edges** (as PDF and Illustrator draw them): kinks along the edges, and a gradient with a jump. \`bicubic\` is C¹ and better for fitting.
@@ -223,18 +233,24 @@ function mount(el: HTMLElement, initial: unknown, api: EntryApi): MountedEntry {
             change({ mesh: { ...props.mesh, nodes } });
         };
         m.nodes.forEach((n, i) => {
-            for (const s of [1, -1]) {
-                const hu: [number, number] = [n.p[0] + s * n.u[0] / 3, n.p[1] + s * n.u[1] / 3];
-                const hv: [number, number] = [n.p[0] + s * n.v[0] / 3, n.p[1] + s * n.v[1] / 3];
-                line(n.p[0], n.p[1], hu[0], hu[1]); line(n.p[0], n.p[1], hv[0], hv[1]);
-                // A handle moves its tangent symmetrically: the handles of a smooth mesh point stay opposite.
-                dot(hu[0], hu[1], 0.009, "var(--fg)", "gx-handle", edit(i, (nd, x, y) => ({ ...nd, u: [3 * s * (x - nd.p[0]), 3 * s * (y - nd.p[1])] })));
-                dot(hv[0], hv[1], 0.009, "var(--fg)", "gx-handle", edit(i, (nd, x, y) => ({ ...nd, v: [3 * s * (x - nd.p[0]), 3 * s * (y - nd.p[1])] })));
+            // Four handles: far side `u`/`v` (s = 1), near side `uIn`/`vIn` (s = −1). A drag moves its handle alone, as
+            // Illustrator does; with Shift held it moves the opposite one too, which keeps a smooth point smooth.
+            for (const [far, near] of [["u", "uIn"], ["v", "vIn"]] as const) {
+                for (const s of [1, -1]) {
+                    const t = s === 1 ? n[far] : (n[near] ?? n[far]), h: Vec2 = [n.p[0] + s * t[0] / 3, n.p[1] + s * t[1] / 3];
+                    line(n.p[0], n.p[1], h[0], h[1]);
+                    dot(h[0], h[1], 0.009, "var(--fg)", "gx-handle", edit(i, (nd, x, y) => {
+                        const tan: Vec2 = [3 * s * (x - nd.p[0]), 3 * s * (y - nd.p[1])];
+                        if (shift) return { ...nd, [far]: tan, [near]: tan };
+                        return { ...nd, [far]: s === 1 ? tan : nd[far], [near]: s === 1 ? (nd[near] ?? nd[far]) : tan };
+                    }));
+                }
             }
             dot(n.p[0], n.p[1], 0.016, rgb(n.value), "gx-point", edit(i, (nd, x, y) => ({ ...nd, p: [x, y] })));
         });
     }
-    svg.addEventListener("pointermove", (e) => { if (drag) drag.set(...toFill(e)); });
+    let shift = false;
+    svg.addEventListener("pointermove", (e) => { shift = e.shiftKey; if (drag) drag.set(...toFill(e)); });
     svg.addEventListener("pointerup", () => { drag = null; });
 
     /** A change made on the canvas: redraw, and write the props back to the sidebar. */
@@ -276,6 +292,7 @@ export const gallery: GalleryEntry[] = [{
         "freeform: Shepard": { ...BASE, freeform: { ...FREEFORM, mode: "shepard", points: FREEFORM.points.map((p, i) => ({ ...p, spread: i === 2 ? 3 : 1 })) } },
         "mesh: bilinear": { ...BASE, kind: "mesh" },
         "mesh: bicubic": { ...BASE, kind: "mesh", mesh: demoMesh(3, 3, "bicubic") },
+        "mesh: corner handles": { ...BASE, kind: "mesh", mesh: cornerMesh() },
         "stress: 256 points": { ...BASE, overlay: false, continuous: true, freeform: { mode: "tps", points: manyPoints(256), smoothing: 1e-4 } },
         "stress: 16×16 mesh": { ...BASE, kind: "mesh", overlay: false, continuous: true, mesh: { ...demoMesh(16, 16, "bicubic"), tessellation: 16 } },
     },
