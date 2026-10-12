@@ -754,7 +754,7 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
     hlTokenSeq = 0;
     if (ref.selector) {
         let el: Element | undefined;
-        try { el = queryAll(ref.selector)[ref.index || 0]; } catch { el = undefined; }   // an invalid selector: nothing to show
+        try { el = highlightTarget(ref.selector, ref.index || 0); } catch { el = undefined; }   // an invalid selector: nothing to show
         if (!el) return hideHighlight();
         // viewportRect, so an element inside a same-origin iframe is placed in the TOP viewport, where the box is drawn.
         const r = viewportRect(el);
@@ -769,12 +769,42 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
 let hlTokenSeq = 0;   // state: ui — the hover in flight
 /** Whether the page's closed shadow roots are read for a highlight: the DOM tools' `pierceClosedShadow` setting. */
 let pierceClosed = true;   // state: ui — mirrors the stored setting
-// The page's CLOSED roots, for the highlight's `queryAll`, never one of ours: our hosts are skipped by identity, since the
-// page can rename the ids `queryAll`'s own skip reads (attack 17c).
+/** Whether the reader opens closed roots at all: off only while `highlightTarget` resolves without them. */
+let readClosed = true;   // state: ui — set and restored within one resolve
+// The page's CLOSED roots in the top document, for the highlight's `queryAll`, never one of ours: our hosts are skipped by
+// identity, since the page can rename the ids `queryAll`'s own skip reads (attack 17c). Only the top document's, as the
+// DOM tools': the main world's capture (shadow-patch.js) runs in the top frame alone.
 setClosedRootReader((el) => {
-    if (!pierceClosed || el === shellHost || el === cardHost || el === hlHost) return null;
+    if (!readClosed || el === shellHost || el === cardHost || el === hlHost || el.ownerDocument !== document) return null;
     try { return (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom?.openOrClosedShadowRoot?.(el) ?? null; } catch { return null; }
 });
+/** The closed shadow roots `el` sits inside, innermost first. */
+function closedRootsOf(el: Element): ShadowRoot[] {
+    const out: ShadowRoot[] = [];
+    for (let r = el.getRootNode(); r instanceof ShadowRoot; r = r.host.getRootNode()) if (r.host.shadowRoot !== r) out.push(r);
+    return out;
+}
+/**
+ * The element a highlight of `selector` may outline: the one the DOM tools act on in the page's main world, or none
+ * when this world cannot tell which that is. The main world reaches a closed root only if its load-time capture saw it
+ * created and the run has piercing on, neither of which this world can read (a declarative root is never captured, and
+ * the run's setting is the one it started with). So the selector is resolved with every closed root open and with none:
+ * where both agree, so does the main world, whichever roots it reaches. Where they differ, the element is outlined only
+ * when nothing outside a closed root matches and every match shares its closed roots, so that dropping any of them
+ * leaves the tools no other element; never for an index into the matches. The setting off outlines no element that only
+ * a closed root holds.
+ */
+function highlightTarget(selector: string, index: number): Element | undefined {
+    const all = queryAll(selector);
+    let none: Element[];
+    readClosed = false;
+    try { none = queryAll(selector); } finally { readClosed = true; }
+    const el = all[index];
+    if (el === none[index]) return el;
+    if (!pierceClosed || !el || index !== 0 || none.length || /:eq\(|:nth-/i.test(selector)) return undefined;
+    const roots = closedRootsOf(el);
+    return all.every((e) => { const own = closedRootsOf(e); return roots.every((r) => own.includes(r)); }) ? el : undefined;
+}
 
 // While the overlay is hidden for a shot it stops being a hit-test target, so a wheel
 // gesture you were mid-scroll on falls through to the page and moves it — corrupting the

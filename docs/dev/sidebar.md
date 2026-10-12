@@ -175,6 +175,10 @@ highlight-only shadow host, since no overlay is present). `SET_APPROVAL` is the 
 The shell resolves a highlight's SELECTOR itself, in its isolated world, with the DOM tools' `queryAll` and
 `chrome.dom.openOrClosedShadowRoot` for the page's closed roots (`setClosedRootReader`); only an `@pt`/`@box` token,
 whose coordinates live in the main world's registry, is asked of `injected.ts` over the window (attack 18 in the spec).
+The two worlds reach different closed roots: this one every closed root in the top document, the main world only those
+its load-time capture saw created, and only when the run started with piercing on. So `highlightTarget` resolves with
+every closed root and with none, and outlines an element only where that cannot name a different one than the click
+acts on; otherwise it outlines nothing. A same-origin frame's closed roots are never read, as in the main world.
 A future page-input channel would follow the pattern.
 
 ## Traps
