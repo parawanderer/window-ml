@@ -71,13 +71,13 @@ const DEFAULT_MAX_STEPS = 10;
  * @returns the run's session hash
  * @throws when the tab is not an ordinary web page, there is nothing to do, or the page cannot host the run
  */
-export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true } = {}): Promise<{ hash: string }> {
+export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; remote?: true } = {}): Promise<{ hash: string }> {
     // The URL and title are the BROWSER's, never something the page said about itself.
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
     if (!/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
     const ml = workerMl(url);
-    const recipe = userRunOptions(ml, req);
+    const recipe = userRunOptions(ml, req, !!opts.remote);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, ...(opts.answer ? { answer: true } : {}) });
     const runId = shortHash();
@@ -163,9 +163,11 @@ export function steerRun(hash: string, text: string, origin?: PromptOrigin, disp
  * @param action "send" a message, or "continue" a capped run with no message
  * @param body the message (text, images, a right-clicked element), a Continue budget, and where it was typed
  * @param fromTabId when the request came from a tab, the tab it came from: a run is only driven from its own tab
+ * @param sentFrom where the message was typed, as the channel it came over knows it (a hub command's sender); wins over
+ *   the body's `surface`
  * @returns what happened, or null when this is not the worker's run to drive
  */
-export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
+export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
@@ -180,7 +182,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         makeWorkerRun(hash);
     }
     const surface = promptSurfaceOf(body.surface);
-    const origin: PromptOrigin | undefined = surface ? { surface } : undefined;
+    const origin: PromptOrigin | undefined = sentFrom ?? (surface ? { surface } : undefined);
     const { text, display } = action === "send" ? framePrompt(String(body.text || ""), body.elementContext) : { text: "", display: undefined };
     if (action === "send" && !text && !(body.images && body.images.length)) return "none";
     if (runControllers.has(hash)) {
@@ -193,6 +195,6 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     if (text) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}) });
     const steps = stepBudget(body.maxSteps);
     hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
-        tabId, () => { /* reported through the session's events */ });
+        tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined);
     return action === "continue" ? "continued" : "turn";
 }

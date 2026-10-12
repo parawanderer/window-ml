@@ -302,6 +302,13 @@ now carries a `reqId`; the shell relays it into the page and waits up to three s
 nothing: the transcript still changes only through the session's events. The DevTools composer sends no `reqId` and is
 unchanged.
 
+**Who sent a command is the channel's, not the command's.** The handler takes a second argument, `CommandFrom`
+(`session-host.ts`): `this browser` for the local port, `hub` for a command whose seal `HubRuntime` verified. A
+`session.send` or `agent.start` stamps its message with `commandOrigin(from)`, the chat app here or the chat app on
+another device (`PromptOrigin.remote`), on every path: a steer, a page's turn and a worker run's next turn. Nothing in
+the command body can say it, and a page's own `RESUME_RUN` cannot either: `hostRun` takes a resumed turn's origin as
+an argument only the worker passes. Before this, a steer carried no origin and inherited the HUD's.
+
 **A screenshot of a background tab is refused, not taken with the debugger.** CDP could capture it, but attaching
 puts the debugging banner on someone's screen for a look they did not start.
 

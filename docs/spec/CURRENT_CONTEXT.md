@@ -450,8 +450,9 @@ identifier is a bug in the projection, and the tests below say so by pattern.
   no page-started type returns either (enumerated from `page-relay.ts`); neither appears outside the run's own tab;
   and neither holds a string matching a 64-hex id, a URL or an origin, over every `RuntimeCapabilities` value the
   fixtures can build.
-- **The steer mislabel fixed first**, with a test that a hub `session.send` on a HUD-started run records `via: "hub"`
-  and the chat surface, not `hud`.
+- **The steer mislabel fixed first** (done, 2026-10-12): the handler takes the sender (`CommandFrom`), and a hub
+  `session.send` on a HUD-started run records the chat surface with `remote: true`, as a steer and as a next turn
+  (`tests/run-start.test.mjs`). `meta[i].client` with `via` comes with `client`.
 - **The upgrade**: a stored session whose user messages have no `client` reads as unknown (absent), never as
   `this browser`.
 - **The prompt**: nothing new in it. `CURRENT_SIGNATURE` is generated from `CurrentSnapshot`, so the two members appear in

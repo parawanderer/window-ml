@@ -43,6 +43,7 @@ export interface RunAgentConfig {
     labelMatch?: import("../contract").LexicalMetric;   // which lexical metric ranks a near-miss on a pointer label   // the SESSION's `@tool:` pointer store, so pointers span a handle's turns
     after?: "human";               // this turn's first request follows a person (a follow-up, Continue, Retry) — see AgentLoopOptions.after
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
+    origin?: import("../contract/contract-run").PromptOrigin | null;   // where this turn's prompt was typed: stamped on the task's `meta` and what `chat_metadata` reports until a steer says otherwise
     images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
 }
 
@@ -214,6 +215,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, ...(cfg.origin ? { origin: cfg.origin } : {}), tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

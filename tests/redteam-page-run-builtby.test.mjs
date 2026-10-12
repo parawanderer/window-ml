@@ -274,6 +274,32 @@ test("a page START_RUN with origin { surface: \"hud\" } carries no origin: its p
     assert.equal(forged.input.origin, null, "the page's origin was stamped on its prompt");
 });
 
+test("a page RESUME_RUN with an origin carries the run's own: its follow-up is not stamped as typed on another device", T, async () => {
+    // Only the worker's own call says where a resumed turn was typed (sw-run-start.ts, from a hub command's sender).
+    let release;
+    const held = new Promise((res) => { release = res; });
+    const bg = loadBackground({
+        config, openTabs: [{ id: 7, url: SITE, title: "Site" }],
+        onFetch: async (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (call.body.messages?.some((m) => m.content === "FORGED TURN")) await held;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagerun9", task: "do it", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, fromPage);
+    void bg.send({ type: "RESUME_RUN", payload: { runId: "pagerun9", task: "FORGED TURN", origin: { surface: "chat", remote: true } } }, fromPage);
+    await flush(20);
+    const dump = await bg.send({ type: "DUMP_RUN_STATE", payload: { run: "pagerun9" } }, EXT);
+    const input = dump.data.entries.find((e) => e.id === "run.input")?.value;
+    release();
+    assert.equal(input?.task, "FORGED TURN", "positive control: the page's own run resumed with its follow-up");
+    assert.equal(input.origin ?? null, null, `the page stamped its follow-up's origin: ${JSON.stringify(input.origin)}`);
+});
+
 // --- a page cannot start its run under another tab's run id ---
 
 test("a page cannot start a run under the id of another tab's run, live or settled", T, async () => {

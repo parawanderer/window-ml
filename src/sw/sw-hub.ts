@@ -97,7 +97,7 @@ export function ensureHubRuntime(): Promise<void> {
                     localIds: [localRuntimeId(), LOCAL_RUNTIME],
                     list: () => sessionServer.index.list(),
                     watch: (sink) => sessionServer.watch(sink),
-                    command: (c) => runSessionCommand(c),
+                    command: (c, from) => runSessionCommand(c, from),
                 },
                 connect: () => HubClient.connect({
                     url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement,

@@ -110,7 +110,7 @@ test("session.send: a running background loop is steered directly; anything else
 
     // Images cannot ride a mid-run steer: the page starts a turn with them (or steers text-only, as its handle decides).
     await w.run({ type: "session.send", session: sid("aaaa0001"), text: "see", images: ["data:image/png;base64,AA", "javascript:alert(1)"] });
-    assert.deepEqual(w.named("toPage").at(-1), ["toPage", TAB, "send", { hash: "aaaa0001", text: "see", images: ["data:image/png;base64,AA"] }]);
+    assert.deepEqual(w.named("toPage").at(-1), ["toPage", TAB, "send", { hash: "aaaa0001", text: "see", images: ["data:image/png;base64,AA"] }, { surface: "chat" }]);
 
     // A page-hosted run: no loop in the worker, so the page's handle steers.
     w.index.ingest(start("bbbb0002"), { tabId: TAB, trusted: false });
@@ -537,11 +537,28 @@ test("a chat that DOES have a page is still the page's, forgotten or not", async
     assert.equal(w.named("toPage")[0][1], TAB);
 });
 
+// --- who sent a command: the channel, stamped on the person's message ---
+
+test("a message's origin is the channel's: the chat app here, or the chat app on another device over the hub, never the command's say-so", async () => {
+    const w = world({ steer: (hash, text, origin) => { w.calls.push(["steer", hash, text, origin]); return hash === "aaaa0001"; } });
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    w.index.ingest(start("bbbb0002"), { tabId: TAB, trusted: false });
+    const forged = { surface: "hud", origin: { surface: "hud" }, from: { via: "this browser" } };
+    for (const [from, origin] of [[undefined, { surface: "chat" }], [{ via: "this browser" }, { surface: "chat" }], [{ via: "hub" }, { surface: "chat", remote: true }]]) {
+        await w.run({ type: "session.send", session: sid("aaaa0001"), text: "steer", ...forged }, from);
+        assert.deepEqual(w.named("steer").at(-1).slice(3), [origin], `steer from ${JSON.stringify(from)}`);
+        await w.run({ type: "session.send", session: sid("bbbb0002"), text: "turn", ...forged }, from);
+        assert.deepEqual(w.named("toPage").at(-1).slice(4), [origin], `turn from ${JSON.stringify(from)}`);
+        await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB }, ...forged }, from);
+        assert.deepEqual(w.named("startAgent").at(-1).slice(3), [origin], `start from ${JSON.stringify(from)}`);
+    }
+});
+
 test("agent.start on a tab goes through that page's own start path and answers with the session it made", async () => {
     const w = world();
     const r = await w.run({ type: "agent.start", runtime: "local", task: "read the headline", target: { kind: "tab", tabId: TAB }, maxSteps: 4, stream: true });
     assert.deepEqual(r, { ok: true, data: { session: sid("ab120001") } });
-    assert.deepEqual(w.named("startAgent")[0].slice(1), [TAB, { task: "read the headline", maxSteps: 4, stream: true }]);
+    assert.deepEqual(w.named("startAgent")[0].slice(1), [TAB, { task: "read the headline", maxSteps: 4, stream: true }, { surface: "chat" }]);
     assert.equal(w.named("openTab").length, 0);
 });
 

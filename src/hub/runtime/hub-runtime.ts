@@ -10,7 +10,7 @@
 // `session.delete` is refused here.
 //
 // chrome-free, over its inputs, so it is tested against the real hub; `sw-hub.ts` plugs it into the worker.
-import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "../../session/session-host";
+import { COMMAND_SCOPE, type Command, type CommandFrom, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "../../session/session-host";
 import { SessionPublisher, hubPublish } from "./session-publisher";
 import { IndexPublisher, LivePreview } from "./session-relay";
 import type { HubClient, HubEvent } from "../client";
@@ -44,8 +44,8 @@ export interface RuntimeSide {
     list(): SessionSummary[];
     /** every index change and every session's stream message from now on, until the returned stop is called */
     watch(sink: { index(update: SessionIndexUpdate): void; stream(hash: string, message: SessionStreamMessage): void }): () => void;
-    /** run one contract command, addressed to this runtime by its LOCAL id */
-    command(command: Command): Promise<CommandResult<CommandType>>;
+    /** run one contract command, addressed to this runtime by its LOCAL id, from the sender its seal verified */
+    command(command: Command, from: CommandFrom): Promise<CommandResult<CommandType>>;
 }
 
 /** Where the connection stands, for Settings to show. */
@@ -274,7 +274,7 @@ export class HubRuntime {
         } else {
             const [localId] = local;
             try {
-                result = await this.opts.side.command(rehome(command, new Set([principal]), localId));
+                result = await this.opts.side.command(rehome(command, new Set([principal]), localId), { via: "hub" });
             } catch (e) {
                 result = { ok: false, error: { code: "failed", message: (e as Error)?.message || String(e) } };
             }
