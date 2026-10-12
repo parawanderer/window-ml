@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -50,6 +50,30 @@ test("a deleted test is a test file or a fixture; the harness and the bench's ow
     ].join("\n");
     assert.deepStrictEqual(deletedTests(status), ["tests/sidebar-vram.test.js", "tests/e2e/resource-panel.spec.mjs", "tests/fixtures/boxes.mjs"]);
     assert.deepStrictEqual(deletedTests(""), []);
+});
+
+// --- agent-post markers: a session's own comment is not an unread review ---
+
+const SESSION = "69c70d91-db9e-4660-a1a6-21bc97937b5c";
+const post = (session, extra = "") => `Added the flows.\n\n> *Drafted by Claude Code · work: gallery · session ${session.slice(0, 8)} · claude-opus-5-5*\n<!-- agent-post: harness=claude-code work=gallery session=${session} model=claude-opus-5-5${extra} -->`;
+
+test("the marker is read from the end of a post, every field", () => {
+    assert.deepStrictEqual(agentMarker(post(SESSION)), { harness: "claude-code", work: "gallery", session: SESSION, model: "claude-opus-5-5" });
+    assert.strictEqual(agentMarker("LGTM, but rename the flag."), null);
+    assert.strictEqual(agentMarker(undefined), null);
+});
+
+test("a post is the session's own only when its marker names that session (full id or an 8+ character prefix)", () => {
+    assert.strictEqual(isOwnPost(post(SESSION), SESSION), true);
+    assert.strictEqual(isOwnPost(post(SESSION), SESSION.slice(0, 8)), true);
+    assert.strictEqual(isOwnPost(post(SESSION.slice(0, 8)), SESSION), true);
+    // Another session's post is a review all the same; so is a person's, which has no marker.
+    assert.strictEqual(isOwnPost(post("1234abcd-0000-0000-0000-000000000000"), SESSION), false);
+    assert.strictEqual(isOwnPost("Please also cover the hub.", SESSION), false);
+    // Without --session nothing is skipped, and a prefix too short to identify a session matches nothing.
+    assert.strictEqual(isOwnPost(post(SESSION), null), false);
+    assert.strictEqual(isOwnPost(post(SESSION), "69c7"), false);
+    assert.strictEqual(isOwnPost(post("69c7"), SESSION), false);
 });
 
 // --- the reminder: what a merge would leave behind on disk ---

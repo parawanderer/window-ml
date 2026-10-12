@@ -19,9 +19,13 @@ Merging your own PR once it is green: the `merge-when-green` skill (`node script
 git switch -c ui/event-lane-zoom          # a branch per piece of work, named for it
 # …work, commit…
 git push -u origin HEAD
-gh pr create --fill --label @exec,@api   # title/body from the commits; TOPIC labels, see below
+gh pr create --title "…" --body-file body.md --label @exec,@api   # TOPIC labels, see below
 gh pr checks --watch                      # blocks until every check settles
 ```
+
+The body (and every comment or review you post) ENDS with the agent-post lines, so other sessions and
+`merge-when-green --session <id>` can tell it is yours (AGENTS.md; `docs/dev/working-in-the-repo.md`, "GitHub posts say
+which session made them"). `--fill` writes a body without them: use `--body-file`.
 
 `gh pr checks --watch` is the one to use: it exits non-zero when anything failed, so it doubles as the
 gate. For a long e2e run, `--interval 30` keeps the polling quiet.

@@ -7,6 +7,7 @@
 //   node scripts/merge-when-green.mjs 501             # check once: prints OK, or why not (exit 0 / 1)
 //   node scripts/merge-when-green.mjs 501 --wait      # poll every 30 s while CI runs (up to an hour), then check
 //   node scripts/merge-when-green.mjs 501 --wait --merge   # …and squash-merge when it says OK
+//   … --session <id>  # your harness's session id: comments YOU posted (their agent-post marker) do not count as unread
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
 //   … --discard       # merge even though a worktree holds work that is in no commit
 //
@@ -61,6 +62,29 @@ export function deletedTests(nameStatus) {
         .filter((f) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(f) || f.startsWith("tests/fixtures/"));
 }
 
+/**
+ * The AGENT-POST MARKER at the end of a comment an agent posted (AGENTS.md, "GitHub posts say which session"):
+ * `<!-- agent-post: harness=… work=… session=… model=… -->`, as an object, or null when there is none. Everything an
+ * agent posts through `gh` carries the owner's name, so this marker is the only way to tell a session's own note from
+ * a review.
+ */
+export function agentMarker(body) {
+    const m = /<!--\s*agent-post:([^>]*?)-->/.exec(String(body ?? ""));
+    if (!m) return null;
+    return Object.fromEntries([...m[1].matchAll(/(\w+)=(\S+)/g)].map((x) => [x[1], x[2]]));
+}
+
+/**
+ * Is this post the merging session's OWN? Only when its marker names that session (the full id, or a prefix of at
+ * least 8 characters either way, since a footer may show the short form). Another session's marked post still counts:
+ * an agent's review is a review. An unmarked post counts as a person's, so a forgotten marker fails safe.
+ */
+export function isOwnPost(body, session) {
+    const theirs = agentMarker(body)?.session;
+    if (!session || !theirs || session.length < 8 || theirs.length < 8) return false;
+    return session.startsWith(theirs) || theirs.startsWith(session);
+}
+
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
 export function judge(f) {
     if (!f.runId) return { ok: false, pending: true, reason: `no tests run for ${f.sha.slice(0, 8)} yet (or the PR conflicts with main: a conflicting PR runs no checks)` };
@@ -99,7 +123,7 @@ async function spareTheBudget() {
     await new Promise((r) => setTimeout(r, ms));
 }
 
-function facts(pr) {
+function facts(pr, session) {
     git("fetch", "-q", "origin");
     const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable,reviews,comments") || "{}");
     const head = view.headRefName;
@@ -114,13 +138,16 @@ function facts(pr) {
         : [];
     const range = `origin/main...origin/${head}`;
     // The conflicts workflow's own notice is about CI, which the run settles; it is not a review.
-    const comments = (view.comments || []).filter((c) => !String(c.body).includes("<!-- pr-conflicts -->"));
+    // A post the merging session made itself (its agent-post marker) is not something it has to read.
+    const comments = (view.comments || []).filter((c) => !String(c.body).includes("<!-- pr-conflicts -->") && !isOwnPost(c.body, session));
+    const reviews = (view.reviews || []).filter((r) => !isOwnPost(r.body, session));
+    const inline = JSON.parse(gh("api", `repos/${REPO}/pulls/${pr}/comments`) || "[]").filter((c) => !isOwnPost(c.body, session));
     return {
         head, sha, runId, runStatus, badJobs,
         tests: testLineCounts(git("diff", range, "--", "tests")),
         deletedTestFiles: deletedTests(git("diff", "--name-status", range, "--", "tests")).length,
-        reviews: (view.reviews || []).length + comments.length,
-        inlineComments: Number(gh("api", `repos/${REPO}/pulls/${pr}/comments`, "-q", "length")) || 0,
+        reviews: reviews.length + comments.length,
+        inlineComments: inline.length,
         stacked: Number(gh("pr", "list", "--base", head, "--json", "number", "-q", "length")) || 0,
         mergeable: view.mergeable,
     };
@@ -265,12 +292,13 @@ function releaseHeld(runs) {
 async function main() {
     const argv = process.argv.slice(2);
     const pr = argv.find((a) => /^\d+$/.test(a));
-    if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge]"); process.exit(2); }
+    if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>]"); process.exit(2); }
     const wait = argv.includes("--wait"), merge = argv.includes("--merge");
     const keep = argv.includes("--keep-bench"), discard = argv.includes("--discard");
+    const si = argv.indexOf("--session"), session = si >= 0 ? argv[si + 1] : null;
     let f, v;
     for (let i = 0; ; i++) {
-        f = facts(pr);
+        f = facts(pr, session);
         v = judge(f);
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         // While the run is still going, one call a minute says so; the full facts wait until it is done.
