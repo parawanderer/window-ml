@@ -125,6 +125,13 @@ export function toolThrewResult(name: string, error: unknown): string {
     return `Error: the "${name}" call failed inside the extension (${msg.slice(0, 300)}). It did not complete; check its arguments, then call it again or try another way.`;
 }
 
+/** A tool result whose `result` is the text the model reads. The host's answer can carry anything (a page's
+ *  envelope, a read-only survey's value), and one that cannot be made a string throws HERE, inside the step that
+ *  produced it, where the throw is an error result or a gate rather than the run's end. */
+function withText(r: ToolRunResult): ToolRunResult {
+    return typeof r?.result === "string" ? r : { ...r, result: String(r?.result) };
+}
+
 /** The machine's devices and memory for chat_metadata, in GiB like every other memory figure. One line per device
  *  (so a split box reads card by card), then the VRAM total across devices and system RAM. A unified pool (Apple
  *  silicon) shares memory with the system, so it is never summed with RAM. Absent capacity is said to be unknown,
@@ -749,11 +756,17 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
-            return "error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push);
+            return withText("error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push));
         } catch (e) {
             threw(name, "run", e);
             return { result: toolThrewResult(name, e) };
         } finally { lastToolMs = Date.now() - t0; if (waited !== "human") waited = "tool"; }
+    };
+    /** The doomed-action precheck's verdict as text, or "" to go on to the gate. A throw, synchronous or not, and a
+     *  verdict that cannot be made a string go on to the gate too (`threw`). */
+    const precheckText = async (name: string, a: Record<string, unknown>): Promise<string> => {
+        try { const v = await deps.precheck?.(name, a); return v ? String(v) : ""; }
+        catch (e) { threw(name, "precheck", e); return ""; }
     };
     let seq = 0;
     // WHAT THE NEXT MODEL CALL WAITED ON, for the request hint: a person at an approval gate outranks a tool
@@ -854,7 +867,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // A throw in any step that only DECIDES (the read-only try, auto-approve, the precheck) falls through to
                 // the gate: the person is asked, which is never less safe than the step that threw.
                 let ro: ToolRunResult | null = null;
-                try { ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args, fan ?? undefined) : null; }
+                try { ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args, fan ?? undefined) : null; if (ro) ro = withText(ro); }
                 catch (e) { threw(call.name, "readonly", e); ro = null; }
                 // A refused try leaves nothing behind, and lines it streamed are something (docs/dev/readonly-exec.md).
                 if (!ro) fan?.discard();
@@ -870,7 +883,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     approval = auto.approval;
                     tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // trusted auto-approve → execute
                     if (auto.reused?.length) tr = { ...tr, reused: [...(tr.reused || []), ...auto.reused] };   // surface the reused grants
-                } else if (deps.precheck && (result = (await deps.precheck(call.name, args).catch((e: unknown) => { threw(call.name, "precheck", e); return null; })) || "")) {
+                } else if (deps.precheck && (result = await precheckText(call.name, args))) {
                     // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
                     // the action can only fail (no element / stale @pt / bad selector), so return that error
                     // WITHOUT gating — approving something that will just fail is pointless friction. It
@@ -993,14 +1006,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // rather than minting a second, so the step the answer resolves to is the step that produced it.
             const mintedView = mintedViews.get(s);
             let heldChars: number | undefined;   // what the pointer holds past the model's copy, when it holds more
-            const tokenId = mintedView
+            let tokenId = mintedView
                 ?? ((opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined);
-            if (tokenId && !mintedView) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             // The pointer carries the value's TYPE, taken from the render descriptor the step already produced —
             // so `dereference … | keys` on a DataFrame means its COLUMNS, without re-parsing a rendered grid.
             // A minted VIEW was already stored by mintView, with the label and kind that describe the
             // reduction. Re-noting it here would overwrite that with the dereference step's own result.
-            if (tokenId && !mintedView) {
+            // The render descriptor is the tool host's data (a page's envelope can carry any shape): a pointer that
+            // cannot be described from it is not minted, and the step keeps its result (`threw`, phase "run").
+            if (tokenId && !mintedView) try {
                 const r = tr?.renderOut;
                 const df = r?.type === "python-out" ? r.df : undefined;
                 // Described through tableOf, so a POINTER to a table carries the same pandas surface a fetched
@@ -1035,6 +1049,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     ?? (r?.type === "image" ? r.src : r?.type === "look" ? r.image : r?.type === "python-out" ? r.image : undefined);
                 const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
                 tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: s, ...(tbl ? { table: tbl } : {}), ...(value ? { value } : {}) });
+                tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
+            } catch (e) {
+                threw(call.name, "run", e);
+                tokenId = undefined; heldChars = undefined;
             }
             // Not for a minted view: mintView appended its own line explaining what the reduction is, and
             // `dereference`'s `token` PARAMETER is the pointer being READ, so `wantsToken` is true for every

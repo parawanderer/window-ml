@@ -25,7 +25,7 @@ const THREW = /failed inside the extension/;
  * @returns the tool results the model read on its last call, how many model calls there were, the run's `tool` log
  *   records, the terminal agent-result event, and the worker
  */
-async function runSteps(steps, { page, config = {} } = {}) {
+async function runSteps(steps, { page, side, config = {} } = {}) {
     let n = 0, bg, hash;
     bg = loadBackground({
         siteGate: true, indexedDB: new IDBFactory(),
@@ -43,7 +43,7 @@ async function runSteps(steps, { page, config = {} } = {}) {
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
-            if (msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
+            if (msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return side ? side(msg.payload) : {};
             return page ? page(msg.payload, bg, hash) : { result: "ok" };
         },
     });
@@ -109,6 +109,39 @@ test("isolated: an exec whose world returns a value the worker cannot print is a
     // Positive control: the same script without the replacement returns its value.
     const ok = await runOn("userScripts", [(id) => `const v = @tool:${id}; return { a: 1 }`]);
     assert.match(ok.results[0], /\{"a":1\}/);
+});
+
+test("main world: a page answering an approved exec with a render the run's pointer cannot be described from is the page's result, with no pointer", async () => {
+    // The pointer-minting block reads the page's renderOut (tableOf over `columns`, String(value) for latex) after the
+    // tool ran: a malformed one ended the run.
+    const js = "document.body.remove()";   // not read-only, so it goes to the gate and the page runs it
+    for (const renderOut of [{ type: "table", columns: 1, rows: 1 }, { type: "python-out", latex: true, value: { toString: 1 } }]) {
+        const r = await runSteps([{ name: "exec", args: { js, token: true } }], { page: () => ({ result: "ran", renderOut }) });
+        wentOn(r, 1);
+        assert.equal(r.results[0], "ran", "the page's result, with no pointer line");
+        assert.deepEqual(r.log.map((x) => [x.kind, x.reason, x.detail?.tool]), [["threw", "run", "exec"]]);
+    }
+    // Positive control: a well-formed render mints the pointer the model asked for.
+    const ok = await runSteps([{ name: "exec", args: { js, token: true } }], { page: () => ({ result: "ran", renderOut: { type: "exec-out", stdout: "ran" } }) });
+    wentOn(ok, 1);
+    assert.match(ok.results[0], /^ran\n\n\[output token @tool:[0-9a-f]+/);
+    assert.deepEqual(ok.log, []);
+});
+
+// --- the page's answer to a step that only decides: the read-only survey's page leg, the precheck ---
+for (const [label, step, side] of [
+    // A survey that reads the page goes there (autoApproveReadonly, on by default); the page answers it.
+    ["a read-only survey's page leg", { name: "exec", args: { js: "document.title" } }, (pl) => (pl.readonlyTry ? { readonly: true, result: { toString: 1 } } : {})],
+    // click's doomed-action precheck goes to the page; a failed one is returned in place of the gate.
+    ["the precheck", { name: "click", args: { selector: "#a" } }, (pl) => (pl.precheck ? { precheckFailed: true, result: { toString: 1 } } : {})],
+])
+test(`a page answering ${label} with a result that cannot be text is asked about instead of ending the run`, async () => {
+    let gates = 0;
+    const r = await runSteps([step], { side, page: () => ({ result: "page ran it" }) });
+    wentOn(r, 1);
+    assert.equal(r.results[0], "page ran it", "the call went through the gate and ran");
+    assert.ok(r.bg.tabMessages.some(([, m]) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.awaitingApproval && ++gates), "the person was asked");
+    assert.deepEqual(r.log.map((x) => [x.kind, x.reason, x.detail?.tool]), [["threw", label === "the precheck" ? "precheck" : "readonly", step.name]]);
 });
 
 // --- a cancel is still a cancel ---
