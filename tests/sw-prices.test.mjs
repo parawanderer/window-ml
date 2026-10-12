@@ -1,10 +1,13 @@
 // sw-prices.test.mjs — price snapshots for spend: fetched only when the setting is on, each body stored once after its
-// hash is checked, the reference stamped on a call, and the exact bytes read back for the bench.
+// hash is checked, the reference stamped on a call, the exact bytes read back for the bench, and a refresh logged as a
+// background job's pass.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { IDBFactory } from "fake-indexeddb";
+import { resetJobRegistry, readJobs } from "../src/job-registry.ts";
+import { housekeeping } from "../src/sw/sw-housekeeping.ts";
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 // Not clean UTF-8 on purpose: a decode and re-encode would change the hash.
@@ -27,6 +30,7 @@ function service({ bodies, sources, fetchedAt = "2026-10-10T09:07:00Z" }) {
 
 /** A fresh module over a fresh database, with `fetch` replaced. */
 async function fresh(fetchImpl) {
+    resetJobRegistry(); // each fresh module declares its job again
     globalThis.indexedDB = new IDBFactory();
     globalThis.fetch = fetchImpl;
     return import(`../src/sw/sw-prices.ts?t=${Math.random()}`);
@@ -156,4 +160,44 @@ test("PRICE_CALLS answers an extension page and refuses a web page", async () =>
     assert.equal(refused.data, undefined);
     const reply = await bg.send({ type: "PRICE_CALLS", payload: { calls } }, { url: "chrome-extension://test/sidebar.html", tab: { id: 7, url: "https://evil.example/" } });
     assert.equal(reply.data[0].reported, 0.25, "the overlay is an extension frame inside a page tab, and is answered");
+});
+
+// --- a refresh as a background job: logged as a pass, its errors kept ---
+
+/** The housekeeping records written since `from`, and the price job's status against the whole log. */
+async function since(from) {
+    const all = await housekeeping.all();
+    return { recs: all.slice(from).filter((e) => e.subsystem === "prices"), job: (await readJobs(all)).find((j) => j.id === "prices.refresh") };
+}
+
+test("a refresh is a pass: refresh, then refresh-done with what it fetched, and the job's last run says so", async () => {
+    const h1 = sha(HTML), h2 = sha(JSONB);
+    const svc = service({ bodies: { [h1]: HTML, [h2]: JSONB }, sources: { a: { sha256: h1 }, b: { sha256: h2 } } });
+    const { pricesForCall } = await fresh(svc.fetch);
+    const from = (await housekeeping.all()).length;
+    await pricesForCall("http://box:3002");
+    const { recs, job } = await since(from);
+    assert.deepEqual(recs.map((r) => r.kind), ["refresh", "refresh-done"]);
+    assert.deepEqual(recs[1].detail, { sources: 2, fetched: 2 });
+    assert.deepEqual([job.state, job.lastRun.ok, job.lastRun.kind], ["idle", true, "refresh-done"]);
+});
+
+test("a failed refresh keeps its error: it rides detail, since the log drops a reason that is not a slug", async () => {
+    const { pricesForCall } = await fresh(async () => new Response("down", { status: 503 }));
+    const from = (await housekeeping.all()).length;
+    await pricesForCall("http://box:3002");
+    const { recs, job } = await since(from);
+    assert.deepEqual(recs.map((r) => [r.kind, r.level ?? "info"]), [["refresh", "info"], ["refresh-failed", "warn"]]);
+    assert.equal(recs[1].detail.error, "price service answered 503");
+    assert.deepEqual([job.state, job.lastRun.detail.error], ["failed", "price service answered 503"]);
+});
+
+test("a body that fails its hash is logged with why, not silently stripped of it", async () => {
+    const h1 = sha(HTML);
+    const { pricesForCall } = await fresh(service({ bodies: { [h1]: JSONB }, sources: { moonshot_pricing_page: { sha256: h1 } } }).fetch);
+    const from = (await housekeeping.all()).length;
+    await pricesForCall("http://box:3002");
+    const bad = (await since(from)).recs.find((r) => r.kind === "hash-mismatch");
+    assert.equal(bad.key, "moonshot_pricing_page");
+    assert.match(bad.detail.why, /did not match the hash/);
 });

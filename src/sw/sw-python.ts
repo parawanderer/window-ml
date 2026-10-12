@@ -8,6 +8,7 @@ import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import { activeRuns, pageValueSession } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
+import { defineJob } from "../job-registry";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -17,6 +18,14 @@ import { PY_PACKAGE_LOADS } from "../python/python-env";
  *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
  *  worker tee; only the last hop differs. */
 const pyStreamTabs = new Map<string, number | null | ((chunk: string, ts?: number) => void)>();
+
+defineJob({
+    id: "pyodide.prewarm",
+    title: "Python pre-warm",
+    trigger: "when a run whose tools include python_exec starts, and when the Commander opens",
+    // One step, started and logged by the worker once the offscreen document says it began: nothing to cut off.
+    log: { subsystem: "pyodide", done: ["prewarm"], also: ["prewarm-used", "cold-start"] },
+});
 
 /** PYTHON_PREWARM: boot the offscreen Pyodide host ahead of a run that will need it. `sendResponse` reports
  *  whether this call is what actually started it. */
