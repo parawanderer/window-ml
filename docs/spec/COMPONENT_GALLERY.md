@@ -79,10 +79,18 @@ label used once (`chat` against `chat-page`) stands out.
 
 - **Left**: search (over name, summary and group) and the groups, each with its count; a mark on entries that do not
   render.
-- **Centre**: the component, one tile per variant; a light/dark switch; a width preset (phone, panel, desktop).
-- **Right**: the props as JSON, applied live when it parses; the enum members for the key under the cursor; the calls
-  made to function props.
-- **The URL holds the state**: `#/<id>?variant=<name>&props=<base64url JSON>&theme=dark`, so a link or a screenshot is
+- **Centre**: the component, one tile per variant, under a toolbar of the axes the real surfaces have:
+  - **theme**: light, dark or system, as `data-theme` on `<html>` (how the panel and the chat page set it);
+  - **view**: the dev-facing default or the chat page's CALM view (the `calm` signal and the shared `data-focus`
+    attribute, `view-mode.tsx`), since a shared component renders differently in each;
+  - **width**: phone, panel, desktop.
+- **Right**, two tabs:
+  - **Props**: the JSON, applied live when it parses; the enum members for the key under the cursor; the calls made to
+    function props.
+  - **Tokens**: every CSS custom property the stylesheets define (`--fg`, `--bg`, `--border`, …) with its current value,
+    as JSON; an override applies live to the stage. A custom theme is a set of overrides, and the first concrete form of
+    the parked user-stylesheets idea (a token palette file).
+- **The URL holds the state**: `#/<id>?variant=<name>&props=<base64url JSON>&theme=dark&view=calm&tokens=<base64url JSON>`, so a link or a screenshot is
   reproducible.
 
 A custom entry's interface (`src/gallery/`):
@@ -117,7 +125,8 @@ toggle turns the entry into a small benchmark.
 node scripts/gallery.mjs build                      # dist-gallery/
 node scripts/gallery.mjs serve [--port 5180]        # build, then serve it
 node scripts/gallery.mjs list ['<regex>'] [--group g] [--props <id>]
-node scripts/gallery.mjs shot <id> [--variant v] [--props '<json>'|@file.json] [--dark] [--size WxH] [--out f.png]
+node scripts/gallery.mjs shot <id> [--variant v] [--props '<json>'|@file.json] [--dark] [--calm] [--tokens '<json>'|@file.json]
+                                    [--size WxH] [--out f.png]
 node scripts/gallery.mjs check                      # render every entry, report what fails (below)
 ```
 
