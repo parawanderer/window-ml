@@ -69,3 +69,35 @@ test("several series share one selection holding each series' extremes", () => {
     assert.ok(kept.includes(100) && kept.includes(2900));
     assert.ok(kept.every((k, j) => j === 0 || k > kept[j - 1]));
 });
+
+// --- a stacked area's samples ---
+
+const { thinStack } = await import("../src/resource/resource-decimate.ts");
+const band = (model, bytes) => ({ key: model, label: model, kind: "model", model, bytes });
+const free = (bytes) => ({ key: "free", label: "free", kind: "free", bytes });
+
+test("a stack keeps the samples where ANY band's top peaks, so a spike in an upper band is drawn", () => {
+    const n = 5000;
+    const frames = Array.from({ length: n }, (_, i) => [band("a", 10), band("b", i === 3333 ? 9 : 2), free(100)]);
+    const times = frames.map((_, i) => i * 1000);
+    const kept = thinStack(frames, times, 40);
+    assert.ok(kept.includes(3333), "b's spike, on top of a, survives");
+    assert.ok(kept.length <= 40 * 4 * 2, `${kept.length} kept`);
+    assert.equal(kept[0], 0);
+    assert.equal(kept.at(-1), n - 1);
+    assert.ok(kept.every((k, j) => j === 0 || k > kept[j - 1]), "strictly increasing");
+});
+
+test("a band appearing and leaving inside a column keeps the samples where it did", () => {
+    const n = 4000;
+    // c is resident for samples 1500..1520 only: its arrival raises every top above it, its departure drops them.
+    const frames = Array.from({ length: n }, (_, i) => [band("a", 10), ...(i >= 1500 && i <= 1520 ? [band("c", 5)] : []), free(100)]);
+    const kept = thinStack(frames, frames.map((_, i) => i), 20);
+    assert.ok(kept.some((k) => k >= 1500 && k <= 1520), "a sample with c resident is drawn");
+    assert.ok(kept.some((k) => k > 1520 && k < 2000) || kept.includes(1999), "and one after it left, in the same column");
+});
+
+test("a stack with no more than four samples a column is drawn whole", () => {
+    const frames = Array.from({ length: 30 }, (_, i) => [band("a", i), free(100)]);
+    assert.deepEqual(thinStack(frames, frames.map((_, i) => i), 10), [...Array(30).keys()]);
+});

@@ -8,6 +8,8 @@
 // the column it happened in), and a zoom spreads the run over more columns, so the detail comes back as the window
 // narrows. Readings (a tooltip, the snapped dot) keep using the full run: only the drawing is thinned.
 
+import { type Band, bandOrder } from "./resource-bands";
+
 /**
  * The indices of `n` samples worth drawing across `columns` screen columns: per column (samples bucketed by `x`), the
  * first, the one with the lowest `y`, the one with the highest, and the last, in order and without repeats. Every
@@ -46,4 +48,20 @@ export function m4IndicesMany(n: number, x: (i: number) => number, ys: ((i: numb
     const keep = new Set<number>();
     for (const y of ys) for (const i of m4Indices(n, x, y, columns)) keep.add(i);
     return [...keep].sort((a, b) => a - b);
+}
+
+/** Which of a run's samples a STACKED area needs at `columns` screen columns: one selection shared by every band, so
+ *  adjacent bands keep sharing their edge, holding each column's extremes of every cumulative band top (`m4IndicesMany`).
+ *  `frames` is one band list per sample, `times` their instants. */
+export function thinStack(frames: Band[][], times: readonly number[], columns: number): number[] {
+    const n = frames.length;
+    if (n <= Math.max(1, Math.floor(columns)) * 4) return Array.from({ length: n }, (_, i) => i);
+    const t0 = times[0], span = times[n - 1] - t0;
+    const order = bandOrder(frames).filter((k) => k !== "free");
+    const tops = order.map(() => new Array<number>(n).fill(0));
+    frames.forEach((bands, i) => {
+        let acc = 0;
+        order.forEach((key, ki) => { acc += bands.find((b) => b.key === key)?.bytes ?? 0; tops[ki][i] = acc; });
+    });
+    return m4IndicesMany(n, (i) => (span > 0 ? (times[i] - t0) / span : 0.5), tops.map((top) => (i: number) => top[i]), columns);
 }
