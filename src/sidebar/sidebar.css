@@ -3336,7 +3336,7 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .bgw { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
 .bgw-title { font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); padding: 2px 3px; }
 .bgw-body { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px 18px; }
-.bgw-body .hint { margin: 0; }
+.bgw-body .hint { margin: 0; font-size: 0.86em; }
 /* The state on a job's header: only what needs a look is coloured. */
 .bgw-state { font-variant-numeric: tabular-nums; }
 .bgw-state.running { color: var(--accent); }
