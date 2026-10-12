@@ -16,7 +16,7 @@
 // and keyboard are on is chart-interaction.
 
 import { Fragment, type ComponentChildren } from "preact";
-import { useMemo, useState, useEffect } from "preact/hooks";
+import { useMemo, useState, useEffect, useRef } from "preact/hooks";
 import { ceilingsFor, isCpuResident, type ResourceSample } from "../../resource/resource-model";
 import { type ResourceEvent } from "../../resource/resource-timeline";
 import { type Capacity } from "../../resource/resource-capacity";
@@ -26,6 +26,7 @@ import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resourc
 import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout, sampleGapMs } from "./panel-state";
 import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted, leavePool, poolHover } from "./chart-interaction";
+import { plotPx } from "./chart-paint";
 import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled, crosshair } from "../store";
 import { EventLane } from "./resource-lane-ui";
 import { AXIS_TICK_MS } from "./resource-overlays";
@@ -241,6 +242,23 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
     // already gives time nobody measured — which the band model cannot express yet.
     const filled = useMemo(() => windowed.map((s) => (s.capacity ? s : { ...s, capacity })), [windowed, capacity]);
     const latest = filled.at(-1);
+    // THE PLOT'S WIDTH ON SCREEN, which the lines are thinned to (`plotPx`): measured, since a track is laid out at
+    // whatever width its panel or page gives it, and a line drawn at more points than that is paid for on every hover.
+    const rcRef = useRef<HTMLDivElement>(null);
+    const drawn = !!latest?.capacity;
+    useEffect(() => {
+        const el = rcRef.current;
+        if (!el) return;
+        const measure = () => {
+            const w = ((el.querySelector(".rc-plot") as HTMLElement | null) ?? el).getBoundingClientRect().width;
+            if (w > 0 && Math.abs(w - plotPx.value) >= 1) plotPx.value = w;
+        };
+        measure();
+        if (typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [drawn]);
     if (!latest?.capacity) return null;
     const tracks = layout && layout.length ? layout : (presetsFor(latest)[0]?.tracks ?? []);
     // Hiding a model hides its EVENTS too. The dot on a model row takes it out of the totals and the bands,
@@ -303,7 +321,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
     };
     return (
         <OwnerContext.Provider value={owner}>
-            <div class="rc" onWheel={wheelScrub} onPointerEnter={holdAxis} onPointerMove={holdAxis} onPointerLeave={releaseAxis}>
+            <div class="rc" ref={rcRef} onWheel={wheelScrub} onPointerEnter={holdAxis} onPointerMove={holdAxis} onPointerLeave={releaseAxis}>
                 {/* The plots' RULES obey the same kind filter as the lane and the strip: hiding "loads" takes the
                     load steps off the chart too, rather than leaving them ruled through a trace whose lane bars
                     are gone. */}

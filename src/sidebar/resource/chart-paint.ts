@@ -5,10 +5,33 @@
 
 import type { Band } from "../../resource/resource-bands";
 import type { MemoryBreakdown } from "../../resource/resource-model";
+import { signal } from "@preact/signals";
+import { axisFrac } from "../../resource/resource-axis";
+import { m4Indices } from "../../resource/resource-decimate";
 import { colorFor } from "../palette";
+import { live } from "./chart-interaction";
 
 /** The plot's SVG viewBox, width and height; every plot is stretched to its track, so these are units, not pixels. */
 export const W = 300, H = 72;
+
+/** How wide a plot is ON SCREEN, in CSS px: what a line is thinned to (`thinLine`). Measured by the chart as it is laid
+ *  out; the default only serves the first frame, and a test with no layout. */
+export const plotPx = signal(1000);   // state: ui
+
+/** How many screen columns `run` spans on the axis being drawn: a run is placed in a box that is its share of the axis,
+ *  so a zoom widens it and its line keeps more of its samples. */
+export function runColumns(run: readonly { t: number }[]): number {
+    const axis = live.axis;
+    if (!axis || run.length < 2) return plotPx.value;
+    return Math.max(1, (axisFrac(axis, run[run.length - 1].t) - axisFrac(axis, run[0].t)) * plotPx.value);
+}
+
+/** A polyline's `points` for one series over a run, in the plot's viewBox, keeping only what its screen columns can
+ *  show (`m4Indices`): `x` is each sample's place in the run (0..1), `y` its value as a share of the plot's height. */
+export function thinLine(xs: readonly number[], ys: readonly number[], columns: number): string {
+    return m4Indices(xs.length, (i) => xs[i], (i) => ys[i], columns)
+        .map((i) => `${(xs[i] * W).toFixed(1)},${(H - ys[i] * H).toFixed(1)}`).join(" ");
+}
 
 /** Which model each residual band is TINTED with (`Band.of`) — a runner's overhead, a load in flight. Kept
  *  apart from `bandIdentity` on purpose: identity makes a band hoverable, hideable and stepped as the model. */

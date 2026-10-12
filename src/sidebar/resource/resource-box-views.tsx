@@ -11,8 +11,9 @@ import { type ResourceEvent } from "../../resource/resource-timeline";
 import { type DeviceCapacity, utilOf } from "../../resource/resource-capacity";
 import { type TrackDef, boxAxis } from "../../resource/resource-presets";
 import { bridgeOrder, bridgeWalls, linkPhrase } from "../../resource/resource-topology";
-import { noteRuns, notePools, trackCursor, hoverAt, hoverPool, enterPool, leavePool, snapUnder, poolHover } from "./chart-interaction";
-import { W, H } from "./chart-paint";
+import { useMemo } from "preact/hooks";
+import { live, noteRuns, notePools, trackCursor, hoverAt, hoverPool, enterPool, leavePool, snapUnder, poolHover } from "./chart-interaction";
+import { W, H, plotPx, runColumns, thinLine } from "./chart-paint";
 import { hiddenPools, sampleGapMs, togglePool } from "./panel-state";
 import { poolColor } from "../palette";
 import { HideTrack } from "./resource-device-view";
@@ -301,19 +302,31 @@ export function OverlayView({ def, samples, latest, hidden, events = [], onHide 
         const c = ceilingsFor(latest, d.id);
         return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes, bandsOf: (s: ResourceSample) => deviceBands(s, d.id) };
     }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
-    if (!pools.length) return null;
-    // WHAT THE ARROW KEYS STEP THROUGH HERE. Published with the colours the lines are actually drawn in, so a
-    // keyboard focus lights the same key the pointer would — `poolColor` is keyed by index among ALL pools,
-    // so colouring after any filtering renumbers them.
-    notePools("overlay", pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) })));
-
-    const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
     const usedOf = (s: ResourceSample, p: typeof pools[number]) =>
         p.bandsOf(s).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
     // Plotted as a FRACTION of each pool's own capacity. Absolute bytes on a shared axis would be a lie here:
     // 121.2 GiB of RAM and 95.59 GiB of VRAM are different denominators, so the same height would mean
     // different things per line. Relative occupancy is the comparison this view exists to make.
     const frac = (s: ResourceSample, p: typeof pools[number]) => (p.ceiling > 0 ? Math.min(1, usedOf(s, p) / p.ceiling) : 0);
+    // THE LINES DO NOT DEPEND ON THE POINTER, so a hover must not redraw them. Every move re-renders this view (the
+    // crosshair, the lit pool), and recomputing each sample's share of each pool to rebuild strings that came out the
+    // same was most of what a move cost on a long sweep. Keyed on what the geometry IS made of: the samples, the axis,
+    // the plot's width, the hidden models and each pool's ceiling.
+    const gapMs = sampleGapMs();
+    const runList = useMemo(() => segments(samples, gapMs).filter((r) => r.length > 1), [samples, gapMs]);
+    const axis = live.axis;
+    const lines = useMemo(() => runList.map((run) => {
+        const xs = run.map((s) => runFrac(run, s.t));
+        const cols = runColumns(run);
+        return new Map(pools.map((p) => [p.id, thinLine(xs, run.map((s) => frac(s, p)), cols)]));
+    }), [runList, axis?.from, axis?.to, plotPx.value, [...hidden].join("\n"), pools.map((p) => `${p.id}:${p.ceiling}`).join()]);
+    if (!pools.length) return null;
+    // WHAT THE ARROW KEYS STEP THROUGH HERE. Published with the colours the lines are actually drawn in, so a
+    // keyboard focus lights the same key the pointer would — `poolColor` is keyed by index among ALL pools,
+    // so colouring after any filtering renumbers them.
+    notePools("overlay", pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) })));
+
+    const runs = noteRuns(runList);
     // A pool whose models you have ALL hidden reads as empty, with nothing to say it is a choice rather than
     // the truth. Dim it like the row you hid, so the selection is visible from both ends.
     const allHidden = (p: typeof pools[number]) => {
@@ -368,7 +381,7 @@ export function OverlayView({ def, samples, latest, hidden, events = [], onHide 
                             }) : null}
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
-                                const pts = run.map((s) => `${(runFrac(run, s.t) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
+                                const pts = lines[ri]?.get(p.id) ?? "";
                                 // non-scaling-stroke keeps the width in DEVICE space: without it the
                                 // non-uniform viewBox scale makes diagonals visibly fatter than horizontals.
                                 // Two directions of the same question. Hovering this pool highlights it; and
