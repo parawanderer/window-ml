@@ -21,7 +21,11 @@ import { IconChevron } from "./icons";
  *
  *  `aside` is the same idea for CONTROLS rather than text: it renders BESIDE the header button instead of
  *  inside it, because a button cannot legally contain buttons. That is what lets a section's own toggles
- *  (the event lane's kind filters) share the header line instead of costing a row of their own below it. */
+ *  (the event lane's kind filters) share the header line instead of costing a row of their own below it.
+ *  @group primitives, layout
+ *  @gallery closed {"label": "Environment", "note": "3 packages", "children": "numpy 2.1, pandas 2.2, pyarrow 17"}
+ *  @gallery open {"label": "Environment", "note": "3 packages", "defaultOpen": true, "children": "numpy 2.1, pandas 2.2, pyarrow 17"}
+ */
 export function Disclosure({ label, note, aside, open: controlled, onOpen, onToggle, defaultOpen = false, children }: {
     label: ComponentChildren;
     note?: ComponentChildren;

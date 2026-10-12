@@ -77,6 +77,10 @@ export const Code = (props: CodeProps) => <CodeBlock {...props} lineNumbers={cod
  * @param onStep called with -1 or 1
  * @param label what the control adjusts, for a screen reader ("Text size")
  * @param reset put it back; omitted, the middle is plain text
+ * @group primitives, controls
+ * @gallery {"value": "13 px", "label": "Text size"}
+ * @gallery at the bottom {"value": "10 px", "label": "Text size", "atLeast": true}
+ * @gallery named ends {"value": "2 of 5", "label": "Detail", "less": "Fewer", "more": "More"}
  */
 export function Stepper({ value, onStep, label, less, more, reset, atLeast, atMost }: {
     value: string; onStep(by: -1 | 1): void; label: string;
@@ -97,6 +101,11 @@ export function Stepper({ value, onStep, label, less, more, reset, atLeast, atMo
     );
 }
 
+/** A pointer as a CHIP: its label in monospace, with the panel's tooltip, and a click that opens what it points at.
+ *  @group primitives, chips
+ *  @gallery {"label": "@tool:3f9a2c1", "tip": "The page's table, 12 rows × 4 columns"}
+ *  @gallery with a trailing mark {"label": "@tool:\"prices\"", "tip": "A pointer by label", "trailing": " ·12 rows"}
+ */
 export function PointerChip({ label, tip, onClick, cls, trailing }:
     { label: ComponentChildren; tip: ComponentChildren; onClick: (e: MouseEvent) => void; cls?: string; trailing?: ComponentChildren }) {
     return (
@@ -375,11 +384,14 @@ export const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
 export const ClickableImg = ({ src, alt }: { src: string; alt?: string }) =>
     <img class="zoomable" src={src} alt={alt} onClick={(e) => { e.stopPropagation(); openLightbox(src); }} />;
 
-// The HUD completion card's answer-media gallery — the user-facing deliverable. Each item HOVER-HIGHLIGHTS
-// the live element on the page (the same debug highlighter the sidebar uses), via its captured `selector`.
-// `mode` "inline" shows the picture (an <img>'s full-res src, or an element crop); "highlight" is a compact
-// chip that points at the element (for a control/region where the visual isn't the payoff). HUD-only — the
-// debug detail (AgentRunView) never renders this.
+/** The HUD completion card's answer-media gallery — the user-facing deliverable. Each item HOVER-HIGHLIGHTS
+ *  the live element on the page (the same debug highlighter the sidebar uses), via its captured `selector`.
+ *  `mode` "inline" shows the picture (an <img>'s full-res src, or an element crop); "highlight" is a compact
+ *  chip that points at the element (for a control/region where the visual isn't the payoff). HUD-only — the
+ *  debug detail (AgentRunView) never renders this.
+ *  @group primitives, media
+ *  @gallery {"media": [{"image": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='135'><defs><linearGradient id='g'><stop offset='0' stop-color='%236366f1'/><stop offset='1' stop-color='%2306b6d4'/></linearGradient></defs><rect width='240' height='135' fill='url(%23g)'/></svg>", "label": "The chart the run captured", "kind": "image", "mode": "inline"}, {"image": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='135'><defs><linearGradient id='g'><stop offset='0' stop-color='%236366f1'/><stop offset='1' stop-color='%2306b6d4'/></linearGradient></defs><rect width='240' height='135' fill='url(%23g)'/></svg>", "label": "Submit button", "selector": "#submit", "kind": "element", "mode": "highlight"}]}
+ */
 export function AnswerMediaGallery({ media }: { media: AnswerMedia[] }) {
     return (
         <div class="card-answer-media">
@@ -403,7 +415,10 @@ export function AnswerMediaGallery({ media }: { media: AnswerMedia[] }) {
     );
 }
 
-// A small copy-to-clipboard icon button with a tooltip.
+/** A small copy-to-clipboard icon button with a tooltip.
+ *  @group primitives, controls
+ *  @gallery {"text": "print('hello')", "tip": "copy the code"}
+ */
 export function CopyBtn({ text, tip = "copy" }: { text: string; tip?: string }) {
     const { copied, copy } = useCopy();
     return (
@@ -440,7 +455,10 @@ export const Stamp = ({ ts, snap = "left" }: { ts?: number; snap?: "left" | "rig
     </span>
 );
 
-// The model that produced a reply, as a click-to-copy chip (handy for debugging).
+/** The model that produced a reply, as a click-to-copy chip (handy for debugging).
+ *  @group primitives, chips
+ *  @gallery {"model": "qwen3:32b"}
+ */
 export function CopyModel({ model }: { model: string }) {
     const { copied, copy } = useCopy();
     return (
@@ -458,7 +476,10 @@ export const inlineText = (s: string): string => truncate(s.replace(/\s+/g, " ")
 
 const sheetTitleCache = new Map<string, string | null>();   // id → title (fetched once per session)
 /** A Google Sheet reference as a friendly CHIP — the spreadsheet's title rather than its id, so an
- *  approval card says WHICH sheet is about to be read. */
+ *  approval card says WHICH sheet is about to be read.
+ *  @group primitives, chips
+ *  @gallery {"id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "label": "Quarterly budget"}
+ */
 export function SheetChip({ id, label }: { id: string; label?: string }) {
     // With a label (post-run: the run already fetched the sheet), use it. Without (the pre-run approval
     // chip), lazily HEAD-fetch just the TITLE so the USER sees which sheet — the model never gets it.
@@ -496,6 +517,8 @@ export function SheetChip({ id, label }: { id: string; label?: string }) {
  * The group's rotation runs the whole time and is invisible while they are a lump, which is what keeps the two
  * phases from needing to be coordinated: the spin is simply always there and only legible once there is something
  * to spin.
+ * @group primitives, status
+ * @gallery {"label": "Thinking"}
  */
 export function BusyBlob({ label }: { label?: string }) {
     return (

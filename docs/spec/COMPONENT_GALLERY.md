@@ -130,6 +130,16 @@ node scripts/gallery.mjs shot <id> [--variant v] [--props '<json>'|@file.json] [
 node scripts/gallery.mjs check                      # render every entry, report what fails (below)
 ```
 
+**Interactions.** `shot --do <step>` (repeatable: `click:`, `hover:`, `type:<sel>=<text>`, `press:`, `wait:`, …, scoped
+to the tile) for one-offs, and `flow <id>`, which runs a Playwright script kept as a FILE (`tmp/gallery-flows/<id>.mjs`,
+written from a template the first time) so a model edits and re-runs it rather than retyping it; `shot(name)` inside it
+saves numbered frames.
+
+**What the page fills in that JSON cannot say:** a recorder per function prop, `Set`/`Map` from an array/object, a
+signal around a signal prop, `"$store"`/`"$host"` (the demo world), `{"$h": [tag, attrs, ...children]}` for elements.
+Components that only run in the extension see an inert `chrome` stub. A component whose module is a build ENTRY (it
+renders a page at import) is listed but never loaded.
+
 `shot` builds when the bundle is stale, renders the one entry and screenshots ITS tile, not the page, then prints the
 path and any error the component threw; it exits 1 when the component did not render. A model Reads the PNG.
 
@@ -144,6 +154,13 @@ The skill is `gallery` (in `.claude/skills/`); AGENTS.md mentions it in one line
 | the gallery bundle does not build | **blocks** (it is broken code) |
 | a custom entry, or an `@gallery` example, throws or renders nothing | **blocks**: someone wrote that example on purpose, so its breaking is a broken claim, like JSDoc that contradicts the code |
 | a component rendered from INFERRED props throws | **warns**, with the count and the list |
+
+**Reminders on change, never failures.** When a commit adds or changes a component:
+
+- **the pre-commit hook** (static, no browser) names each one with no `@group`, and each one with no `@gallery` together
+  with the `gallery.mjs shot <id>` command that shows whether its inferred render is fine;
+- **CI** renders the changed components and puts a `::warning` annotation on each whose inferred render fails and
+  that has no `@gallery`.
 
 A component a change touches usually has an example, so a model that breaks it is stopped; one without an example is
 not forced to grow one before an unrelated change can land. It runs in CI's tools job.

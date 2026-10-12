@@ -1,0 +1,92 @@
+/* gallery.css — the component gallery's own chrome: three columns (the list, the stage, the props sidebar), the tiles a
+   component renders in, and the gradient entry's canvas overlay. Colours are the extension's tokens, so both themes and
+   a Tokens override apply to the gallery as they do to the components. */
+
+/* The page: the list, the stage and the sidebar side by side, each scrolling on its own. */
+.gl { display: grid; grid-template-columns: 240px minmax(0, 1fr) 340px; height: 100vh; background: var(--bg); color: var(--fg);
+      font: 13px/1.45 system-ui, sans-serif }
+.gl > * { overflow: auto; min-height: 0 }
+@media (max-width: 900px) { .gl { grid-template-columns: 1fr; height: auto } .gl > * { overflow: visible } }
+
+/* The left list: search, a count, then the groups. */
+.gl-nav { border-right: 1px solid var(--border); padding: 10px }
+.gl-search { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--fg) }
+.gl-count { color: var(--fg-faint); font-size: 11px; margin: 6px 2px 10px }
+/* A group heading in the list, with its count, so a label used once stands out. */
+.gl-group h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-dim); margin: 12px 2px 4px }
+.gl-n { color: var(--fg-faint); font-weight: normal }
+/* One entry in the list; `.sel` is the one shown, `.bad` one whose render failed. */
+.gl-item { display: flex; gap: 6px; align-items: center; padding: 3px 6px; border-radius: 5px; color: var(--fg); text-decoration: none }
+.gl-item:hover { background: var(--panel) }
+.gl-item.sel { background: var(--panel-2) }
+.gl-item.bad { color: var(--err) }
+/* A small label: a group, `custom`, or a failure. */
+.gl-tag { font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); margin-left: 4px }
+.gl-tag.bad { border-color: var(--err); color: var(--err) }
+.gl-dim { color: var(--fg-faint) }
+
+/* The centre: the entry's header and toolbar, its tiles, its notes and log. */
+.gl-stage { padding: 14px 18px 40px }
+.gl-head h2 { margin: 0 0 4px; font-size: 18px }
+.gl-summary { margin: 0 0 6px; color: var(--fg-dim) }
+.gl-summary p { margin: 0 }
+.gl-meta { font-size: 11px; color: var(--fg-dim); margin-bottom: 10px }
+.gl-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px }
+/* A segmented control: a label, then one button per choice. */
+.gl-seg { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 7px; overflow: hidden }
+.gl-seg-label { padding: 0 8px; color: var(--fg-faint); font-size: 11px }
+.gl-seg button, .gl-variants button, .gl-tabs button, .gl-members button, .gl-row button {
+    background: transparent; color: var(--fg-dim); border: 0; padding: 4px 9px; cursor: pointer; font: inherit; font-size: 12px }
+.gl-seg button.on, .gl-variants button.on, .gl-tabs button.on, .gl-members button.on { background: var(--accent); color: var(--accent-fg) }
+.gl-variants { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px }
+.gl-variants button, .gl-members button, .gl-row button { border: 1px solid var(--border); border-radius: 6px }
+
+/* The tiles: one per variant; the selected one is the one the sidebar edits. */
+.gl-tiles { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px }
+.gl-tile { margin: 0; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px 12px; background: var(--bg); cursor: pointer }
+.gl-tile.sel { border-color: var(--accent); cursor: default }
+.gl-tile figcaption { font-size: 11px; color: var(--fg-dim); margin-bottom: 8px }
+/* The frame a component renders in, at the chosen width. */
+.gl-frame { position: relative; width: 100%; font-size: var(--fs) }
+.gl-host { min-height: 8px }
+.gl-err { color: var(--err); white-space: pre-wrap; font-size: 12px; margin: 0 }
+.gl-pending { color: var(--fg-faint); font-size: 12px }
+.gl-notes { font-size: 12.5px }
+
+/* The right sidebar: tabs, the JSON, the schema, the calls, the tokens. */
+.gl-side { border-left: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 8px }
+.gl-tabs { display: flex; gap: 4px }
+.gl-json { width: 100%; box-sizing: border-box; min-height: 260px; resize: vertical; font: 12px/1.4 ui-monospace, monospace; background: var(--panel); color: var(--fg);
+           border: 1px solid var(--border); border-radius: 6px; padding: 8px }
+.gl-json-err { color: var(--err); font-size: 11px }
+.gl-row { display: flex; gap: 6px }
+.gl-schema, .gl-tokens { list-style: none; margin: 0; padding: 0 }
+/* One prop in the schema: name, kind, type, its doc and, for an enum-like type, its members. */
+.gl-field { padding: 5px 0; border-bottom: 1px solid var(--border) }
+.gl-kind { font-size: 10px; color: var(--fg-faint) }
+.gl-type { font: 11px ui-monospace, monospace; color: var(--fg-dim); word-break: break-word }
+.gl-doc { font-size: 11px; color: var(--fg-dim) }
+.gl-members { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px }
+.gl-calls { font-size: 11px; margin: 0; white-space: pre-wrap }
+/* One theme token: a swatch, its name and value; a click copies it into the overrides. */
+.gl-tokens button { display: flex; gap: 6px; align-items: center; width: 100%; background: none; border: 0; color: var(--fg); padding: 2px 0; cursor: pointer; text-align: left; font-size: 11px }
+.gl-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); flex: none }
+.gl-tok-v { color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+/* The timing chart's series colours, one per phase. */
+.gl-series-0 { fill: #6366f1; background: #6366f1 }
+.gl-series-1 { fill: #22c55e; background: #22c55e }
+.gl-series-2 { fill: #eab308; background: #eab308 }
+.gl-series-3 { fill: #ef4444; background: #ef4444 }
+.gl-series-4 { fill: #06b6d4; background: #06b6d4 }
+.gl-series-5 { fill: #a855f7; background: #a855f7 }
+
+/* The gradient entry: the canvas with its SVG overlay on top, the same size. */
+.gx-wrap { position: relative; width: 100%; background: repeating-conic-gradient(var(--panel) 0 25%, var(--bg) 0 50%) 0 0 / 16px 16px; border-radius: 6px; overflow: hidden }
+.gx-wrap canvas, .gx-wrap svg { position: absolute; inset: 0; width: 100%; height: 100% }
+.gx-wrap svg { touch-action: none }
+/* A draggable point or mesh node, filled with its own value. */
+.gx-point { stroke: #fff; stroke-width: .005; cursor: grab; filter: drop-shadow(0 0 .003px #000) }
+/* A tangent handle and the line to its node. */
+.gx-handle { cursor: grab; opacity: .85 }
+.gx-handle-line { stroke: var(--fg); stroke-width: .002; opacity: .6 }

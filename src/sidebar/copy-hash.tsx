@@ -34,8 +34,11 @@ export function useCopy(): { copied: boolean; copy: (text: string) => void } {
     return { copied, copy };
 }
 
-// A short hash rendered as click-to-copy, with a tooltip. `stop` swallows the
-// click so copying a hash inside a session row doesn't also open the session.
+/** A short hash rendered as click-to-copy, with a tooltip. `stop` swallows the
+ *  click so copying a hash inside a session row doesn't also open the session.
+ *  @group primitives, chips
+ *  @gallery {"hash": "7b21d4e8"}
+ */
 export function Hash({ hash, stop }: { hash: string; stop?: boolean }) {
     const { copied, copy } = useCopy();
     // SHOWN short, COPIED whole — git's arrangement, and for git's reason: the identifier is long enough not to

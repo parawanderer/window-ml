@@ -185,6 +185,12 @@ if echo "$staged" | grep -q '^src/gradient/'; then
     fi
 fi
 
+# The component gallery's reminder: a component this commit adds or changes with no `@group`, or no `@gallery`
+# (docs/spec/COMPONENT_GALLERY.md). Static and never a failure; CI renders them.
+if echo "$staged" | grep -q '^src/.*\.tsx$'; then
+    node scripts/gallery.mjs remind --staged || true
+fi
+
 # A staged notebook must carry nbclient's evidence that it was run as committed, and be named in its folder's README
 # (docs/dev/notebooks.md). Run it with `node scripts/nb.mjs run <path>`.
 if ! node scripts/check-notebooks.mjs --staged; then

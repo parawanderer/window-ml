@@ -438,6 +438,27 @@ jobs:
   # heavy specs (resource-panel, bench-dock) spread across shards instead of pinning one; a spec pinned with
   # `mode: "default"` stays whole on one shard. `fail-fast: false` so one red shard does not cancel the others'
   # report — the failures you need to read may be in all three.
+  # THE COMPONENT GALLERY renders every component and custom entry (scripts/gallery.mjs check). A broken @gallery
+  # example or custom entry FAILS the job; a component that does not render from its inferred props is a warning,
+  # annotated on the components this PR touched (docs/spec/COMPONENT_GALLERY.md, "The check").
+  gallery:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Every gallery example renders
+        run: node scripts/gallery.mjs check --changed "origin/${{ github.base_ref || 'main' }}"
+
   e2e-shard:
     needs: changes
     if: needs.changes.outputs.code == 'true'

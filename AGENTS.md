@@ -231,6 +231,11 @@ undocumented thing is INVISIBLE and gets rebuilt. A new export or CSS family nee
 is FOR (`--new` ratchet), a new file opens with `// <name>.ts — <what it is for>.` (`--headerless` gate).
 `.claude/skills/code-index/SKILL.md`.
 
+**What a component LOOKS like: `node scripts/gallery.mjs shot <id>`** (props, theme, calm/dev, width, tokens and a
+Playwright `flow` as flags), after the index says it exists. One that renders blank or broken from its inferred props
+gets an `@gallery {json}` example and an `@group` in its JSDoc, COMMITTED, so the next agent sees it right; `gallery.mjs
+check` (CI) fails on a broken example. `.claude/skills/gallery/SKILL.md`.
+
 **RULE — state goes through the STATE REGISTRY, from the first commit of the component that adds it.** Anything kept
 across calls (a module-level Map/Set/signal/`let`, a storage key, an IndexedDB store, a grant) that a RUN depends on is
 declared beside the store with `defineState` (`src/state-registry.ts`): scope, realm (`worker`/`page`/`offscreen`),
@@ -332,7 +337,8 @@ every demo: `docs/dev/e2e-harness.md`.
   `run-once.mjs`, `bench/`, the live probes (`server-tool-live`, `md-ladder-live`, `proto-stream-live`,
   `capture-frames`), `chat-shots.mjs` + `window.__chatFake` (chat-web), `scripts/probe.mjs` (one look at a page),
   `scripts/android.mjs`/`scripts/ios.mjs` (phone), `scripts/hub-root.mjs` + `dev-hub-pair.html` (hub-pairing),
-  `scripts/check-disk.mjs` (disk-space), and the narrated `*-demo.mjs` files.
+  `scripts/check-disk.mjs` (disk-space), `scripts/gallery.mjs` (gallery), `scripts/check-glsl.mjs` (shader type-check, in
+  the gallery skill), and the narrated `*-demo.mjs` files.
 
 ## Branches, PRs and CI
 

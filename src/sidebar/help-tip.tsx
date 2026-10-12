@@ -6,6 +6,8 @@ import type { ComponentChildren } from "preact";
 /**
  * A label that explains itself on hover: `tip` goes in the tooltip layer's `data-tip` (installTooltipLayer reads it as
  * plain text, never markup) and a faint dotted underline (`.help`) says there is one. No tip, just the label.
+ * @group primitives, tooltips
+ * @gallery {"tip": "Measured from the model's first token, not from the request.", "children": "Time to first token"}
  */
 export function Tip({ tip, children }: { tip?: string; children: ComponentChildren }) {
     if (!tip) return <>{children}</>;

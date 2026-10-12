@@ -15,6 +15,8 @@ const readFolded = (): string[] => { try { return JSON.parse(localStorage.getIte
  * A card whose content can be folded away under its header. `id` names it for the remembered state (and is its anchor
  * when `anchor` is set); `label` is what the fold button's tooltip calls it. The content stays mounted while folded, so
  * what it holds (a hover, a scroll position) is still there when it opens.
+ * @group primitives, layout
+ * @gallery {"id": "gallery-card", "label": "Memory", "children": [{"$h": ["header", {}, {"$h": ["b", {}, "Memory"]}, {"$h": ["span", {"class": "sub"}, "What each model holds right now"]}]}, {"$h": ["p", {}, "A card's content: it folds away under its header, and the fold is remembered."]}]}
  */
 export function Card({ id, label, anchor, class: cls = "", children }: { id: string; label: string; anchor?: boolean; class?: string; children: ComponentChildren }) {
     const [folded, setFolded] = useState(() => readFolded().includes(id));
