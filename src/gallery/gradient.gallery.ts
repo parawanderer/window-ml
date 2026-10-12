@@ -1,11 +1,11 @@
-// gradient.gallery.ts — the gradient fills (src/gradient/) as a custom gallery entry: the WebGL2 canvas, an SVG overlay
+// gradient.gallery.ts — the gradient fills (src/lab/gradient/) as a custom gallery entry: the WebGL2 canvas, an SVG overlay
 // to drag points, mesh nodes and their handles, per-phase timings for the performance log, a continuous-redraw mode that
 // turns it into a small benchmark, and the ML-side caveats as notes. docs/spec/GRADIENT_FILLS.md.
 
 import type { EntryApi, GalleryEntry, MountedEntry } from "./gallery-entry";
-import { createGradientRenderer, type GradientRenderer, type GradientScene } from "../gradient/gradient-gl";
-import { tpsDegenerate, type Freeform } from "../gradient/gradient-freeform";
-import { gridMesh, type Mesh } from "../gradient/gradient-mesh";
+import { createGradientRenderer, type GradientRenderer, type GradientScene } from "../lab/gradient/gradient-gl";
+import { tpsDegenerate, type Freeform } from "../lab/gradient/gradient-freeform";
+import { gridMesh, type Mesh } from "../lab/gradient/gradient-mesh";
 
 /** The entry's props: which fill, both fills' parameters, and how to draw and time it. */
 interface GradientProps {

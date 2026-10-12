@@ -11,7 +11,7 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 async function bundle() {
     const out = await esbuild.build({
         stdin: {
-            contents: `export * from "./src/gradient/gradient-gl"; export * from "./src/gradient/gradient-freeform"; export * from "./src/gradient/gradient-mesh";`,
+            contents: `export * from "./src/lab/gradient/gradient-gl"; export * from "./src/lab/gradient/gradient-freeform"; export * from "./src/lab/gradient/gradient-mesh";`,
             resolveDir: ROOT, loader: "ts",
         },
         bundle: true, write: false, format: "iife", globalName: "G", target: "chrome114",

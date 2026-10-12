@@ -5,7 +5,7 @@ component gallery ([`COMPONENT_GALLERY.md`](COMPONENT_GALLERY.md)), as a custom 
 
 ## What it is
 
-The two point-based fills from Illustrator, as one standalone module (the `src/gradient/` folder):
+The two point-based fills from Illustrator, as one standalone module (the `src/lab/gradient/` folder):
 
 - **Freeform gradient** ("Points" mode): values pinned at scattered points, interpolated over the plane.
 - **Gradient mesh**: a grid of bicubic Bézier patches, each node carrying a position, tangent handles and a value.
@@ -17,8 +17,8 @@ Each fill exists twice, with the same maths:
    parameter** (a vector-Jacobian product). It is the ground truth the shader is tested against, and the thing an
    optimiser differentiates through, for example fitting a fill to an image by gradient descent.
 
-**The module imports nothing from the rest of the repo**, so it can be copied into another project unchanged. A test
-holds it to that.
+**The module imports nothing from the rest of the repo**, so it can be copied into another project unchanged. It is
+LAB code (`src/lab/`, the `@lab` PR label), and `tests/lab.test.mjs` holds every lab topic to that.
 
 ## Conventions shared by both fills
 
@@ -183,4 +183,4 @@ edge is an open item.
   width is the identity-like bilinear map; a bilinear mesh is exact at the nodes.
 - **The shader against the reference**: render in Chromium (Playwright, software GL), `readPixels`, and compare with
   the CPU at the pixel centres, within a tolerance that accounts for float32 and the mesh tessellation.
-- **Standalone**: nothing under `src/gradient/` imports from outside it.
+- **Standalone**: nothing under `src/lab/gradient/` imports from outside it.

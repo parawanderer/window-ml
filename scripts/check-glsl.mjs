@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // check-glsl.mjs — TYPE-CHECK THE SHADERS without a browser: every assembled shader the gradient renderer compiles
-// (`GRADIENT_SHADERS`, src/gradient/gradient-gl.ts) goes through glslangValidator, Khronos's reference compiler for
+// (`GRADIENT_SHADERS`, src/lab/gradient/gradient-gl.ts) goes through glslangValidator, Khronos's reference compiler for
 // OpenGL ES, as GLSL ES 3.00 (WebGL2's dialect).
 //
 //   node scripts/check-glsl.mjs
@@ -15,7 +15,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { GRADIENT_SHADERS } from "../src/gradient/gradient-gl.ts";
+import { GRADIENT_SHADERS } from "../src/lab/gradient/gradient-gl.ts";
 
 const BIN = process.env.GLSLANG ?? "glslangValidator";
 try { execFileSync(BIN, ["--version"], { stdio: "ignore" }); } catch {
