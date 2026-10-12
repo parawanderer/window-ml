@@ -91,12 +91,14 @@ test("the popup opens the chat page, and opening it again focuses the one that i
     } finally { await ext.context.close(); }
 });
 
-test("starting a chat from the page: the worker hosts it, with no tab behind it", async () => {
-    const fake = await startFakeLlm({ model: "fake-model" });
+test("starting a chat from the page: the worker hosts it, with no tab behind it, and its reply streams", async () => {
+    // Paced, so the reply is still being written while the page is looked at.
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 40 });
+    const ANSWER = "a service worker is a background script that runs apart from any page and wakes for the events it has registered, then sleeps again";
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
-        fake.setScript([{ content: "a service worker is a background script" }]);
+        fake.setScript([{ content: ANSWER }]);
         const { page: chat, errors } = await openChatPage(ext);
 
         // With nothing open the page is the start box; this browser can start both kinds, so Chat is one click.
@@ -107,7 +109,16 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it"
 
         // The page opens the session the worker answered with, and the answer arrives through the stream.
         await expect(chat).toHaveURL(/#\/s\/local%3A/);
-        await expect(chat.locator(".chat-main")).toContainText("a service worker is a background script");
+        // The reply STREAMS: a live bubble holds the start of the answer before the whole of it has arrived.
+        const live = chat.locator(".chat-main .msg.asst.streaming");
+        await expect(live).toBeVisible();
+        const partial = ((await live.locator(".asst-body").textContent()) || "").trim();
+        expect(partial.length, "some of the answer is on screen").toBeGreaterThan(0);
+        expect(ANSWER.startsWith(partial), `"${partial}" is the start of the answer`).toBe(true);
+        expect(partial.length, "and not yet all of it").toBeLessThan(ANSWER.length);
+        await expect(chat.locator(".chat-main")).toContainText(ANSWER);
+        await expect(live, "the result replaces the live bubble").toHaveCount(0);
+        expect(fake.calls()[0].stream, "the worker asked for a streamed reply").toBe(true);
         // No tab was opened for it: the chat page and the popup-less context are all there is.
         expect(ext.context.pages().filter((p) => p.url().startsWith("http")).length).toBe(0);
         expect(errors).toEqual([]);

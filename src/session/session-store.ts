@@ -299,7 +299,7 @@ export class SessionStore {
         const queue = this.pending.get(hash) ?? [];
         queue.push(event);
         this.pending.set(hash, queue);
-        this.schedule(event.kind !== "agent-stream");
+        this.schedule(event.kind !== "agent-stream" && event.kind !== "chat-stream");   // a live preview is batched, never flushed eagerly
     }
 
     /**

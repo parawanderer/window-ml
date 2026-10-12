@@ -126,8 +126,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // STREAM THE THINKING, always. It used to be a choice on a runtime reached over a wire, because every
     // `agent-stream` event carried the whole answer so far rather than the part that is new — a five-minute turn
     // was 118 MB. A remote preview now carries a bounded tail at a fixed rate (hub #330), which measured 1.70 MB
-    // for the same turn and does not grow with it, so there is nothing left to choose between. Only for an agent:
-    // a chat streams its reply through its own path and never asked.
+    // for the same turn and does not grow with it, so there is nothing left to choose between. Only an agent asks:
+    // a chat the worker hosts always streams (`chat-stream`, sw-chat.ts), so `chat.start` has no option to send.
     const streaming = kind === "agent";
     const ready = !!text.trim() && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
     const start = async (): Promise<void> => {

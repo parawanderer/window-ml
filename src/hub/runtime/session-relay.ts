@@ -173,7 +173,7 @@ export function decodeStreamFrame(batch: Bytes): SessionStreamMessage | null {
 /**
  * How much of a live preview's text one REMOTE frame carries, per channel (`reasoning` and `content` each).
  *
- * `agent-stream` carries the text ACCUMULATED so far, and the UI replaces rather than appends, which is what makes a
+ * `agent-stream` (and a chat turn's `chat-stream`) carries the text ACCUMULATED so far, and the UI replaces rather than appends, which is what makes a
  * dropped or reordered event harmless. Over a hub it is also what makes the cost QUADRATIC in a turn's length: a
  * 5-minute turn emits 3,333 of them 90 ms apart, averaging half the final text, and that was measured over a real
  * hub at 118 MB uploaded to deliver 73 KB of model output. Capped, the same turn is 10 MB and every frame is the same
@@ -249,11 +249,11 @@ export class LivePreview {
     forWire(hash: string, m: SessionStreamMessage): SessionStreamMessage | null {
         if (m.type === "event" && isToolOutput(m.event)) return this.toolOutput(hash, m);
         this.settle(hash, m);
-        if (m.type !== "event" || m.event?.kind !== "agent-stream") return m;
+        if (m.type !== "event" || !isModelPreview(m.event)) return m;
         const last = this.sent.get(hash);
         if (last != null && this.now() - last < this.everyMs) return null;
         this.sent.set(hash, this.now());
-        return { ...m, event: tail(m.event as import("../../contract/contract-debug").DebugAgentStream, this.chars) };
+        return { ...m, event: tail(m.event as Preview, this.chars) };
     }
 
     /** Drop every held tool output and its timer: the connection they were for is gone. */
@@ -298,6 +298,13 @@ export class LivePreview {
     }
 }
 
+/** A live MODEL preview: an agent's `agent-stream` or a chat turn's `chat-stream`, both the text accumulated so far. */
+type Preview = import("../../contract/contract-debug").DebugAgentStream | import("../../contract/contract-debug").DebugChatStream;
+function isModelPreview(ev: unknown): boolean {
+    const kind = (ev as { kind?: string } | undefined)?.kind;
+    return kind === "agent-stream" || kind === "chat-stream";
+}
+
 /** A live tool-output delta: an `agent-step` with `streamOutput` and no `tool` (the loop's fan, agent-loop.ts). */
 function isToolOutput(ev: unknown): boolean {
     const e = ev as { kind?: string; streamOutput?: unknown; tool?: unknown } | undefined;
@@ -313,7 +320,7 @@ function isToolOutput(ev: unknown): boolean {
  * knows WHICH channel was cut, where `elided` is a single number for both. What `elided` is for is a reader that
  * wants to say how much, or to tell a tail from a short answer without parsing prose.
  */
-function tail(ev: import("../../contract/contract-debug").DebugAgentStream, chars: number): import("../../contract/contract-debug").DebugAgentStream {
+function tail<E extends Preview>(ev: E, chars: number): E {
     const over = (s: string | undefined): number => Math.max(0, (s?.length ?? 0) - chars);
     const elided = over(ev.reasoning) + over(ev.content);
     if (!elided) return ev;

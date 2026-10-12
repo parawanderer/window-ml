@@ -21,7 +21,7 @@ import { defineState } from "../state-registry";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-consent";
-import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
+import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
@@ -274,6 +274,8 @@ export function configureSessionCommands(run: RunDeps): void {
     configureBackgroundChats({
         emit: (event) => ingestSessionEvent(event, { trusted: true }),
         call: async (req, signal) => await fetchLLM(req, signal) as import("../contract").LlmResult,
+        // Streamed, so a chat started from the chat page shows its answer as it is written, as an agent run does.
+        stream: async (req, onDelta, signal) => await streamLLM(req, (content) => onDelta({ content }), signal, (reasoning) => onDelta({ reasoning })),
         load: async (hash) => {
             const key = `ml_session_${hash}`;
             try { return ((await chrome.storage.local.get(key)) as Record<string, never>)[key] ?? null; } catch { return null; }

@@ -334,6 +334,17 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         rev.value++;
         return;
     }
+    // A chat turn's reply SO FAR (a worker-hosted chat streams it). Replaces the turn's live preview, never appends,
+    // and is ignored once the turn has ended: previews can land after the result, and one must not reopen it.
+    if (ev.kind === "chat-stream") {
+        const s = sessionMap.get(key);
+        const i = s ? s.turns.findIndex(x => x.id === ev.id) : -1;
+        if (!s || i < 0 || s.turns[i].status !== "pending") return;
+        const live = { ...(ev.content ? { content: ev.content } : {}), ...(ev.reasoning ? { reasoning: ev.reasoning } : {}), ...(ev.elided ? { elided: ev.elided } : {}) };
+        s.turns = s.turns.map((x, idx) => idx === i ? { ...x, live } : x);   // a new object, for the same reason as below
+        s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
+        return;
+    }
     if (ev.kind === "chat") {
         let s = sessionMap.get(key);
         if (!s) {
@@ -362,8 +373,8 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         // Replace the turn with a NEW object (see note above) so the open detail
         // view re-renders it live instead of only after a re-navigation/reload.
         const updated: Turn = ev.kind === "chat-result"
-            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend, reasoning: ev.reasoning, usage: ev.usage }
-            : { ...prev, error: ev.error, status: "err", ts: ev.ts };
+            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend, reasoning: ev.reasoning, usage: ev.usage, live: undefined }
+            : { ...prev, error: ev.error, status: "err", ts: ev.ts, live: undefined };
         // Backend health (mirror the agent-result path): a chat that couldn't reach the box flags offline; a
         // successful chat-result clears it.
         if (ev.kind === "chat-error") backendError.value = unreachableIfNothingSaysOtherwise(ev.error || "");

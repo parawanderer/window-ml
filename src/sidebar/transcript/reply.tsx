@@ -138,9 +138,11 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                     : null}
                 {streaming ? null : <Stamp ts={ts} />}
             </div>
-            {/* Reasoning/thinking text (separate from the reply), collapsed by default. */}
+            {/* Reasoning/thinking text (separate from the reply), collapsed by default. While a reply streams and has
+                only its thinking so far, it is OPEN, so the live text is what is on screen; it closes when the
+                answer starts. */}
             {hasReply && !collapsed && reasoning
-                ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(reasoning, { math: true }) }} /></details>
+                ? <details class="thinking" open={!!streaming && !content}><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(reasoning, { math: true }) }} /></details>
                 : null}
             {/* The body lives in a wrapper of its own so a surface can ANIMATE the swap between the prose and its
                 collapsed one-liner. Without one there is nothing that survives the change to animate: each side
@@ -237,9 +239,14 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing
                 to reach — the anchor was only set for agent answers, which is where `tokenRun` comes from. */}
-            <ReplyBubble content={t.assistant || ""} status={t.status} model={t.model ?? null}
-                profile={turnProfile(t)} ts={t.ts} reasoning={t.reasoning} sources={t.sources} anchorHash={hash}
-                error={t.status === "err" ? (t.error || "(error)") : undefined} initialRaw={!!t.structured} />
+            {/* A turn still STREAMING draws its reply so far in the same bubble, in its streaming mode; the result
+                replaces it in place. */}
+            {t.status === "pending" && t.live
+                ? <ReplyBubble content={t.live.content || ""} status="ok" model={t.model ?? t.reqModel ?? null}
+                    profile={turnProfile(t)} ts={t.ts} reasoning={t.live.reasoning ?? null} anchorHash={hash} streaming />
+                : <ReplyBubble content={t.assistant || ""} status={t.status} model={t.model ?? null}
+                    profile={turnProfile(t)} ts={t.ts} reasoning={t.reasoning} sources={t.sources} anchorHash={hash}
+                    error={t.status === "err" ? (t.error || "(error)") : undefined} initialRaw={!!t.structured} />}
         </>
     );
 }

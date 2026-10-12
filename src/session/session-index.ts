@@ -52,7 +52,7 @@ export interface SessionIndexOptions {
     maxSessions?: number;
 }
 
-const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "agent", "agent-step", "agent-result", "agent-cap", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed"]);
+const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "chat-stream", "agent", "agent-step", "agent-result", "agent-cap", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed"]);
 /** Kinds that describe a SESSION rather than a chat or a run. They never create one: a note about a session this
  *  index does not hold is not a session, and the kind-from-prefix rule below would have to guess what it was. */
 const SESSION_KINDS = new Set(["session-resumed"]);
@@ -343,6 +343,9 @@ export class SessionIndex {
             else if (!ev.pending) superseded = (e) => (e.kind === "agent-step" && e.seq === seq && e.streamOutput != null && e.tool == null) || (e.kind === "agent-stream" && e.step === ev.step);
         } else if (ev.kind === "agent-result") {
             superseded = (e) => e.kind === "agent-stream";
+        } else if (ev.kind === "chat-stream" || ev.kind === "chat-result" || ev.kind === "chat-error") {
+            // A chat turn's newer preview replaces its older one, and the turn's end replaces them all.
+            superseded = (e) => e.kind === "chat-stream" && e.id === ev.id;
         }
         if (!superseded) return;
         const keep: Entry[] = [];

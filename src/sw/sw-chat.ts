@@ -11,7 +11,8 @@
  *
  * The transcript is emitted HERE, as the same `chat` / `chat-result` / `chat-error` events `injected.ts` emits for
  * a page chat, so the index, the chat page, the sidebar's session views and the exports all read one shape and
- * nothing has to know which side ran the turn.
+ * nothing has to know which side ran the turn. The reply STREAMS while it is written, as throttled `chat-stream`
+ * previews of the text so far (the chat counterpart of an agent run's `agent-stream`), which the result supersedes.
  *
  * And there is no DevTools panel to relay them to: a panel attaches to a tab, and this session has no tab. So this
  * is the one place an event reaches the index without also going through `relayDebugEvent`. That is not a second
@@ -30,12 +31,22 @@ export const MAX_BG_CHATS = 32;
 /** Images on one turn, matching what the page path accepts from the composer. */
 export const MAX_TURN_IMAGES = 8;
 
+/** The least time between two live `chat-stream` previews of one turn: the cadence an agent run streams at
+ *  (`STREAM_EMIT_MS`, sw-run-host.ts), smooth enough to read and not a flood of events into the index. */
+export const CHAT_STREAM_EMIT_MS = 90;
+
+/** One model request of a background chat's turn. */
+export interface ChatRequest { messages: NeutralMessage[]; model: string | null; think: boolean | null; hint: RequestHint }
+
 /** What a background chat needs from the worker, injected so the module is testable without `chrome`. */
 export interface ChatDeps {
     /** the session index (and nothing else: see the file's header) */
     emit(event: MlDebugEvent): void;
     /** one model call, aborted through its signal; `fetchLLM` in the worker */
-    call(req: { messages: NeutralMessage[]; model: string | null; think: boolean | null; hint: RequestHint }, signal: AbortSignal): Promise<LlmResult>;
+    call(req: ChatRequest, signal: AbortSignal): Promise<LlmResult>;
+    /** the same call STREAMED: `onDelta` gets each new piece of the reply or of its thinking as it arrives; `streamLLM`
+     *  in the worker. Absent, a turn falls back to `call` and its answer lands whole. */
+    stream?(req: ChatRequest, onDelta: (delta: { content?: string; reasoning?: string }) => void, signal: AbortSignal): Promise<LlmResult>;
     load(hash: string): Promise<StoredSession | null>;
     save(hash: string, session: StoredSession): Promise<void>;
     now(): number;
@@ -159,8 +170,9 @@ async function turn(chat: BgChat, text: string, images?: string[]): Promise<void
     chat.running = controller;
     chat.lastTs = d.now();
 
+    const streaming = !!d.stream;
     d.emit({
-        kind: "chat", id, ts: d.now(), save: chat.save, session, streaming: false,
+        kind: "chat", id, ts: d.now(), save: chat.save, session, streaming,
         config: { system: chat.system, model: chat.model, think: chat.think, schema: false, toolIds: null, maxTokens: null, save: chat.save },
         request: {
             model: chat.model, extend: null, messages, images: pictures.length ? pictures : null,
@@ -169,14 +181,15 @@ async function turn(chat: BgChat, text: string, images?: string[]): Promise<void
     });
 
     try {
-        const result = await d.call({
+        const req: ChatRequest = {
             messages,
             model: chat.model,
             think: chat.think,
             // "interactive": a person is waiting for this answer, which is what the hint means (contract.ts
             // RequestUse). An agent run says "agent"; a title or a summary says "utility".
             hint: { use: "interactive", session: hintSession(chat.hash) },
-        }, controller.signal);
+        };
+        const result = d.stream ? await d.stream(req, preview(chat, id, session, controller.signal), controller.signal) : await d.call(req, controller.signal);
         // A cancel that landed while the fetch was resolving: the turn is over either way, and reporting a result
         // the person cancelled would put an answer in a transcript they stopped.
         if (controller.signal.aborted) throw new Error("cancelled");
@@ -200,6 +213,27 @@ async function turn(chat: BgChat, text: string, images?: string[]): Promise<void
     } finally {
         if (chat.running === controller) chat.running = null;
     }
+}
+
+/**
+ * The live preview of one streamed turn: accumulate what arrives, and emit it as a `chat-stream` at most every
+ * {@link CHAT_STREAM_EMIT_MS}. Each event carries everything SO FAR, so the index can keep only the newest and a reader
+ * that missed one is not behind. Leading edge only, with no trailing send: the turn's `chat-result` follows the last
+ * piece and supersedes every preview. Nothing goes out once the turn is cancelled.
+ */
+function preview(chat: BgChat, id: string, session: { hash: string; turn: number }, signal: AbortSignal): (delta: { content?: string; reasoning?: string }) => void {
+    const d = need();
+    let content = "", reasoning = "", last = -Infinity;
+    return (delta) => {
+        if (delta.content) content += delta.content;
+        if (delta.reasoning) reasoning += delta.reasoning;
+        if (signal.aborted || (!content && !reasoning)) return;
+        const now = d.now();
+        if (now - last < CHAT_STREAM_EMIT_MS) return;
+        last = now;
+        chat.lastTs = now;
+        d.emit({ kind: "chat-stream", id, ts: now, save: false, session, ...(content ? { content } : {}), ...(reasoning ? { reasoning } : {}) });
+    };
 }
 
 /** Write the chat where `ml.resumeChat(hash)` and a later worker can find it: the same `ml_session_<hash>` record a

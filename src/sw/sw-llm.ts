@@ -879,8 +879,10 @@ function servedProto(res: Response, asked: ProtoMode | null, url: string): boole
 // onDelta(text) for each content chunk, returning the full concatenated text.
 // Text-only — no schema/raw/tools; toolIds is supported (streams each
 // server-side mode; a handed-back attempt streams no content, so nothing is
-// emitted to the caller before we retry the next mode).
-export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
+// emitted to the caller before we retry the next mode). `onReasoning` gets the
+// separate thinking stream the same way, for a caller that shows it live (a
+// worker-hosted chat, sw-chat.ts); without it the thinking only lands at the end.
+export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal, onReasoning?: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, model, protoAsked, requestId } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
     const spend = spendForCall(config);   // the prices this call runs under (sw-prices.ts); nothing unless spend tracking is set
@@ -901,7 +903,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
             const chunk = format.streamChunk(line);
             if (!chunk) return;
             if (chunk.delta) { content += chunk.delta; onDelta(chunk.delta); }
-            if (chunk.reasoning) reasoning += chunk.reasoning;   // separate thinking stream (not emitted to the caller)
+            if (chunk.reasoning) { reasoning += chunk.reasoning; onReasoning?.(chunk.reasoning); }   // separate thinking stream
             if (chunk.toolCall) sawToolCall = true;
             // sources arrive on their own SSE line (no choices) — capture them.
             if (Array.isArray(chunk.sources)) sources = chunk.sources;
@@ -948,7 +950,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
             if (f.delta && f.delta.index) return;
             if (f.delta) {
                 if (f.delta.content) { content += f.delta.content; onDelta(f.delta.content); }
-                if (f.delta.reasoning) reasoning += f.delta.reasoning;
+                if (f.delta.reasoning) { reasoning += f.delta.reasoning; onReasoning?.(f.delta.reasoning); }
                 // TOOL CALLS ARRIVE HERE. The field and the encoder that fills it landed upstream in ONE
                 // commit, after the handover had told us they were missing — so the schema never ran ahead of
                 // the wire, and the reason this needed no change on our side is only that we regenerate from

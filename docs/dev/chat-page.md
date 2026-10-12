@@ -194,7 +194,7 @@ document (`ML_DEBUG_RESET`) becomes `interrupted`.
 
 **The ring.** Per session, bounded by count and by serialized size, plus a total size cap that trims the least
 recently changed sessions first, and a session cap that forgets finished sessions first. Live output is coalesced as
-it arrives: the newest `agent-stream` and `agent-turn` per step, the newest output delta per `seq`, and a finished step
+it arrives: the newest `agent-stream` and `agent-turn` per step, the newest `chat-stream` per turn, the newest output delta per `seq`, and a finished step
 or a result drops the deltas it supersedes. Each carries its accumulated state, so a client that applied a dropped
 entry is not behind. Only a cap loses history, and `lostThrough` records how far, which is what `truncated` reports.
 
@@ -316,6 +316,13 @@ The turn is emitted here, as the same `chat` / `chat-result` / `chat-error` even
 chat, so the index, the session views and the exports read one shape and none of them has to know which side ran it.
 The start and its result share an `id` derived from the hash and the turn number rather than drawn at random, so a
 turn reported twice is recognised as one turn.
+
+**The reply streams.** The turn calls `streamLLM` and emits `chat-stream` previews of the reply (and its thinking) SO
+FAR, at most every `CHAT_STREAM_EMIT_MS`, with the start saying `streaming: true`. They are the chat counterpart of
+`agent-stream` and handled where it is: the index keeps the newest per turn `id` and drops them on the turn's
+`chat-result` or `chat-error`, the store batches them, a hub's `LivePreview` paces them and cuts them to a tail, and the
+reducer puts the newest on the open turn (`Turn.live`), which `MessageTurn` draws as a streaming `ReplyBubble` until the
+result replaces it. A cancel aborts the streamed fetch, and no preview goes out after it.
 
 **This is the one place an event reaches the index without also going to `relayDebugEvent`**, and that is not the
 double-feed the AGENTS.md trap is about. That trap is about recording a run twice because a background-hosted run's

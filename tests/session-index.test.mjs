@@ -128,6 +128,31 @@ test("live output is coalesced: the ring holds the newest of each, and a finishe
     assert.notEqual(ix.ingest(delta(h, 2, "xy"), bg()).summary, null, "recency is still reported, every few seconds");
 });
 
+// --- a chat turn's live preview (chat-stream) ---
+
+test("a chat turn's previews are coalesced by turn, and its result or error drops them", () => {
+    const ix = index();
+    const h = "cccc0001";
+    const turn = (id, over = {}) => base(h, "chat", { id, streaming: true, request: { model: "m", messages: [{ role: "user", content: "hi" }] }, config: null, ...over });
+    const preview = (id, content) => base(h, "chat-stream", { id, content });
+    const held = () => ix.backfill(h).filter((m) => m.type === "event").map((m) => `${m.event.kind}:${m.event.content ?? m.event.id}`);
+    assert.equal(ix.ingest(turn(`${h}-1`), bg()).accepted, true);
+    assert.equal(ix.ingest(preview(`${h}-1`, "Hel"), bg()).accepted, true, "a known kind");
+    ix.ingest(preview(`${h}-1`, "Hello"), bg());
+    // The newest preview replaces the older one: each carries everything so far.
+    assert.deepEqual(held(), [`chat:${h}-1`, "chat-stream:Hello"]);
+    ix.ingest(base(h, "chat-result", { id: `${h}-1`, content: "Hello there", sources: null, structured: false, model: "m", extend: null, reasoning: null, usage: null }), bg());
+    assert.deepEqual(held(), [`chat:${h}-1`, "chat-result:Hello there"], "the result supersedes the turn's previews");
+
+    // Another turn's preview is its own, and an error ends a turn's previews as a result does.
+    ix.ingest(turn(`${h}-2`), bg());
+    ix.ingest(preview(`${h}-2`, "par"), bg());
+    ix.ingest(base(h, "chat-error", { id: `${h}-2`, error: "cancelled" }), bg());
+    assert.deepEqual(held().slice(2), [`chat:${h}-2`, `chat-error:${h}-2`]);
+});
+
+// --- subscriptions, caps, restores and resume notes ---
+
 test("opening a subscription: everything with a reset, only the tail from a position it holds, a reset otherwise", () => {
     const ix = index();
     const h = "aaaa0001";
@@ -369,6 +394,7 @@ test("every event kind the index accepts has been considered for de-duplication"
     const NO_RULE_NEEDED = new Set([
         "agent-step",    // coalesced by step, and a repeat is the same step's later state
         "agent-stream",  // coalesced by step: the newest delta replaces the last
+        "chat-stream",   // coalesced by turn id the same way, and dropped by the turn's result or error
         "agent-turn",    // coalesced the same way, and carries no history of its own
         "agent-cap",     // last write wins: a cap is a number, not an occurrence
         "agent-say",     // paired with agent-say-seen, which is the one that can arrive twice

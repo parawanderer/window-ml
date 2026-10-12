@@ -74,6 +74,15 @@ export interface DebugChatResult extends DebugBase { kind: "chat-result"; conten
 /** A chat turn FAILED. The turn is terminal either way, so a reader that saw the `chat` is not left waiting. */
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 
+/** A chat turn's reply SO FAR, while it streams (a `chat` with `streaming: true`). The chat counterpart of
+ *  `agent-stream`: `id` is the turn's, and `content`/`reasoning` are ACCUMULATED, so a surface REPLACES rather than
+ *  appends and a dropped or repeated event still converges. Transient: the turn's `chat-result` or `chat-error`
+ *  supersedes every one of them and carries the authoritative text. */
+export interface DebugChatStream extends DebugBase { kind: "chat-stream"; content?: string; reasoning?: string;
+    /** Characters dropped from the FRONT of `reasoning` and `content` together by a hub's live preview, exactly as
+     *  on `agent-stream`. Absent means nothing was dropped. */
+    elided?: number; }
+
 /** ml.agent runs: a run-start, one event per step (a thought OR a tool call +
  *  result), then a result. `elements` is a COUNT — real DOM nodes can't cross the
  *  window bus (they reach the console via onStep instead). */
@@ -296,7 +305,8 @@ export interface DebugSessionResumed extends DebugBase {
     dropped: string[];
 }
 
-export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
+/** Every event the debug stream carries about a session: a chat's turns, an agent run's lifecycle and live previews. */
+export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError | DebugChatStream
     | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn
     | DebugSessionResumed;
 

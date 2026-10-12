@@ -186,6 +186,22 @@ test("previews are paced per session, and nothing else is paced at all", () => {
     assert.ok(p.forWire("bbbb0002", { ...preview(10, 5), session: { runtime: "rt", hash: "bbbb0002" } }));
 });
 
+test("a chat turn's preview (chat-stream) is paced and cut to a tail like an agent's, and its result is not", () => {
+    let now = 0;
+    const p = new LivePreview({ now: () => now });
+    const chat = (n, cursor) => ({ type: "event", v: 1, session: S, epoch: "w1.0", cursor,
+        event: { kind: "chat-stream", id: `${S.hash}-1`, session: { hash: S.hash, turn: 1 }, content: "y".repeat(n) } });
+    const first = p.forWire(S.hash, chat(LIVE_PREVIEW_CHARS * 3, 1));
+    assert.ok(first, "the first one goes");
+    assert.ok(first.event.content.startsWith("… "), "cut to a marked tail");
+    assert.equal(first.event.elided, LIVE_PREVIEW_CHARS * 2);
+    now += LIVE_PREVIEW_MS - 1;
+    assert.equal(p.forWire(S.hash, chat(10, 2)), null, "inside the window it is paced away");
+    const result = { type: "event", v: 1, session: S, epoch: "w1.0", cursor: 3,
+        event: { kind: "chat-result", id: `${S.hash}-1`, session: { hash: S.hash, turn: 1 }, content: "z".repeat(LIVE_PREVIEW_CHARS * 3) } };
+    assert.deepEqual(p.forWire(S.hash, result), result, "the turn's result goes whole, whenever it comes");
+});
+
 // --- live TOOL output over a hub: paced, with a trailing send, and a discard never held ---
 
 /** One live tool-output delta (the loop's fan): an `agent-step` with `streamOutput` and no `tool`. */
