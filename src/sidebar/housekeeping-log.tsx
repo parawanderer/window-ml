@@ -147,7 +147,7 @@ export function jobStateText(j: JobStatus, now: number): string {
         : j.state === "interrupted" ? `interrupted${j.interruptedAt != null ? ` ${fmtAge(now - j.interruptedAt)} ago` : ""}, resumes on its own`
             : j.state === "failed" ? "last run failed"
                 : j.state === "waiting" ? "waiting" : "idle";
-    return [head, waiting, j.state !== "running" ? due : ""].filter(Boolean).join(" · ");
+    return [head, waiting, j.state !== "running" ? (j.blocked ? `blocked: ${j.blocked}` : due) : ""].filter(Boolean).join(" · ");
 }
 
 /** The last run in words: when, and what it did. */

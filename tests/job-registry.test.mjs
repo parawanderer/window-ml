@@ -55,6 +55,7 @@ test("idle → waiting (with the count) → running → idle with the last run",
     const d = job();
     assert.equal(R.jobStatus(d, { pending: 0 }, []).state, "idle");
     const w = R.jobStatus(d, { pending: 3, pendingLabel: "sessions with PNG screenshots", nextDue: 5000 }, []);
+    assert.equal(R.jobStatus(d, { pending: 1, blocked: "needs a grant" }, []).blocked, "needs a grant");
     assert.deepEqual([w.state, w.pending, w.pendingLabel, w.nextDue], ["waiting", 3, "sessions with PNG screenshots", 5000]);
     assert.equal(R.jobStatus(d, { running: true, pending: 3 }, [e(10, "compact-pass")]).state, "running");
     const done = R.jobStatus(d, { pending: 0 }, [e(10, "compact-pass"), e(11, "compact-images", { key: "h1" }), e(20, "compact-pass-done", { bytes: 900, ms: 10, detail: { sessions: 1, images: 2 } })]);
@@ -159,6 +160,8 @@ test("each state in words: what waits, when it is next due, and an interruption 
         "interrupted 2m ago, resumes on its own · 2 sessions");
     assert.equal(jobStateText(status({ state: "failed" }), NOW), "last run failed");
     assert.equal(jobStateText(status({ nextDue: NOW - 1 }), NOW), "idle · due now");
+    assert.equal(jobStateText(status({ state: "waiting", pending: 3, pendingLabel: "month files to write", nextDue: NOW + 5000, blocked: "the folder needs access" }), NOW),
+        "waiting · 3 month files to write · blocked: the folder needs access", "what blocks it, in place of a countdown that would not help");
 });
 
 test("the last run in words, a failure with its error, and none recorded", () => {

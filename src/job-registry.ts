@@ -35,6 +35,8 @@ export interface JobLive {
     pendingLabel?: string;
     /** Epoch ms of the next time it starts on its own. */
     nextDue?: number;
+    /** Why the work waiting cannot be done until a person acts (a folder whose permission lapsed). */
+    blocked?: string;
 }
 
 /** One job's declaration. */
@@ -72,6 +74,8 @@ export interface JobStatus {
     pending?: number;
     pendingLabel?: string;
     nextDue?: number;
+    /** See {@link JobLive.blocked}. */
+    blocked?: string;
     lastRun?: JobRun;
     /** When the pass that never ended started (state `interrupted`, or `running` again after one). */
     interruptedAt?: number;
@@ -138,6 +142,7 @@ export function jobStatus(decl: JobDecl, live: JobLive | undefined, events: read
         ...(pending != null ? { pending } : {}),
         ...(live?.pendingLabel ? { pendingLabel: live.pendingLabel } : {}),
         ...(live?.nextDue != null ? { nextDue: live.nextDue } : {}),
+        ...(live?.blocked ? { blocked: live.blocked } : {}),
         ...(last ? { lastRun: last } : {}),
         // A running pass that is not the open one would have closed it; an open record while running is its own start.
         ...(open != null && !live?.running ? { interruptedAt: open } : {}),

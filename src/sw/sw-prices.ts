@@ -7,6 +7,7 @@
 // box's raw model list, which `modelFilter` would hide, so they are read from the worker realm only, never through `ml`.
 
 import { recordHousekeeping } from "./sw-housekeeping";
+import { defineJob } from "../job-registry";
 import type { PriceRef, TokenUsage } from "../contract/contract-chat";
 import { priceBook, callCost, type PriceOf, type CallCost, type CallToPrice, isOffPeak } from "../spend/price-book";
 
@@ -62,13 +63,15 @@ function baseUrl(setting: unknown): string | null {
     return /^https?:\/\//.test(url) ? url.replace(/\/+(latest)?\/*$/, "") : null;
 }
 
-/** Ask the service for its newest snapshot, store any body not held yet, and make it current. */
-async function refresh(base: string): Promise<void> {
+/** Ask the service for its newest snapshot, store any body not held yet, and make it current. Answers how many sources
+ *  the snapshot names and how many bodies had to be fetched. */
+async function refresh(base: string): Promise<{ sources: number; fetched: number }> {
     const res = await fetch(`${base}/latest`, { credentials: "omit", cache: "no-store" });
     if (!res.ok) throw new Error(`price service answered ${res.status}`);
     const latest = await res.json() as { fetched_at?: string; sources?: Record<string, { sha256?: string; content_type?: string }> };
     const sources: Record<string, string> = {};
     const now = Date.now();
+    let fetched = 0;
     for (const [name, s] of Object.entries(latest.sources ?? {})) {
         const sha = String(s?.sha256 || "").toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(sha)) continue;
@@ -82,7 +85,7 @@ async function refresh(base: string): Promise<void> {
         if (!raw.ok) continue;
         const bytes = await raw.arrayBuffer();
         if (await sha256(bytes) !== sha) {
-            recordHousekeeping({ subsystem: "prices", kind: "hash-mismatch", reason: "a source body did not match the hash the price service gave for it, so it was not stored", key: name });
+            recordHousekeeping({ level: "warn", subsystem: "prices", kind: "hash-mismatch", key: name, detail: { why: "the body did not match the hash the price service gave for it, so it was not stored" } });
             continue;
         }
         const row: BodyRow = { sha256: sha, source: name, contentType: String(s?.content_type || raw.headers.get("content-type") || ""), bytes, lastSeen: now };
@@ -91,10 +94,12 @@ async function refresh(base: string): Promise<void> {
         if (!st) continue;
         await done(st.put(row));
         sources[name] = sha;
+        fetched++;
     }
     current = { ref: { fetchedAt: String(latest.fetched_at || new Date(now).toISOString()), sources }, checkedAt: now };
     await store(META, "readwrite").then((st) => st && done(st.put(current, "current")));
     await sweep(now);
+    return { sources: Object.keys(sources).length, fetched };
 }
 
 /** Delete the bodies no snapshot has named for {@link KEEP_MS}. */
@@ -104,18 +109,32 @@ async function sweep(now: number): Promise<void> {
     for (const row of await done(st.getAll()) as BodyRow[]) {
         if (now - row.lastSeen > KEEP_MS) {
             await done(st.delete(row.sha256));
-            recordHousekeeping({ subsystem: "prices", kind: "evict", reason: "no price snapshot has named it in 30 days", key: row.source, bytes: row.bytes.byteLength });
+            recordHousekeeping({ subsystem: "prices", kind: "evict", reason: "unnamed", key: row.source, bytes: row.bytes.byteLength, detail: { why: "no price snapshot has named it in 30 days" } });
         }
     }
 }
 
-/** Start a refresh unless one is running; failures are logged, never thrown at a model call. */
+/** Start a refresh unless one is running; failures are logged, never thrown at a model call. Logged as a pass
+ *  (`refresh`, then `refresh-done` or `refresh-failed`), so one the worker was stopped in shows as interrupted. The
+ *  error rides `detail`: a `reason` must be a slug, and a message in it was dropped by the log. */
 function startRefresh(base: string): Promise<void> {
-    refreshing ??= refresh(base)
-        .catch((e) => recordHousekeeping({ subsystem: "prices", kind: "refresh-failed", reason: String((e as Error)?.message || e) }))
+    if (refreshing) return refreshing;
+    const t0 = Date.now();
+    recordHousekeeping({ subsystem: "prices", kind: "refresh" });
+    refreshing = refresh(base)
+        .then((r) => recordHousekeeping({ subsystem: "prices", kind: "refresh-done", ms: Date.now() - t0, detail: r }))
+        .catch((e) => recordHousekeeping({ level: "warn", subsystem: "prices", kind: "refresh-failed", ms: Date.now() - t0, detail: { error: String((e as Error)?.message || e) } }))
         .finally(() => { refreshing = null; });
     return refreshing;
 }
+
+defineJob({
+    id: "prices.refresh",
+    title: "Price snapshot refresh",
+    trigger: "on a model call while spend tracking is on and the price snapshot is over an hour old",
+    log: { subsystem: "prices", start: "refresh", done: ["refresh-done"], failed: ["refresh-failed"], also: ["hash-mismatch", "evict"] },
+    live: () => ({ running: refreshing != null }),
+});
 
 /**
  * The prices a model call starting now runs under, or null when spend tracking is off or nothing could be fetched yet.

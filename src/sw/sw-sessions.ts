@@ -24,7 +24,7 @@ import { isExtensionSender } from "./sw-consent";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
-import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
+import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
 import { compactionJob, imageCompactor } from "./sw-image-compact";
 import { defineJob } from "../job-registry";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
@@ -897,7 +897,7 @@ try {
         // A pass a stopped worker never finished, or one that failed, is tried again on the same clock.
         imageCompaction?.kick();
         // The same clock catches a folder whose grant came back (re-granted from a page since the last write).
-        if (archiveOn) void archiveCall("sync").catch(() => {});
+        if (archiveOn) void syncFolder("sync", "alarm").catch(() => {});
     });
     void chrome.alarms?.get(SNAPSHOT_ALARM).then((a) => { if (!a) void chrome.alarms.create(SNAPSHOT_ALARM, { periodInMinutes: SNAPSHOT_CHECK_MIN }); }).catch(() => {});
 } catch { /* no alarms (a test harness) */ }

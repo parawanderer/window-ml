@@ -3,6 +3,8 @@
 // archive does happens there; this is the messenger.
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import type { ArchiveOp, FolderReport } from "../archive/archive-worker";
+import { recordHousekeeping } from "./sw-housekeeping";
+import { defineJob } from "../job-registry";
 
 /** Run one archive operation. Rejects with the archive's own message when it fails (no OPFS, a newer schema). */
 export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args"]): Promise<T> {
@@ -47,18 +49,66 @@ export function onFolderChange(listener: () => void): void {
 /** How long after an archive write the folder is synced: a burst of evictions then writes each month once. */
 const SYNC_DEBOUNCE_MS = 30_000;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let syncDue: number | null = null; // state: plumbing (the job status's due time, lost with the timer it times)
+let syncing = 0; // state: plumbing (syncs in flight, for the job status)
+
+/**
+ * Write the archive's month files to the folder (`sync`), or all of them after a new pick (`resync`), logged as a pass:
+ * `folder-sync` when it starts, then `folder-sync-done` or `folder-sync-failed`. Only while a folder is connected:
+ * with none picked, or its grant lapsed, a sync writes nothing and a record of it every 30 s would be noise. A sync
+ * that wrote something is still recorded when the state was not known yet (the worker's first one).
+ * @param op `sync` or `resync`
+ * @param reason what started it: `write`, `alarm`, `settings` or `picked`
+ */
+export async function syncFolder(op: "sync" | "resync", reason: "write" | "alarm" | "settings" | "picked"): Promise<FolderReport> {
+    const logged = lastFolder?.state === "connected";
+    const t0 = Date.now();
+    if (logged) recordHousekeeping({ subsystem: "archive", kind: "folder-sync", reason });
+    syncing++;
+    try {
+        const r = await archiveCall<FolderReport>(op);
+        const written = r.written?.length ?? 0, removed = r.removed?.length ?? 0;
+        if (logged || written || removed) {
+            recordHousekeeping({ subsystem: "archive", kind: "folder-sync-done", reason, ms: Date.now() - t0, detail: { written, removed, pending: r.pending, state: r.state } });
+        }
+        return r;
+    } catch (e) {
+        if (logged) recordHousekeeping({ level: "warn", subsystem: "archive", kind: "folder-sync-failed", reason, ms: Date.now() - t0, detail: { error: String((e as Error)?.message || e).slice(0, 200) } });
+        throw e;
+    } finally { syncing--; }
+}
 
 /** Sync the folder soon. Harmless when no folder is picked or its grant lapsed: the worker then writes nothing. */
 export function scheduleFolderSync(): void {
     if (syncTimer) return;
-    syncTimer = setTimeout(() => { syncTimer = null; void archiveCall<FolderReport>("sync").catch(() => { /* retried at the next write or alarm */ }); }, SYNC_DEBOUNCE_MS);
+    syncDue = Date.now() + SYNC_DEBOUNCE_MS;
+    syncTimer = setTimeout(() => { syncTimer = null; syncDue = null; void syncFolder("sync", "write").catch(() => { /* retried at the next write or alarm */ }); }, SYNC_DEBOUNCE_MS);
 }
+
+defineJob({
+    id: "archive.folder-sync",
+    title: "Archive folder sync",
+    trigger: "30 s after a session moves to the archive, every 6 hours, and from Settings",
+    log: { subsystem: "archive", start: "folder-sync", done: ["folder-sync-done"], failed: ["folder-sync-failed"] },
+    live: () => {
+        const f = lastFolder;
+        // No folder picked, or a browser that cannot have one: nothing waits for it, whatever the archive holds.
+        if (!f || f.state === "none" || f.state === "unsupported") return { running: syncing > 0 };
+        return {
+            running: syncing > 0,
+            pending: f.pending,
+            pendingLabel: f.pending === 1 ? "month file to write" : "month files to write",
+            ...(syncDue != null ? { nextDue: syncDue } : {}),
+            ...(f.state === "needs-grant" && f.pending ? { blocked: "the archive folder needs its access granted again, in Settings" } : {}),
+        };
+    },
+});
 
 /** What Settings asks about the folder: its state, or an action taken after a click (a pick, a re-grant, an import). */
 export async function folderAction(action: unknown): Promise<FolderReport> {
     switch (action) {
-        case "picked": return archiveCall<FolderReport>("resync");
-        case "sync": return archiveCall<FolderReport>("sync");
+        case "picked": return syncFolder("resync", "picked");
+        case "sync": return syncFolder("sync", "settings");
         case "import": return archiveCall<FolderReport>("import");
         default: return archiveCall<FolderReport>("folder");
     }

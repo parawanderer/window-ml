@@ -63,8 +63,20 @@ is `waiting`; else `idle`. Kinds are listed rather than matched by subsystem, be
 lives in `storage.session`, so a browser restart clears the history: a pass cut off by closing the browser shows as
 `waiting` (its sessions are still uncompacted), never as a wrong `interrupted`.
 
-Declared today: screenshot compaction (`sw-image-compact.ts` `compactionJob`, the only one with a start record),
-saved-session cleanup and the stored-value sweep (whose `nextDue` is its alarm's). `DUMP_JOBS` reads them all against
+Declared today:
+
+| Job | Where | Pass records | Live |
+| --- | --- | --- | --- |
+| Screenshot compaction | `sw-image-compact.ts` `compactionJob` | `sessions/compact-pass` → `compact-pass-done` / `compact-images-failed` | running, sessions waiting, the quiet timer's due time |
+| Saved-session cleanup | `sw-sessions.ts` | none: each `sessions/evict` is a run, `archive-failed` a failure | none |
+| Stored-value sweep | `sw-values.ts` | none: each `value-store/evict` | its alarm's next time |
+| Archive folder sync | `sw-archive.ts` `syncFolder` | `archive/folder-sync` → `folder-sync-done` / `folder-sync-failed`, only while a folder is connected | running, month files waiting, the debounce's due time, `blocked` when the grant lapsed |
+| Price snapshot refresh | `sw-prices.ts` `startRefresh` | `prices/refresh` → `refresh-done` / `refresh-failed` | running |
+| Python pre-warm | `sw-python.ts` | none: each `pyodide/prewarm` | none |
+
+`blocked` is a live field for work that waits on a person (a folder whose permission lapsed); the row says what to do
+in place of a countdown. A `reason` must be a lowercase slug or the log DROPS it (`sanitizeReport`), so prose and error
+messages go in `detail` (`why`, `error`): the price refresh's error was lost that way until 2026-10-12. `DUMP_JOBS` reads them all against
 one copy of the log, for extension pages only (`handleJobsDump`). The **Background work** section (`BackgroundWork`,
 `housekeeping-log.tsx`) sits at the top of the housekeeping view, so the chat page's Settings, Housekeeping shows it
 too: one fold per job with its state on the header line, opening onto the job's own records. It re-reads when the log
