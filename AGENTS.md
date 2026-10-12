@@ -29,23 +29,13 @@ file` finds the path:
 
 A new file goes in the folder of what it is for. Move files with `node scripts/move-files.mjs`, never `git mv`.
 
-## Architecture (4 files + popup)
+## Architecture
 
-Requests flow: **page → content script → background worker → OpenWebUI**, and
-back. This exists to bypass CORS — the background worker has host permissions
-the page doesn't.
-
-| File | World | Role |
-| --- | --- | --- |
-| `injected.js` | page main world | Defines `window.ml`. Serializes `<img>`/blob/http images to data URLs. Fires `ml:ready` + sets `window.ml.ready`. |
-| `content.js` | isolated content-script world | Dumb relay: `window.postMessage` ⇄ `chrome.runtime.sendMessage`, via `HANDLE_MAP`. |
-| `background.js` | service worker | Owns config, builds per-format request bodies, extracts replies, talks to the server. All privileged fetches happen here. |
-| `popup.html` / `popup.js` | extension popup | Settings UI (`chrome.storage.sync`), model picker, Save & Test, VRAM readout, Free VRAM. |
-
-`content.js` injects `injected.js` as a real `<script>` tag so `window.ml`
-lives in the page's **main world** (reachable by page scripts/userscripts), not
-the isolated content-script world.
-
+Requests flow **page → content script → service worker → OpenWebUI/Ollama** and back, to get around CORS: only the
+worker has host permissions. `injected.ts` defines `window.ml` in the page's MAIN world (injected as a real
+`<script>`, so page scripts and userscripts reach it); `content.ts` is a dumb relay (`window.postMessage` ⇄
+`chrome.runtime.sendMessage`, via `HANDLE_MAP`); `background.ts` owns config and every privileged fetch; `popup.ts` is
+the settings popup.
 
 **The CONTRACT is one contract in eleven files.** `contract.ts` holds `MlApi`, `JsonSchema`, and a BARREL
 (`export * from "./contract-<theme>"`). Keep importing from `./contract`: about a hundred references are the inline
@@ -199,6 +189,8 @@ learned by shipping the wrong version first.
 - **A run never starts on a page WE own** (`AGENT_START_PAGE`): the extension's own page is privileged and puts
   the API key within `exec`'s reach. Whether a new tab can be opened is the RUNTIME's answer
   (`capabilities.blankStart`), and absent is not blocked. → agent-tools.md
+- **Backend quirks:** OpenWebUI has no root `/v1/chat/completions`, and its OpenAI route reads `think` from
+  `params`, so a top-level one is silently dropped (`applyThink`). The rest: architecture.md, "Backend gotchas".
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run
@@ -279,8 +271,8 @@ paragraph here, ask whether someone NOT touching that code needs it. A trap is O
 subsystem gets a doc and a row in the table above.
 
 **RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current, WITHOUT asking.** A harness,
-driver or script you will reuse gets `.claude/skills/<name>/SKILL.md` and a one-line mention here (detail in
-`docs/dev/e2e-harness.md` or `docs/dev/working-in-the-repo.md`).
+driver or script you will reuse gets `.claude/skills/<name>/SKILL.md`, whose description is the mention every session
+sees, and its detail in `docs/dev/e2e-harness.md` or `docs/dev/working-in-the-repo.md`.
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
 least monthly, read what a call carries the way `docs/dev/prompt-review.md` describes (panel, bench, debrief).
@@ -309,6 +301,9 @@ assert no run of two spaces (`tests/token-pipe.test.mjs`). Human-facing surfaces
 - **Several sessions at once? Each gets its own CLONE** as a sibling directory, with `.env` and `pyodide-wheels`
   symlinked, `git config core.hooksPath .githooks` (it does not clone, and its absence is silent), and `npm ci`.
   Never `git add -A` in a shared tree. The commands: `docs/dev/working-in-the-repo.md`.
+- **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
+  nothing unpushed. One you did not create (or are unsure of) is never removed without asking; `~/git/window-ml` and
+  `~/git/window-ml-hub` never. The checks: `docs/dev/working-in-the-repo.md`, "Cleaning up a clone".
 - **Four absences are silent:** `node_modules`, `pyodide-wheels/` (fails at run time as `No module named
   'numpy'`), `.env` (`USE_ENV=1` dies on ENOENT), and the `wmlhub` binary (thirty hub tests SKIP; `npm run
   fetch-hub`).
@@ -333,14 +328,8 @@ every demo: `docs/dev/e2e-harness.md`.
   immediately before holding the browser open.
 - **RULE — a demo about what happens INSIDE a run calls `openRunInSidebar(page)`**: the panel opens on the
   sessions list, not the run.
-- **The self-tools**, each with a skill in `.claude/skills/`: `observe.mjs` (one agent run → `run.md`/`run.json`),
-  `converse.mjs` (a run you talk to turn by turn through files: answer, steer, rule on gates), `panel.mjs` (one
-  interview put to several models at once, to read where they agree),
-  `run-once.mjs`, `bench/`, the live probes (`server-tool-live`, `md-ladder-live`, `proto-stream-live`,
-  `capture-frames`), `chat-shots.mjs` + `window.__chatFake` (chat-web), `scripts/probe.mjs` (one look at a page),
-  `scripts/android.mjs`/`scripts/ios.mjs` (phone), `scripts/hub-root.mjs` + `dev-hub-pair.html` (hub-pairing),
-  `scripts/check-disk.mjs` (disk-space), `scripts/gallery.mjs` (gallery), `scripts/check-glsl.mjs` (shader type-check, in
-  the gallery skill), and the narrated `*-demo.mjs` files.
+- **The self-tools** (observe, converse, panel, bench, probe, the live probes, the demos, …) each have a skill in
+  `.claude/skills/`, which every session is shown; what each does: `docs/dev/e2e-harness.md`.
 
 ## Branches, PRs and CI
 
@@ -404,21 +393,3 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
   — without it, it's a cookie-authenticated "read any URL" exfil primitive.
   (`FETCH_IMAGE_B64` is *uncredentialed* — default `same-origin` — so it can read
   cross-origin public bytes but not the user's authenticated data.)
-
-## Gotchas (hard-won)
-
-- OpenWebUI has **no root `/v1/chat/completions`** (tested 0.9.5, 0.10.2) —
-  external clients use `/api/chat/completions`. Unknown routes return the SPA
-  HTML, so a non-JSON body means "wrong route."
-- OpenWebUI **0.9.5** 400s external chat calls (`NoneType ... startswith`,
-  issue #24550); fixed in 0.10.x. Workaround was the `/ollama/api/chat` passthrough.
-- `think` is Ollama's param; sent only when a boolean. Cloud (non-Ollama) models
-  may reject it — pass `{ think: null }` to omit.
-- Vision fail-fast reads Ollama `/api/show`; for non-Ollama models it returns
-  "unknown" and the request is sent anyway (degrades gracefully).
-- Cross-origin `<img>` without CORS **taints the canvas**, so pixel readback
-  fails even for already-rendered images — hence image fetching goes through the
-  background worker, not a canvas.
-- `think` placement: Like `num_ctx`, OpenWebUI's OpenAI route reads `think` from the request-body **`params`**
-  object, not top-level — a top-level `think:false` is silently dropped (reasoning keeps coming). `applyThink`
-  places it per format: `params.think` (openai) vs a top-level `think` (ollama native).

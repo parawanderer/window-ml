@@ -352,6 +352,31 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   self-referential symlink that replaced the real `node_modules` and left every dependency UNMET. Its own
   `npm ci` has no such edge. A worktree also refuses to check out a branch another worktree holds, which
   is occasionally what you want and occasionally just in the way.
+- **Cleaning up a clone.** Every session that makes a clone and walks away leaves a full checkout, `node_modules`
+  and a build behind, and the next session cannot tell a finished one from a live one, so `~/git` filled with
+  `window-ml-*` directories nobody dared delete. The rule splits on WHO MADE IT, because only the maker knows it is done.
+
+  **One you created in this session, for this topic:** once its PR is MERGED (`gh pr view <n> --json state`), remove it.
+  Check first, from inside it; any hit means stop and tell the user instead:
+
+  ```bash
+  git status --porcelain                              # uncommitted or untracked files
+  git stash list                                      # stashes
+  git log --branches --not --remotes --oneline        # commits on no remote branch
+  ls tests/e2e/artifacts/bench 2>/dev/null            # bench sweeps (git-ignored)
+  ```
+
+  The PR's own branch shows up in the third check after a merge, because `merge-when-green` squash-merges and deletes
+  the remote branch: it is fine when the local head equals the PR's `headRefOid` (`gh pr view <n> --json headRefOid`).
+  Any OTHER branch listed there is unpushed work. Then stop anything still running from it (a dev server, `serve.mjs`,
+  a held bench run), `cd` out, and remove it: `git worktree remove <dir>` for a worktree (run from the main clone),
+  `rm -rf <dir>` for a clone (the `.env` and `pyodide-wheels` symlinks go, their targets do not). Tell the user, so
+  they drop it from their VS Code workspace.
+
+  **One you did not create, or are not sure you did** (a summary that dropped the fact counts as not sure): never
+  remove it on your own. Another session may still be working in it, or the user may be keeping it. Run the same
+  checks, add who might be using it (`lsof +D <dir>`, the session mail, the date of its last commit), and put that
+  to the user as a question. `~/git/window-ml` and `~/git/window-ml-hub` are the core clones and are never removed.
 - **Three gitignored things do NOT come with a fresh checkout, and no absence is loud.** `node_modules` is
   obvious (nothing runs); `pyodide-wheels/` is not — the build prints one `⚠ pyodide-wheels/ missing`
   line and carries on, `npm test` stays green because the CPython tests self-skip, and the failure only

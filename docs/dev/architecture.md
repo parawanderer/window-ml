@@ -172,3 +172,23 @@ cancel — no waiting on a slow local generation.
   CDNs) — a known limitation, not a bug. The popup's **Permissions → "Enable
   Google Sheets access"** requests just the Google origins at runtime
   (`chrome.permissions.request`), a narrower grant than "On all sites".
+
+## Backend gotchas
+
+Learned against real servers.
+
+- OpenWebUI has **no root `/v1/chat/completions`** (tested 0.9.5, 0.10.2) —
+  external clients use `/api/chat/completions`. Unknown routes return the SPA
+  HTML, so a non-JSON body means "wrong route."
+- OpenWebUI **0.9.5** 400s external chat calls (`NoneType ... startswith`,
+  issue #24550); fixed in 0.10.x. Workaround was the `/ollama/api/chat` passthrough.
+- `think` is Ollama's param; sent only when a boolean. Cloud (non-Ollama) models
+  may reject it — pass `{ think: null }` to omit.
+- Vision fail-fast reads Ollama `/api/show`; for non-Ollama models it returns
+  "unknown" and the request is sent anyway (degrades gracefully).
+- Cross-origin `<img>` without CORS **taints the canvas**, so pixel readback
+  fails even for already-rendered images — hence image fetching goes through the
+  background worker, not a canvas.
+- `think` placement: Like `num_ctx`, OpenWebUI's OpenAI route reads `think` from the request-body **`params`**
+  object, not top-level — a top-level `think:false` is silently dropped (reasoning keeps coming). `applyThink`
+  places it per format: `params.think` (openai) vs a top-level `think` (ollama native).
