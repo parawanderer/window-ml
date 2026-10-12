@@ -3,6 +3,7 @@
 // placeholder values; and the page's URL state (src/gallery/gallery-url.ts). docs/spec/COMPONENT_GALLERY.md.
 import { test } from "node:test";
 import assert from "node:assert";
+import { existsSync } from "node:fs";
 import { galleryManifest, parseTags, placeholder, customEntryFiles } from "../scripts/gallery-gen.mjs";
 import { parseHash, formatHash, encodeJson, decodeJson, DEFAULT_STATE } from "../src/gallery/gallery-url.ts";
 
@@ -86,6 +87,29 @@ test("a malformed @gallery is kept as an error, not dropped", () => {
     assert.strictEqual(examples.length, 1);
     assert.strictEqual(examples[0].name, "broken");
     assert.match(examples[0].error, /not JSON/);
+});
+
+test("@gallery-flow names a committed flow file, with optional JSON; @gallery none carries its reason", () => {
+    const { examples, none } = parseTags(`@gallery-flow open tests/gallery-flows/ContextMenu.mjs\n@gallery-flow with items tests/gallery-flows/X.mjs {"n": 2}\n@gallery none a line over a chart: nothing to read alone`);
+    assert.deepStrictEqual(examples, [
+        { name: "open", flow: "tests/gallery-flows/ContextMenu.mjs" },
+        { name: "with items", flow: "tests/gallery-flows/X.mjs", props: { n: 2 } },
+    ]);
+    assert.strictEqual(none, "a line over a chart: nothing to read alone");
+    assert.match(parseTags("@gallery-flow just-a-name").examples[0].error, /wants: <name> <file\.mjs>/);
+});
+
+test("the tagged layers carry their flows, the crosshair its reason, and every flow file exists", () => {
+    const m = galleryManifest({ only: /^(ContextMenu|CursorTipLayer|Crosshair)$/ });
+    const get = (n) => m.components.find((c) => c.name === n);
+    for (const n of ["ContextMenu", "CursorTipLayer"]) {
+        const [v] = get(n).variants;
+        assert.strictEqual(v.source, "example");
+        assert.ok(existsSync(new URL(`../${v.flow}`, import.meta.url)), `${n}'s flow ${v.flow} is missing`);
+    }
+    const [v] = get("Crosshair").variants;
+    assert.strictEqual(v.source, "none");
+    assert.match(v.reason, /one-pixel line/);
 });
 
 // --- the URL state ------------------------------------------------------------------------------------------------

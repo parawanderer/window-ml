@@ -215,7 +215,9 @@ async function shot() {
                 await doStep(g.page, frame, step);
                 if (flag("each")) await frameShot(step);
             }
-            const script = flowScript ?? opt("script");
+            const own = flowScript || opt("script") ? null : await variantFlow(g.page, id, st.variant);
+            if (own) console.log(`  flow: ${own} (the variant's @gallery-flow)`);
+            const script = flowScript ?? opt("script") ?? (own ? path.join(ROOT, own) : null);
             if (script) {
                 // A query string defeats Node's module cache, so an edited flow re-runs as edited.
                 const mod = await import(`${path.resolve(script)}?t=${Date.now()}`);
@@ -298,6 +300,21 @@ async function flow() {
     return shot();
 }
 
+/** The committed flow of a variant (`@gallery-flow`), repo-relative, or null. */
+async function variantFlow(page, id, variant) {
+    return page.evaluate(({ id, variant }) => {
+        const it = globalThis.__gallery.items().find((x) => x.id === id);
+        return it?.variants.find((v) => v.name === variant)?.flow ?? null;
+    }, { id, variant });
+}
+
+/** Run a committed flow against the tile for the check: it passes when it returns without throwing. */
+async function runFlow(page, file) {
+    const tile = page.locator(".gl-tile.sel .gl-frame, .gl-tile:first-child .gl-frame").first();
+    const mod = await import(`${path.join(ROOT, file)}?t=${Date.now()}`);
+    await (mod.default ?? mod.run)({ page, tile, frame: tile, shot: async () => {} });
+}
+
 /** Components in files changed since `ref`, by id. */
 function changedFiles(ref) {
     return new Set(execFileSync("git", ["diff", "--name-only", ref, "--"], { cwd: ROOT, encoding: "utf8" }).split("\n").filter(Boolean));
@@ -309,7 +326,7 @@ async function check() {
     const changed = opt("changed") ? changedFiles(opt("changed")) : null;
     const g = await openGallery();
     const blocking = [], warnings = [];
-    let rendered = 0;
+    let rendered = 0, handled = 0;
     // A component can spin the page's main thread (a render loop), and then nothing inside the page times out: the
     // render is raced here, and a page that does not answer is replaced by a fresh one.
     const fresh = async () => {
@@ -329,8 +346,13 @@ async function check() {
             const c = manifest.get(it.id);
             for (const v of it.variants) {
                 const go = g.page.evaluate(({ id, variant }) => { location.hash = `#/${encodeURIComponent(id)}?variant=${encodeURIComponent(variant)}`; }, { id: it.id, variant: v.name });
-                const st = await race(go.then(() => settle(g.page, it.id, v.name, 8_000)), 12_000);
+                if (v.source === "none") { handled++; if (flag("verbose")) console.error(`none   ${it.id}  ${v.reason}`); continue; }
+                let st = await race(go.then(() => settle(g.page, it.id, v.name, 8_000)), 12_000);
                 if (st.hung) await fresh();
+                else if (v.flow && st.state === "ok") {
+                    st = await race(runFlow(g.page, v.flow).then(() => ({ state: "ok" }), (e) => ({ state: "error", error: `flow ${v.flow} failed: ${String(e?.message ?? e).split("\n")[0]}` })), 20_000);
+                    if (st.hung) await fresh();
+                }
                 if (flag("verbose")) console.error(`${st.state.padEnd(6)} ${it.id} [${v.name}]${st.error ? `  ${st.error.slice(0, 140)}` : ""}`);
                 rendered++;
                 if (st.state === "ok") continue;
@@ -344,14 +366,14 @@ async function check() {
         console.log(`warn  ${r.id} [${r.variant}] ${r.state}: ${r.error ?? ""}  (${where(r)})`);
         // In CI, an annotation on the component, for the ones this change touched: "add an @gallery example".
         if (process.env.GITHUB_ACTIONS && r.file && (!changed || changed.has(r.file))) {
-            console.log(`::warning file=${r.file},line=${r.line}::${r.id} does not render from its inferred props (${r.state}: ${(r.error ?? "").slice(0, 120)}). Add an @gallery example to its JSDoc (skill: gallery).`);
+            console.log(`::warning file=${r.file},line=${r.line}::${r.id} does not render from its inferred props (${r.state}: ${(r.error ?? "").slice(0, 120)}). Add an @gallery example to its JSDoc; if it draws nothing until triggered, an @gallery-flow; if nothing is worth showing on its own, @gallery none <reason> (skill: gallery).`);
         }
     }
     for (const r of blocking) {
         console.log(`FAIL  ${r.id} [${r.variant}] (${r.source}) ${r.state}: ${r.error ?? ""}  (${where(r)})`);
         if (process.env.GITHUB_ACTIONS && r.file) console.log(`::error file=${r.file},line=${r.line}::the @gallery example "${r.variant}" of ${r.id} does not render: ${r.state}`);
     }
-    console.log(`gallery check: ${rendered} render(s); ${blocking.length} broken example(s) or custom entr(ies) (blocking), ${warnings.length} inferred render(s) failing (warnings)`);
+    console.log(`gallery check: ${rendered} render(s); ${blocking.length} broken example(s), flow(s) or custom entr(ies) (blocking), ${warnings.length} inferred render(s) failing (warnings), ${handled} marked @gallery none`);
     process.exit(blocking.length ? 1 : 0);
 }
 
@@ -390,7 +412,7 @@ function remind() {
     if (!missing.length) return;
     console.log("gallery: components this change touches, missing gallery tags (a reminder, not a failure; skill: gallery):");
     for (const m of missing) {
-        const hint = m.needs.includes("@gallery") ? `  check its inferred render: node scripts/gallery.mjs shot ${m.name}; if it is blank or broken, add @gallery {…}` : "";
+        const hint = m.needs.includes("@gallery") ? `  check its inferred render: node scripts/gallery.mjs shot ${m.name}; if it is blank or broken, add @gallery {…} (or @gallery-flow / @gallery none: skill gallery)` : "";
         console.log(`  ${m.name}  ${m.file}:${m.line}  no ${m.needs.join(", no ")}${hint}`);
     }
 }

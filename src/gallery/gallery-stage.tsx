@@ -111,7 +111,8 @@ export function ComponentTile({ item, variant, json, loader, ctx }: {
             const el = host.current;
             if (!el || el.querySelector(".gl-err")) return;
             const blank = !el.textContent?.trim() && !el.querySelector("svg, canvas, img, input, button, textarea, select, [style*=background], [class]");
-            report(key, blank ? { state: "empty", error: "rendered nothing" } : { state: "ok" });
+            // Blank is EXPECTED of a `none` variant and of a flow variant before its flow has run.
+            report(key, blank && variant.source !== "none" && !variant.flow ? { state: "empty", error: "rendered nothing" } : { state: "ok" });
         }, 50);
         return () => clearTimeout(t);
     });

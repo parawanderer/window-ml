@@ -233,8 +233,10 @@ is FOR (`--new` ratchet), a new file opens with `// <name>.ts — <what it is fo
 
 **What a component LOOKS like: `node scripts/gallery.mjs shot <id>`** (props, theme, calm/dev, width, tokens and a
 Playwright `flow` as flags), after the index says it exists. One that renders blank or broken from its inferred props
-gets an `@gallery {json}` example and an `@group` in its JSDoc, COMMITTED, so the next agent sees it right; `gallery.mjs
-check` (CI) fails on a broken example. `.claude/skills/gallery/SKILL.md`.
+gets an `@gallery {json}` example and an `@group` in its JSDoc, COMMITTED, so the next agent sees it right; one that
+draws nothing until triggered gets `@gallery-flow` (a committed Playwright script that also tests it) or, if nothing
+there can break visibly, `@gallery none <reason>`. `gallery.mjs check` (CI) fails on a broken example or flow.
+`.claude/skills/gallery/SKILL.md`.
 
 **RULE — state goes through the STATE REGISTRY, from the first commit of the component that adds it.** Anything kept
 across calls (a module-level Map/Set/signal/`let`, a storage key, an IndexedDB store, a grant) that a RUN depends on is

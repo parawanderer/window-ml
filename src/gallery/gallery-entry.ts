@@ -11,8 +11,13 @@ export interface PropSchema {
     fields?: { name: string; optional: boolean; doc: string; schema: PropSchema }[];
 }
 
-/** One way to show an entry: a name and its props. `source` says who wrote them; `error` is a malformed example. */
-export interface GalleryVariant { name: string; props: unknown; source: "example" | "inferred" | "custom"; error?: string }
+/** One way to show an entry: a name and its props. `source` says who wrote them; `error` is a malformed example;
+ *  `flow` is the committed Playwright script that triggers it (`@gallery-flow`); `reason` says why a `none` variant
+ *  shows nothing (`@gallery none`). */
+export interface GalleryVariant {
+    name: string; props: unknown; source: "example" | "inferred" | "custom" | "none";
+    error?: string; flow?: string; reason?: string;
+}
 
 /** A Preact component as the generator lists it. */
 export interface ManifestComponent {

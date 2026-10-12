@@ -33,7 +33,7 @@ to `dist-gallery/` (gitignored).
 
 ## Filling in the props
 
-Three layers, each used only where the one before it is not enough.
+Four layers, each used only where the one before it is not enough.
 
 1. **Inferred from the type.** A string gets the prop's own name; a number 1; a boolean `false`; an enum-like type its
    first member (below); an array one generated element; an object its own fields, recursively to a few levels;
@@ -49,7 +49,12 @@ Three layers, each used only where the one before it is not enough.
    ```
 
    An example is JSON, optionally named. Several make several variants.
-3. **A shared context.** Components that read `services()` or a store render inside the chat page's demo world (the
+3. **`@gallery-flow <name> <file> [{json}]`**, for a component that draws nothing until triggered (a menu, a tooltip
+   layer): a committed Playwright script (`tests/gallery-flows/`) that triggers it, checks it and leaves it in the
+   state to shoot. It reaches a component's driving signal through `__gallery.module(id)`, the module instance the
+   component renders with. **`@gallery none <reason>`** says that nothing renders on its own and nothing would be
+   worth triggering (a crosshair line over a chart track); the page shows the reason.
+4. **A shared context.** Components that read `services()` or a store render inside the chat page's demo world (the
    `FakeHost` scripted host that `dist-web/` and the chat specs run on), so they get believable data without the
    gallery inventing any.
 
@@ -152,8 +157,9 @@ The skill is `gallery` (in `.claude/skills/`); AGENTS.md mentions it in one line
 | Failure | Result |
 | --- | --- |
 | the gallery bundle does not build | **blocks** (it is broken code) |
-| a custom entry, or an `@gallery` example, throws or renders nothing | **blocks**: someone wrote that example on purpose, so its breaking is a broken claim, like JSDoc that contradicts the code |
+| a custom entry, an `@gallery` example, or an `@gallery-flow` (the flow throws) fails | **blocks**: someone wrote that example on purpose, so its breaking is a broken claim, like JSDoc that contradicts the code |
 | a component rendered from INFERRED props throws | **warns**, with the count and the list |
+| `@gallery none <reason>` | counted as handled, never rendered by the check |
 
 **Reminders on change, never failures.** When a commit adds or changes a component:
 

@@ -145,7 +145,10 @@ export const openCtxMenu = (e: MouseEvent, items: CtxItem[], opts?: { mark?: Ele
 };
 /** The panel's right-click MENU, mounted once per surface and driven by the `ctxMenu` signal. A menu
  *  rather than the browser's: the useful actions here are ours (copy a `document.querySelector(…)` for an
- *  element, copy a pointer) and the native one offers none of them. */
+ *  element, copy a pointer) and the native one offers none of them.
+ *  @group primitives, menus
+ *  @gallery-flow open tests/gallery-flows/ContextMenu.mjs
+ */
 export function ContextMenu() {
     const m = ctxMenu.value;
     useEffect(() => {
@@ -331,7 +334,10 @@ function clearCursorTip(): void {
     unwatchTip?.(); unwatchTip = null;
 }
 
-/** The single layer. Mounted once per surface, beside the context menu. */
+/** The single layer. Mounted once per surface, beside the context menu.
+ *  @group primitives, tooltips
+ *  @gallery-flow raised tests/gallery-flows/CursorTipLayer.mjs
+ */
 export function CursorTipLayer() {
     const t = cursorTip.value;
     const { ref, style } = useTipPlacement(t ? { x: t.x, y: t.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 } : null);

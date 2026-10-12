@@ -54,19 +54,38 @@ function jsdocText(node, sf) {
 /** The `@tag` blocks of a JSDoc text: [tag, text up to the next tag]. */
 function tagsOf(doc) {
     const out = [];
-    const re = /(?:^|\n)\s*@(\w+)([\s\S]*?)(?=\n\s*@\w|$)/g;
+    const re = /(?:^|\n)\s*@([\w-]+)([\s\S]*?)(?=\n\s*@\w|$)/g;
     for (const m of doc.matchAll(re)) out.push([m[1], m[2].trim()]);
     return out;
 }
 
 /**
- * `@group a, b` and `@gallery [name] {json}` from a JSDoc text. A malformed example is kept as an ERROR, not dropped:
- * an example someone wrote that cannot be read is the same broken claim as one that does not render.
+ * The gallery's JSDoc tags. A malformed example is kept as an ERROR, not dropped: an example someone wrote that cannot
+ * be read is the same broken claim as one that does not render.
+ *
+ * - `@group a, b`: where the component is listed.
+ * - `@gallery [name] {json}`: an example, one variant each.
+ * - `@gallery-flow <name> <file> [{json}]`: an example that a committed Playwright script (`<file>`, repo-relative)
+ *   TRIGGERS before it is judged: for a component that draws nothing until something happens to it (a menu, a tooltip
+ *   layer). The JSON is optional; without it the inferred props are used.
+ * - `@gallery none <reason>`: nothing renders on its own and no flow would show anything worth seeing; the reason is
+ *   shown instead and the check counts it as handled.
  */
 export function parseTags(doc) {
     const groups = [], examples = [];
+    let none = null;
     for (const [tag, text] of tagsOf(doc)) {
         if (tag === "group") groups.push(...text.split(",").map((g) => g.trim()).filter(Boolean));
+        if (tag === "gallery" && /^none\b/.test(text)) { none = text.replace(/^none\s*/, "").trim() || "(no reason given)"; continue; }
+        if (tag === "gallery-flow") {
+            const m = /^(.*?)\s+(\S+\.m?js)\s*(\{[\s\S]*)?$/.exec(text);
+            if (!m) { examples.push({ name: text || "flow", error: "@gallery-flow wants: <name> <file.mjs> [{json}]" }); continue; }
+            const name = m[1].trim() || "flow";
+            if (!m[3]) { examples.push({ name, flow: m[2] }); continue; }
+            try { examples.push({ name, flow: m[2], props: JSON.parse(m[3]) }); }
+            catch (e) { examples.push({ name, flow: m[2], error: `@gallery-flow JSON is not JSON: ${e.message}` }); }
+            continue;
+        }
         if (tag === "gallery") {
             // The name is everything before the first `{` (it may have spaces: "at the bottom"); the JSON is the rest.
             const brace = text.indexOf("{");
@@ -76,7 +95,7 @@ export function parseTags(doc) {
             catch (e) { examples.push({ name: name || `example ${examples.length + 1}`, error: `@gallery is not JSON: ${e.message}` }); }
         }
     }
-    return { groups, examples };
+    return { groups, examples, none };
 }
 
 /** Describe a type as a small schema: what the sidebar shows and what the default props are built from. */
@@ -149,9 +168,10 @@ export function placeholder(schema, name = "value") {
 
 /** The props a component is first shown with, and its variants: the examples, else one per member of its first
  *  small union, else the inferred placeholder alone. */
-function variantsOf(props, examples) {
+function variantsOf(props, examples, none) {
     const inferred = props.kind === "object" ? placeholder(props) : {};
-    if (examples.length) return { inferred, variants: examples.map((e) => ({ name: e.name, props: e.props, error: e.error, source: "example" })) };
+    if (examples.length) return { inferred, variants: examples.map((e) => ({ name: e.name, props: e.props ?? inferred, error: e.error, flow: e.flow, source: "example" })) };
+    if (none) return { inferred, variants: [{ name: "none", props: inferred, source: "none", reason: none }] };
     const en = props.kind === "object" && props.fields.find((f) => f.schema.kind === "enum" && f.schema.members.length > 1 && f.schema.members.length <= MAX_ENUM_VARIANTS);
     if (en) return { inferred, variants: en.schema.members.map((m) => ({ name: `${en.name}: ${m}`, props: { ...inferred, [en.name]: m }, source: "inferred" })) };
     return { inferred, variants: [{ name: "inferred", props: inferred, source: "inferred" }] };
@@ -199,8 +219,8 @@ export function galleryManifest({ only } = {}) {
         if (!decl) continue;
         const param = decl.parameters[0];
         const props = param ? describe(checker, checker.getTypeAtLocation(param), param) : { kind: "object", text: "{}", fields: [] };
-        const { groups, examples } = parseTags(jsdocText(decl, sf));
-        let { inferred, variants } = variantsOf(props, examples);
+        const { groups, examples, none } = parseTags(jsdocText(decl, sf));
+        let { inferred, variants } = variantsOf(props, examples, none);
         if (rendersAtImport(sf, r.file)) {
             const why = `${r.file} renders a page at import (an entry point), so the gallery cannot load it: move ${r.name} into a module of its own to render it here`;
             variants = variants.map((v) => ({ ...v, error: why, source: "inferred" }));

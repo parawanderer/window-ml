@@ -275,8 +275,10 @@ function Stage({ s, item }: { s: GalleryState; item: GalleryItem }) {
                     return (
                         <figure key={`${item.id}::${t.name}`} class={`gl-tile${sel ? " sel" : ""}`} data-variant={t.name} data-status={st?.state ?? "pending"}
                             onClick={() => { if (!sel) setState({ variant: t.name, props: null }); }}>
-                            <figcaption>{t.name} <span class="gl-dim">{t.source}</span>{st && st.state !== "ok" && st.state !== "pending" ? <span class="gl-tag bad">{st.state}</span> : null}</figcaption>
-                            <div class={`gl-frame${s.view === "calm" ? " chat calm" : ""}`} style={width ? { maxWidth: `${width}px` } : undefined}>
+                            <figcaption>{t.name} <span class="gl-dim">{t.source}</span>
+                                {t.flow ? <span class="gl-dim"> · flow <code>{t.flow}</code>: <code>node scripts/gallery.mjs shot {item.id} --variant '{t.name}'</code> runs it</span> : null}
+                                {t.reason ? <span class="gl-dim"> · nothing to show on its own: {t.reason}</span> : null}{st && st.state !== "ok" && st.state !== "pending" ? <span class="gl-tag bad">{st.state}</span> : null}</figcaption>
+                            <div class={`gl-frame${s.view === "calm" ? " chat calm" : ""}`} style={{ ...(width ? { maxWidth: `${width}px` } : {}), ...(t.flow ? { minHeight: "180px" } : {}) }}>
                                 {item.kind === "custom"
                                     ? <CustomTile item={item} variant={t} json={json} onProps={(p) => setState({ props: p })} />
                                     : <ComponentTile item={item} variant={t} json={json} loader={loaders[item.component!.file]} ctx={ctx} />}
@@ -312,7 +314,14 @@ function Gallery() {
 /** What `gallery.mjs` drives: the item list once custom entries loaded, and every tile's render status. */
 (globalThis as { __gallery?: unknown }).__gallery = {
     ready,
-    items: () => items.peek().map((it) => ({ id: it.id, title: it.title, kind: it.kind, groups: it.groups, variants: it.variants.map((v) => ({ name: v.name, source: v.source })) })),
+    items: () => items.peek().map((it) => ({ id: it.id, title: it.title, kind: it.kind, groups: it.groups, variants: it.variants.map((v) => ({ name: v.name, source: v.source, flow: v.flow, reason: v.reason })) })),
+    /** The module a component was loaded from, the SAME instance it renders with: how a flow reaches a signal that
+     *  drives it (`(await __gallery.module("ContextMenu")).ctxMenu.value = …`). */
+    module: (id: string) => {
+        const c = items.peek().find((it) => it.id === id)?.component;
+        const load = c && loaders[c.file];
+        return load ? load() : Promise.reject(new Error(`no component module for ${id}`));
+    },
     status: (id: string, variant: string) => statuses.peek()[statusKey(id, variant)] ?? null,
     statuses: () => statuses.peek(),
     log: () => entryLog.peek(),

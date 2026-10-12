@@ -91,10 +91,29 @@ The loop: `shot <id>`, Read the PNG, write the `@gallery` line, `shot <id>` agai
 is meant to look. Then **commit the example with your change**: the next agent who asks what this component looks like
 gets a real answer instead of rediscovering the props.
 
+### When it draws NOTHING on its own: a flow, or `none`
+
+Some components render nothing until something happens to them: a menu waiting for a right-click, a tooltip layer
+waiting for a hover, a dialog waiting to be opened. Props cannot fix that, so there are two other tags. Pick by asking
+**would triggering it show something a reader needs to see, or test something that could break?**
+
+- **Yes → `@gallery-flow <name> <file> [{json}]`.** Commit a Playwright script under `tests/gallery-flows/` that
+  triggers the component, then CHECKS what a person would (the items are there, a click does its thing, Escape closes
+  it), and ends with the component in the state the final shot should show. `check` runs it and a throw FAILS CI;
+  `shot <id>` runs it automatically. A flow reaches the signal or store that drives a component through
+  `__gallery.module(id)`, the same module instance the component renders with. Worked examples:
+  `tests/gallery-flows/ContextMenu.mjs` and `tests/gallery-flows/CursorTipLayer.mjs` (tags in `src/sidebar/ui-kit.tsx`).
+- **No → `@gallery none <reason>`.** For a piece that only means something inside its parent (a crosshair line over a
+  chart track, a `<g>` that needs an `<svg>`), say why and where to see it in place. `check` counts it as handled, the
+  page shows the reason. Worked example: `Crosshair` in `src/sidebar/resource/resource-overlays.tsx`.
+
+Prefer a flow when in doubt: `none` is a statement that nothing here can break visibly, and a flow is a test.
+
 **An example is a promise.** `gallery.mjs check` (CI's `gallery` job) FAILS on an `@gallery` example or custom entry
 that does not render; an inferred render that fails is only a warning. The pre-commit hook reminds you (never fails)
-about a component the commit touches that has no `@group` or `@gallery`: add `@gallery` only if the inferred render is
-blank or broken.
+about a component the commit touches that has no `@group` or `@gallery`: add one only if the inferred render is blank
+or broken, and then the kind that fits (`@gallery`, `@gallery-flow` or `@gallery none`). A broken `@gallery-flow`
+fails the check like a broken example; CI annotates a failing component inline in the PR diff.
 
 ## Custom entries
 
