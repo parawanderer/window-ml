@@ -18,7 +18,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell, watchRunEvents } from "./harness.mjs";
+import { HANDLE_MAP } from "../../src/page-relay.ts";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/server.mjs";
 
@@ -26,7 +27,7 @@ import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/serv
  *  that slice is listed here, the test asserts the attack works. Flip an entry in the change that lands the slice.
  *  `slice2stream` is slice 2's first part (attacks 15 and 16: the run's events and the extension's own iframe), which
  *  landed before the rest. */
-const OPEN = { slice0: false, slice1: false, slice2stream: false, slice2: true, slice4: true };
+const OPEN = { slice0: false, slice1: false, slice2stream: false, slice2: false, slice4: true };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {
@@ -243,6 +244,87 @@ test.describe("@security a run the user started on an unapproved page", () => {
             expect((await page.evaluate(() => window.__spent)).error).toMatch(/refused|not approved/i);
             expect(JSON.stringify(fake.calls())).not.toContain("EVIL SPEND");
         } finally { await close(); }
+    });
+});
+
+// PART 5 of slice 2: a page a run is on is lent nothing. Until it landed a tab HOSTING a run could send what the run's
+// in-page tools sent (`RUN_TAB_TYPES`) whatever its origin; those tools now run in the worker, and a page-built run that
+// navigates onto a site nobody approved is handed to the worker at the browser's commit. The types it used to be lent,
+// by name, and the page request type each is sent as (a fire-and-forget ABORT_TASK has no answer to read, and is in the
+// vm suite, tests/redteam.test.js "(g)").
+const FORMER_RUN_TAB_TYPES = ["FETCH_LLM", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG", "CAPTURE_TAB", "FETCH_IMAGE_B64", "FETCH_URL", "PYTHON_EXEC", "FETCH_SHEET", "LIST_SERVER_TOOLS", "SERVER_TOOL_EXEC", "CDP_SHADOW_RESOLVE"];
+const DRAIN = FORMER_RUN_TAB_TYPES.map((t) => {
+    const req = Object.entries(HANDLE_MAP).find(([, v]) => v.type === t)?.[0];
+    if (!req) throw new Error(`no page request type relays ${t}`);
+    return req;
+}).join(",");
+
+/** Every gate approved as it opens, the way an approver outside the browser does. */
+function approveAll(ext) {
+    let stop = false;
+    const loop = (async () => {
+        while (!stop) {
+            const gates = await ext.sw.evaluate(() => globalThis.__mlApprovals?.list?.() ?? []).catch(() => []);
+            for (const g of gates) await ext.sw.evaluate(({ key }) => globalThis.__mlApprovals.resolve(key, true), { key: g.key }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 100));
+        }
+    })();
+    return async () => { stop = true; await loop; };
+}
+
+/** Each drained answer, held to "refused": an error naming the gate, never data and never no answer at all. */
+function expectAllRefused(drained) {
+    expect(drained, "positive control: the page sent its requests").not.toBeNull();
+    for (const t of DRAIN.split(",")) {
+        const r = drained[t];
+        expect(r?.timeout, `${t}: answered`).toBeFalsy();
+        expect(r?.error ?? "", `${t}: ${JSON.stringify(r).slice(0, 160)}`).toMatch(/Refused: .* is not approved/);
+        expect(r?.result, `${t}: no data`).toBeUndefined();
+    }
+}
+
+test.describe("@security part 5: a page a run is on is lent nothing", () => {
+    test("a run the user started on an unapproved page: the page's own send of every former run-tab type, naming the run, is refused", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test", `/?drain=${DRAIN}`));
+            const idx = await sessions(ext);
+            fake.setScript([{ tool: "findByText", args: { text: "code" } }, { content: "the code is 4417" }]);
+            const hash = await userStartsRun(ext, idx, page, "what is the code on this page?");
+            expect(await idx.settled(hash), "positive control: the run itself worked there").toBe("done");
+            await expect.poll(() => page.evaluate(() => window.__drained), { timeout: 20000 }).not.toBeNull();
+            expectAllRefused(await page.evaluate(() => window.__drained));
+            expect(JSON.stringify(fake.calls()), "nothing the page sent reached the backend").not.toContain("EVIL DRAIN");
+        } finally { await close(); }
+    });
+
+    test("a page-built run that navigates onto the unapproved site is the worker's there: that page blocking the re-adopt, cancelling it and draining every former run-tab type gets nothing", async () => {
+        const { fake, site, ext, close } = await setup();
+        const stopApprover = approveAll(ext);
+        try {
+            const page = await open(ext, site.url("approved.test"), { approve: true });
+            const dest = site.url("evil.test", `/?block=1&cancel=1&drain=${DRAIN}`);
+            fake.setScript([{ tool: "navigate", args: { url: dest } }, { tool: "findByText", args: { text: "code" } }, { content: "finished" }]);
+            const events = [];
+            const watch = await watchRunEvents(ext, page, (ev) => events.push(ev));
+            // The approved page builds the run itself (window.ml.agent), and lets it cross to another site.
+            await page.evaluate(() => { window.ml.agent("go to the other site and read its code", { env: false, crossOrigin: true, approvalRouting: "external" }); return true; });
+            await expect.poll(() => events.find((e) => e.kind === "agent-result") ?? null, { timeout: 60000 }).not.toBeNull();
+            await watch.close();
+            const result = events.find((e) => e.kind === "agent-result");
+            expect(new URL(page.url()).origin, "the run moved to the unapproved site").toBe(site.origin("evil.test"));
+            // The page's own requests, sent on the run's tool call there, were all refused (a model call that went through
+            // would also have eaten the run's scripted last turn).
+            await expect.poll(() => page.evaluate(() => window.__drained), { timeout: 20000 }).not.toBeNull();
+            expectAllRefused(await page.evaluate(() => window.__drained));
+            expect(JSON.stringify(fake.calls()), "nothing the page sent reached the backend").not.toContain("EVIL DRAIN");
+            expect(result.cancelled, "the page could not cancel the run").toBeFalsy();
+            expect(result.summary).toBe("finished");
+            expect(await page.evaluate(() => window.__blocked), "the page did block its re-adopt").toBeGreaterThan(0);
+            // The hand-over is the browser's commit, so blocking the re-adopt did not keep the run the page's.
+            const log = await ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).filter((x) => x.kind === "handed-to-worker").map((x) => [x.reason, x.detail?.origin]));
+            expect(log).toEqual([["navigated-to-unapproved-site", site.origin("evil.test")]]);
+        } finally { await stopApprover(); await close(); }
     });
 });
 

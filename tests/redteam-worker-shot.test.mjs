@@ -19,7 +19,7 @@ const visionSrc = readFileSync(new URL("../src/sw/worker-vision.ts", import.meta
 const constOf = (name) => Number(new RegExp(`export const ${name} = ([0-9_]+);`).exec(visionSrc)[1].replace(/_/g, ""));
 const CDP_SHOT_MS = constOf("CDP_SHOT_MS"), SHOT_RECTS_MS = constOf("SHOT_RECTS_MS");
 const { jsonResponse, loadBackground } = require("./helpers");
-const { PAGE_STARTED_TYPES, RUN_TAB_TYPES } = require("../src/page-relay.ts");
+const { PAGE_STARTED_TYPES } = require("../src/page-relay.ts");
 
 globalThis.requestAnimationFrame ??= (fn) => setTimeout(fn, 0);
 globalThis.chrome ??= { runtime: { id: "ext-id" } };
@@ -74,12 +74,12 @@ const spendOf = (wv, run) => JSON.parse(JSON.stringify(wv.spend(run) ?? null));
 const chatCalls = (calls) => calls.filter((c) => c.url.includes("/chat/completions"));
 
 /**
- * Send every page-startable and run-tab type with `payload`, from each of `senders`. START_RUN is left out: it starts the
+ * Send every page-startable type (the former run-tab types among them) with `payload`, from each of `senders`. START_RUN is left out: it starts the
  * PAGE's own run (refused under a worker run's hash, tests/run-start.test.mjs), and with this bait payload its handler
  * throws on the missing toolset after the channel is gone, which says nothing about a shot or a spend.
  */
 async function sendEveryType(bg, payload, senders, extra = {}) {
-    for (const t of new Set([...PAGE_STARTED_TYPES, ...RUN_TAB_TYPES])) {
+    for (const t of PAGE_STARTED_TYPES) {
         if (t === "START_RUN") continue;
         for (const sender of senders) await Promise.race([bg.send({ ...extra, type: t, payload: { ...payload } }, sender).catch(() => {}), tick()]);
     }
@@ -166,7 +166,7 @@ test("every step of a worker shot is bounded: a page stalling every one of them 
 
 // --- (d) the shell acts on the worker alone ---
 
-test("no page-started or run-tab message, from the run's tab or a hostile one, makes the worker send SHOT_* to any tab", async () => {
+test("no page-started message, from the run's tab or a hostile one, makes the worker send SHOT_* to any tab", async () => {
     const { bg } = world({ siteGate: true, local: { ml_site_always: ["https://run.example"] } });
     const evil = { tab: { id: 9, url: "https://evil.example/" }, url: "https://evil.example/", origin: "https://evil.example", frameId: 0, documentId: "doc-evil" };
     await sendEveryType(bg, { type: "SHOT_RECTS", id: "x", tabId: 4, runId: "run-1" }, [fromRunTab(), evil], { id: "x" });

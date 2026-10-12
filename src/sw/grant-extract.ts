@@ -106,9 +106,11 @@ export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sh
  * - An `exec`: the URLs its code spells out (its inline `ml.fetch`), and no others.
  * - A server tool: the exact call the person saw (`remoteKey`, `serverToolKey`).
  * - A `python_exec` the worker runs (`pyInWorker`): nothing on the tab; its grants are the run's (worker-tools.ts).
- * - A `python_exec` that falls to the page: its full-mode code. Its external sheets only for a run the PAGE built,
+ * - A `python_exec` that runs on the page: its full-mode code. Its external sheets only for a run the PAGE built,
  *   whose loop is the page's own. A worker-built run's sheet never goes on the tab, whatever the call's shape: the
- *   minted id is a credentialed read any script on the page could spend while the call runs (clause B, #442).
+ *   minted id is a credentialed read any script on the page could spend while the call runs (clause B, #442). Since
+ *   site access part 5 every python_exec of a run the worker drives runs in the worker, so only a page-built run's,
+ *   on its approved site, reaches this branch.
  * @param c the call: its tool, its args, whether the worker built the run, whether its python_exec runs in the worker,
  *   and a server tool's call key
  */

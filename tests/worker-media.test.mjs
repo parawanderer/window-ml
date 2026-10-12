@@ -14,7 +14,6 @@ import { shootVia, _shotBox } from "../src/ml/ml-vision.ts";
 import { mintPoint, mintBox } from "../src/util.ts";
 import { answerMediaShape, ANSWER_MEDIA_MAX } from "../src/tools/tools.ts";
 import { checkSelection, MAX_MEDIA, MAX_IMAGE } from "../src/sw/worker-answer.ts";
-import { pageOnlyPython, mixedPythonRefusalFor } from "../src/sw/worker-tools.ts";
 import { GEOMETRY_OPS, GEOMETRY_REFUSED, GEOMETRY_MOVED, GEOMETRY_SLOW } from "../src/sw/geometry-check.ts";
 import { PY_IMAGE_NO_DOCUMENT } from "../src/sw/worker-media.ts";
 
@@ -354,18 +353,50 @@ test("a cast's token is minted in the page's registry, pinned to the image's doc
     });
 });
 
-// --- python_exec routing: an image no longer needs the page ---
+// --- python_exec routing: an image and a page table both run in the worker ---
 
-test("an image alone runs python in the worker; with a page table it is refused with a two-call steer, as with an external sheet", T, () => {
-    assert.equal(pageOnlyPython({ code: "x", image: "#save" }), false);
-    assert.equal(pageOnlyPython({ code: "x", image: "@pt:abcdef12", tables: "@tool:abc1234" }), false);
-    assert.equal(pageOnlyPython({ code: "x", tables: "table#t" }), true, "positive control: a page table is the page's");
-    assert.equal(mixedPythonRefusalFor({ code: "x", image: "#save" }, 0), null);
-    assert.equal(mixedPythonRefusalFor({ code: "x", image: "#save", tables: "https://example.com/a.csv" }, 0), null);
-    assert.match(mixedPythonRefusalFor({ code: "x", image: "#save", tables: "current" }, 0), /cannot mix an `image` with a page table/);
-    assert.match(mixedPythonRefusalFor({ code: "x", image: "#save", tables: { t: "table#t" } }, 0), /cannot mix an `image` with a page table/);
-    assert.match(mixedPythonRefusalFor({ code: "x", tables: { t: "table#t", s: "https://docs.google.com/spreadsheets/d/x/edit" } }, 1), /cannot mix an external Google Sheet/);
-    assert.equal(mixedPythonRefusalFor({ code: "x", tables: "table#t" }, 0), null, "a page table alone goes to the page");
+test("an image together with a page table runs python in the worker: the image from the worker's crop, the table from the page's answer, and no call to the page", T, async () => {
+    await onPage(async () => {
+        const geo = pageGeometry();
+        const runs = [];
+        let turns = 0, bg;
+        bg = loadBackground({
+            config: { ...config, autoApprovePython: true, debugMode: "off" },
+            openTabs: [{ id: 3, windowId: 1, active: true, url: "https://site.example/" }],
+            onCaptureTab: async () => png(1024, 768),
+            onFetch: (call) => {
+                if (!call.url.includes("/chat/completions")) return jsonResponse({});
+                return ++turns === 1
+                    ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "return len(df) # CODE-9", image: "#save", tables: "table#t" }) } }] } }] })
+                    : jsonResponse({ choices: [{ message: { content: "done" } }] });
+            },
+            onPyRun: async (msg) => {
+                if (msg.type !== "PY_RUN") return { ok: true, prewarm: "started" };
+                runs.push(JSON.parse(JSON.stringify(msg)));
+                return { ok: true, value: 2, stdout: "" };
+            },
+            onTabMessage: async (_t, msg) => {
+                if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+                if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
+                if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+                if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+                if (msg.payload.finish) return { result: "" };
+                if (msg.payload.geometry) { const a = await answerGeometry(geo, JSON.parse(JSON.stringify(msg.payload.geometry))); return JSON.parse(JSON.stringify({ result: "", geometry: a })); }
+                if (msg.payload.pageRead) return { result: "", pageRead: { table: { label: "table#t", data: { kind: "rows", columns: ["n"], rows: [[1], [2]] } } } };
+                if (msg.payload.renderOnly || msg.payload.precheck) return {};
+                return { result: "FROM THE PAGE" };
+            },
+        });
+        bg.context.__mlWorkerVisionForTest.useRaster(blankRaster());
+        await bg.context.__mlStartUserRunForTest(3, { task: "count the rows", surface: "hud" });
+        for (let i = 0; i < 2000 && turns < 2; i++) await new Promise((r) => setTimeout(r, 0));
+        assert.equal(runs.length, 1, "positive control: the sandbox ran the call");
+        assert.match(runs[0].image, /^data:image\/png;base64,RASTER\d+$/, "the worker's crop");
+        assert.deepEqual(runs[0].tables.map((t) => [t.name, t.data.rows]), [["df", [[1], [2]]]], "the page's table");
+        const sends = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m]) => m.payload);
+        assert.deepEqual(sends.filter((p) => p.name === "python_exec" && !p.renderOnly && !p.precheck), [], "the call never went to the page");
+        assert.ok(!JSON.stringify(sends).includes("CODE-9"), "nor its code");
+    });
 });
 
 // --- python_exec with an image in a worker-built run: the call never reaches the page ---

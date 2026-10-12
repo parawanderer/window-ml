@@ -516,6 +516,21 @@ Recorded as each slice lands, with the reason.
   exec routing and grants as the page's until the turn ended. Each decision now reads who drives the run when it is
   made. One way: a run that returns to an approved site stays the worker's. A revoke while a page-built run is on an
   approved site does not hand it over (there is no navigation to act on).
+- **Part 5 (second part): `RUN_TAB_TYPES` is gone.** A tab hosting a run is judged by its own origin like any other
+  page, so attack 9 is closed. What a run's page still sent for it moved to the worker, each for its own reason:
+  `PYTHON_EXEC` and `FETCH_SHEET` (a python_exec over a page table, or `current`) now run in the worker, which asks the
+  page for the table's cells as plain data (`pageRead`, `src/sw/worker-page-read.ts`) and checks them field by field;
+  `FETCH_LLM` from a `fetch_url` session render of the page with an `ask` now comes from the worker, which asks the page
+  for its document's HTML the same way; `CDP_SHADOW_RESOLVE` (describeElement into a sealed root) is done by the worker
+  on the model's selector, never the page's echo. The vision types, `GET_MODEL` and `MODEL_CAPS` were already the
+  worker's for such a run (part 3), `GET_CONFIG` too (`agent_api_docs`, vision), and `LIST_SERVER_TOOLS`,
+  `SERVER_TOOL_EXEC` and `FETCH_URL` (a remote tool, `fetch_url`) since part 2; an exec on an unapproved page is
+  isolated (part 4) and its `ml` sends nothing; `ABORT_TASK` aborted only those requests. Nothing is refused that used
+  to work for a run the worker drives. Differences: a python_exec mixing an image or an external sheet with a page
+  table used to be refused with a two-call steer, because its page part ran on the page and would have put the sheet
+  grant on the tab; it now runs whole in the worker. A worker builtin that cannot be set up in the worker reports an
+  error instead of falling back to the page. A page-built run on an approved site still sends from its page, which is
+  approved; a revoke while it runs refuses its page's next send (no hand-over without a navigation).
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

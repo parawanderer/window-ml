@@ -145,6 +145,8 @@ const ENVELOPE = {
     cdpClick: "model",          // x, y and hint are printed into the result; the verify's point is checked
     cdpExec: "plumbing",        // the approved args.js runs, never the echoed source
     cdpShadowClick: "model",    // the selector is printed into the result; the worker resolves it itself
+    cdpShadowResolve: "plumbing", // the worker resolves the MODEL's selector, never this echo (worker-page-read.test.mjs)
+    pageRead: "plumbing",       // a page table or document, checked field by field (worker-page-read.ts)
     cdpType: "model",           // text, x and y are printed into the result; the verify's target is checked
     verifyRequest: "plumbing",  // checkVerifyRequest
 };

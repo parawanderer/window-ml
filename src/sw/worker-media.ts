@@ -19,6 +19,7 @@ import { MAX_IMAGE } from "./worker-answer";
 import { onWorkerHost, workerVisionHost, type WorkerVisionHostOpts } from "./worker-vision-host";
 import { topDocument } from "./worker-vision";
 import type { WorkerPyMedia } from "./worker-tools";
+import { workerPageDocument, workerPageTable } from "./worker-page-read";
 
 /** The python_exec error for an image with no document to pin it to. */
 export const PY_IMAGE_NO_DOCUMENT = "the browser does not say which page the tab holds now, so the image was not taken. Run it again.";
@@ -105,12 +106,16 @@ export async function workerMint(runId: string, tabId: number, q: { pt: { x: num
 }
 
 /**
- * A run's python_exec image and cast through the worker's vision over its tab: what the run's worker tools are built
- * with (worker-tools.ts `buildWorkerTools`), wherever they are built (sw-run-start.ts, sw-run-host.ts).
+ * What a run's worker tools ask of its tab: python_exec's image and cast through the worker's vision, and a page table or
+ * the live document read from the page as plain data (worker-page-read.ts). What the run's worker tools are built with
+ * (worker-tools.ts `buildWorkerTools`), wherever they are built (sw-run-start.ts, sw-run-host.ts).
  * @param runId the run
  * @param tabId the run's tab
- * @returns the python_exec media
+ * @returns the worker tools' media and page reads
  */
 export function pyMediaFor(runId: string, tabId: number): WorkerPyMedia {
-    return { image: (image, margin) => workerPythonImage(runId, tabId, image, margin), mint: (q, doc) => workerMint(runId, tabId, q, doc) };
+    return {
+        image: (image, margin) => workerPythonImage(runId, tabId, image, margin), mint: (q, doc) => workerMint(runId, tabId, q, doc),
+        table: (src, raw) => workerPageTable(runId, tabId, src, raw), document: () => workerPageDocument(runId, tabId),
+    };
 }

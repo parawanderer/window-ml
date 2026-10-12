@@ -180,12 +180,16 @@ test("a subframe, or a sender with a tab but no id, gets nothing; an extension f
         assert.match(res.error || "", /Refused: only a page's top frame/, `frame ${s.frameId}: refused at the gate`);
         assert.equal(bg.captures.length, 0);
     }
-    // a subframe of a tab hosting a run is not let through by the run allowance either
+    // a tab hosting a run gets nothing for it, from a subframe or from its top frame (site access part 5: the run's
+    // captures are the worker's own); the same top frame on an approved origin gets its own pixels
     {
         const { bg } = browser({ showing: 3, siteGate: true });
         bg.context.__mlSeedActiveRunForTest(3, "run-on-tab");
         assert.match((await capture(bg, sender(3, { frameId: 1 }))).error || "", /Refused/);
-        assert.equal((await capture(bg, sender(3))).data, shotOf(OWN), "positive control: the run tab's top frame gets its own pixels");
+        assert.match((await capture(bg, sender(3))).error || "", /Refused: .* is not approved/, "the run tab's top frame, unapproved");
+        assert.equal(bg.captures.length, 0);
+        bg.localStore.ml_site_always = [new URL(OWN).origin];
+        assert.equal((await capture(bg, sender(3))).data, shotOf(OWN), "positive control: approved, the top frame gets its own pixels");
         assert.equal(bg.captures.length, 1);
     }
     {

@@ -233,15 +233,17 @@ const CAPS = { "vlm-driver": ["completion", "vision", "tools"], "text-driver": [
  * @param opts.turns the driver's tool calls, one per turn: `{ name, args }`; after them it answers "done"
  * @param opts.reader the vision sub-call's reply, from its body
  * @param opts.capture the viewport capture, or a function that throws
+ * @param opts.approved SITE's origin is approved: what the page's OWN capture and model calls need since site access
+ *   part 5 (a page a run is on is lent nothing), for the tests of the page's half of a page-built run's vision
  */
-async function startVisionRun({ model = "vlm-driver", turns = [], reader = () => "a page with a button", capture = () => VIEWPORT, html = "", dpr = 1, cfg = {}, before, onDriverTurn } = {}) {
+async function startVisionRun({ model = "vlm-driver", turns = [], reader = () => "a page with a button", capture = () => VIEWPORT, html = "", dpr = 1, cfg = {}, before, onDriverTurn, approved = false } = {}) {
     const chats = [];      // every model call, driver and sub-call: { url, body, kind }
     let page, bg;
     const runIdOf = () => bg.tabMessages.find(([, m]) => m.type === "ADOPT_RUN_NOW")?.[1].payload.runId;
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model, apiFormat: "openai", ocrModel: "reader-vl", debugMode: "off", ...cfg },
         openTabs: [SITE],
-        siteGate: true,
+        siteGate: true, ...(approved ? { local: { ml_site_always: [new URL(SITE.url).origin] } } : {}),
         onCaptureTab: () => capture(),
         // With CDP on, the worker captures through the debugger: the same capture, as Page.captureScreenshot's base64.
         onDebuggerCommand: (method) => method === "Page.captureScreenshot" ? { data: capture().slice("data:image/png;base64,".length) } : undefined,
@@ -607,7 +609,8 @@ test("the navigate verify ring-back (verifyViewport), which the page still answe
     // adopts with a page-built run's rebuild, which does.
     let env;
     const pageBuilt = { toolNames: ["navigate"], model: "text-driver", driverSees: false, visionModel: "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
-    const w = await startVisionRun({ model: "text-driver", turns: [], reader: () => "The new page.",
+    // The page's own capture and model call: an approved site's, as a page-built run's page always is.
+    const w = await startVisionRun({ model: "text-driver", turns: [], reader: () => "The new page.", approved: true,
         onDriverTurn: async (n, { page }) => {
             if (n !== 0) return;
             await page.deliver({ type: "ADOPT_RUN_NOW", payload: { runId: "page-built", rebuild: pageBuilt } });
@@ -639,7 +642,8 @@ const shotOrder = (page) => page.posted.map((d) => d.__mlSidebarShot ? `sidebar:
 /** A run whose driver's first turn has the page take its own screenshot; resolves once the screenshot has. */
 async function pageShot(html, before) {
     let shot;
-    const w = await startVisionRun({ model: "vlm-driver", html, before, turns: [],
+    // The page's own capture: an approved site's (an unapproved one is refused at the gate, run or no run).
+    const w = await startVisionRun({ model: "vlm-driver", html, before, turns: [], approved: true,
         onDriverTurn: async (n, { page }) => { if (n === 0) { shot = page.win.ml.screenshot(); await shot; } } });
     await shot;
     // The run ends after the screenshot: wait for its end, so no send to the page is still open when the page closes.
@@ -701,15 +705,16 @@ test("a worker-built locate puts no capture, no reader prompt or reply, no descr
     }
 });
 
-test("while the run lives, the page itself may send CAPTURE_TAB and FETCH_LLM from an unapproved origin; once it ends, both are refused", T, async () => {
+test("the page itself cannot send CAPTURE_TAB or FETCH_LLM from an unapproved origin, while a run lives on its tab or after (site access part 5)", T, async () => {
     const sender = { tab: { id: SITE.id, windowId: SITE.windowId, url: SITE.url }, url: SITE.url, origin: "https://site.example", frameId: 0 };
     const llm = { type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "spend my tokens" }], model: "reader-vl" } };
     let during;
     const w = await startVisionRun({ model: "text-driver", turns: [],
         onDriverTurn: async (n, { bg }) => { if (n === 0) during = { capture: await bg.send({ type: "CAPTURE_TAB", payload: {} }, sender), llm: await bg.send(llm, sender) }; } });
     try {
-        assert.equal(during.capture.data, VIEWPORT, "RUN_TAB_TYPES lets the run's tab capture itself");
-        assert.equal(typeof during.llm.data, "string", "and call a model of its choosing");
+        assert.ok(during, "positive control: the page tried while the run lived");
+        assert.match(during.capture.error, /^Refused/, "the run's tab may not capture itself");
+        assert.match(during.llm.error, /^Refused/, "nor call a model of its choosing");
         const after = { capture: await w.bg.send({ type: "CAPTURE_TAB", payload: {} }, sender), llm: await w.bg.send(llm, sender) };
         assert.match(after.capture.error, /^Refused/);
         assert.match(after.llm.error, /^Refused/);

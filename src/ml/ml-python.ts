@@ -168,18 +168,7 @@ export const _loadTable = async function(this: MlApi, name: string, src: string 
         const target = isCurrent ? (typeof location !== "undefined" ? location.href : "") : String(src);
         const csvUrl = googleSheetCsvUrl(target);
         if (!csvUrl) {
-            // `current` on a NON-sheet page → the page's single non-empty <table> (the shorthand
-            // the tool only advertises when there's exactly one). 0 or >1 → say so, steer to a selector.
-            if (isCurrent) {
-                const tables = typeof document !== "undefined" ? nonEmptyTables(document) : [];
-                if (tables.length === 1) {
-                    const data = this._resolveTable(tables[0], raw);
-                    return { name, source: { kind: "dom", label: "current page table" }, data };
-                }
-                throw new Error(tables.length === 0
-                    ? "pythonExec tables:'current' — this page is neither a Google Sheet nor has a table with data. Pass a CSS selector."
-                    : `pythonExec tables:'current' — this page has ${tables.length} tables (ambiguous). Pass a CSS selector to pick one.`);
-            }
+            if (isCurrent) return { name, ...pageTable(this, "current", raw) };
             throw new Error(`pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
         }
         const { csv, name: sheetName } = await makeBackgroundTaskPromise<{ csv: string; name: string | null }>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
@@ -191,9 +180,30 @@ export const _loadTable = async function(this: MlApi, name: string, src: string 
             : { kind: "sheet-external", label: googleSheetId(String(src)) || String(src), name: sheetName };   // label = id (for the link), name = the real title (chip)
         return { name, source, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
     }
-    const data = this._resolveTable(src, raw);
-    return { name, source: { kind: "dom", label: typeof src === "string" ? src : elPath(src) }, data };
+    if (typeof src === "string") return { name, ...pageTable(this, src, raw) };
+    return { name, source: { kind: "dom", label: elPath(src) }, data: this._resolveTable(src, raw) };
 };
+
+/**
+ * A table of THIS page, read from its DOM: a CSS selector's first match, or `"current"` (the page's one non-empty
+ * `<table>`, the shorthand the tool advertises only when there is exactly one). The one reader for a page table, used by
+ * `_loadTable` and, for a run whose python_exec runs in the worker, by the page's answer to the worker's question
+ * (run-delegation.ts `pageRead`), so both read a page table the same way. Not a Google Sheet's `current`: that is fetched.
+ * @param ml the page's `window.ml`
+ * @param src a CSS selector, or `"current"`
+ * @param raw keep every cell a string
+ * @returns the table's provenance and data
+ * @throws a sentence naming what is wrong (no match, no table, an empty or ambiguous one)
+ */
+export function pageTable(ml: Pick<MlApi, "_resolveTable">, src: string, raw = false): Pick<LoadedTable, "source" | "data"> {
+    if (src !== "current") return { source: { kind: "dom", label: src }, data: ml._resolveTable(src, raw) as LoadedTable["data"] };
+    // 0 or >1 → say so, steer to a selector.
+    const tables = typeof document !== "undefined" ? nonEmptyTables(document) : [];
+    if (tables.length === 1) return { source: { kind: "dom", label: "current page table" }, data: ml._resolveTable(tables[0], raw) as LoadedTable["data"] };
+    throw new Error(tables.length === 0
+        ? "pythonExec tables:'current' — this page is neither a Google Sheet nor has a table with data. Pass a CSS selector."
+        : `pythonExec tables:'current' — this page has ${tables.length} tables (ambiguous). Pass a CSS selector to pick one.`);
+}
 
 /**
  * Resolve a `table` target (selector/Element) to what the sandbox loads as `df`:

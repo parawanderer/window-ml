@@ -57,6 +57,10 @@ export interface ToolResult {
      *  (which pierces closed roots) and click the resolved element by coordinate. `selector` is the `>>>` path,
      *  `index` the Nth match. Background-only, like `cdpClick`. See the CDP shadow resolver in background.ts. */
     cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
+    /** SEALED-SHADOW discovery signal, for a run the worker drives (`verifiesInWorker`): describeElement found a `>>>`
+     *  path into a sealed root and asks the WORKER to resolve it via CDP, rather than the page sending
+     *  `CDP_SHADOW_RESOLVE` itself (site access part 5). The worker resolves the model's own selector, not this echo. */
+    cdpShadowResolve?: { selector: string };
     /** TRUSTED-KEYBOARD signal: type text via CDP `Input.dispatchKeyEvent` (real, isTrusted key events a
      *  canvas/WebGL/remote-desktop app honours — synthetic KeyboardEvents don't). Three focus modes: a sealed
      *  `>>>` `selector` (CDP-resolve → focus the field) · an `@pt` `x,y` (CDP-click there first to focus) · or

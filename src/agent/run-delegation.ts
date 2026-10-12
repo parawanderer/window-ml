@@ -12,7 +12,8 @@
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool } from "../contract/contract-agent";
 import type { AnswerMedia } from "../contract/contract-render";
-import type { PageToolEnvelope } from "../contract/contract-messages";
+import type { PageReadRequest, PageToolEnvelope } from "../contract/contract-messages";
+import { pageTable } from "../ml/ml-python";
 import type { SubcallUsage } from "../contract/contract-debug";
 import { hintSession } from "../contract/contract-run";
 import { outputCapEscalated } from "../contract/contract-pointers";
@@ -110,11 +111,11 @@ const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a 
 /** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
  *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
  *  (RequestHint: `use: "agent"`, the run's session). */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
 }
 
-async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // A worker-built run's `answer` tool runs in the worker, and asks the page only for a selector's elements: this
@@ -129,6 +130,24 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const got = await select(a.selector, typeof a.index === "number" ? a.index : undefined, typeof a.note === "string" ? a.note : undefined, a.show, a.mediaInWorker !== true);
             return { result: "", answerSelection: { count: got.count, ...(got.preview ? { preview: got.preview } : {}), ...(got.media?.length ? { media: got.media } : {}) } };
         } catch (e) { return { result: `Error: ${errText(e)}` }; }
+    }
+    // A worker tool's question about this page's own content (worker-page-read.ts): a page table for a python_exec, or
+    // the live document for a `fetch_url` session render of the page the run is on. Answered from the DOM as plain data,
+    // which the worker checks; the worker runs the tool, so nothing of the call but the source comes here.
+    if (opts.pageRead) {
+        const r = opts.pageRead;
+        try {
+            if (r.kind === "table" && typeof r.src === "string") {
+                const ml = window.ml as unknown as import("../contract").MlApi;
+                const t = pageTable(ml, r.src, r.raw === true);
+                return { result: "", pageRead: { table: { label: (t.source as { label?: string }).label ?? r.src, data: t.data } } };
+            }
+            if (r.kind === "document") {
+                const doctype = document.doctype ? `<!DOCTYPE ${document.doctype.name}>\n` : "";
+                return { result: "", pageRead: { html: doctype + document.documentElement.outerHTML } };
+            }
+        } catch (e) { return { result: "", pageRead: { error: errText(e) } }; }
+        return { result: "", pageRead: { error: "this page cannot answer that." } };
     }
     // A worker vision host's question about this page's layout (worker-vision-host.ts): answered from the DOM, as plain
     // data, by the run's own page geometry. No capture, prompt, image or model name comes with it; the worker checks
@@ -317,6 +336,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
         cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
         cdpExec: env.cdpExec,     // strict-page exec → the BACKGROUND re-runs the source via CDP eval (CSP-exempt)
         cdpShadowClick: env.cdpShadowClick,   // sealed-shadow `>>>` click → the BACKGROUND CDP-resolves + clicks it
+        ...(env.cdpShadowResolve ? { cdpShadowResolve: env.cdpShadowResolve } : {}),   // sealed-shadow discovery → the WORKER resolves it
         cdpType: env.cdpType,   // trusted-keyboard type (canvas / remote desktop / sealed field) → BACKGROUND types via CDP
         // THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and
         // queue. It was dropped here, so on the background path (which is EVERY run with a debug surface
@@ -334,7 +354,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, summary, answerShape, answerSelect, geometry } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, summary, answerShape, answerSelect, geometry, pageRead } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
         // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
         // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
         if (finish) {
@@ -351,7 +371,7 @@ export function installToolDelegation(): void {
             try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }, "*"); } catch { /* non-cloneable → drop */ }
         }) : null;
         const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
-        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), onStream });
+        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), ...(pageRead && typeof pageRead === "object" ? { pageRead } : {}), onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });

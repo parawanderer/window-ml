@@ -7,10 +7,9 @@
 // page says is read.
 
 import { type SiteEdit, type SiteLists, SITE_ACCESS_KEYS, applyEdit, decide, grantableOrigin } from "../site-access";
-import { PAGE_STARTED_TYPES, RUN_TAB_TYPES } from "../page-relay";
+import { PAGE_STARTED_TYPES } from "../page-relay";
 import { isExtensionSender } from "./sw-consent";
 import { getConfig } from "./sw-llm";
-import { activeRuns } from "./sw-runs";
 
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
@@ -49,8 +48,8 @@ export async function siteDecision(origin: string): Promise<ReturnType<typeof de
  * The router's gate. Null when the message may go on to its handler; otherwise the refusal to answer it with.
  *
  * Applies only to a type a page can start (`PAGE_STARTED_TYPES`) arriving from a tab that is not one of the
- * extension's own frames. While some of a background run's tools still run in the page (slice 2), a tab HOSTING one may
- * send what those tools send (`RUN_TAB_TYPES`), and nothing else: never run control, a model change, a session.
+ * extension's own frames. A tab hosting a run gets nothing more than any other: a run's tools send nothing from the page
+ * they act on (site access part 5), so the page a run is on is judged by its own origin like every other.
  * @param type the message type
  * @param sender the browser's facts about who sent it
  * @returns null to allow, or the refusal
@@ -58,9 +57,6 @@ export async function siteDecision(origin: string): Promise<ReturnType<typeof de
 export async function pageRefusal(type: unknown, sender: chrome.runtime.MessageSender): Promise<string | null> {
     if (typeof type !== "string" || !PAGE_STARTED_TYPES.has(type)) return null;
     if (sender.tab == null || isExtensionSender(sender)) return null;
-    // Before the origin is even read: a page a run is on (an unapproved site, or a local file the person started a run
-    // on) runs that run's tools, and they send these. Its top frame only, and only what those tools send.
-    if (RUN_TAB_TYPES.has(type) && (sender.frameId ?? 0) === 0 && sender.tab.id != null && activeRuns.has(sender.tab.id)) return null;
     const g = grantableOrigin({ origin: sender.origin, url: sender.url ?? sender.tab.url, frameId: sender.frameId });
     if ("refused" in g) return `Refused: ${g.refused}.`;
     const decision = await siteDecision(g.origin);

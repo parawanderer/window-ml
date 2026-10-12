@@ -286,6 +286,10 @@ export interface PageToolEnvelope {
     /** the page's answer to a worker vision host's layout question (`geometry`): the op's reply with the request's
      *  `seq` (and `stitch`) echoed, or `error`. The page's word, which the worker rebuilds (geometry-check.ts). */
     geometry?: import("../dom/page-geometry").GeometryAnswer;
+    /** the page's answer to a worker tool's question about its own content (`pageRead`): a page table, the live
+     *  document's HTML, or an error sentence. The page's word about the page, which the worker checks
+     *  (worker-page-read.ts). */
+    pageRead?: { table?: { label: string; data: unknown }; html?: string; error?: string };
     /** a selector the worker's `answer` tool asked the page to resolve (`answerSelect`), without its nodes */
     answerSelection?: { count: number; preview?: string; media?: AnswerMedia[] };
     /** screenshot data-URL (inline vision — reserved for the parity work) */
@@ -325,6 +329,9 @@ export interface PageToolEnvelope {
     /** SEALED-SHADOW click: the page-side tool couldn't enter a closed/declarative shadow root to click a `>>>`
      *  target, so the BACKGROUND (trusted) CDP-resolves the selector (piercing the closed root) and clicks it. */
     cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
+    /** SEALED-SHADOW discovery, for a run the worker drives: the WORKER CDP-resolves the call's `>>>` selector and
+     *  writes describeElement's result (tools.ts `sealedDescribe`); the page sends nothing for it. */
+    cdpShadowResolve?: { selector: string };
     /** TRUSTED-KEYBOARD type: the BACKGROUND types `text` via CDP (real key events) into a sealed `>>>` field
      *  (`selector`), an `@pt` (`x,y`, clicked first to focus), or the current focus (neither) — for canvas /
      *  WebGL / remote-desktop targets where synthetic KeyboardEvents don't register. `cdp`-gated. */
@@ -374,3 +381,8 @@ export interface FetchLlmPayload {
      *  knows (whether this browser's traffic is synthetic). */
     hint?: RequestHint | null;
 }
+
+/** A worker tool's question about the page's own content, sent as `RUN_TOOL_IN_PAGE { runId, pageRead }`
+ *  (worker-page-read.ts): a page table for a python_exec the worker runs (a CSS selector, or `"current"`), or the live
+ *  document for a `fetch_url` session render of the page the run is on. Nothing of the call but the source is sent. */
+export type PageReadRequest = { kind: "table"; src: string; raw?: boolean } | { kind: "document" };

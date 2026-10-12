@@ -12,7 +12,6 @@
 import { test, expect } from "@playwright/test";
 import http from "node:http";
 import zlib from "node:zlib";
-import fs from "node:fs";
 import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { PAGE_STARTED_TYPES } from "../../src/page-relay.ts";
 import { startFakeLlm } from "./fake-llm.mjs";
@@ -75,15 +74,13 @@ const counted = (sw, tabId) => sw.evaluate((id) => globalThis.__ratchet.filter((
 /** The forbidden sends among `msgs`: a FORBIDDEN type, or a model stream port. */
 const forbidden = (msgs) => msgs.filter((m) => FORBIDDEN.includes(m.type) || /^PORT:.*(llm|LLM)/.test(m.type));
 
-/** What a tab hosting a run may still send whatever its origin (src/page-relay.ts `RUN_TAB_TYPES`), read from the source
- *  so the list here is never a stale copy: none of it is sent by this script's run, whose every tool runs in the worker
- *  or answers geometry. */
-const RUN_TAB_TYPES = (() => {
-    const src = fs.readFileSync(new URL("../../src/page-relay.ts", import.meta.url), "utf8");
-    const body = src.match(/export const RUN_TAB_TYPES[^[]*\[([^\]]*)\]/);
-    if (!body) throw new Error("RUN_TAB_TYPES not found in src/page-relay.ts");
-    return [...body[1].matchAll(/"([A-Z_0-9]+)"/g)].map((m) => m[1]);
-})();
+/** What a tab hosting a run could send whatever its origin until site access part 5 dropped the allowance
+ *  (`RUN_TAB_TYPES`), named here so a failure says which class it is in: none of it is sent by this script's run, whose
+ *  every tool runs in the worker or answers geometry. */
+const FORMER_RUN_TAB_TYPES = [
+    "FETCH_LLM", "ABORT_TASK", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG", "CAPTURE_TAB", "FETCH_IMAGE_B64", "FETCH_URL",
+    "PYTHON_EXEC", "FETCH_SHEET", "LIST_SERVER_TOOLS", "SERVER_TOOL_EXEC", "CDP_SHADOW_RESOLVE",
+];
 
 /** Decode `src` in `page` and read its size and the colour at its centre. */
 const centre = (page, src) => page.evaluate(async (src) => {
@@ -218,7 +215,7 @@ async function expectTheRun(r, page, result, skip = 0) {
 
 /**
  * The ratchet itself: during the run the tab sent NOTHING (no message, no port) but the probe and what `own` names as
- * the page's own. Nothing of the five vision types, of `RUN_TAB_TYPES`, or of any page-started type (`PAGE_STARTED_TYPES`,
+ * the page's own. Nothing of the five vision types, of the former run-tab types, or of any page-started type (`PAGE_STARTED_TYPES`,
  * every `HANDLE_MAP` type) but the probe; those are asserted on their own too, so a failure names the class.
  * @param sent what the counter saw from the tab during the run
  * @param own the page's own types allowed for this variant (keys of {@link PAGE_OWN})
@@ -227,7 +224,7 @@ function expectNothingSent(sent, own = []) {
     const types = sent.map((m) => m.type);
     expect(types.filter((t) => t === PROBE).length, `the in-run probe was counted once: ${JSON.stringify(types)}`).toBe(1);
     expect(forbidden(sent), `the run's page sent a vision message: ${JSON.stringify(types)}`).toEqual([]);
-    expect(types.filter((t) => RUN_TAB_TYPES.includes(t)), "the run's page needed none of what a run tab may send").toEqual([]);
+    expect(types.filter((t) => FORMER_RUN_TAB_TYPES.includes(t)), "the run's page needed none of what a run tab could send").toEqual([]);
     expect(types.filter((t) => t !== PROBE && PAGE_STARTED_TYPES.has(t)), "the run's page started nothing").toEqual([]);
     expect(types.filter((t) => t !== PROBE && !own.includes(t)), "the run's page sent nothing at all").toEqual([]);
 }
