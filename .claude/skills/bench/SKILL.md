@@ -378,6 +378,16 @@ fetched every clone's. As cells finish, a finished one's estimate gives way to w
 the larger of the two: the page shows `est.` beside each `spent` (a `+` when some runs have no estimate), status.md has
 a Spend estimate section, and the end prints the start estimate beside the computed spend, so its error shows every sweep.
 
+A local model's cost is electricity (`electricity.mjs`), read from the box log (`box.sqlite`, beside the scores log) when
+the scores files are written: the box's power readings (GPU board watts, and `compute.power_sources` counters such as
+RAPL by their differences across a wrap) integrated between samples, each interval's energy given to the generations
+running in it (a run's are the gens whose `hint.session` is `wml-<run hash>`, so a cloud-driven run's local vision
+calls count too), plus the draw above rest in the 30 s after each generation. Nested scopes are never added: the wall
+when the box reports one, else GPUs + CPU, and the section says which. scores.md/json and the scores page's Spend card
+gain `energy` (Wh, and above what the box draws at rest) and `electricity` (each moment at the tariff rate it fell in,
+from the price each run's calls recorded); a run with no electricity price shows energy only, with a warning to set
+one in DevTools Settings > Spend. Not yet live on the sweep page or in the estimate.
+
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at
 `<task>/<combo>/r<N>/`, each containing that run's full observe-style artifacts:

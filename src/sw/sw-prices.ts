@@ -8,7 +8,7 @@
 
 import { recordHousekeeping } from "./sw-housekeeping";
 import type { PriceRef, TokenUsage } from "../contract/contract-chat";
-import { priceBook, callCost, type PriceOf, type CallCost, type CallToPrice } from "../spend/price-book";
+import { priceBook, callCost, type PriceOf, type CallCost, type CallToPrice, isOffPeak } from "../spend/price-book";
 
 /** How old the snapshot may get before a call asks the service again (it refreshes hourly). */
 const STALE_MS = 60 * 60 * 1000;
@@ -131,23 +131,6 @@ export async function pricesForCall(setting: unknown): Promise<PriceRef | null> 
         if (!current) await Promise.race([pending, new Promise((r) => setTimeout(r, FIRST_WAIT_MS))]);
     }
     return current?.ref ?? null;
-}
-
-/**
- * Whether a moment falls in a two-rate tariff's off-peak time, on this device's clock: all weekend when `weekends`, and
- * the "from-to" hours ("23-7" wraps past midnight). Hours that do not parse mean no off-peak hours.
- * @param at the moment
- * @param hours the off-peak hours, "from-to"
- * @param weekends whether Saturday and Sunday are off-peak all day
- */
-export function isOffPeak(at: Date, hours: string, weekends: boolean): boolean {
-    const day = at.getDay();
-    if (weekends && (day === 0 || day === 6)) return true;
-    const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(hours);
-    if (!m) return false;
-    const from = Number(m[1]) % 24, to = Number(m[2]) % 24, h = at.getHours();
-    if (from === to) return false;
-    return from < to ? h >= from && h < to : h >= from || h < to;
 }
 
 /**

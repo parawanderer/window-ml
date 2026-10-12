@@ -87,13 +87,24 @@ test("a call records the electricity price only when one is set, and the price s
 // --- a two-rate tariff ---
 
 test("off-peak: the hours wrap past midnight, weekends count all day when set, and unparsable hours mean none", async () => {
-    const { isOffPeak } = await fresh(async () => new Response("", { status: 404 }));
+    const { isOffPeak } = await import("../src/spend/price-book.ts");
     const at = (day, hour) => new Date(2026, 9, 5 + day, hour, 30);   // 2026-10-05 is a Monday (day 0 here)
     for (const [h, want] of [[22, false], [23, true], [3, true], [6, true], [7, false], [12, false]]) assert.equal(isOffPeak(at(0, h), "23-7", true), want, `Monday ${h}:30`);
     assert.equal(isOffPeak(at(5, 12), "23-7", true), true, "Saturday noon, weekends on");
     assert.equal(isOffPeak(at(5, 12), "23-7", false), false, "Saturday noon, weekends off");
     assert.equal(isOffPeak(at(0, 10), "9-17", false), true, "a daytime window that does not wrap");
     for (const bad of ["", "night", "23", "5-5"]) assert.equal(isOffPeak(at(0, 3), bad, false), false, JSON.stringify(bad));
+});
+
+test("off-peak on the tariff's own clock: the zone it recorded decides the hour and the day, an unknown zone falls back to the device's", async () => {
+    const { isOffPeak } = await import("../src/spend/price-book.ts");
+    const utc = new Date(Date.UTC(2026, 9, 5, 22, 30));   // Monday 22:30 UTC: Tuesday 07:30 in Tokyo, Monday 23:30 in London (BST)
+    assert.equal(isOffPeak(utc, "23-7", false, "UTC"), false);
+    assert.equal(isOffPeak(utc, "23-7", false, "Europe/London"), true);
+    assert.equal(isOffPeak(utc, "23-7", false, "Asia/Tokyo"), false, "07:30 is past the window");
+    assert.equal(isOffPeak(new Date(Date.UTC(2026, 9, 9, 23, 30)), "23-7", true, "Asia/Tokyo"), true, "Friday 23:30 UTC is Saturday in Tokyo: the weekend");
+    const local = new Date(2026, 9, 5, 3, 30);
+    assert.equal(isOffPeak(local, "23-7", false, "Not/AZone"), isOffPeak(local, "23-7", false));
 });
 
 test("a call records the rate in effect when it ran; with no off-peak price set it records the single rate as before", async () => {

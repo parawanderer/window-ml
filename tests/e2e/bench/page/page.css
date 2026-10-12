@@ -241,6 +241,8 @@ td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
 .role.spend b, .badge.spend b { font-weight: 600; font-variant-numeric: tabular-nums }
 .spend .est { color: var(--fg-dim) }
 .badge.spend.partial > .tt b::after { content: "+"; color: var(--fg-faint); margin-left: 1px }
+/* The scores page's electricity cell: runs whose energy has no price to cost it (Settings > Spend sets one). */
+.warn-price { color: var(--warn); margin-left: 4px; vertical-align: -1px }
 /* memory.tsx: the memory budget and the held-run menu */
 .memory h3 { font-size: 12px; margin: 12px 0 6px }
 .memory .mkinds, .memory .mhints { margin: 8px 0; padding-left: 18px }

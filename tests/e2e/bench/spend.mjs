@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { priceCalls, spendByModel } from "./cost.mjs";
+import { runEnergy, energyByModel, BASIS_WORDS } from "./electricity.mjs";
 import { PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
 
 export const SPEND_SCHEMA = `
@@ -129,8 +130,11 @@ export const readCalls = (db) => db.prepare("SELECT * FROM calls ORDER BY id").a
  * Spend per driver model over every logged call, priced on read (cost.mjs), for scores.md and scores.json. `rows` are
  * the runs (readRuns) and `keyOf(row)` the scoreboard's model key. Runs logged before calls were have none and are
  * counted apart: "no per-call data", never zero. Null when no run has calls.
+ *
+ * With the box log (`box`, box.sqlite), each model also gets `energy` (electricity.mjs): what the box drew for its runs,
+ * priced at the electricity price each run's calls recorded; null for a model the box never generated for.
  */
-export function spendReport(db, rows, keyOf) {
+export function spendReport(db, rows, keyOf, { box = null } = {}) {
     const calls = readCalls(db);
     if (!calls.length) return null;
     const body = db.prepare("SELECT body FROM snapshots WHERE hash = ?");
@@ -139,15 +143,31 @@ export function spendReport(db, rows, keyOf) {
     const priced = priceCalls(calls.map((c) => (c.model == null && c.kind === "turn" ? { ...c, model: driverOf.get(c.run) ?? null } : c)), (h) => body.get(h)?.body ?? null);
     const byRun = new Map(rows.map((r) => [r.run, keyOf(r)]));
     const withCalls = new Set(calls.map((c) => c.run));
+    const models = spendByModel(priced, (run) => byRun.get(run) ?? null);
+    let energy = null;
+    if (box) {
+        // A run's electricity price is the one its calls recorded (each carries the whole tariff when there is one).
+        const price = new Map();
+        for (const c of calls) if (c.usage.electricity && !price.has(c.run)) price.set(c.run, c.usage.electricity);
+        energy = energyByModel(runEnergy(box, rows.map((r) => ({ run: r.run, price: price.get(r.run) ?? null }))), (run) => byRun.get(run) ?? null);
+        for (const m of models) m.energy = energy.get(m.model) ?? null;
+    }
     return {
         currency: PRICE_CURRENCY,
         calls: calls.length,
         runsWithCalls: withCalls.size,
         runsWithout: rows.filter((r) => !withCalls.has(r.run)).length,
-        models: spendByModel(priced, (run) => byRun.get(run) ?? null),
-        about: SPEND_ABOUT,
+        models,
+        ...(energy ? { energyBases: [...new Set([...energy.values()].flatMap((e) => e.basis.split(" / ")))].sort() } : {}),
+        about: { ...SPEND_ABOUT, ...(energy ? ENERGY_ABOUT : {}) },
     };
 }
+
+/** What the electricity columns mean. */
+export const ENERGY_ABOUT = {
+    energy: "What the box drew for the model's runs (box.sqlite): everything while it generated for them, plus its draw above rest in the 30 s after each generation, as the GPUs clock down; a stranger's generation at the same moment takes its share. \"Above rest\" takes off what the box draws with nothing generating, which is paid either way. Loading a model and keeping it resident are not counted.",
+    electricity: "That energy at the electricity price each run's calls recorded, each moment at its own rate (a two-rate tariff's off-peak hours on the tariff's clock). A run with no price set shows energy only: set the average price per kWh in DevTools Settings > Spend.",
+};
 
 /** What each spend column means: scores.md's notes. */
 export const SPEND_ABOUT = {
@@ -161,10 +181,16 @@ export const SPEND_ABOUT = {
 export function spendText(spend) {
     if (!spend) return [];
     const money = (x, n) => (n ? `${x.toFixed(4)} ${spend.currency} (${n})` : "");
+    const energy = spend.models.some((m) => m.energy);
+    const wh = (e) => (e ? `${e.Wh.toFixed(2)} (${e.runs})${e.aboveWh != null ? `, ${e.aboveWh.toFixed(2)} above rest` : ""}` : "");
+    const power = (e) => (!e ? "" : [e.cost != null ? `${e.cost.toFixed(4)} ${e.currency}${e.costAbove != null ? ` (${e.costAbove.toFixed(4)} above rest)` : ""}` : null,
+        e.unpriced ? `⚠ ${e.unpriced} run${e.unpriced === 1 ? "" : "s"} with no electricity price` : null].filter(Boolean).join("; "));
     const out = ["## Spend", "", `${spend.calls} model call${spend.calls === 1 ? "" : "s"} over ${spend.runsWithCalls} run${spend.runsWithCalls === 1 ? "" : "s"}, from the \`calls\` table, priced when this was written.${spend.runsWithout ? ` ${spend.runsWithout} run${spend.runsWithout === 1 ? "" : "s"} logged before calls were recorded ha${spend.runsWithout === 1 ? "s" : "ve"} no per-call data and ${spend.runsWithout === 1 ? "is" : "are"} not here.` : ""}`, "",
-        "| model | runs | calls | computed (calls) | reported (calls) | local | unpriced | why |", "| --- | --- | --- | --- | --- | --- | --- | --- |"];
-    for (const m of spend.models) out.push(`| ${m.model} | ${m.runs} | ${m.calls} | ${money(m.computed, m.computedCalls)} | ${money(m.reported, m.reportedCalls)} | ${m.local || ""} | ${m.unpriced || ""} | ${m.unpriced ? m.why : ""} |`);
+        `| model | runs | calls | computed (calls) | reported (calls) | local | unpriced | why |${energy ? " energy, Wh (runs) | electricity |" : ""}`,
+        `| --- | --- | --- | --- | --- | --- | --- | --- |${energy ? " --- | --- |" : ""}`];
+    for (const m of spend.models) out.push(`| ${m.model} | ${m.runs} | ${m.calls} | ${money(m.computed, m.computedCalls)} | ${money(m.reported, m.reportedCalls)} | ${m.local || ""} | ${m.unpriced || ""} | ${m.unpriced ? m.why : ""} |${energy ? ` ${wh(m.energy)} | ${power(m.energy)} |` : ""}`);
     out.push("");
-    for (const [k, v] of Object.entries(SPEND_ABOUT)) out.push(`- **${k}**: ${v}`);
+    if (energy) out.push(`Energy measured as: ${spend.energyBases.map((b) => BASIS_WORDS[b] ?? b).join("; ")}.`, "");
+    for (const [k, v] of Object.entries(spend.about ?? SPEND_ABOUT)) out.push(`- **${k}**: ${v}`);
     return out.concat([""]);
 }

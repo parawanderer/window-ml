@@ -4,7 +4,7 @@
 // saying where it comes from, so a reader never needs the code to know what they are looking at.
 
 import { render, Fragment } from "preact";
-import type { ScoreBoard, ScoreModel, RegressionReport, SpendReport } from "./state";
+import type { ScoreBoard, ScoreModel, RegressionReport, SpendReport, EnergyTally } from "./state";
 import { fmtMoney } from "./format";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
@@ -13,6 +13,7 @@ import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 import { cloudModels } from "../../../../src/sidebar/palette";
 import { signed, Interval } from "../../../../src/sidebar/interval-bar";
 import { Disclosure } from "../../../../src/sidebar/disclosure";
+import { IconWarn } from "../../../../src/sidebar/icons";
 
 declare global { interface Window { __BENCH_SCORES__?: ScoreBoard } }
 
@@ -85,10 +86,30 @@ function Models({ b }: { b: ScoreBoard }) {
     );
 }
 
+/** How energy was measured, in words (electricity.mjs `BASIS_WORDS`). */
+const BASIS_WORDS: Record<string, string> = { wall: "at the wall", system: "the whole system", "gpu+cpu": "GPUs + CPU package (the rest of the box not measured)", gpu: "GPUs only", cpu: "CPU package only" };
+
+/** A model's energy cell: Wh over its runs, and above rest. */
+function Energy({ e }: { e: EnergyTally | null | undefined }) {
+    if (!e) return <span class="dim">—</span>;
+    const how = e.basis.split(" / ").map((b) => BASIS_WORDS[b] ?? b).join("; ");
+    return <span class="tt" data-tip={`${e.runs} run${e.runs === 1 ? "" : "s"} the box generated for. Measured as: ${how}.${e.aboveWh != null ? ` ${e.aboveWh.toFixed(2)} Wh above what the box draws at rest.` : " No rest reading, so nothing is said above rest."}`}>{e.Wh.toFixed(2)} Wh{e.runs ? <span class="dim"> ({e.runs})</span> : null}</span>;
+}
+
+/** A model's electricity cell: the cost when its runs had a price, and a warning for the runs that had none. */
+function Power({ e }: { e: EnergyTally | null | undefined }) {
+    if (!e) return <span class="dim">—</span>;
+    const warn = e.unpriced
+        ? <span class="tt warn-price" data-tip={`${e.unpriced} run${e.unpriced === 1 ? "" : "s"} had no electricity price, so ${e.unpriced === 1 ? "its" : "their"} energy is shown but not costed. Set the average price per kWh in DevTools Settings > Spend.`}><IconWarn /></span>
+        : null;
+    return <>{e.cost != null ? <span class="tt" data-tip={e.costAbove != null ? `${fmtMoney(e.costAbove, e.currency ?? "")} of it above what the box draws at rest` : "No rest reading, so nothing is said above rest."}>{fmtMoney(e.cost, e.currency ?? "")}</span> : null}{warn}</>;
+}
+
 /** What every logged model call cost, per driver model, priced when this page was written (spend.mjs, cost.mjs). */
 function Spend({ sp, models }: { sp: SpendReport; models: ScoreModel[] }) {
     const about = sp.about ?? {};
     const byKey = new Map(models.map((m) => [m.key, m]));
+    const energy = sp.models.some((r) => r.energy);
     const money = (x: number, n: number, of: number) => (n ? <span class="tt" data-tip={`over ${n} of ${of} call${of === 1 ? "" : "s"}`}>{fmtMoney(x, sp.currency)}{n < of ? <span class="dim"> ({n})</span> : null}</span> : <span class="dim">—</span>);
     return (
         <section class="card">
@@ -104,6 +125,7 @@ function Spend({ sp, models }: { sp: SpendReport; models: ScoreModel[] }) {
                         <th>calls</th>
                         <th><Tip tip={about.local}>local</Tip></th>
                         <th class="l"><Tip tip={about.unpriced}>unpriced</Tip></th>
+                        {energy ? <><th><Tip tip={about.energy}>energy</Tip></th><th><Tip tip={about.electricity}>electricity</Tip></th></> : null}
                     </tr></thead>
                     <tbody>{sp.models.map((r) => {
                         const m = byKey.get(r.model);
@@ -116,6 +138,7 @@ function Spend({ sp, models }: { sp: SpendReport; models: ScoreModel[] }) {
                                 <td>{r.calls}</td>
                                 <td>{r.local || ""}</td>
                                 <td class="l">{r.unpriced ? <span class="tt" data-tip={`Most often: ${r.why ?? "unknown"}`}>{r.unpriced} <span class="dim">{r.why}</span></span> : ""}</td>
+                                {energy ? <><td><Energy e={r.energy} /></td><td><Power e={r.energy} /></td></> : null}
                             </tr>
                         );
                     })}</tbody>

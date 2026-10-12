@@ -162,3 +162,37 @@ export function callCost(usage: Pick<TokenUsage, "promptTokens" | "completionTok
     if (out.unpriced.length) out.why = `no rate for ${out.unpriced.join(", ")}`;
     return out;
 }
+
+/**
+ * Whether a moment falls in a two-rate tariff's off-peak time: all weekend when `weekends`, and the "from-to" hours
+ * ("23-7" wraps past midnight). Hours that do not parse mean no off-peak hours. The clock is `tz`'s (an IANA zone, as
+ * a tariff records it), else this device's; a zone this runtime does not know falls back to the device's too.
+ * @param at the moment
+ * @param hours the off-peak hours, "from-to"
+ * @param weekends whether Saturday and Sunday are off-peak all day
+ * @param tz the time zone the hours are on
+ */
+export function isOffPeak(at: Date, hours: string, weekends: boolean, tz?: string): boolean {
+    const { day, h } = clockIn(at, tz);
+    if (weekends && (day === 0 || day === 6)) return true;
+    const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(hours);
+    if (!m) return false;
+    const from = Number(m[1]) % 24, to = Number(m[2]) % 24;
+    if (from === to) return false;
+    return from < to ? h >= from && h < to : h >= from || h < to;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** The weekday (0 = Sunday) and hour of a moment on `tz`'s clock, or the device's when there is none or it is unknown. */
+function clockIn(at: Date, tz?: string): { day: number; h: number } {
+    if (tz) {
+        try {
+            const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23" }).formatToParts(at);
+            const day = WEEKDAYS.indexOf(parts.find((p) => p.type === "weekday")?.value ?? "");
+            const h = Number(parts.find((p) => p.type === "hour")?.value);
+            if (day >= 0 && Number.isFinite(h)) return { day, h };
+        } catch { /* an unknown zone: the device's clock */ }
+    }
+    return { day: at.getDay(), h: at.getHours() };
+}
