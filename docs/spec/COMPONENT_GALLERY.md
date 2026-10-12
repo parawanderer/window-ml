@@ -92,12 +92,24 @@ interface GalleryEntry {
   id: string; title: string; summary: string; groups?: string[];
   props: unknown;                     // the default JSON shown in the sidebar
   variants?: Record<string, unknown>;
-  mount(el: HTMLElement, props: unknown, api: { setProps(next: unknown): void }):
-    { update(props: unknown): void; destroy(): void };
+  notes?: string;                     // markdown, shown folded under the stage
+  mount(el: HTMLElement, props: unknown, api: EntryApi): { update(props: unknown): void; destroy(): void };
+}
+interface EntryApi {
+  setProps(next: unknown): void;      // write back: dragging a point on the canvas updates the JSON
+  log(text: string): void;            // a line in the entry's log, time-stamped
+  metric(name: string, ms: number): void;   // one timing sample, by phase
 }
 ```
 
-`setProps` lets the entry write back, so dragging a gradient point on the canvas updates the JSON.
+**Notes** are for what a reader should know before relying on the thing: for the gradient entry, the ML-side caveats
+([`GRADIENT_FILLS.md`](GRADIENT_FILLS.md)). They fold away with the panel's `Disclosure`.
+
+**The log and the metrics** are drawn with what the panel already has: the log cell with a time gutter (`TimedOutput`,
+as the housekeeping log uses it) and a stacked chart over time (`TimeChart`), one series per phase. The gradient entry
+reports CPU solve, upload and GPU draw per frame. GPU time comes from `EXT_disjoint_timer_query_webgl2` where the browser
+exposes it; elsewhere from a forced sync (`readPixels` after the draw), labelled as an upper bound. A continuous-redraw
+toggle turns the entry into a small benchmark.
 
 ## The CLI: `gallery.mjs` (in `scripts/`)
 
