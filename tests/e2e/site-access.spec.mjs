@@ -977,6 +977,126 @@ test.describe("@security attack 18: the approval highlight", () => {
             expect(await cardText(), "a forged ML_HL_AT moved the card's note").not.toContain("bottom-left");
         } finally { await close(); }   // abandons the still-gated run
     });
+
+    // The highlight is resolved in the shell's world and the click in the page's: the two must not name different
+    // elements. The page here has a same-origin frame with a closed root (which the main world's capture never sees),
+    // a declarative closed root (never captured either), a scripted closed root (captured), an open root and the light
+    // DOM, in that order, so a resolver that opens more roots than the main world finds a different first match.
+    /** Build the fixture, every target at its own place, and turn piercing on in the main world as a run does. */
+    const buildRoots = (page) => page.evaluate(() => {
+        const pos = (i) => `position:absolute;left:${20 + i * 70}px;top:${40 + i * 13}px;width:${40 + i}px;height:${20 + i}px;display:block`;
+        const btn = (doc, cls, text, i) => { const b = doc.createElement("button"); b.className = cls; b.textContent = text; b.style.cssText = pos(i); return b; };
+        const fr = Object.assign(document.createElement("iframe"), { id: "fr" });
+        fr.style.cssText = "position:absolute;left:0;top:300px;width:600px;height:200px;border:0";
+        document.body.append(fr);
+        const fd = fr.contentDocument; fd.open(); fd.write("<!doctype html><body style='margin:0'></body>"); fd.close();
+        fd.body.append(btn(fd, "fin", "Frame", 1));
+        const fh = Object.assign(fd.createElement("div"), { id: "fch" });
+        fh.attachShadow({ mode: "closed" }).append(btn(fd, "in", "Frame closed", 2));
+        fd.body.append(fh);
+        const parsed = Document.parseHTMLUnsafe(`<div id="dh"><template shadowrootmode="closed"><button class="in cl" style="${pos(3)}">Declarative</button></template></div>`);
+        document.body.append(document.adoptNode(parsed.getElementById("dh")));
+        const ch = Object.assign(document.createElement("div"), { id: "ch" });
+        ch.attachShadow({ mode: "closed" }).append(btn(document, "in cl", "Closed", 4));
+        const oh = Object.assign(document.createElement("div"), { id: "oh" });
+        oh.attachShadow({ mode: "open" }).append(btn(document, "in", "Open", 5));
+        document.body.append(ch, oh, btn(document, "lt", "Light", 6));
+        window.__mlPierceClosed = true;
+    });
+    /** What the DOM tools resolve `sel` to in the main world, as `text@left,top` in the top viewport, or null. */
+    const mainTarget = (page, sel) => page.evaluate((s) => {
+        const el = window.ml.queryAll(s)[0];
+        if (!el) return null;
+        const r = el.getBoundingClientRect(), f = el.ownerDocument.defaultView.frameElement?.getBoundingClientRect();
+        return `${el.textContent}@${Math.round(r.left + (f?.left ?? 0))},${Math.round(r.top + (f?.top ?? 0))}`;
+    }, sel);
+    /** Ask the shell to outline `sel` the way the panel does, and read back where it drew, as `left,top`, or null. */
+    const outline = async (ext, page, sel) => {
+        const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, page.url());
+        await ext.sw.evaluate(([t, s]) => chrome.tabs.sendMessage(t, { type: "ML_HL_REMOTE", ref: { selector: s }, anyMode: true }), [tabId, sel]);
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        return inShell(page, (roots) => {
+            const el = (roots.highlight || roots.sidebar)?.querySelector("#ml-highlight");
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return `${Math.round(r.left)},${Math.round(r.top)}`;
+        });
+    };
+
+    test("18 (parity): the highlight outlines the element the DOM tools act on, or nothing, never another", async () => {
+        const { site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"), { approve: true });
+            await buildRoots(page);
+            // Positive control: where the main world's resolution is the shell's, the outline is on that element.
+            for (const sel of ["button.lt", 'button:contains("Light")', "text=Light", 'role=button[name="Light"]', "#oh >>> .in", "#ch >>> .in",
+                'text="Closed"', "#fr >>> .fin", ".fin", "button:nth-of-type(2)"]) {
+                const main = await mainTarget(page, sel);
+                expect(main, `${sel}: the main world resolves it`).not.toBeNull();
+                expect(await outline(ext, page, sel), `${sel}: outlined where the tools act`).toBe(main.split("@")[1]);
+            }
+            // Where the shell can reach roots the main world cannot (the frame's closed root, the declarative one), the
+            // outline is the main world's element or none. `.in` is "Closed" in the main world; it was "Frame closed".
+            // `.cl` is only in closed roots, the declarative one first.
+            for (const sel of [".in", ".in:eq(1)", ".cl", "#fr >>> #fch >>> .in"]) {
+                const main = await mainTarget(page, sel);
+                const drawn = await outline(ext, page, sel);
+                if (drawn !== null) expect(drawn, `${sel}: outlined another element than the tools act on (main world: ${main})`).toBe(main?.split("@")[1]);
+            }
+            // A declarative closed host with a light child that also matches: the main world cannot enter the root, so
+            // `>>>` falls back to the host's light subtree and acts on the slotted child.
+            await page.evaluate(() => {
+                const parsed = Document.parseHTMLUnsafe(`<div id="dl"><template shadowrootmode="closed"><button class="in" style="position:absolute;left:20px;top:240px;width:50px;height:20px">Inside</button><slot></slot></template><button class="in" style="position:absolute;left:120px;top:240px;width:50px;height:20px">Slotted</button></div>`);
+                document.body.append(document.adoptNode(parsed.getElementById("dl")));
+            });
+            const main = await mainTarget(page, "#dl >>> .in");
+            expect(main, "the main world acts on the slotted child").toMatch(/^Slotted@/);
+            const drawn = await outline(ext, page, "#dl >>> .in");
+            if (drawn !== null) expect(drawn, "outlined the declarative root's button, not the slotted one the tools act on").toBe(main.split("@")[1]);
+        } finally { await close(); }
+    });
+
+    test("18 (setting): piercing turned off while a run has it on never outlines another element than the run acts on", async () => {
+        const { site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"), { approve: true });
+            await buildRoots(page);
+            // The run started with piercing on (`window.__mlPierceClosed`, set at the run's start); the person turns it off.
+            await ext.sw.evaluate(() => chrome.storage.sync.set({ pierceClosedShadow: false }));
+            // The shell has the new setting once it stops outlining what only a closed root holds.
+            await expect.poll(() => outline(ext, page, "#ch >>> .in"), { timeout: 5000 }).toBeNull();
+            const main = await mainTarget(page, ".in");
+            expect(main, "the run acts on the closed root's button").toMatch(/^Closed@/);
+            const drawn = await outline(ext, page, ".in");
+            if (drawn !== null) expect(drawn, "outlined another element than the run acts on").toBe(main.split("@")[1]);
+            // Positive control: the setting off still outlines an element outside every closed root.
+            expect(await outline(ext, page, "button.lt")).toBe((await mainTarget(page, "button.lt")).split("@")[1]);
+        } finally { await close(); }
+    });
+
+    test("18 (remount): a host of ours the page keeps and puts back under another id is never read for a highlight", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"), { approve: true });
+            const idx = await sessions(ext);
+            fake.setScript([{ tool: "click", args: { selector: "#nothing-here" } }, { content: "done" }]);
+            await page.evaluate(() => document.body.append(Object.assign(document.createElement("button"), { id: "nothing-here", textContent: "x" })));
+            const hash = await userStartsRun(ext, idx, page, "click it");
+            await expect.poll(() => idx.status(hash), { timeout: 15000 }).toBe("waiting");
+            // The page keeps the card's host, the shell remounts (overlay mode), and the page puts the old host back.
+            await page.waitForFunction(() => (window.__oldHost = document.getElementById("ml-sb-card")));
+            await ext.sw.evaluate(() => chrome.storage.sync.set({ debugMode: "overlay" }));
+            await page.waitForFunction(() => !document.contains(window.__oldHost) && document.getElementById("ml-sb-root"));
+            await page.evaluate(() => { window.__oldHost.id = "not-yours"; document.body.prepend(window.__oldHost); });
+            // Only our old root holds an iframe. The shell's reader does open that root (only the current hosts are
+            // matched by identity), and every element in a root of ours carries an `ml-sb-*` id the page cannot rename,
+            // which `queryAll` drops: the outline must not find it.
+            expect(await outline(ext, page, "iframe"), "outlined an element inside a root of ours").toBeNull();
+            // Positive control: the page's own iframe, after ours in the document, is outlined.
+            await page.evaluate(() => { const f = document.createElement("iframe"); f.id = "mine"; f.style.cssText = "position:absolute;left:30px;top:200px;width:90px;height:60px"; document.body.append(f); });
+            expect(await outline(ext, page, "iframe")).toBe("30,200");
+        } finally { await close(); }
+    });
 });
 
 // PART 4b: an approved exec of a worker-built run on a page that is not approved runs in a CDP isolated world (the
