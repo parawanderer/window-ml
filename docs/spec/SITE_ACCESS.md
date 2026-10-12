@@ -319,7 +319,9 @@ The attacks, each its own test:
     and let it put a `:host{…!important}` rule inside a root, which beats the hosts' inline `all: initial !important`.
     The roots are closed (owner decision 2026-10-10), and the tests assert the page has no handle on one by any path,
     nor on the card's window (17a, 17b). Closing it found two bypasses: the card app posted its theme to its parent
-    window, and the page-started `CDP_SHADOW_RESOLVE` walked into our hosts.
+    window, and the page-started `CDP_SHADOW_RESOLVE` walked into our hosts. The review of #610 found two more: that
+    resolver keyed on the host's id, which the page can rename (17c), and a drag out of our lightbox handed the page the
+    image's address, markup and file at `dragstart` (17d).
 
 The suite was written before any slice landed, against a build that every attack beats. While a slice is open its
 tests assert that the attack SUCCEEDS; the slice that closes it flips that, and the same tests then assert the secure

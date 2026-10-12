@@ -59,7 +59,8 @@ the worker, and the page answers geometry only):
             reach our nodes or the card's iframe. The page holds no handle on a root by any path (host, global,
             expando, event path, mutation record, focus, selection, hit test, the test hook); the card app's theme post
             to `window.parent` and the page-started `CDP_SHADOW_RESOLVE` descending into our hosts, both of which
-            bypassed it, are shut (site-access.spec.mjs, attack 17; review-look.spec.mjs, "does not get in";
+            bypassed it, are shut, and so are the resolver keyed on a host id the page can rename (17c) and a drag out of
+            the lightbox (17d) (site-access.spec.mjs, attack 17; review-look.spec.mjs, "does not get in";
             background.test.js, "never descends into the shell's own host"): #610.
       - [ ] `<html>` (the page's own element) stays open: a timed edit to it is seen only by a frame read.
       - [x] Review of #599: a host removed and put back is restored at once (child-list watch); the page re-showing

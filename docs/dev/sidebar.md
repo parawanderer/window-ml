@@ -94,8 +94,11 @@ test in `tests/e2e/site-access.spec.mjs` (attack 17): a root through the host, a
 or `composedPath()`, a mutation record, focus, the selection or a hit test; the card's iframe (a frame in a shadow tree is
 not in `window.frames` either); a `:host` rule inside a root (`review-look.spec.mjs`). Two paths that bypassed the
 closed root are shut with it: the app posting its theme to `window.parent` (the page heard it and got the frame's window
-as the message source; it goes through `toHost` now), and the page-started `CDP_SHADOW_RESOLVE`, which pierces closed
-roots and now skips a host with one of our ids (`isOwnUiId`, `ids.ts`). The DOM tools never see inside our UI either:
+as the message source; it goes through `toHost` now, 16e), and the page-started `CDP_SHADOW_RESOLVE`, which pierces closed
+roots and now skips a root whose host has one of our ids (`isOwnUiId`, `ids.ts`) or which holds the shell's stylesheet
+(`SB_STYLE`): the host's id is the page's to rename, the inside of our root is not (17c). Nothing in our roots starts a
+drag or a text selection (`NO_DRAG_CSS`, and the lightbox image is not draggable): the page's capture listener reads a
+drag's `dataTransfer` at `dragstart`, which a closed root does not retarget (17d). The DOM tools never see inside our UI either:
 they pierce open roots and the closed roots `shadow-patch.ts` captures in the MAIN world, and ours are attached in the
 isolated world, whose `attachShadow` that patch does not wrap. That is what they want: they skipped our hosts by id before
 (`isExtUiRoot`), and `queryAll(sel, true)` now reaches the hosts only.
