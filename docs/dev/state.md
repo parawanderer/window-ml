@@ -53,6 +53,7 @@ page-hosted one. Several stores exist once per host.
 | What a worker-built run's worker-side `fetch_url` and `python_exec` were approved for (URL consent, one-time as-you reads, the running call's sheets and full-mode code) | `runs[runId].consented`, `.credOnce`, `.pyCall` (`worker-tools.ts`, worker memory); never the tab's | no; lost on an eviction, and a call then asks again | maybe |
 | What a worker-built run's `fetch_url` read (the read-only survey's free re-reads) | `runs[runId].cache` (`worker-tools.ts`, worker memory, frozen copies); page-hosted and approved exec: `mlFetchCache` (`injected.ts`, page) | no; the worker's goes with an eviction (a re-read then asks again) | maybe |
 | Execution log | `runLog` (`sw-run-log.ts`) | `ml_run_log` (session storage) | `run.log`, read by the model as `ml.current.log` (no `key`/`tab`/`origin`) |
+| Who sent each user message (the channel, the verified scopes; PROPOSED, `CURRENT_CONTEXT.md`) | nowhere yet: the hub drops the sender after checking it, and a steer carries no origin | with `meta` | `client` |
 | Environment: debugger attached, tab pinned, navigation barrier, hub devices granted this session | `attachedDebuggees`, `ml_pinned_tabs`, `navBarrier`, `SessionPublisher.granted` | partly | `run` (new) |
 | Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page; a worker-built run's: worker) | no | maybe |
 | An isolated exec's `state` | `globalThis.__mlState` in the run's user-script world `wml-<runId>` (`sw-isolated-exec.ts`); a CDP world's dies with the call | no | no |
