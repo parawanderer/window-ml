@@ -15,6 +15,8 @@
 // them to it, so each is a distinct origin. Nothing here needs a real model or network, and no wait is on a timer:
 // every wait is on a run finishing, a reply arriving, or a state change.
 
+import fs from "node:fs";
+import path from "node:path";
 import { test, expect } from "@playwright/test";
 import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
@@ -519,6 +521,22 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
             // Secure: the forged event is ignored and the card still shows the run's real answer.
             await expect.poll(() => cardText(page), { timeout: 15000 }).toContain("first answer");
             expect(await cardText(page)).not.toContain("FORGED");
+        } finally { await close(); }
+    });
+
+    test("16e: the card's resolved theme reaches the shell over its port, and the page never hears it", async () => {
+        // The card's frame resolves the theme (prefs.ts) and the shell paints the acrylic behind it from that answer. An
+        // uploaded dark VS Code theme colouring the panel makes the app's answer dark while the Theme setting the shell
+        // guesses from says light, so the wrap shows whose answer arrived.
+        const { fake, site, ext, close } = await setup({ theme: "light" });
+        try {
+            const text = fs.readFileSync(path.resolve(import.meta.dirname, "../fixtures/vscode-theme.jsonc"), "utf8");
+            await ext.sw.evaluate((t) => chrome.storage.local.set({ ml_code_theme: "vscode", ml_code_theme_vscode: { name: "Fixture Sunset", text: t }, ml_code_theme_ui: true }), text);
+            const page = await open(ext, site.url("evil.test"));
+            await finishedRun(ext, page, fake);
+            await expect.poll(() => cardFrame(page).evaluate(() => document.documentElement.getAttribute("data-theme")), { timeout: 15000 }).toBe("dark");
+            await expect.poll(() => inShell(page, (roots) => roots.card?.getElementById("ml-sb-card-wrap")?.dataset.theme ?? null), { timeout: 15000 }).toBe("dark");
+            expect(await page.evaluate(() => JSON.stringify(window.__heard)), "the page heard the card's theme").not.toContain("__mlSidebarCardTheme");
         } finally { await close(); }
     });
 
