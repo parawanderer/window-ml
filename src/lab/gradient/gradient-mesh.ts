@@ -6,8 +6,9 @@
 export type Vec2 = [number, number];
 
 /** One mesh node: its position, its tangents along a row (`u`) and down a column (`v`) in units of one patch, and its
- *  value. Illustrator's handles are `p ± u/3` and `p ± v/3`. */
-export interface MeshNode { p: Vec2; u: Vec2; v: Vec2; value: number[] }
+ *  value. Illustrator's handles are `p + u/3` and `p + v/3` on the far side, and `p − uIn/3`, `p − vIn/3` on the near
+ *  side; `uIn` and `vIn` default to `u` and `v` (symmetric handles, a smooth mesh point). */
+export interface MeshNode { p: Vec2; u: Vec2; v: Vec2; uIn?: Vec2; vIn?: Vec2; value: number[] }
 
 /** A gradient mesh of `rows × cols` patches, its `(rows+1) × (cols+1)` nodes row-major. */
 export interface Mesh {
@@ -23,8 +24,8 @@ export interface Mesh {
 /** Where a pixel landed on the mesh: the patch (row-major index) and its parameters. */
 export interface MeshHit { patch: number; u: number; v: number }
 
-/** The gradient of a loss with respect to every node's position, tangents and value. */
-export interface MeshGrad { nodes: { p: Vec2; u: Vec2; v: Vec2; value: number[] }[] }
+/** The gradient of a loss with respect to every node's position, tangents and value; `uIn`/`vIn` where the node has them. */
+export interface MeshGrad { nodes: { p: Vec2; u: Vec2; v: Vec2; uIn?: Vec2; vIn?: Vec2; value: number[] }[] }
 
 /** The Hermite basis and its derivatives: H0, H1 (positions), T0, T1 (tangents). */
 const H0 = (t: number) => 2 * t * t * t - 3 * t * t + 1;
@@ -53,16 +54,23 @@ export function meshChannels(mesh: Mesh): number {
     return k;
 }
 
-/** One position-basis term: corner node, which parameter (`p`, `u` or `v`) and its weight β. */
-type GeoTerm = { node: number; which: "p" | "u" | "v"; w: number };
+/** A node's parameter that the geometry is linear in. */
+type GeoParam = "p" | "u" | "v" | "uIn" | "vIn";
+/** One position-basis term: corner node, which parameter and its weight β. */
+type GeoTerm = { node: number; which: GeoParam; w: number };
+
+/** The tangents a patch reads at its corner `(a, b)`: the far-side ones at a = 0 / b = 0, the near-side ones at 1. */
+function cornerTangents(n: MeshNode, a: number, b: number): ["u" | "uIn", "v" | "vIn"] {
+    return [a === 1 && n.uIn ? "uIn" : "u", b === 1 && n.vIn ? "vIn" : "v"];
+}
 
 /** The geometry basis β at (u, v), or of ∂/∂u (`du`) or ∂/∂v (`dv`): S = Σ β θ over the 12 corner parameters. */
 function geoBasis(mesh: Mesh, patch: number, u: number, v: number, du = false, dv = false): GeoTerm[] {
     const out: GeoTerm[] = [];
     for (let b = 0; b < 2; b++) for (let a = 0; a < 2; a++) {
         const [ha, ta] = hermite(a, u, du), [hb, tb] = hermite(b, v, dv);
-        const node = cornerNode(mesh, patch, a, b);
-        out.push({ node, which: "p", w: ha * hb }, { node, which: "u", w: ta * hb }, { node, which: "v", w: ha * tb });
+        const node = cornerNode(mesh, patch, a, b), [tu, tv] = cornerTangents(mesh.nodes[node], a, b);
+        out.push({ node, which: "p", w: ha * hb }, { node, which: tu, w: ta * hb }, { node, which: tv, w: ha * tb });
     }
     return out;
 }
@@ -70,7 +78,7 @@ function geoBasis(mesh: Mesh, patch: number, u: number, v: number, du = false, d
 /** Evaluate a basis against the node parameters. */
 function applyGeo(mesh: Mesh, terms: GeoTerm[]): Vec2 {
     let x = 0, y = 0;
-    for (const t of terms) { const q = mesh.nodes[t.node][t.which]; x += t.w * q[0]; y += t.w * q[1]; }
+    for (const t of terms) { const q = mesh.nodes[t.node][t.which]!; x += t.w * q[0]; y += t.w * q[1]; }
     return [x, y];
 }
 
@@ -121,10 +129,10 @@ export function patchValue(mesh: Mesh, patch: number, u: number, v: number, k = 
 function patchBox(mesh: Mesh, patch: number): [number, number, number, number] {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let b = 0; b < 2; b++) for (let a = 0; a < 2; a++) {
-        const n = mesh.nodes[cornerNode(mesh, patch, a, b)];
+        const n = mesh.nodes[cornerNode(mesh, patch, a, b)], [tu, tv] = cornerTangents(n, a, b), U = n[tu]!, V = n[tv]!;
         const su = a === 0 ? 1 / 3 : -1 / 3, sv = b === 0 ? 1 / 3 : -1 / 3;
         for (const [cu, cv] of [[0, 0], [su, 0], [0, sv], [su, sv]]) {
-            const x = n.p[0] + cu * n.u[0] + cv * n.v[0], y = n.p[1] + cu * n.u[1] + cv * n.v[1];
+            const x = n.p[0] + cu * U[0] + cv * V[0], y = n.p[1] + cu * U[1] + cv * V[1];
             x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
         }
     }
@@ -199,7 +207,13 @@ export function evalMesh(mesh: Mesh, xs: ArrayLike<number>): MeshEval {
 
 /** An all-zero gradient shaped like `mesh`. */
 function zeroGrad(mesh: Mesh, k: number): MeshGrad {
-    return { nodes: mesh.nodes.map(() => ({ p: [0, 0] as Vec2, u: [0, 0] as Vec2, v: [0, 0] as Vec2, value: new Array(k).fill(0) })) };
+    return {
+        nodes: mesh.nodes.map((n) => ({
+            p: [0, 0] as Vec2, u: [0, 0] as Vec2, v: [0, 0] as Vec2,
+            ...(n.uIn ? { uIn: [0, 0] as Vec2 } : {}), ...(n.vIn ? { vIn: [0, 0] as Vec2 } : {}),
+            value: new Array(k).fill(0),
+        })),
+    };
 }
 
 /**
@@ -227,7 +241,7 @@ export function vjpMesh(mesh: Mesh, xs: ArrayLike<number>, g: ArrayLike<number>,
         // r = q J⁻¹, J⁻¹ = [[d, −b], [−c, a]] / det
         const rx = (qu * d - qv * c) / det, ry = (-qu * b + qv * a) / det;
         for (const t of geoBasis(mesh, patch, u, v)) {
-            const q = grad.nodes[t.node][t.which];
+            const q = grad.nodes[t.node][t.which]!;
             q[0] -= rx * t.w; q[1] -= ry * t.w;
         }
     }
@@ -245,6 +259,12 @@ export function meshMse(mesh: Mesh, xs: ArrayLike<number>, targets: ArrayLike<nu
     }
     for (const h of hits) if (h) covered++;
     return { loss, grad: vjpMesh(mesh, xs, g, hits), covered };
+}
+
+/** Give every node of `mesh` its own near-side handles (`uIn`, `vIn`, copied from `u`, `v`), so each of its four handles
+ *  can move alone. The fill is unchanged until one does. */
+export function splitHandles(mesh: Mesh): Mesh {
+    return { ...mesh, nodes: mesh.nodes.map((n) => ({ ...n, uIn: n.uIn ?? [n.u[0], n.u[1]], vIn: n.vIn ?? [n.v[0], n.v[1]] })) };
 }
 
 /** A regular mesh over a rectangle: straight edges, tangents of one patch's size, values from `value(i, j)`. */

@@ -151,9 +151,11 @@ What the cheap version costs:
 A grid of `(m+1) × (n+1)` nodes, node `(i, j)` (row i, column j) carrying:
 
 - a position `P ∈ R²`;
-- two tangents, `U` along a row (the u direction) and `V` down a column (v), in units of one patch. The Bézier handles
-  Illustrator draws are `P ± U/3` and `P ± V/3`. The handles are SYMMETRIC (a smooth mesh point); independent handles
-  per side are a later extension that only changes how a patch reads its corners;
+- tangents along a row (the u direction) and down a column (v), in units of one patch: `U` and `V` on the far side
+  (toward the next node), and optionally `U_in` and `V_in` on the near side. The four Bézier handles Illustrator draws
+  are `P + U/3`, `P − U_in/3`, `P + V/3` and `P − V_in/3`. Absent, `U_in = U` and `V_in = V`: the handles are SYMMETRIC
+  (a smooth mesh point). Given, each handle moves alone (a corner point), and `splitHandles(mesh)` gives every node
+  its own copies to start from;
 - a value `C ∈ R^k`.
 
 ### Geometry: bicubic Hermite with zero twist
@@ -166,12 +168,15 @@ basis `H_0(t) = 2t³ − 3t² + 1`, `H_1(t) = −2t³ + 3t²`, `T_0(t) = t³ −
 S(u, v) = Σ_{a,b} H_a(u) H_b(v) P_ab + T_a(u) H_b(v) U_ab + H_a(u) T_b(v) V_ab
 ```
 
-This is the tensor-product Bézier patch whose inner control points are set by zero twist (`b_11 = P + (U + V)/3`, and
-the same from each corner). Neighbouring patches share their edge curve, so the mesh is C⁰ in position everywhere and C¹
-across an edge whose tangents agree, which symmetric handles give.
+where a patch reads, at its corner `(a, b)`, the far-side `U` at `a = 0` and the near-side `U_in` at `a = 1` (and `V`,
+`V_in` the same way by `b`). This is the tensor-product Bézier patch whose inner control points are set by zero twist
+(`b_11 = P + (U + V)/3`, and the same from each corner). Two neighbouring patches read the same tangents along the edge
+they share, so the mesh is C⁰ in position everywhere, independent handles included, and C¹ across an edge where a
+node's two handles are opposite and equally long, which symmetric handles give.
 
 **`S` is LINEAR in every node position and tangent**: `S(u, v) = Σ_k β_k(u, v) θ_k`. That is what makes its gradient
-cheap.
+cheap, and why independent handles change only which tangent a β_k multiplies: a symmetric node's `U` collects the
+gradient of both of its sides, an independent one's `U` and `U_in` one side each.
 
 ### Values: `bilinear` (default) or `bicubic`
 

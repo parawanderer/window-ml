@@ -96,7 +96,7 @@ vec2 hermite(int a, float t, bool d) {
     if (a == 0) return d ? vec2(6.0*t*t - 6.0*t, 3.0*t*t - 4.0*t + 1.0) : vec2(2.0*t*t*t - 3.0*t*t + 1.0, t*t*t - 2.0*t*t + t);
     return d ? vec2(-6.0*t*t + 6.0*t, 3.0*t*t - 2.0*t) : vec2(-2.0*t*t*t + 3.0*t*t, t*t*t - t*t);
 }
-uniform highp sampler2D u_nodes;    // row 0: (p.x, p.y, u.x, u.y); row 1: (v.x, v.y, 0, 0); row 2: value
+uniform highp sampler2D u_nodes;    // row 0: (p.x, p.y, u.x, u.y); row 1: (v.x, v.y, uIn.x, uIn.y); row 2: value; row 3: (vIn.x, vIn.y, 0, 0)
 uniform int u_cols;
 uniform int u_rows;
 int nodeAt(int i, int j) { return i * (u_cols + 1) + j; }`;
@@ -114,10 +114,11 @@ void main() {
     vec2 s = vec2(0.0);
     for (int b = 0; b < 2; b++) for (int a = 0; a < 2; a++) {
         int n = nodeAt(pi + b, pj + a);
-        vec4 pu = texelFetch(u_nodes, ivec2(n, 0), 0);
-        vec2 v = texelFetch(u_nodes, ivec2(n, 1), 0).xy;
+        vec4 pu = texelFetch(u_nodes, ivec2(n, 0), 0), vu = texelFetch(u_nodes, ivec2(n, 1), 0);
+        // The far-side tangents at a = 0 / b = 0, the near-side ones (uIn, vIn) at 1.
+        vec2 tu = a == 0 ? pu.zw : vu.zw, tv = b == 0 ? vu.xy : texelFetch(u_nodes, ivec2(n, 3), 0).xy;
         vec2 hu = hermite(a, a_uv.x, false), hv = hermite(b, a_uv.y, false);
-        s += hu.x * hv.x * pu.xy + hu.y * hv.x * pu.zw + hu.x * hv.y * v;
+        s += hu.x * hv.x * pu.xy + hu.y * hv.x * tu + hu.x * hv.y * tv;
     }
     v_uv = a_uv;
     v_patch = pc;
@@ -261,14 +262,16 @@ export function createGradientRenderer(canvas: HTMLCanvasElement | OffscreenCanv
         const m = scene.fill, nodes = m.nodes.length, k = meshChannels(m), patches = m.rows * m.cols;
         if (!patches || nodes !== (m.rows + 1) * (m.cols + 1)) return { solveMs: 0, uploadMs: 0, submitMs: 0, mode: "empty" };
         const t1 = now();
-        const data = new Float32Array(4 * nodes * 3);
+        const data = new Float32Array(4 * nodes * 4);
         m.nodes.forEach((nd, i) => {
+            const uIn = nd.uIn ?? nd.u, vIn = nd.vIn ?? nd.v;
             data.set([nd.p[0], nd.p[1], nd.u[0], nd.u[1]], 4 * i);
-            data.set([nd.v[0], nd.v[1], 0, 0], 4 * (nodes + i));
+            data.set([nd.v[0], nd.v[1], uIn[0], uIn[1]], 4 * (nodes + i));
             for (let c = 0; c < k; c++) data[4 * (2 * nodes + i) + c] = nd.value[c] ?? 0;
+            data.set([vIn[0], vIn[1], 0, 0], 4 * (3 * nodes + i));
         });
         gl.useProgram(mesh);
-        gl.activeTexture(gl.TEXTURE0); floatTexture(gl, texA, nodes, 3, data);
+        gl.activeTexture(gl.TEXTURE0); floatTexture(gl, texA, nodes, 4, data);
         const t = Math.max(1, Math.min(256, Math.round(m.tessellation ?? 24)));
         gl.bindBuffer(gl.ARRAY_BUFFER, grid);
         if (t !== gridT) { const g = tessellation(t); gl.bufferData(gl.ARRAY_BUFFER, g, gl.STATIC_DRAW); gridT = t; gridCount = g.length / 2; }

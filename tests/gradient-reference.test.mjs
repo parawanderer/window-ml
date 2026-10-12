@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { evalFreeform, vjpFreeform, freeformMse, solveTps, flattenFreeform } from "../src/lab/gradient/gradient-freeform.ts";
-import { evalMesh, vjpMesh, gridMesh, locate, patchPoint, patchValue } from "../src/lab/gradient/gradient-mesh.ts";
+import { evalMesh, vjpMesh, gridMesh, locate, patchPoint, patchValue, splitHandles } from "../src/lab/gradient/gradient-mesh.ts";
 
 /** A seeded generator (mulberry32), so a failure reproduces. */
 function rng(seed) {
@@ -16,25 +16,26 @@ function rng(seed) {
     };
 }
 
-/** Every number in a JSON-shaped object, as [getter, setter] pairs, in a fixed order. */
+/** Every number in a JSON-shaped object, as [getter, setter, path] triples, sorted by path so that two objects with
+ *  the same leaves pair up whatever order their keys were written in. */
 function leaves(obj, skip = new Set()) {
     const out = [];
-    const walk = (o) => {
+    const walk = (o, at) => {
         for (const key of Object.keys(o)) {
             if (skip.has(key)) continue;
-            if (typeof o[key] === "number") out.push([() => o[key], (v) => { o[key] = v; }]);
-            else if (o[key] && typeof o[key] === "object") walk(o[key]);
+            if (typeof o[key] === "number") out.push([() => o[key], (v) => { o[key] = v; }, `${at}.${key}`]);
+            else if (o[key] && typeof o[key] === "object") walk(o[key], `${at}.${key}`);
         }
     };
-    walk(obj);
-    return out;
+    walk(obj, "");
+    return out.sort((a, b) => (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0));
 }
 
 /** L = Σ g·f(x) through `evaluate`, and its central difference for every leaf of `params`, compared to `analytic`. */
 function checkFd(params, evaluate, analytic, g, { h = 1e-6, tol = 2e-5, skip } = {}) {
     const L = () => { const f = evaluate(params); let s = 0; for (let i = 0; i < f.length; i++) s += g[i] * f[i]; return s; };
     const ps = leaves(params, skip), as = leaves(analytic, skip);
-    assert.strictEqual(ps.length, as.length, "the gradient is not shaped like the parameters");
+    assert.deepStrictEqual(ps.map((l) => l[2]), as.map((l) => l[2]), "the gradient is not shaped like the parameters");
     let worst = 0, where = -1;
     for (let i = 0; i < ps.length; i++) {
         const [get, set] = ps[i], v = get();
@@ -45,7 +46,7 @@ function checkFd(params, evaluate, analytic, g, { h = 1e-6, tol = 2e-5, skip } =
         const err = Math.abs(fd - an) / Math.max(1, Math.abs(fd));
         if (err > worst) { worst = err; where = i; }
     }
-    assert.ok(worst < tol, `worst relative error ${worst.toExponential(2)} at leaf ${where}`);
+    assert.ok(worst < tol, `worst relative error ${worst.toExponential(2)} at ${ps[where]?.[2]}`);
 }
 
 const randomPoints = (r, n, k) => Array.from({ length: n }, () => ({
@@ -220,6 +221,16 @@ function warpedMesh(r, values = "bilinear", k = 3) {
     return { ...m, values };
 }
 
+/** `warpedMesh` with every node's handles split, and each near-side handle turned on its own. */
+function brokenHandleMesh(r, values = "bilinear", k = 3) {
+    const m = splitHandles(warpedMesh(r, values, k));
+    for (const n of m.nodes) {
+        n.uIn[0] *= 1 + 0.4 * (r() - 0.5); n.uIn[1] += 0.08 * (r() - 0.5);
+        n.vIn[1] *= 1 + 0.4 * (r() - 0.5); n.vIn[0] += 0.08 * (r() - 0.5);
+    }
+    return m;
+}
+
 /** Pixels strictly inside patches, by mapping random (u, v) in [0.2, 0.8]² forward. */
 function interiorSamples(r, mesh, s) {
     const xs = [];
@@ -274,6 +285,24 @@ test("where patches overlap, the later patch wins (the renderer's draw order)", 
     assert.strictEqual(hit.patch, 1);
 });
 
+test("independent handles: splitting changes nothing, and neighbouring patches still share their edges", () => {
+    const r = rng(25);
+    const m = warpedMesh(r), split = splitHandles(m), xs = interiorSamples(r, m, 20);
+    assert.deepStrictEqual(evalMesh(split, xs).values, evalMesh(m, xs).values);
+    const b = brokenHandleMesh(r);
+    for (let t = 0; t <= 1; t += 0.125) {
+        // Along a row: patch 0's right edge is patch 1's left edge. Down a column: patch 0's bottom is patch 3's top.
+        const [ax, ay] = patchPoint(b, 0, 1, t), [bx, by] = patchPoint(b, 1, 0, t);
+        assert.ok(Math.hypot(ax - bx, ay - by) < 1e-12, `row edge at ${t}`);
+        const [cx, cy] = patchPoint(b, 0, t, 1), [dx, dy] = patchPoint(b, 3, t, 0);
+        assert.ok(Math.hypot(cx - dx, cy - dy) < 1e-12, `column edge at ${t}`);
+    }
+    // A near-side handle moves only the patch on its side: patch 1 reads node 1's u at its left corner, patch 0 reads uIn.
+    const before = patchPoint(b, 1, 0.5, 0.5);
+    b.nodes[1].uIn = [b.nodes[1].uIn[0] * 2, 0.2];
+    assert.deepStrictEqual(patchPoint(b, 1, 0.5, 0.5), before);
+});
+
 // --- the Gradient Mesh: every gradient against finite differences -------------------------------------------------------
 
 for (const values of ["bilinear", "bicubic"]) {
@@ -283,6 +312,19 @@ for (const values of ["bilinear", "bicubic"]) {
             const m = warpedMesh(r, values, k);
             const xs = interiorSamples(r, m, 30), g = Float64Array.from({ length: 30 * k }, () => r() - 0.5);
             const grad = vjpMesh(m, xs, g);
+            checkFd(m, (p) => evalMesh(p, xs).values, grad, g, { skip: new Set(["rows", "cols", "values", "tessellation"]), tol: 1e-4 });
+        }
+    });
+}
+
+for (const values of ["bilinear", "bicubic"]) {
+    test(`mesh VJP matches finite differences with independent handles: ${values}`, () => {
+        for (const seed of [33, 34]) {
+            const r = rng(seed), k = 3;
+            const m = brokenHandleMesh(r, values, k);
+            const xs = interiorSamples(r, m, 30), g = Float64Array.from({ length: 30 * k }, () => r() - 0.5);
+            const grad = vjpMesh(m, xs, g);
+            assert.ok(grad.nodes.every((n) => n.uIn && n.vIn), "the gradient names the near-side handles");
             checkFd(m, (p) => evalMesh(p, xs).values, grad, g, { skip: new Set(["rows", "cols", "values", "tessellation"]), tol: 1e-4 });
         }
     });

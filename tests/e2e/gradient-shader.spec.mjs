@@ -93,18 +93,22 @@ test("freeform lines: the shader matches the reference, through the flattening",
 
 // --- the Gradient Mesh ------------------------------------------------------------------------------------------------
 
-for (const values of ["bilinear", "bicubic"]) {
-    test(`mesh ${values}: the shader matches the reference inside the patches`, async ({ page }) => {
+for (const [values, handles] of [["bilinear", "symmetric"], ["bicubic", "symmetric"], ["bilinear", "independent"]]) {
+    test(`mesh ${values}, ${handles} handles: the shader matches the reference inside the patches`, async ({ page }) => {
         const errors = await open(page);
-        const scene = await page.evaluate((values) => {
+        const scene = await page.evaluate(({ values, handles }) => {
             const r = rng(9);
-            const m = G.gridMesh(2, 3, [0.1, 0.1, 1.2, 0.9], () => [r(), r(), r()]);
+            let m = G.gridMesh(2, 3, [0.1, 0.1, 1.2, 0.9], () => [r(), r(), r()]);
             for (const n of m.nodes) {
                 n.p[0] += 0.04 * (r() - 0.5); n.p[1] += 0.04 * (r() - 0.5);
                 n.u[1] += 0.06 * (r() - 0.5); n.v[0] += 0.06 * (r() - 0.5);
             }
+            if (handles === "independent") {
+                m = G.splitHandles(m);
+                for (const n of m.nodes) { n.uIn[1] += 0.1 * (r() - 0.5); n.vIn[0] += 0.1 * (r() - 0.5); n.vIn[1] *= 1 + 0.3 * (r() - 0.5); }
+            }
             return { kind: "mesh", fill: { ...m, values, tessellation: 64 } };
-        }, values);
+        }, { values, handles });
         const res = await page.evaluate(compare, { scene, W: 80, H: 60, edge: 0.02 });
         expect(errors).toEqual([]);
         test.skip(!!res.skipped, res.skipped);
