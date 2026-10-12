@@ -353,7 +353,7 @@ Note the difference from `log.text`, which IS a wrapper of a sort and is kept: t
 ordinary Array, so it stays structurally a plain value the dialect already understands. A String subclass is not
 structurally a string in the same way, which is the line between the two.
 
-## The runtime and the client (proposed 2026-10-12, not built)
+## The runtime and the client (agreed 2026-10-12, not built yet)
 
 Two questions a model cannot answer today, and both change what a good answer looks like. **Where am I running**: can
 this runtime open tabs, take screenshots, keep the session, run Python, call a utility model? **Who is talking to me,
