@@ -8,7 +8,7 @@
     "fetch-hub": "node scripts/fetch-hub.mjs",
     "gen-api-docs": "node scripts/gen-api-docs.mjs",
     "gen-build-info": "node scripts/gen-build-info.mjs",
-    "typecheck": "npm run gen-api-docs && npm run gen-build-info && tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
+    "typecheck": "npm run gen-api-docs && npm run gen-build-info && node scripts/gen-isolated-kit.mjs && tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
     "pretest": "npm run build",
     "test": "node scripts/test.mjs",
     "test:core": "node scripts/test.mjs core",
