@@ -83,7 +83,10 @@ export function onAxis(runs: ResourceSample[][], samples: ResourceSample[], scop
 
 /** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading
  *  one pool against another at a given moment is the whole reason these are small multiples, and doing it by
- *  eye across three plots is exactly what a shared line removes. */
+ *  eye across three plots is exactly what a shared line removes.
+ *  @group resource-panel
+ *  @gallery none a one-pixel line laid over a resource-panel track at the pointer's instant: alone it has nothing to read against. See it in place with `shot VramPanel` and the resource panel's e2e specs.
+ */
 export function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     const c = crosshair.value;
     if (!c) return null;

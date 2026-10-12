@@ -9,6 +9,8 @@ export interface FilterChip { key: string; label: ComponentChildren; count?: num
 /**
  * Chips that hide and show: a click toggles `key` (the caller keeps the hidden set, and decides what hiding means).
  * Each is a toggle button (`aria-pressed` while shown) with the panel's tooltip; `children` follow the chips.
+ * @group primitives, chips
+ * @gallery {"items": [{"key": "sweep", "label": "sweep", "count": 12}, {"key": "evict", "label": "evict", "count": 3, "tip": "Models unloaded to free memory"}, {"key": "restart", "label": "restart", "count": 1}], "hidden": ["restart"]}
  */
 export function FilterChips({ items, hidden, toggle, children }: { items: FilterChip[]; hidden: ReadonlySet<string>; toggle: (key: string) => void; children?: ComponentChildren }) {
     return (
