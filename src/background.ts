@@ -5,7 +5,7 @@
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage } from "./sw/sw-isolated-exec";
-import { handOverOnCommit } from "./sw/nav-handover";
+import { forgetHandOverTab, handOverOnCommit } from "./sw/nav-handover";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
@@ -152,7 +152,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an

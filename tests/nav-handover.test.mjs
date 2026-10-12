@@ -52,7 +52,7 @@ function geometry(g) {
  * `navigate` call moves the tab to its `url`: the page answers it, then the browser commits the new document and, unless
  * `readopt` is false, the destination re-adopts the run. `page(payload)` plays the page for any other tool call.
  */
-async function run({ calls, page = () => undefined, readopt = true, onNavigated = async () => {} }) {
+async function run({ calls, page = () => undefined, readopt = true, onNavigated = async () => {}, onStart = () => {} }) {
     const tab = { id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" };
     const driverBodies = [], subs = [], adopts = [];
     let bg, docN = 1;
@@ -95,6 +95,7 @@ async function run({ calls, page = () => undefined, readopt = true, onNavigated 
         },
     });
     bg.context.__mlWorkerVisionForTest.useRaster(blankRaster());
+    onStart(bg, tab);
     const tools = ["navigate", "look", "scroll"];
     const tool = (name) => ({ name, description: name, parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: name === "look" ? ["vision"] : [] });
     const started = bg.send({ type: "START_RUN", payload: { runId: "page-run", task: "do it", systemPrompt: "sys", tools: tools.map(tool), model: "text-driver", think: null, maxSteps: 20, surface: "off", crossOrigin: true, approvalRouting: "both",
@@ -166,4 +167,75 @@ test("a page-built run handed over mid-turn has the rest of its turn's answer an
     // And the turn's result reached the surfaces from the worker (no page-side caller is left).
     const result = w.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === "page-run");
     assert.ok(result, "the worker fanned the run's result");
+});
+
+// --- the hand-over outlives the worker that made it ---
+
+test("a run handed over mid-turn is stored as the worker's: its in-flight snapshot says so, and a worker restarted from it refuses the approved builder page's RESUME_RUN", T, async () => {
+    let bgRef = null, snap = null;
+    const w = await run({ calls: [{ name: "navigate", args: { url: UNAPPROVED } }, { name: "scroll", args: {} }],
+        onNavigated: async (bg) => { bgRef = bg; },
+        // The step after the hand-over: the run is in flight, and the per-step snapshot was written after the navigate.
+        page: (p) => { if (p.name === "scroll") snap = plain(bgRef.localStore["ml_bgrun_page-run"]); } });
+    assert.equal(w.driverBodies.length, 3);
+    assert.ok(snap, "an in-flight snapshot was written");
+    assert.equal(snap.p.builtBy, "worker", "the snapshot an eviction resumes from is the worker's run, not the page's");
+    assert.equal(snap.p.rebuild?.builtBy, "worker");
+    // The eviction: a fresh worker hydrates that snapshot; the tab is back on the approved builder site, whose page
+    // sends RESUME_RUN for the run. One way: it stays the worker's.
+    const calls = [];
+    const bg2 = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, local: { ml_site_always: ["https://builder.example"], "ml_bgrun_page-run": { ...snap, ts: Date.now() } },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+        onFetch: async (call) => { calls.push(call.url); return jsonResponse({ choices: [{ message: { content: "page took it" } }] }); },
+    });
+    await sleep(30);
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: "https://builder.example", frameId: 0, documentId: "doc-back" };
+    const r = plain(await Promise.race([bg2.send({ type: "RESUME_RUN", payload: { runId: "page-run", task: "mine again" } }, sender), sleep(2000).then(() => "no answer")]));
+    assert.match(String(r?.error), /Refused/, `the page's resume was refused: ${JSON.stringify(r)}`);
+    assert.ok(!calls.some((u) => u.includes("/chat/completions")), "no model call was made for the page");
+});
+
+test("a commit that wakes a worker before it has restored its runs still hands an in-flight page-built run over", T, async () => {
+    const p = { runId: "slept-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 5, surface: "off", crossOrigin: true, pageUrl: BUILDER, pageOrigin: "https://builder.example",
+        rebuild: { toolNames: ["scroll"], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } };
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, local: { ml_site_always: ["https://builder.example"], "ml_bgrun_slept-run": { p, tabId: 7, messages: [], version: "9.9.9", ts: Date.now() } },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: UNAPPROVED, title: "Elsewhere" }],
+    });
+    // The event that woke the worker, delivered before its storage read came back.
+    bg.commit(7, { documentId: "doc-elsewhere", url: UNAPPROVED });
+    await sleep(50);
+    const log = (await bg.context.__mlRunLog.all()).filter((r) => r.run === "slept-run" && r.kind === "handed-to-worker").map(plain);
+    assert.equal(log.length, 1, "the commit handed the run over once the runs were restored");
+    // And the page it is on cannot resume it as its builder.
+    const r = plain(await Promise.race([bg.send({ type: "RESUME_RUN", payload: { runId: "slept-run", task: "x" } }, { tab: { id: 7, url: UNAPPROVED }, url: UNAPPROVED, origin: "https://elsewhere.example", frameId: 0, documentId: "doc-elsewhere" }), sleep(2000).then(() => "no answer")]));
+    assert.match(String(r?.error), /Refused/);
+});
+
+// --- a top-frame document the run's tab shows without a main-frame commit ---
+
+test("a prerendered unapproved page the tab activates is handed the run's next tool as a worker run: its look runs in the worker, never sent to the page with its question", T, async () => {
+    let bgRef = null, tabRef = null;
+    // Simulated from Chrome's documented behaviour (inferred, not staged in a browser): a prerender commits in its own
+    // frame tree (frameId != 0, documentLifecycle "prerender"), and its activation fires no main-frame onCommitted.
+    const w = await run({ calls: [{ name: "scroll", args: {} }, { name: "look", args: { question: QUESTION } }],
+        page: (p) => {
+            if (p.name !== "scroll" || !bgRef) return undefined;
+            bgRef.commit(7, { documentId: "doc-pre", url: UNAPPROVED, frameId: 9, frameType: "outermost_frame", documentLifecycle: "prerender" });
+            bgRef.activate(7, { documentId: "doc-pre", url: UNAPPROVED });
+            tabRef.url = UNAPPROVED;
+            return undefined;
+        },
+        onStart: (bg, tab) => { bgRef = bg; tabRef = tab; } });
+    assert.equal(w.driverBodies.length, 3, "the run went through its two calls and answered");
+    // Positive control: the scroll before the activation ran in the page.
+    assert.equal(w.calls().filter((p) => p.name === "scroll").length, 1);
+    const looks = w.calls().filter((p) => p.name === "look");
+    assert.deepEqual(looks, [], `the activated page was sent no look call: ${JSON.stringify(looks)}`);
+    const leaked = w.bg.tabMessages.map(([, m]) => m).filter((m) => m.type !== "ML_DEBUG_TO_PAGE" && JSON.stringify(m).includes("Q-SECRET-4242"));
+    assert.deepEqual(leaked.map(plain), [], "the question never reached the page (the shell's own run events aside)");
+    assert.ok(w.geometryAsked() > 0, "the worker's look asked the page for geometry only");
 });

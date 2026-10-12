@@ -245,6 +245,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
      *  each decision, never from `p`, which is the turn's start payload: everything the worker does for a run it built
      *  (its tools in the worker, the run's grants, its answer set, an isolated exec) applies from the hand-over on. */
     const byWorker = workerVision;
+    /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
+     *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
+     *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. */
+    const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
+        ? { ...p, builtBy: "worker", ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
     /** Take a verify in the worker, pinned to `doc`, with the run's vision facts (carried in its rebuild config). */
     /** The run's vision facts for the worker's look, locate and verify: the worker's own for a run it built, a handed-over
@@ -316,7 +321,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
     // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
     // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
-    persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: snapSub() });
+    persistRun(runId, { p: storedP(), tabId, messages: resumeMessages || [], sub: snapSub() });
     // `remote` has to survive into the loop's ToolMeta: it is what makes a remote tool's output CITABLE
     // (`meta?.remote` in agent-loop), and it cannot be recovered from the name — the name is generated
     // from the server's own bundle, so no hardcoded list can hold it. Dropping it here made the whole
@@ -1039,7 +1044,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 } catch { return false; }
             },
             checkpoint: (messages) => {
-                persistRun(runId, { p, tabId, messages, sub: snapSub() });   // durable resume snapshot per step
+                persistRun(runId, { p: storedP(), tabId, messages, sub: snapSub() });   // durable resume snapshot per step
                 // And the same history where a SAVED session keeps it. The snapshot above dies with the run
                 // (it is deleted on settle, and is stale after five minutes); this one lives as long as the
                 // session does, which is what `session.resume` needs from a run that ended yesterday.
@@ -1100,11 +1105,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // prior turns. Without this it reused base 0 and the new turn's steps collided at step/seq 1 with
             // turn 1's — the reducer patches by seq, so the follow-up's tool steps OVERWROTE turn 1's and
             // vanished from the sidebar/panel (and scrambled the export's chat-log order).
-            // A run handed to the worker while this turn ran (`makeWorkerRun`) stays the worker's: `p` is the turn's
-            // start payload, written before the hand-over, and storing it as it is would give the run back to the page.
-            const handed = p.builtBy !== "worker" && isWorkerRun(runId)
-                ? { builtBy: "worker" as const, ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" as const } } : {}) } : {};
-            const resumeP = { ...p, ...handed, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
+            // A run handed to the worker while this turn ran stays the worker's (`storedP`).
+            const resumeP = { ...storedP(), stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
             bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
             // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
             // AFTER this one's steps rather than colliding with them.

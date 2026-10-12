@@ -137,6 +137,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     /** The tab's top-frame document now: the last committed, else an open tab's first (`doc-<tabId>`). */
     const docOf = (tabId) => committedDocs.get(tabId) ?? (openTabs.some((t) => t.id === tabId) ? `doc-${tabId}` : undefined);
+    const committedUrls = new Map();   // tabId → the main-frame URL last committed (or activated), for webNavigation.getFrame
+    /** The tab's top-frame URL now, as getFrame reports it: the last committed, else the open tab's. */
+    const urlOf = (tabId) => committedUrls.get(tabId) ?? openTabs.find((t) => t.id === tabId)?.url;
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
@@ -206,7 +209,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             webNavigation: {
                 onCommitted: { addListener: (fn) => committedListeners.push(fn), removeListener: (fn) => { const i = committedListeners.indexOf(fn); if (i >= 0) committedListeners.splice(i, 1); } },
                 // Like the browser, a live tab always has a top-frame document: the last one committed, else its first.
-                getFrame: async ({ tabId, frameId }) => (frameId === 0 && docOf(tabId) ? { documentId: docOf(tabId), frameId: 0 } : null),
+                getFrame: async ({ tabId, frameId }) => (frameId === 0 && docOf(tabId) ? { documentId: docOf(tabId), frameId: 0, ...(urlOf(tabId) ? { url: urlOf(tabId) } : {}) } : null),
                 // A same-document navigation (pushState, a fragment) keeps the document: fired by bg.sameDocumentNav only.
                 onHistoryStateUpdated: { addListener: (fn) => sameDocListeners.history.push(fn), removeListener: (fn) => { const i = sameDocListeners.history.indexOf(fn); if (i >= 0) sameDocListeners.history.splice(i, 1); } },
                 onReferenceFragmentUpdated: { addListener: (fn) => sameDocListeners.fragment.push(fn), removeListener: (fn) => { const i = sameDocListeners.fragment.indexOf(fn); if (i >= 0) sameDocListeners.fragment.splice(i, 1); } },
@@ -380,10 +383,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             for (const fn of syncListeners) fn(changes, "sync");
         },
         /** Commit a main-frame document on a tab, the way the browser reports a navigation (webNavigation.onCommitted). */
-        commit: (tabId, { documentId, url = "https://page.test/" }) => {
-            committedDocs.set(tabId, documentId);
-            for (const fn of [...committedListeners]) fn({ tabId, frameId: 0, documentId, url });
+        commit: (tabId, { documentId, url = "https://page.test/", frameId = 0, ...extra }) => {
+            if (frameId === 0) { committedDocs.set(tabId, documentId); committedUrls.set(tabId, url); }
+            for (const fn of [...committedListeners]) fn({ tabId, frameId, documentId, url, ...extra });
         },
+        /** A prerendered document becoming the tab's top frame (activation): the browser fires no main-frame commit
+         *  for it (its commit was reported earlier, with the prerender's own non-zero frameId); getFrame names it. */
+        activate: (tabId, { documentId, url }) => { committedDocs.set(tabId, documentId); committedUrls.set(tabId, url); },
         /** A same-document navigation of the tab's top frame, as the browser reports one: `kind` "history" (pushState) or
          *  "fragment" (a hash change). The document, and its id, stay. */
         sameDocumentNav: (tabId, { kind = "history", url = "https://page.test/" } = {}) => {
