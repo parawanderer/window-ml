@@ -922,7 +922,9 @@ function shadowCdp(method, params) {
         return { nodeIds: [] };
     }
     if (method === "DOM.describeNode" && params.nodeId === 10) return { node: { shadowRoots: [{ nodeId: 20 }] } };
-    if (method === "DOM.resolveNode" && params.nodeId === 30) return { object: { objectId: "obj30" } };
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "F1" } } };
+    if (method === "Page.createIsolatedWorld") return { executionContextId: 5 };
+    if (method === "DOM.resolveNode" && params.nodeId === 30) return { object: { objectId: params.executionContextId === 5 ? "obj30" : "main30" } };
     if (method === "Runtime.callFunctionOn" && params.objectId === "obj30") return { result: { value: { line: 'button.inner "Go"', cx: 50, cy: 60, w: 40, h: 20 } } };
     return undefined;   // Runtime.releaseObject etc.
 }

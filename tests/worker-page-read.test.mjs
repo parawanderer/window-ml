@@ -161,8 +161,11 @@ function sealedCdp(asked) {
         if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
         if (method === "DOM.querySelectorAll") { asked.push(params.selector); return { nodeIds: params.selector === "x-host" ? [2] : params.selector === "button" && params.nodeId === 3 ? [4] : [] }; }
         if (method === "DOM.describeNode") return { node: { shadowRoots: [{ nodeId: 3 }] } };
-        if (method === "DOM.resolveNode") return { object: { objectId: "o4" } };
-        if (method === "Runtime.callFunctionOn") return { result: { value: { line: "button «Inner»", cx: 10, cy: 10, w: 20, h: 10 } } };
+        if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "F1" } } };
+        if (method === "Page.createIsolatedWorld") return { executionContextId: 77 };
+        // A node resolved into the page's main world (no context named) would be described by the page's patched builtins.
+        if (method === "DOM.resolveNode") return { object: { objectId: params.executionContextId === 77 ? "o4" : "main-world-o4" } };
+        if (method === "Runtime.callFunctionOn") return { result: { value: { line: params.objectId === "o4" ? "button «Inner»" : "button «MAIN WORLD»", cx: 10, cy: 10, w: 20, h: 10 } } };
         return {};
     };
 }
@@ -270,4 +273,26 @@ test("a page's cdpShadowResolve on a tool that is not describeElement resolves n
     });
     assert.equal(w.calls().length, 1, "positive control: the click went to the page");
     assert.deepEqual(asked, [], "the debugger was driven for a click's echo");
+});
+
+test("a worker-run sealed describe never descends into the shell's own root, told by the stylesheet inside it, whatever the host is called", T, async () => {
+    const asked = [];
+    const base = sealedCdp(asked);
+    const w = await run({ name: "describeElement", args: { selector: "x-host >>> button" } }, {
+        debuggerCmd: (m, p) => (m === "DOM.describeNode" && p.nodeId === 3 ? { node: { children: [{ attributes: ["id", "ml-sb-style"] }] } } : base(m, p)),
+        page: (p) => (p.name === "describeElement" ? { result: "", cdpShadowResolve: { selector: "x-host >>> button" } } : undefined),
+    });
+    assert.deepEqual(asked, ["x-host"], "positive control: the host was looked up; nothing was queried inside our root");
+    assert.match(w.result, /SEALED/);
+});
+
+test("a worker-run sealed describe reads each match in a world of its own, never through the page's main-world builtins", T, async () => {
+    const asked = [];
+    const w = await run({ name: "describeElement", args: { selector: "x-host >>> button" } }, {
+        debuggerCmd: sealedCdp(asked),
+        page: (p) => (p.name === "describeElement" ? { result: "", cdpShadowResolve: { selector: "x-host >>> button" } } : undefined),
+    });
+    assert.match(w.result, /#0: button «Inner»/, "described in the isolated world");
+    assert.ok(!w.result.includes("MAIN WORLD"));
+    assert.ok(w.bg.debuggerCalls.some((c) => c[2] === "Page.createIsolatedWorld"), "a world was made for it");
 });
