@@ -11,6 +11,7 @@ export interface FilterChip { key: string; label: ComponentChildren; count?: num
  * Each is a toggle button (`aria-pressed` while shown) with the panel's tooltip; `children` follow the chips.
  * @group primitives, chips
  * @gallery {"items": [{"key": "sweep", "label": "sweep", "count": 12}, {"key": "evict", "label": "evict", "count": 3, "tip": "Models unloaded to free memory"}, {"key": "restart", "label": "restart", "count": 1}], "hidden": ["restart"]}
+ * @gallery-flow spaced tests/gallery-flows/FilterChips.mjs {"items": [{"key": "sweep", "label": "sweep", "count": 12}, {"key": "evict", "label": "evict", "count": 3, "tip": "Models unloaded to free memory"}, {"key": "restart", "label": "restart", "count": 1}], "hidden": ["restart"]}
  */
 export function FilterChips({ items, hidden, toggle, children }: { items: FilterChip[]; hidden: ReadonlySet<string>; toggle: (key: string) => void; children?: ComponentChildren }) {
     return (
@@ -20,7 +21,9 @@ export function FilterChips({ items, hidden, toggle, children }: { items: Filter
                 return (
                     <button key={c.key} class={`rc-lane-chip${off ? " off" : ""}${c.tip ? " tt" : ""}`} aria-pressed={!off}
                         {...(c.tip ? { "data-tip": c.tip } : {})} onClick={() => toggle(c.key)}>
-                        {c.label}{c.count != null ? <> <span class="rc-chip-n">{c.count}</span></> : null}
+                        {/* One inline box: a tipped chip is `.tt`, an inline-flex, which drops a whitespace-only text node
+                            between flex items, so a bare " " before the count would vanish there (`evict3`). */}
+                        <span>{c.label}{c.count != null ? <> <span class="rc-chip-n">{c.count}</span></> : null}</span>
                     </button>
                 );
             })}
