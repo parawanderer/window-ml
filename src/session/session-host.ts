@@ -554,6 +554,10 @@ export type Command =
 
 export type CommandType = Command["type"];
 
+/** Who sent a command, as the TRANSPORT knows it, never as the command says: this browser's own pages over the local
+ *  port, or a device over the hub whose seal the hub runtime verified (hub-runtime.ts). */
+export interface CommandFrom { via: "this browser" | "hub" }
+
 /** The scope each command needs. The runtime enforces this; a client uses it to decide what to offer. */
 export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.send": "drive",

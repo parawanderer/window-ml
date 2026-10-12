@@ -119,7 +119,7 @@ startValueSweeps();
 (globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./agent/run-assembly").UserRunRequest, opts?: { keep?: boolean; approvalRouting?: "both"; answer?: true }) => startUserRun(tabId, req, opts);
 // TEST-ONLY (SW realm only): send a person's message into, or Continue, a run the worker built, as the sidebar and the
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
-(globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }) => userRunAction(hash, action, body);
+(globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }, origin?: import("./contract/contract-run").PromptOrigin) => userRunAction(hash, action, body, undefined, origin);
 
 // TEST-ONLY (SW realm only): crop a data URL with the worker's raster, so tests/e2e/raster.spec.mjs can hold the real
 // worker's OffscreenCanvas to the page's canvas pixel for pixel.
@@ -1089,9 +1089,9 @@ function cancelBackgroundRun(runId: string): boolean {
 configureSessionCommands({
     // A steer from the chat page goes into the running loop's inbox, the same one a handle's say() reaches through
     // INJECT_MESSAGE, and is shown the way say() shows it: an `agent-say` bubble the loop marks seen when it drains.
-    steer: (hash, text) => steerRun(hash, text),
-    startUserRun: (tabId, req) => startUserRun(tabId, req),
-    userRunAction: (hash, action, body, fromTabId) => userRunAction(hash, action, body, fromTabId),
+    steer: (hash, text, origin) => steerRun(hash, text, origin),
+    startUserRun: (tabId, req, opts) => startUserRun(tabId, req, opts),
+    userRunAction: (hash, action, body, fromTabId, origin) => userRunAction(hash, action, body, fromTabId, origin),
     adoptOnTab,
     cancelRun: cancelBackgroundRun,
     // Only a run whose loop THIS worker hosts: a live one (its controller) or a resumable one (its snapshot).

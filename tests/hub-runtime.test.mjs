@@ -28,14 +28,16 @@ const row = (hash, task) => ({ id: { runtime: "local", hash }, kind: "agent", st
 function side() {
     const sinks = new Set();
     const commands = [];
+    const froms = [];
     return {
-        commands,
+        commands, froms,
         localIds: ["local"],
         list: () => [row("aaaa0001", "read the headline")],
         watch: (sink) => { sinks.add(sink); return () => sinks.delete(sink); },
         emit: (fn) => { for (const s of sinks) fn(s); },
-        async command(c) {
+        async command(c, from) {
             commands.push(c);
+            froms.push(from);
             if (c.type === "runtime.info") return { ok: true, data: { kind: "browser", contractVersion: SESSION_CONTRACT_VERSION, capabilities: { chat: true, agent: true, localSettings: true, blankStart: { url: "https://pages.example/agent-start.html", granted: false, origins: ["https://a.example/*"], browser: "Brave", extensionId: "zz9" } }, nowMs: Date.now() } };
             if (c.type === "session.pin") return { ok: true, data: { session: c.session } };
             return { ok: false, error: { code: "unsupported", message: c.type } };
@@ -99,6 +101,9 @@ test("a phone lists the runtime, sees its sessions under its principal, and is n
         assert.equal(pinned.ok, true);
         assert.deepEqual(w.s.commands.at(-1).session, { runtime: "local", hash: "aaaa0001" });
         assert.deepEqual(pinned.data.session, { runtime: w.id, hash: "aaaa0001" });
+        // Every command the seal let through reaches the handler as the hub's, which is what marks a person's message
+        // as typed on another device.
+        assert.deepEqual(w.s.froms, w.s.commands.map(() => ({ via: "hub" })));
     } finally { await w.close(); }
 });
 

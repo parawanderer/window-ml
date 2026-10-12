@@ -9,13 +9,27 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
+import type { PromptOrigin } from "../contract/contract-run";
 import type { SessionHistory } from "./session-store";
-import type { Command, CommandError, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
+import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 
 /** What a page said it did with a relayed session action. `no-answer`: it did not reply in time. */
 export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" | "none" | "no-answer";
+
+/** A command from this browser's own pages: the local port's sender, and what a caller that names none means. */
+export const THIS_BROWSER: CommandFrom = { via: "this browser" };
+
+/**
+ * Where a person's message in a command was typed. Only the chat page sends `session.send` and `agent.start`, so the
+ * surface is always the chat app; the channel says whether it is this browser's or another device's.
+ * @param from the command's sender
+ * @returns the origin to stamp on the message
+ */
+export function commandOrigin(from: CommandFrom): PromptOrigin {
+    return from.via === "hub" ? { surface: "chat", remote: true } : { surface: "chat" };
+}
 
 /** Everything the commands reach outside themselves. */
 export interface CommandDeps {
@@ -40,13 +54,13 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
-    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number }): Promise<PageOutcome>;
+    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
     highlight(tabId: number, ref: { selector: string } | { token: string } | null): void;
     /** push a message into a RUNNING background loop's inbox and show it in the transcript; false when no loop runs */
-    steer(hash: string, text: string): boolean;
+    steer(hash: string, text: string, origin?: PromptOrigin): boolean;
     /** abort a background-hosted run and close its open gates; false when none was live */
     cancelRun(hash: string): boolean;
     /** resolve one open approval gate; false when it was already closed */
@@ -93,7 +107,7 @@ export interface CommandDeps {
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[] }): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
     /** `error`: why nothing started, in words the person can act on */
-    startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
+    startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -155,7 +169,7 @@ const ok = <T extends CommandType>(data: any): CommandResult<T> => ({ ok: true, 
 const isSessionId = (v: unknown): v is SessionId => !!v && typeof (v as SessionId).runtime === "string" && typeof (v as SessionId).hash === "string";
 
 /** The command handler for one runtime. */
-export function createCommandHandler(deps: CommandDeps): (command: Command) => Promise<CommandResult<CommandType>> {
+export function createCommandHandler(deps: CommandDeps): (command: Command, from?: CommandFrom) => Promise<CommandResult<CommandType>> {
     /** The session a command names, when it is this runtime's and the index holds it. */
     const session = (c: { session?: unknown }): { id: SessionId; error?: undefined } | { id?: undefined; error: CommandResult<any> } => {
         if (!isSessionId(c.session)) return { error: fail("invalid", "a session id is required") };
@@ -219,11 +233,11 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
     };
 
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
-    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number } = {}): Promise<PageOutcome | CommandResult<any>> => {
+    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
         if (t.error) return t.error;
         try {
-            const outcome = await deps.toPage(t.tabId, action, { hash, ...body });
+            const outcome = await deps.toPage(t.tabId, action, { hash, ...body }, origin);
             if (outcome === "no-answer") return fail("unavailable", "the page this session runs on did not answer; it may still be loading");
             return outcome;
         } catch {
@@ -231,7 +245,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         }
     };
 
-    const handlers: { [T in CommandType]?: (c: Extract<Command, { type: T }>) => Promise<CommandResult<T>> } = {
+    const handlers: { [T in CommandType]?: (c: Extract<Command, { type: T }>, from: CommandFrom) => Promise<CommandResult<T>> } = {
         /**
          * A page of a session's events, for a client whose subscription came back `truncated`.
          *
@@ -334,7 +348,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         // A run on a tab. It goes through the page's own start path (the one the HUD composer uses), so a run
         // started from the chat page is a genuine session of that tab, built by the page's toolset, rather than a
         // second way of starting a run that would drift from the first.
-        "agent.start": async (c) => {
+        "agent.start": async (c, from) => {
             const bad = ownRuntime(c);
             if (bad) return bad;
             if (c.lineage) return fail("unsupported", "this browser does not start subagents yet");
@@ -353,7 +367,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
                 ...(c.stream === true ? { stream: true as const } : {}),
-            });
+            }, commandOrigin(from));
             if (r.outcome === "started" && r.hash) {
                 if (!c.ephemeral) deps.keepSession(r.hash);
                 return ok({ session: { runtime: deps.runtime, hash: r.hash } });
@@ -462,7 +476,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             }
         },
 
-        "session.send": async (c) => {
+        "session.send": async (c, from) => {
             const s = session(c);
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
@@ -483,9 +497,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             // navigated), and the inbox is the same one the handle's `say` reaches.
             if (running && !images.length && !c.elementContext) {
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
-                if (deps.steer(s.id.hash, text)) return ok({ mode: "steer" });
+                if (deps.steer(s.id.hash, text, commandOrigin(from))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) });
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");
@@ -690,10 +704,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         return { sessions: all.slice(0, limit), more: all.length > limit };
     }
 
-    return async (command) => {
-        const h = handlers[command.type] as ((c: Command) => Promise<CommandResult<CommandType>>) | undefined;
+    return async (command, from = THIS_BROWSER) => {
+        const h = handlers[command.type] as ((c: Command, from: CommandFrom) => Promise<CommandResult<CommandType>>) | undefined;
         if (!h) return fail("unsupported", `${command.type} is not available on this browser yet`);
-        return h(command);
+        return h(command, from);
     };
 }
 

@@ -146,8 +146,10 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
 }
 
 /** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run
- *  it built (sw-run-start.ts), where there is no sender. `sendResponse` fires once the whole run finishes. */
-export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void): void {
+ *  it built (sw-run-start.ts), where there is no sender. `sendResponse` fires once the whole run finishes. `turnOrigin`
+ *  is where a resumed turn's message was typed: an argument rather than a payload field, because a page's RESUME_RUN
+ *  reaches here unfiltered and must not stamp its message as typed somewhere else. */
+export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin): void {
     // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
     // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. Whoever built the run (the page for a console
     // ml.agent, the worker for a run the user started) registered the live builtin tools in the page under runId;
@@ -168,7 +170,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // again below: raising a cap STICKS. Bounded the same way the loop is, so a bad number from a page cannot
         // ask the worker for an unbounded run.
         const budget = stepBudget(rp.maxSteps);
-        p = { ...stored.p, task: rp.task, ...(budget ? { maxSteps: budget } : {}) };
+        p = { ...stored.p, task: rp.task, ...(budget ? { maxSteps: budget } : {}), ...(turnOrigin ? { origin: turnOrigin } : {}) };
         capRaised = budget != null && budget !== stored.p.maxSteps;
         resumeOriginalTask = stored.p.task;
         resumeMessages = stored.messages;

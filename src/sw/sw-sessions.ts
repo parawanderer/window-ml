@@ -4,10 +4,10 @@
 // (docs/dev/chat-page.md §The local index).
 import { hintSession } from "../contract/contract-run";
 import { type MlDebugEvent } from "../contract/contract-debug";
-import { createCommandHandler, type CommandDeps, type PageOutcome } from "../session/session-commands";
+import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "../contract/contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { tabReadyFailure } from "./tab-ready";
 import { browserInfo } from "../util";
@@ -203,23 +203,27 @@ export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval
     /** drop a finished run's resumable snapshot and pointer store */
     forgetRun(hash: string): void;
     /** start a run the user asked for, assembled in the worker (sw-run-start.ts) */
-    startUserRun(tabId: number, req: import("../agent/run-assembly").UserRunRequest): Promise<{ hash: string }>;
+    startUserRun(tabId: number, req: import("../agent/run-assembly").UserRunRequest, opts?: { remote?: true }): Promise<{ hash: string }>;
     /** a message or Continue for a run the worker built; null when the run is not the worker's (sw-run-start.ts) */
-    userRunAction(hash: string, action: "send" | "continue", body: Record<string, unknown>, fromTabId?: number): Promise<PageOutcome | null>;
+    userRunAction(hash: string, action: "send" | "continue", body: Record<string, unknown>, fromTabId?: number, origin?: import("../contract/contract-run").PromptOrigin): Promise<PageOutcome | null>;
     /** register a run's builtin toolset in a tab's page and hear its context (the ADOPT_RUN_NOW push) */
     adoptOnTab(tabId: number, runId: string, rebuild: import("../contract").RebuildConfig): Promise<{ pageInfo?: string; error?: string; unanswered?: true }>;
 };
 
-let handler: ((command: Command) => Promise<CommandResult<CommandType>>) | null = null;
+let handler: ((command: Command, from?: CommandFrom) => Promise<CommandResult<CommandType>>) | null = null;
 
-/** Run one contract command through the same handler the extension's pages use: the hub connection's way in. */
-export function runSessionCommand(command: Command): Promise<CommandResult<CommandType>> {
-    return runCommand(command);
+/**
+ * Run one contract command through the same handler the extension's pages use: the hub connection's way in.
+ * @param command the command, opened and checked
+ * @param from who sent it, as the transport verified
+ */
+export function runSessionCommand(command: Command, from: CommandFrom): Promise<CommandResult<CommandType>> {
+    return runCommand(command, from);
 }
 
-async function runCommand(command: Command): Promise<CommandResult<CommandType>> {
+async function runCommand(command: Command, from: CommandFrom = THIS_BROWSER): Promise<CommandResult<CommandType>> {
     if (!handler) return { ok: false, error: { code: "unavailable", message: "the extension's worker is still starting" } };
-    return handler(command);
+    return handler(command, from);
 }
 
 const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
@@ -309,10 +313,10 @@ export function configureSessionCommands(run: RunDeps): void {
                 return true;
             } catch { return false; }   // closed between the check and the focus
         },
-        toPage: async (tabId, action, body) => {
+        toPage: async (tabId, action, body, origin) => {
             // A run the worker built is driven from the worker: the page never carries the person's message.
             if (action === "send" || action === "continue") {
-                const mine = await run.userRunAction(String((body as { hash?: unknown }).hash ?? ""), action, body as Record<string, unknown>, tabId);
+                const mine = await run.userRunAction(String((body as { hash?: unknown }).hash ?? ""), action, body as Record<string, unknown>, tabId, origin);
                 if (mine) return mine;
             }
             const reqId = Math.random().toString(36).slice(2, 12);
@@ -357,9 +361,9 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         startChat: (opts) => startBackgroundChat(opts),
         // Assembled in the worker, never by the page it acts on (docs/spec/SITE_ACCESS.md, slice 0).
-        startAgent: async (tabId, opts) => {
+        startAgent: async (tabId, opts, origin) => {
             try {
-                const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" });
+                const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" }, origin?.remote ? { remote: true } : {});
                 return { outcome: "started", hash };
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
