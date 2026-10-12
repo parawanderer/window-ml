@@ -54,10 +54,13 @@ the worker, and the page answers geometry only):
             `hidePopover()`, attribute removal or change, or a cancelled show by restoring ours, all within one budget;
             a host kept out of the top layer refuses the shot as tampered (review-look.spec.mjs, "the top layer";
             shell-top-layer.test.mjs): #599.
-      - [ ] Closed shadow roots: PLANNED next (owner decision 2026-10-10). A `:host{…!important}` rule the page puts
-            inside our OPEN root still beats the host's inline `!important` (for `!important` the inner context wins),
-            edited into our own sheet through the CSSOM or set as an adopted sheet, neither a DOM mutation, so the watch
-            refuses it only when a frame read sees it.
+      - [x] Closed shadow roots (owner decision 2026-10-10): all three roots are `mode: "closed"`, so the page cannot
+            put a `:host{…!important}` rule inside one (a stylesheet, an adopted sheet or a CSSOM edit of ours), nor
+            reach our nodes or the card's iframe. The page holds no handle on a root by any path (host, global,
+            expando, event path, mutation record, focus, selection, hit test, the test hook); the card app's theme post
+            to `window.parent` and the page-started `CDP_SHADOW_RESOLVE` descending into our hosts, both of which
+            bypassed it, are shut (site-access.spec.mjs, attack 17; review-look.spec.mjs, "does not get in";
+            background.test.js, "never descends into the shell's own host"): #PRNUM.
       - [ ] `<html>` (the page's own element) stays open: a timed edit to it is seen only by a frame read.
       - [x] Review of #599: a host removed and put back is restored at once (child-list watch); the page re-showing
             one of our hosts is restacked; the keeper's listeners outlive an unmount, so a page listener added between

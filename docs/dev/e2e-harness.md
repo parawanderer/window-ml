@@ -499,6 +499,10 @@ thing. The parts:
   hosts), so a spec keeps that listener for those and adds the watcher for the rest. Open the sidebar by CLICKING its
   tab (`#ml-sb-tab` in the `#ml-sb-root` shadow root), never by posting `__mlSidebarOpen` into its iframe: the app
   ignores window messages on a web page, because the page could send them too.
+- **Our shadow roots are CLOSED: reach them with `inShell`, `waitInShell` and `clickInShell`** (harness.mjs), never
+  `host.shadowRoot` (null) or a Playwright locator (it does not enter a closed root). They evaluate in the content
+  script's isolated world over CDP, where the shell's `__wmlShellRoots` hook lives. How and why: docs/dev/sidebar.md,
+  "Reaching the roots in a test".
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).

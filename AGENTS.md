@@ -169,7 +169,8 @@ learned by shipping the wrong version first.
 - **Notifications.** Only a certificate's DURABLE fields may reach a scheduled reminder, nothing about a session
   goes on a lock screen, and `expo-notifications` stays out of `app.json`'s plugins. → chat-page.md
 - **Sidebar.** One app, two surfaces: a new app→parent message is also handled in `panel.ts`; shared session views
-  call `services()`, never `chrome.*`; a session key is `runtime:hash`, split on the LAST `:`. → sidebar.md
+  call `services()`, never `chrome.*`; a session key is `runtime:hash`, split on the LAST `:`. Our shadow roots are
+  CLOSED: the shell uses its kept references, a test `inShell` (harness.mjs), never `.shadowRoot`. → sidebar.md
 - **A run's events never reach the page's window**, and the sidebar app talks to its host only through
   `parent-channel.ts`: an e2e watches a background run with `watchRunEvents` and opens the sidebar by clicking its
   tab, never by posting into its iframe. → sidebar.md
