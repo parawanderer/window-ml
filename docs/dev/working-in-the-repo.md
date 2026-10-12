@@ -413,6 +413,19 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   suite globs `tests/*.test.*`; E2E is `tests/e2e/*.spec.mjs`). See the fuller
   writeup below.
 
+## Claude Code's memory folder
+
+Claude Code keeps a memory per checkout outside the repo, in `~/.claude/projects/<checkout path, non-alphanumerics as
+dashes>/memory/`. Its `MEMORY.md` is loaded into every session and cut off past 200 lines, so it is HIERARCHICAL: a
+few read-first entries and one hub per topic (`topic-<name>.md`), and every other memory carries `  topics: a, b` under
+`metadata:` and is listed by the command in its hub. A memory without topics is invisible.
+
+`scripts/check-memory.mjs` holds that shape. It runs as a Claude Code `PostToolUse` hook (`.claude/settings.json`), not
+a git hook or a CI job: the folder exists only on the machine running the harness, and the format is the harness's.
+When a Write, Edit or Bash call touches the folder and leaves it broken (no topics, a topic with no hub, a hub not
+linked from `MEMORY.md`, an index past 200 lines), the hook exits 2 and the session that wrote it is told at once. With
+no folder it says nothing. `node scripts/check-memory.mjs` prints the same errors plus warnings on demand.
+
 ## GitHub posts say which session made them
 
 **Every comment, review, inline remark or PR body an agent posts ends with two lines**, whatever the harness (Claude
