@@ -151,3 +151,38 @@ test("UPGRADE: an isolated exec that read a pointer before part 4b reads it the 
         assert.deepEqual(r.log.map((x) => x.kind), ["exec-isolated"]);
     }
 });
+
+// --- parity at the edges of a stage list ---
+
+/** Pipes at the edges of what a stage list is: empty, padded, blank stages, an unterminated quote, a non-string stage,
+ *  and past the isolated channel's stage count and stage length. Short keys, so no report is clipped. */
+const EDGE_PIPES = [
+    ["empty", ""], ["emptyArray", []], ["padded", "  head -n 1  "], ["blankStages", ["", " head -n 1 ", "  "]],
+    ["doubleBar", "head -n 1 || tail -n 1"], ["unterminated", "grep 'a"], ["unterminatedArray", ["grep 'a"]],
+    ["nonString", [7, "head -n 1"]], ["stages33", Array.from({ length: 33 }, () => "head -n 9")],
+    ["longStage", [`grep -c ${"x".repeat(5000)}`]], ["stages200", Array.from({ length: 200 }, () => "tail -n 3")],
+];
+const edgeScripts = (path) => EDGE_PIPES.map(([k, p]) => (id) => {
+    const e = path === "readonly" ? `(await ml.dereference("@tool:${id}", { pipe: ${JSON.stringify(p)} })).text` : `(await v.pipe(${JSON.stringify(p)})).text`;
+    const body = probe(() => [[k, e]])(id);
+    return path === "main" ? `${body}\n// ml.dereference("@tool:${id}", { pipe: ${JSON.stringify(p)} })` : body;
+});
+
+test("a pipe at the edges (empty, padded, blank or non-string stages, an unterminated quote, many or long stages) gives the same text or error through .pipe() in an isolated world as through the read-only path and the main world", T, async () => {
+    const out = {};
+    for (const path of ["readonly", "userScripts", "cdp", "main"]) {
+        const r = await runOn(path === "main" ? "none" : path, edgeScripts(path));
+        out[path] = Object.assign({}, ...r.results.map((x) => norm(report(x))));
+    }
+    const ro = out.readonly;
+    assert.deepEqual(Object.keys(ro).sort(), EDGE_PIPES.map(([k]) => k).sort(), `positive control: every probe reported: ${JSON.stringify(ro).slice(0, 600)}`);
+    assert.equal(ro.padded[1], "{", "positive control: a padded stage answers");
+    assert.match(ro.unterminated, /^ERR unterminated quote/);
+    const differ = [];
+    // The main world answers only a pipe the script spells out as string literals (named-reads.ts), so a stage that is
+    // not a string literal is refused there by that rule, never answered differently.
+    assert.match(out.main.nonString, /^ERR ml\.dereference\(.*\{ pipe \}\) was not named in the script/);
+    out.main.nonString = ro.nonString;
+    for (const path of ["userScripts", "cdp", "main"]) for (const [k] of EDGE_PIPES) if (JSON.stringify(out[path][k]) !== JSON.stringify(ro[k])) differ.push(`${path} ${k}: ${JSON.stringify(out[path][k])?.slice(0, 160)} (read-only: ${JSON.stringify(ro[k])?.slice(0, 160)})`);
+    assert.deepEqual(differ, []);
+});

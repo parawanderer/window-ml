@@ -125,6 +125,12 @@ test("the wrapper binds the pointer reads sent with the call, the pipe as a stri
     assert.equal((await runWrapped("(ml.dereference('@tool:exec', { pipe: ' head 1 ' }))", b)).out.v, "FIRST", "a string pipe is split as the page splits it");
     assert.equal((await runWrapped("(ml.dereference('@tool:exec', { pipe: ['head 1'] }))", b)).out.v, "FIRST");
     assert.match((await runWrapped("(ml.dereference('@tool:other'))", b)).out.threw, /was not named in the script/);
+    // Since part 4b a pipe need not be a literal (`.pipe()` asks the worker): the refusal of a computed pipe says so,
+    // and never tells the model to spell out a pipe it computes.
+    const computed = (await runWrapped("{ const p = 'head ' + 2; return ml.dereference('@tool:exec', { pipe: p }) }", b)).out.threw;
+    assert.match(computed, /\{ pipe \}\) was not named in the script.*ml\.dereference\('@tool:<id>'\)\.pipe\(stages\)/);
+    assert.doesNotMatch(computed, /pointer and its pipe as literals/);
+    assert.doesNotMatch((await runWrapped("(ml.dereference('@tool:other'))", b)).out.threw, /pipe/, "a bare read that was not named is told only to name the pointer");
     assert.match((await runWrapped("(ml.dereference('@tool:bad'))", b)).out.threw, /MemoryFault: gone/);
 });
 

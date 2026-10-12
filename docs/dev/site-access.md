@@ -186,15 +186,26 @@ A value's `.pipe()` and a stored table's `col`/`select`/`records`/long `head` ne
   send there, and the type is in neither `HANDLE_MAP` nor `runtime.onMessage`'s router. A CDP world calls the binding
   named for its world (`executionContextName`); the answer goes back by `Runtime.evaluate` in that world's context id.
 - A request is answered only under the call's nonce (minted per call, written only into the world's source, deleted
-  when the call ends), from the call's tab, frame 0, its routed document and, where Chrome names it, its own world
-  (`userScriptWorldId`); an absent fact is a no. Anything else gets no answer at all, so a sender learns nothing. A CDP
-  call is taken only from the world's context id on the run's tab.
+  when the call ends), from the call's tab, frame 0 and its routed document; an absent tab, frame or document is a no.
+  Anything else gets no answer at all, so a sender learns nothing. A CDP call is taken only from the world's context id
+  on the run's tab.
+- Which facts Chrome gives, checked in its source (2026-10, `extensions/browser/api/messaging/extension_message_port.cc`,
+  `DispatchOnConnect`): a user-script world's message gets the same `sender` as any frame's, so `tab`, `frameId` and
+  `documentId` are set, with no branch on the sending world. Chrome does NOT set `userScriptWorldId` (Firefox does), so
+  the world check applies only where a browser names it, and in Chrome another world on the same document is kept out
+  by the nonce alone, which only this call's world was given. Were `documentId` ever absent, every request would go
+  unanswered (`.pipe()` and stored columns would fail, nothing would leak): `tests/redteam-isolated-channel.test.mjs`,
+  "no document". The vm harness sends Chrome's shape (`tests/isolated-harness.mjs`).
 - What it may read is the entitlement `VALUE_COLUMNS` applies: a re-pipe of a read the approved source NAMED (the world
   sends an index into the call's reads, never a pointer), and the columns of a stored table sent with the call or handed
   back by one of its re-pipes, with the delimiter from the worker's record, held by the run. A read that failed is not
   re-read under another pipe.
 - At most `ISO_ASK_MAX` (256) requests a call; past it each is refused before any work, so a looping script ends on
-  that sentence.
+  that sentence. One re-pipe carries at most `ISO_MAX_STAGES` (256) stages of `ISO_MAX_STAGE_CHARS` (16,384)
+  characters, past which it is refused with a sentence naming both: the one cap the read-only and main-world paths do
+  not have, set well past any pipe a script writes.
+- Every request is answered, an error included (an unterminated quote, a store that fails): a CDP world's read that
+  went unanswered would leave its script awaiting it for good.
 
 `tests/isolated-pointer.test.mjs` holds the values and errors to the read-only and main-world paths';
 `tests/redteam-isolated-channel.test.mjs` is the red-team pass on the channel.

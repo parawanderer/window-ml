@@ -104,7 +104,9 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
         available: true,
         execute: async (inj) => {
             await onExecute?.(bg, inj, worlds);
-            const ctx = worlds.get(inj.worldId) ?? world({ chrome: { runtime: { sendMessage: (m) => bg.emitUserScriptMessage(m, { tab: { id: 7 }, frameId: 0, documentId: "doc-1", userScriptWorldId: inj.worldId }) } } });
+            // The sender Chrome gives a user-script world's message: its tab, frame and document (set for any frame's
+            // message, ExtensionMessagePort::DispatchOnConnect), and no `userScriptWorldId`, which Chrome does not set.
+            const ctx = worlds.get(inj.worldId) ?? world({ chrome: { runtime: { sendMessage: (m) => bg.emitUserScriptMessage(m, { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0, documentId: "doc-1" }) } } });
             worlds.set(inj.worldId, ctx);
             const r = vm.runInContext(inj.js[0].code, ctx);
             return r && typeof r.then === "function" ? JSON.parse(JSON.stringify(await r)) : r;

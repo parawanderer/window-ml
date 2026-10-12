@@ -385,14 +385,19 @@ test("no pointer value, read ref, pipe, meta field or ml.current content can bre
 
 // --- 5. what the isolated path leaves on the tab ---
 
-test("after an isolated exec the user-script world is the run's own, and messaging is configured only for a call that streams", T, async () => {
+test("after an isolated exec the user-script world is the run's own, and messaging is configured only for a call that streams or may ask the worker for a read", T, async () => {
+    // `a` names a pointer that does not resolve (no exec before it), so nothing was sent and there is nothing to ask for.
     const a = await rtRun(["window.b = 1; return @tool:exec"], { us: true });
     const b = await rtRun(["window.b = 1; console.log(1); return @tool:exec"], { us: true, stream: true });
+    // `c` names one that resolves (part 4b): its value's .pipe() may ask the worker, so the world gets messaging.
+    const c = await rtRun([FIRST, "window.b = 1; return @tool:exec"], { us: true });
     const conf = (bg) => bg.userScriptCalls.filter(([k]) => k === "configureWorld").map(([, c]) => JSON.parse(JSON.stringify(c)));
     assert.deepEqual(conf(a.bg), [{ worldId: `wml-${a.hash}`, messaging: false }]);
     assert.deepEqual(conf(b.bg), [{ worldId: `wml-${b.hash}`, messaging: true }]);
+    assert.deepEqual(conf(c.bg), [{ worldId: `wml-${c.hash}`, messaging: true }]);
+    assert.match(c.results[1], /FROM THE PAGE/, `positive control: the resolved read was sent: ${c.results[1]}`);
     // Never the default (main/USER_SCRIPT) world, which other user scripts share.
-    for (const r of [a, b]) for (const i of r.injected) assert.equal(i.worldId, `wml-${r.hash}`);
+    for (const r of [a, b, c]) for (const i of r.injected) assert.equal(i.worldId, `wml-${r.hash}`);
 });
 
 // --- 6. fail-open on absent facts ---

@@ -33,7 +33,8 @@ export function isoValue(read: { value?: string; meta?: DerefMeta }, i: number, 
     // `.pipe()` re-reads the SAME pointer with new stages, as the page's `ml.dereference` does (injected.ts).
     const again = async (stages: string | string[]): Promise<DerefValue> => {
         if (!ask) throw new Error(NO_CHANNEL.pipe);
-        const r = await ask({ op: "pipe", i, stages: Array.isArray(stages) ? stages.map(String) : String(stages ?? "") }) as { value?: string; warning?: string; meta?: DerefMeta };
+        // As the page's `pipeStages` reads a pipe: an array keeps its strings only, anything else not a string is no pipe.
+        const r = await ask({ op: "pipe", i, stages: Array.isArray(stages) ? stages.filter((s) => typeof s === "string") : typeof stages === "string" ? stages : "" }) as { value?: string; warning?: string; meta?: DerefMeta };
         if (r?.warning) { try { console.warn(r.warning); } catch { /* no console */ } }
         return isoValue(r ?? {}, i, ask);
     };

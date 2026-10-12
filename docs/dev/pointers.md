@@ -188,7 +188,8 @@ call; in a survey the worker reads the value store itself), and `DerefText` hand
   page's own `DerefText`, spliced into the world as source (`src/isolated-kit.ts`, bundled to `isolated-kit.gen.ts` by
   `scripts/gen-isolated-kit.mjs`). A stored table's columns and a `.pipe()` ask the worker over the call's own channel
   (`src/sw/iso-channel.ts`; docs/dev/site-access.md says who can send on it), never `VALUE_COLUMNS`. `.pipe()` there
-  re-reads the named pointer with ANY stages, as a survey's `ml.dereference(ref, { pipe })` does; the main world answers
+  re-reads the named pointer with ANY stages (up to `ISO_MAX_STAGES` of `ISO_MAX_STAGE_CHARS`), as a survey's
+  `ml.dereference(ref, { pipe })` does; the main world answers
   only a pipe the script spells out. The read-only dialect has no `.pipe()` or `.schema()` on a value (it reads one as
   a string): a survey re-pipes through `ml.dereference`. `tests/isolated-pointer.test.mjs` holds the four paths to the
   same values and errors.

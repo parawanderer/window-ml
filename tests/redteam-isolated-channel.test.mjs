@@ -14,7 +14,7 @@ import { runOn, fromTab, DATA_URL, CSV, ROWS } from "./isolated-harness.mjs";
 
 const { ValueStore } = await import("../src/pointers/value-store.ts");
 const { HANDLE_MAP, PAGE_STARTED_TYPES } = await import("../src/page-relay.ts");
-const { isoServer, ISO_ASK_MAX, ISO_REFUSED } = await import("../src/sw/iso-channel.ts");
+const { isoServer, ISO_ASK_MAX, ISO_REFUSED, ISO_MAX_STAGES, ISO_MAX_STAGE_CHARS } = await import("../src/sw/iso-channel.ts");
 
 const T = { timeout: 120000 };
 const nonceOf = (code) => /__mlIsoStarted = "([0-9a-f]+)"/.exec(code)?.[1];
@@ -95,6 +95,18 @@ test("a CDP binding call carrying a read is served only from the isolated world'
     }
 });
 
+test("nothing that crosses the channel reaches the page: no message the run's tab is sent carries a column the world read or a re-pipe's text", T, async () => {
+    // Column `n` is (i * 7) % 1000 for each row: its first values, in order, appear nowhere but in a read of that column.
+    const N = JSON.stringify(Array.from({ length: 40 }, (_, i) => (i * 7) % 1000)).slice(1, -1);
+    const r = await runOn("userScripts", [() => 'window.b = 1; const v = @tool:"orders"; const n = await v.table.col("n"); const t = (await v.pipe("grep -c ,")).text; return "<<<" + JSON.stringify([n.length, n.slice(0, 40).reduce((a, x) => (a * 31 + x) % 1000003, 7), t.length]) + ">>>"']);
+    // The script's own result reaches the page as every tool result does (docs/dev/readonly-exec.md); it returns no data.
+    const got = JSON.parse(/<<<(.*)>>>/.exec(r.results[0])?.[1] ?? "null");
+    assert.deepEqual(got?.slice(0, 2), [ROWS, N.split(",").map(Number).reduce((a, x) => (a * 31 + x) % 1000003, 7)], `positive control: the world read the whole column through the channel: ${r.results[0].slice(0, 300)}`);
+    const toTab = JSON.stringify(r.bg.tabMessages.filter(([t]) => t === 7).map(([, m]) => m));
+    assert.ok(toTab.length > 0, "positive control: the tab was sent messages");
+    assert.ok(!toTab.includes(N.slice(0, 60)) && !toTab.includes(N.slice(20, 80)), "a column read through the channel reached the page");
+});
+
 // --- 2. what the channel answers, even to the world itself ---
 
 test("the world gets only what its approved source named: another stored table, a read index it was not sent, and a read that failed are refused", T, async () => {
@@ -113,7 +125,7 @@ test("the world gets only what its approved source named: another stored table, 
             got.ownTable = await ask({ op: "cols", key: key(DATA_URL), names: ["n"] });
             got.otherTable = await ask({ op: "cols", key: key(OTHER_URL), names: ["m"] });
             for (const i of [1, 2, -1, "0", 0.5, null, 1e9]) got[`pipe i=${JSON.stringify(i)}`] = await ask({ op: "pipe", i, stages: "head -n 1" });
-            for (const req of [null, "x", { op: "eval" }, { op: "cols", key: 1, names: [] }, { op: "cols", key: key(DATA_URL), names: "n" }, { op: "pipe", i: 0, stages: Array(33).fill("head") }, { op: "pipe", i: 0, stages: [{}] }])
+            for (const req of [null, "x", { op: "eval" }, { op: "cols", key: 1, names: [] }, { op: "cols", key: key(DATA_URL), names: "n" }, { op: "pipe", i: 0, stages: [{}] }])
                 got[`malformed ${JSON.stringify(req)}`] = await ask(req);
         },
     });
@@ -220,6 +232,64 @@ test("a table a re-pipe answered with becomes readable for that call, and only t
     assert.ok("ok" in await serve({ op: "pipe", i: 0, stages: ["head"] }));
     assert.ok("ok" in await serve({ op: "cols", key: "vpiped", names: ["a"], delimiter: "," }));
     assert.deepEqual(calls, [["vpiped", ["a"], { delimiter: ";" }]], "the delimiter is the worker's record, never the world's");
+});
+
+test("the server answers every request and never rejects: an unterminated quote is the dialect's own error, and a store that fails to say who holds a table is an error, not a dropped answer", async () => {
+    const table = { columns: ["n"], rows: [[1]], shape: [9, 1], dtypes: { n: "int64" }, truncated: true };
+    const reads = [{ ref: "@tool:t", pipe: [], value: "x", meta: { id: "t", kind: "table", tool: "fetch_url", step: 1, table, value: "vkey" } }];
+    const serve = isoServer("run-1", reads, { deref: () => () => ({ value: "a" }), holders: async () => { throw new Error("IDB closed"); }, columns: async () => ({ rowCount: 1, columns: { n: [1] } }) });
+    const settle = (p) => p.then((v) => ({ resolved: v }), (e) => ({ rejected: String(e?.message ?? e) }));
+    assert.deepEqual(await settle(serve({ op: "pipe", i: 0, stages: "grep 'a" })), { resolved: { error: "unterminated quote (') in the pipe." } });
+    assert.deepEqual(await settle(serve({ op: "cols", key: "vkey", names: ["n"] })), { resolved: { error: "IDB closed" } });
+    assert.deepEqual(await settle(serve({ op: "pipe", i: 0, stages: "head -n 1" })), { resolved: { ok: { value: "a" } } }, "positive control");
+});
+
+test("a pipe past the channel's size bounds is refused with the sentence naming them, and one at the bounds is answered; an index not sent is refused before the pipe is parsed", async () => {
+    let reads = 0;
+    const serve = isoServer("run-1", [{ ref: "@tool:t", pipe: [], value: "a", meta: { id: "t", kind: "text", tool: "x", step: 1 } }], { deref: () => () => { reads++; return { value: "a" }; }, holders: async () => null, columns: async () => ({}) });
+    const many = (n) => Array.from({ length: n }, () => "head -n 9");
+    assert.ok("ok" in await serve({ op: "pipe", i: 0, stages: many(ISO_MAX_STAGES) }), "positive control: as many stages as the bound");
+    assert.ok("ok" in await serve({ op: "pipe", i: 0, stages: [`grep ${"x".repeat(ISO_MAX_STAGE_CHARS - 5)}`] }), "positive control: a stage as long as the bound");
+    for (const stages of [many(ISO_MAX_STAGES + 1), many(ISO_MAX_STAGES + 1).join(" | "), [`grep ${"x".repeat(ISO_MAX_STAGE_CHARS)}`], `grep ${"x".repeat(ISO_MAX_STAGE_CHARS)}`])
+        assert.deepEqual(await serve({ op: "pipe", i: 0, stages }), { error: ISO_REFUSED.pipeSize }, JSON.stringify(stages).slice(0, 60));
+    assert.match(ISO_REFUSED.pipeSize, new RegExp(`${ISO_MAX_STAGES} stages, ${ISO_MAX_STAGE_CHARS.toLocaleString("en-US")} characters`));
+    assert.equal(reads, 2, "nothing past the bounds reached the store");
+    assert.deepEqual(await serve({ op: "pipe", i: 5, stages: "grep 'a" }), { error: ISO_REFUSED.unnamed });
+});
+
+test("HALTING: a CDP world whose server throws still gets an answer, so the script awaiting it ends", { timeout: 20000 }, async () => {
+    const listeners = new Set(), evals = [];
+    const ctx = vm.createContext({ console: { log() {}, info() {}, warn() {}, error() {}, debug() {} } });
+    ctx.__mlIsoStream = (payload) => { for (const fn of [...listeners]) fn({ tabId: 7 }, "Runtime.bindingCalled", { name: "__mlIsoStream", executionContextId: 11, payload }); };
+    const prev = globalThis.chrome;
+    globalThis.chrome = {
+        permissions: { contains: async () => true },
+        webNavigation: { getFrame: async () => ({ documentId: "doc-1" }) },
+        debugger: {
+            attach: async () => {}, detach: async () => {}, onDetach: { addListener() {} },
+            onEvent: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
+            sendCommand: async (_t, method, params) => {
+                if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "F1" } } };
+                if (method === "Page.createIsolatedWorld") return { executionContextId: 11 };
+                if (method !== "Runtime.evaluate") return {};
+                evals.push(params.contextId);
+                try { return { result: { value: JSON.parse(JSON.stringify(await vm.runInContext(params.expression, ctx) ?? null)) } }; }
+                catch (e) { return { exceptionDetails: { text: String(e), exception: { description: `${e.name}: ${e.message}` } } }; }
+            },
+        },
+    };
+    const { runInCdpWorld } = await import("../src/sw/sw-isolated-exec.ts");
+    const { releaseDebugger } = await import("../src/sw/sw-cdp.ts");
+    try {
+        const reads = [{ ref: "@tool:t", pipe: [], value: "x", meta: { id: "t", kind: "text", tool: "x", step: 1 } }];
+        const run = (serve) => Promise.race([
+            runInCdpWorld(7, "doc-1", "r1", "{ try { await ml.dereference('@tool:t').pipe('head'); return 'ANSWERED'; } catch (e) { return 'THREW ' + e.message; } }", { reads }, undefined, serve),
+            new Promise((r) => setTimeout(() => r("HUNG"), 3000)),
+        ]);
+        assert.deepEqual(JSON.parse(JSON.stringify(await run(async () => ({ ok: { value: "y" } })))), { ok: true, value: "ANSWERED", logs: [], dropped: 0 }, "positive control: an answer reaches the world");
+        assert.deepEqual(JSON.parse(JSON.stringify(await run(async () => { throw new Error("server broke"); }))), { ok: true, value: "THREW server broke", logs: [], dropped: 0 });
+        assert.ok(evals.every((c) => c === 11), "every evaluate in the isolated world's context");
+    } finally { releaseDebugger(7); globalThis.chrome = prev; }
 });
 
 // --- 5. the wrapper's channel binding, as source ---

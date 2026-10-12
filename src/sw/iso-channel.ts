@@ -16,8 +16,10 @@ import { pipeStages } from "../pointers/token-pipe";
 /** How many requests one isolated exec may send. Past it every request is refused without any work. */
 export const ISO_ASK_MAX = 256;
 
-/** The most stages one re-pipe may carry, and the longest stage; the most columns one read may name. */
-const MAX_STAGES = 32, MAX_STAGE_CHARS = 4096, MAX_NAMES = 4096;
+/** The most stages one re-pipe may carry, and the longest stage: bounds on the worker's work per request, set well past
+ *  any pipe a script writes, since the read-only and main-world paths have none. The most columns one read may name. */
+export const ISO_MAX_STAGES = 256, ISO_MAX_STAGE_CHARS = 16384;
+const MAX_NAMES = 4096;
 
 /** What a request is answered with: the data, or the error the world throws. */
 export type IsoAnswer = { ok: unknown } | { error: string };
@@ -36,6 +38,7 @@ export interface IsoDeps {
 export const ISO_REFUSED = {
     budget: `This exec asked the worker for pointer reads more than ${ISO_ASK_MAX} times, so the rest are refused. Read what you need in fewer calls (one .pipe() with all its stages, one t.select([...]) for several columns).`,
     malformed: "The isolated exec sent a request the worker does not answer.",
+    pipeSize: `That pipe is longer than an isolated exec sends the worker (${ISO_MAX_STAGES} stages, ${ISO_MAX_STAGE_CHARS.toLocaleString("en-US")} characters a stage). Split it into several .pipe() calls, or filter the text in the script.`,
     unnamed: "That pointer was not named in the script, so the worker does not read it for this exec. Write the pointer as a literal (`@tool:<id>`) and run it again.",
     table: "That stored table was not named by the running script.",
     held: "That stored table is not held by this run.",
@@ -64,10 +67,15 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
         const q = req as { op?: unknown; i?: unknown; stages?: unknown; key?: unknown; names?: unknown } | null;
         if (!q || typeof q !== "object") return { error: ISO_REFUSED.malformed };
         if (q.op === "pipe") {
-            const stages = typeof q.stages === "string" ? (q.stages.length <= MAX_STAGES * MAX_STAGE_CHARS ? pipeStages(q.stages) : null) : strings(q.stages, MAX_STAGES, MAX_STAGE_CHARS) ? pipeStages(q.stages) : null;
-            if (!stages || stages.length > MAX_STAGES) return { error: ISO_REFUSED.malformed };
+            // The world sends what the script passed (a string, or an array of strings); anything else is not a pipe.
+            if (typeof q.stages !== "string" && !(Array.isArray(q.stages) && q.stages.every((s) => typeof s === "string"))) return { error: ISO_REFUSED.malformed };
             const read = Number.isInteger(q.i) ? reads[q.i as number] : undefined;
             if (!read || read.error !== undefined) return { error: ISO_REFUSED.unnamed };
+            if (typeof q.stages === "string" ? q.stages.length > ISO_MAX_STAGES * ISO_MAX_STAGE_CHARS : !strings(q.stages, ISO_MAX_STAGES, ISO_MAX_STAGE_CHARS)) return { error: ISO_REFUSED.pipeSize };
+            let stages: string[];
+            // An unterminated quote is the dialect's own error, as every other path gives it.
+            try { stages = pipeStages(q.stages); } catch (e) { return { error: (e as Error)?.message || String(e) }; }
+            if (stages.length > ISO_MAX_STAGES || stages.some((st) => st.length > ISO_MAX_STAGE_CHARS)) return { error: ISO_REFUSED.pipeSize };
             const fn = deps.deref();
             if (!fn) return { error: ISO_REFUSED.ended };
             try {
@@ -77,12 +85,12 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
             } catch (e) { return { error: (e as Error)?.message || String(e) }; }
         }
         if (q.op === "cols") {
-            if (typeof q.key !== "string" || !strings(q.names, MAX_NAMES, MAX_STAGE_CHARS)) return { error: ISO_REFUSED.malformed };
+            if (typeof q.key !== "string" || !strings(q.names, MAX_NAMES, ISO_MAX_STAGE_CHARS)) return { error: ISO_REFUSED.malformed };
             const table = tables.get(q.key);
             if (!table) return { error: ISO_REFUSED.table };
-            const holders = await deps.holders(q.key);
-            if (holders && !holders.includes(runId)) return { error: ISO_REFUSED.held };
             try {
+                const holders = await deps.holders(q.key);
+                if (holders && !holders.includes(runId)) return { error: ISO_REFUSED.held };
                 return { ok: await deps.columns(q.key, q.names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) };
             } catch (e) { return { error: (e as Error)?.message || String(e) }; }
         }

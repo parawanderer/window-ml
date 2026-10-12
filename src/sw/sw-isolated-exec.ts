@@ -109,7 +109,11 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const __t0 = {
         dereference(ref, opts) {
             const e = __reads.get(JSON.stringify([String(ref), __stages(opts && opts.pipe)]));
-            if (!e) throw new Error("ml.dereference(" + JSON.stringify(String(ref)) + ") was not named in the script, so its value was not sent with it. Write the pointer and its pipe as literals and run it again.");
+            // Since part 4b only the POINTER must be a literal: a pipe the script computes goes on the value's .pipe(),
+            // which the worker answers while the script runs.
+            if (!e) throw new Error(__stages(opts && opts.pipe).length
+                ? "ml.dereference(" + JSON.stringify(String(ref)) + ", { pipe }) was not named in the script, so its value was not sent with it. Write the pointer as a literal and put a pipe the script computes on its value instead: ml.dereference('@tool:<id>').pipe(stages)."
+                : "ml.dereference(" + JSON.stringify(String(ref)) + ") was not named in the script, so its value was not sent with it. Write the pointer as a literal (@tool:<id>) and run it again.");
             const r = e.r;
             if (r.error !== undefined && r.error !== null) throw new Error(r.error);
             if (r.warning) console.warn(r.warning);
@@ -254,7 +258,9 @@ export async function runInCdpWorld(tabId: number, documentId: string, runId: st
         // gone with its document) fails quietly.
         if (serve && Number.isInteger(m.ask)) {
             const ctxNow = contextId;
-            void serve(m.req).then((ans) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
+            // A server that throws still answers, with its error, as onIsolatedMessage does: an unanswered read would
+            // leave the script awaiting it for good.
+            void serve(m.req).catch((e): IsoAnswer => ({ error: (e as Error)?.message || String(e) })).then((ans) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
                 { expression: `globalThis.__mlIsoAnswer(${JSON.stringify(m.ask)}, ${JSON.stringify(ans)})`, contextId: ctxNow })).catch(() => {});
         }
     };
