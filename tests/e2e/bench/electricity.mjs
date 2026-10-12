@@ -86,7 +86,8 @@ export function measured(J) {
     return null;
 }
 
-/** What each basis means, in words. */
+/** What each basis means, in words.
+ * @type {Record<string, string>} */
 export const BASIS_WORDS = { wall: "at the wall", system: "the whole system", "gpu+cpu": "GPUs + CPU package (the rest of the box not measured)", gpu: "GPUs only", cpu: "CPU package only" };
 
 /** A generation's span from its gen.end: it ran backwards from the finish for its prompt and decode time. */
@@ -216,14 +217,14 @@ function stretches(spans) {
  * run's hash and the electricity price its calls recorded (`usage.electricity`, or null). Returns a Map of run →
  * `{ Wh, aboveWh, tailWh, scopes: { gpu?: Wh, ... }, basis, ms, restW, cost, costAbove, currency }`, holding only the
  * runs the box generated for (a run on an external model with no local call is not in it). A stretch with no rest in
- * reach takes the box's rest over its whole log.
+ * reach takes the box's rest over its whole log (from `since`, when given: a sweep reads only its own time).
  */
-export function runEnergy(db, runs) {
+export function runEnergy(db, runs, { since = null } = {}) {
     const out = new Map();
     if (!db || !runs.length) return out;
     const want = new Map(runs.map((r) => [`wml-${r.run}`, r]));
     const gens = db.prepare(`SELECT box, at, json_extract(frame, '$.hint.session') AS session, json_extract(frame, '$.model') AS model,
-        json_extract(frame, '$.timings.prompt_ms') AS promptMs, json_extract(frame, '$.timings.eval_ms') AS evalMs FROM frames WHERE kind = 'gen.end'`).all();
+        json_extract(frame, '$.timings.prompt_ms') AS promptMs, json_extract(frame, '$.timings.eval_ms') AS evalMs FROM frames WHERE kind = 'gen.end' AND at >= ?`).all(since ?? -Number.MAX_VALUE);
     const byBox = new Map();
     for (const g of gens) {
         const s = genSpan(g);
@@ -235,7 +236,7 @@ export function runEnergy(db, runs) {
     for (const [box, spans] of byBox) {
         const ours = spans.filter((s) => want.has(s.session));
         let boxRest;
-        const restOfBox = () => (boxRest ??= attribute(read(box, -Infinity, Infinity), spans).restW);
+        const restOfBox = () => (boxRest ??= attribute(read(box, since ?? -Number.MAX_VALUE, Number.MAX_VALUE), spans).restW);
         for (const { from, to } of stretches(ours)) {
             const ivs = read(box, from - PAD_MS, to + PAD_MS);
             const near = spans.filter((s) => s.to >= from - PAD_MS && s.from <= to + PAD_MS);
@@ -282,4 +283,27 @@ export function energyByModel(energy, keyOf) {
         else m.costAbove += e.costAbove;
     }
     return new Map([...by].map(([k, { bases, aboveUnknown, ...m }]) => [k, { ...m, costAbove: m.cost == null || aboveUnknown ? null : m.costAbove, basis: [...bases].sort().join(" / ") }]));
+}
+
+/**
+ * A sweep's electricity so far, for its page and status files: `runs` are `{ index, run, price }` (the cell's index, its
+ * run hash, the electricity price its calls recorded), `modelOf(index)` the driver. Returns `{ total, models, runs }` of
+ * energyByModel tallies (`runs` keyed by index), or null when the box generated for none of them. `since` bounds the
+ * box log read to the sweep's own time.
+ */
+export function sweepEnergy(db, runs, modelOf, { since = null } = {}) {
+    const e = runEnergy(db, runs.map(({ run, price }) => ({ run, price })), { since });
+    if (!e.size) return null;
+    const indexOf = new Map(runs.map((r) => [r.run, r.index]));
+    const by = (keyOf) => Object.fromEntries(energyByModel(e, keyOf));
+    return { total: by(() => "all").all, models: by((run) => modelOf(indexOf.get(run)) ?? "?"), runs: by((run) => String(indexOf.get(run))) };
+}
+
+/** An energy tally as words for the terminal and status.md: Wh, above rest, the cost, and the runs with no price. */
+export function energyLine(t) {
+    if (!t) return null;
+    return [`${t.Wh.toFixed(2)} Wh over ${t.runs} run${t.runs === 1 ? "" : "s"}${t.aboveWh != null ? ` (${t.aboveWh.toFixed(2)} above rest)` : ""}`,
+        t.cost != null ? `${t.cost.toFixed(4)} ${t.currency}` : null,
+        t.unpriced ? `${t.unpriced} run${t.unpriced === 1 ? "" : "s"} with no electricity price (energy only; set one in DevTools Settings > Spend)` : null,
+        `measured as ${t.basis.split(" / ").map((b) => BASIS_WORDS[b] ?? b).join("; ")}`].filter(Boolean).join("; ");
 }

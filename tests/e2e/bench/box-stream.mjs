@@ -153,7 +153,9 @@ export async function openBoxLog(file = BOX_DB) {
         digest TEXT NOT NULL,       -- of the frame without its connection-relative fields, for the key
         UNIQUE (box, server_at, kind, digest)
     );
-    CREATE INDEX IF NOT EXISTS frames_at ON frames (box, at);`);
+    CREATE INDEX IF NOT EXISTS frames_at ON frames (box, at);
+    -- electricity.mjs reads every generation since a sweep began, of any box, every half minute while it runs.
+    CREATE INDEX IF NOT EXISTS frames_kind_at ON frames (kind, at);`);
     return db;
 }
 

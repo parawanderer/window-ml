@@ -386,7 +386,15 @@ calls count too), plus the draw above rest in the 30 s after each generation. Ne
 when the box reports one, else GPUs + CPU, and the section says which. scores.md/json and the scores page's Spend card
 gain `energy` (Wh, and above what the box draws at rest) and `electricity` (each moment at the tariff rate it fell in,
 from the price each run's calls recorded); a run with no electricity price shows energy only, with a warning to set
-one in DevTools Settings > Spend. Not yet live on the sweep page or in the estimate.
+one in DevTools Settings > Spend.
+
+While a sweep runs, the same reading covers its own runs (each cell's session from its live events), re-read every
+30 s: a `power` segment on the header badge and each driver pill (Wh, its cost, the warning), `page.json` `energy`,
+status.md's Electricity section, and a terminal line at the end. At the start (and on `--dry`) it estimates the
+electricity too: each cell from its model's recent past runs' energy in the box logs (this clone's and the pulled pool's),
+at the same fallbacks as the spend estimate, priced at the rate `ELECTRICITY_*` gives now; a cloud model whose runs never
+drew on the box is 0 Wh, a local one with no energy on record "no estimate". It narrows as runs finish (`est.` on the
+power segment, status.md's Electricity estimate section, the start estimate beside the measured figure at the end).
 
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at
