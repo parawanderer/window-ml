@@ -26,7 +26,7 @@
     // python-runtime.ts embeds the Pyodide prelude as Python source.
     "ms-python.python",
 
-    // src/gradient/gradient-gl.ts writes its shaders as `/* glsl */` template literals; this highlights them as
+    // src/lab/gradient/gradient-gl.ts writes its shaders as `/* glsl */` template literals; this highlights them as
     // GLSL. Type errors are scripts/check-glsl.mjs's job (glslangValidator), not the editor's.
     "boyswan.glsl-literal"
   ],

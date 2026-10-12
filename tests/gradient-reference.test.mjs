@@ -1,11 +1,10 @@
-// gradient-reference.test.mjs — the gradient fills' CPU reference (src/gradient/): interpolation properties of the
+// gradient-reference.test.mjs — the gradient fills' CPU reference (src/lab/gradient/): interpolation properties of the
 // Freeform gradient (thin-plate and Shepard) and the Gradient Mesh, and every vector-Jacobian product against central
 // finite differences. The maths these hold the code to: docs/spec/GRADIENT_FILLS.md.
 import { test } from "node:test";
 import assert from "node:assert";
-import { readdirSync, readFileSync } from "node:fs";
-import { evalFreeform, vjpFreeform, freeformMse, solveTps } from "../src/gradient/gradient-freeform.ts";
-import { evalMesh, vjpMesh, gridMesh, locate, patchPoint, patchValue } from "../src/gradient/gradient-mesh.ts";
+import { evalFreeform, vjpFreeform, freeformMse, solveTps } from "../src/lab/gradient/gradient-freeform.ts";
+import { evalMesh, vjpMesh, gridMesh, locate, patchPoint, patchValue } from "../src/lab/gradient/gradient-mesh.ts";
 
 /** A seeded generator (mulberry32), so a failure reproduces. */
 function rng(seed) {
@@ -233,15 +232,3 @@ for (const values of ["bilinear", "bicubic"]) {
         }
     });
 }
-
-// --- the module stands alone ---------------------------------------------------------------------------------------------
-
-test("nothing under src/gradient/ imports from outside it", () => {
-    const dir = new URL("../src/gradient/", import.meta.url);
-    for (const f of readdirSync(dir)) {
-        const src = readFileSync(new URL(f, dir), "utf8");
-        for (const m of src.matchAll(/^\s*(?:import|export)[^;]*?from\s+["']([^"']+)["']/gm)) {
-            assert.match(m[1], /^\.\/[\w.-]+$/, `${f} imports ${m[1]}`);
-        }
-    }
-});

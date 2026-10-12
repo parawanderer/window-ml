@@ -26,6 +26,8 @@ file` finds the path:
 | `python/`, `resource/`, `session/`, `log/` | the Pyodide sandbox; the box's memory and events; the session store; run and housekeeping logs |
 | `hub/` (+ `hub/runtime/`), `pairing/`, `archive/`, `chat/`, `native/`, `proto/` | as named; `hub/runtime/` is this browser AS a runtime |
 | `sidebar/` (+ `resource/`, `transcript/`, `card/`, `code/`, `export/`, `settings/`) | the panel, by view |
+| `gallery/` | the component gallery's page (`gallery.mjs`, the `gallery` skill) |
+| `lab/<topic>/` | LAB code: research that lives here but is not for window.ml (`lab/gradient/`). Each topic imports nothing outside its folder (`tests/lab.test.mjs`), has a `docs/spec/` file, and its PRs carry `@lab` |
 
 A new file goes in the folder of what it is for. Move files with `node scripts/move-files.mjs`, never `git mv`.
 
@@ -350,7 +352,7 @@ PR is what runs CI (e2e, three Node versions, real CPython), which a green local
 - **RULE — label every PR by TOPIC when you open it** (`gh pr create --label @exec,@api`), every one that applies.
   Topic labels start with `@`, which keeps them apart from GitHub's defaults: `@core` `@api` `@agent` `@exec`
   `@python` `@ui` `@chat-page` `@mobile` `@hub` `@hub-compat` `@model-backend-compat` `@resource-panel` `@security`
-  `@docs` `@agent-skills` `@ci`. What each means is its description (`gh label list`). A reviewer must not miss the
+  `@docs` `@agent-skills` `@ci` `@lab` (anything under `src/lab/`: reviewed for the maths, not as product). What each means is its description (`gh label list`). A reviewer must not miss the
   two `-compat` ones: the change needs a matching one in window-ml-hub, or in the forked Ollama/OpenWebUI. A missing
   topic gets a new `@` label with a description, not a stretched old one.
 - **A PR that conflicts with its base has NO checks at all.** If `gh run list` shows nothing for a pushed commit,

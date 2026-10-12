@@ -127,4 +127,4 @@ DOM at import: `list` imports it in Node. The gradient canvas (`src/gallery/grad
 
 The gradient renderer's GLSL is written as `/* glsl */` template literals and type-checked without a browser by
 `node --import tsx scripts/check-glsl.mjs` (glslangValidator, GLSL ES 3.00; `brew install glslang`). The pre-commit
-hook runs it when `src/gradient/` changes; CI always does.
+hook runs it when `src/lab/gradient/` changes; CI always does.
