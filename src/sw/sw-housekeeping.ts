@@ -3,6 +3,7 @@
 // DevTools panel). Kept out of background.ts, which only routes to it.
 import { HousekeepingLog, eventsForReader, type HousekeepingOrigin, type HousekeepingReport } from "../log/housekeeping";
 import { type SessionArea } from "../log/storage-ring";
+import { readJobs, type JobStatus } from "../job-registry";
 
 /** storage.session when the browser has it; an in-memory stand-in otherwise (a test harness without it), which
  *  still logs but cannot outlive the worker. Shared with the execution log (sw-run-log.ts), which keeps its own
@@ -50,4 +51,11 @@ export async function handleHousekeepingDump(payload: unknown, sender: chrome.ru
         await housekeeping.clear();
     }
     return { data: eventsForReader(events, origin === "page" ? (sender.tab?.id ?? -1) : null) };
+}
+
+/** DUMP_JOBS: every declared background job's status (job-registry.ts), read against the log as it is now. Extension
+ *  pages only: a job's last run can carry a session hash, and a page has no use for what the browser does on its own. */
+export async function handleJobsDump(sender: chrome.runtime.MessageSender): Promise<{ data?: JobStatus[]; error?: string }> {
+    if (senderOrigin(sender) === "page") return { error: "Refused: background jobs are for extension pages." };
+    return { data: await readJobs(await housekeeping.all()) };
 }

@@ -3331,6 +3331,16 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* THE HOUSEKEEPING LOG VIEW (header ⋮ → Housekeeping log): a toolbar, one line about what this is, then the log's
    output cell taking the rest of the height (it rides `.view-bench`'s non-scrolling column, like the full bench). */
 .hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+/* THE BACKGROUND WORK SECTION (housekeeping-log.tsx BackgroundWork): one fold per self-acting job, its state on the
+   header line, opening onto that job's own records. Above the log, never scrolled away with it. */
+.bgw { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.bgw-title { font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); padding: 2px 3px; }
+.bgw-body { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px 18px; }
+.bgw-body .hint { margin: 0; }
+/* The state on a job's header: only what needs a look is coloured. */
+.bgw-state { font-variant-numeric: tabular-nums; }
+.bgw-state.running { color: var(--accent); }
+.bgw-state.failed, .bgw-state.interrupted { color: var(--warn); }
 /* THE EXECUTION LOG PANEL (run-log-view.tsx), which is the same log view with everything else taken off it: its
    filters and exports are one menu in the dock's own bar and its explanation is the tab's tooltip, so the panel
    IS the records. No padding, because a region this narrow has no width to give a margin and the output cell

@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { collectPngs, replaceImages, isOpaque, samePixels, WEBP_LOSSLESS } from "../src/session/image-compact.ts";
 import { SessionStore } from "../src/session/session-store.ts";
-import { imageCompactor } from "../src/sw/sw-image-compact.ts";
+import { imageCompactor, compactionJob } from "../src/sw/sw-image-compact.ts";
+import { jobStatus } from "../src/job-registry.ts";
 
 const T = { timeout: 10000 };
 const png = (n) => `data:image/png;base64,iVBORw0KGgo${"A".repeat(400 + n)}${n}`;
@@ -331,4 +332,51 @@ test("one event holding more images than a chunk is a chunk of its own", T, asyn
     const r = await store.compactImages("cccc0003", fakeEncode, { chunkImages: 2 });
     assert.equal(r.compacted, 4);
     assert.equal(be._rows.get("cccc0003").compacted, 2);
+});
+
+// --- the pass as a background job: its status through each state (job-registry.ts) ---
+
+test("the compaction job goes idle → waiting with a due time → running → idle with its last run, from the real pass", T, async () => {
+    const store = new SessionStore(backend());
+    const log = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const c = imageCompactor(store, { encode: async (u) => { await gate; return webpOf(u); }, record: (r) => log.push({ t: log.length + 1, origin: "worker", ...r }), quietMs: 50, now: () => 1000 });
+    const d = compactionJob(c);
+    const st = () => jobStatus(d, d.live(), log);
+    assert.deepEqual([st().state, st().pending], ["idle", 0]);
+
+    store.put(summary("cccc0001"), ev("cccc0001", 0, { feedback: { image: png(1) } }));
+    await store.flush();
+    c.kick();
+    assert.deepEqual([st().state, st().pending, st().pendingLabel, st().nextDue], ["waiting", 1, "sessions with PNG screenshots", 1050]);
+
+    const p = c.pass();
+    assert.equal(st().state, "running");
+    release();
+    await p;
+    const done = st();
+    assert.deepEqual([done.state, done.pending, done.lastRun.ok, done.lastRun.detail], ["idle", 0, true, { sessions: 1, images: 1 }]);
+    await new Promise((r) => setTimeout(r, 80)); // the kick's timer fires a pass over nothing, which logs nothing
+    assert.equal(log.filter((r) => r.kind === "compact-pass").length, 1);
+});
+
+test("the compaction job is failed after the encoder fails, and interrupted when a worker died mid-pass", T, async () => {
+    const store = new SessionStore(backend());
+    const log = [];
+    const rec = (r) => log.push({ t: log.length + 1, origin: "worker", ...r });
+    store.put(summary("cccc0002"), ev("cccc0002", 0, { feedback: { image: png(1) } }));
+    await store.flush();
+    const broken = imageCompactor(store, { encode: async () => { throw new Error("worker gone"); }, record: rec });
+    await broken.pass();
+    assert.equal(jobStatus(compactionJob(broken), broken.status(), log).state, "failed");
+
+    // A worker stopped in the middle: its `compact-pass` is in the log and nothing ended it. The NEW worker's compactor
+    // is not running, and the session still waits.
+    const cut = [{ t: 1, subsystem: "sessions", kind: "compact-pass", origin: "worker", detail: { sessions: 1 } }, { t: 2, subsystem: "sw", kind: "start", origin: "worker" }];
+    const fresh = imageCompactor(store, { encode: fakeEncode, record: (r) => cut.push({ t: cut.length + 1, origin: "worker", ...r }) });
+    const s = jobStatus(compactionJob(fresh), fresh.status(), cut);
+    assert.deepEqual([s.state, s.interruptedAt, s.pending], ["interrupted", 1, 1]);
+    await fresh.pass();
+    assert.equal(jobStatus(compactionJob(fresh), fresh.status(), cut).state, "idle", "the resumed pass ends it");
 });

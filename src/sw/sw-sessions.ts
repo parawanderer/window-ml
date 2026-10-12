@@ -25,7 +25,8 @@ import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesB
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
-import { imageCompactor } from "./sw-image-compact";
+import { compactionJob, imageCompactor } from "./sw-image-compact";
+import { defineJob } from "../job-registry";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
@@ -516,6 +517,14 @@ export const sessionStore = (() => {
 
 /** The background pass that re-encodes saved screenshots as lossless WebP once the store goes quiet. */
 const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping }) : null;
+if (imageCompaction) defineJob(compactionJob(imageCompaction));
+if (sessionStore) defineJob({
+    id: "sessions.evict",
+    title: "Saved-session cleanup",
+    trigger: "on every save, when the browser starts, and when the retention or storage settings change",
+    // `archive-failed`: the archive refused a session meant to move there, so it was kept where it was.
+    log: { subsystem: "sessions", done: ["evict"], failed: ["archive-failed"] },
+});
 
 /** The index and its server, for this worker's life. */
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {

@@ -6,6 +6,7 @@
 // the rewrite is `SessionStore.compactImages`. This is the clock and the messenger.
 import type { SessionStore } from "../session/session-store";
 import type { HousekeepingReport } from "../log/housekeeping";
+import type { JobDecl, JobLive } from "../job-registry";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 
 /** How long the store must be quiet before a pass starts: a streaming run writes every 400 ms, and each write
@@ -43,9 +44,10 @@ export function imageCompactor(store: SessionStore, o: {
     record?: (r: HousekeepingReport) => void;
     quietMs?: number;
     now?: () => number;
-} = {}): { kick(): void; pass(): Promise<void> } {
+} = {}): { kick(): void; pass(): Promise<void>; status(): JobLive } {
     const encode = o.encode ?? webpFromWorker, now = o.now ?? Date.now;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let dueAt: number | null = null;
     let running: Promise<void> | null = null;
     const run = async (): Promise<void> => {
         const todo = store.compactable();
@@ -78,8 +80,27 @@ export function imageCompactor(store: SessionStore, o: {
     return {
         kick() {
             if (timer) clearTimeout(timer);
-            timer = setTimeout(() => { timer = null; void pass(); }, o.quietMs ?? COMPACT_QUIET_MS);
+            const ms = o.quietMs ?? COMPACT_QUIET_MS;
+            dueAt = now() + ms;
+            timer = setTimeout(() => { timer = null; dueAt = null; void pass(); }, ms);
         },
         pass,
+        /** Whether a pass is running, how many sessions wait, and when the quiet timer fires (none set: no time). */
+        status: (): JobLive => ({
+            running: running != null,
+            pending: store.compactable().length,
+            pendingLabel: "sessions with PNG screenshots",
+            ...(dueAt != null ? { nextDue: dueAt } : {}),
+        }),
     };
 }
+
+/** The compaction pass as a background job (job-registry.ts): its live status from the compactor, its history from the
+ *  `sessions/compact-*` records. */
+export const compactionJob = (c: { status(): JobLive }): JobDecl => ({
+    id: "sessions.compact-images",
+    title: "Screenshot compaction",
+    trigger: "15 s after saved sessions stop changing, when the browser starts, and every 6 hours",
+    log: { subsystem: "sessions", start: "compact-pass", done: ["compact-pass-done"], failed: ["compact-images-failed"], also: ["compact-images"] },
+    live: () => c.status(),
+});

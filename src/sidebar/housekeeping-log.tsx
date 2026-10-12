@@ -2,12 +2,17 @@
 // decided on its own, one line per event, in the same OUTPUT CELL a tool's stdout renders into. Reused rather
 // than built as a list because a log IS output: the cell already gives it a timestamp gutter, find (Ctrl+F),
 // a resize grip and tail-follow, and a second list component would have grown half of those, differently.
+//
+// Above the log, the Background work section: what each self-acting job (job-registry.ts) is doing NOW, which the
+// log, a record of what happened, cannot say.
 import { useEffect, useState } from "preact/hooks";
 import { OutputCell, TimedOutput } from "./transcript/render-panel";
 import { downloadBlob } from "./export/download";
 import { formatBytes } from "../resource/resource-model";
-import { fmtDelta } from "./timestamps";
+import { fmtAge, fmtDelta, fmtDur } from "./timestamps";
+import { Disclosure } from "./disclosure";
 import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../log/housekeeping";
+import type { JobStatus } from "../job-registry";
 
 /** A log rendered as text: the lines, the produced-at marks the timestamp gutter is drawn from, and — for a
  *  surface that wants it — which GROUP each line belongs to and how wide that column is. The last two are extra,
@@ -122,10 +127,82 @@ export function HousekeepingView() {
                 the browser restarts. <code>[page]</code> lines were reported by a web page. Same data:{" "}
                 <code>ml.__housekeeping()</code>.
             </div>
+            <BackgroundWork events={all} />
             {error ? <div class="hint err">could not read the log: {error}</div>
                 : events == null ? null
                     : !text ? <div class="hint">{all.length ? "Every subsystem is filtered out." : "Nothing recorded since the browser started."}</div>
                         : <OutputCell text fill><TimedOutput text={text} marks={marks} /></OutputCell>}
         </div>
+    );
+}
+
+/** How often the section re-reads while it is open, so a countdown and a running pass stay current between records. */
+const JOBS_POLL_MS = 5_000;
+
+/** The header line of one job: its state in words, and what waits for it. */
+export function jobStateText(j: JobStatus, now: number): string {
+    const waiting = j.pending ? `${j.pending} ${j.pendingLabel || "waiting"}` : "";
+    const due = j.nextDue != null ? (j.nextDue > now ? `next in ${fmtAge(j.nextDue - now)}` : "due now") : "";
+    const head = j.state === "running" ? "running"
+        : j.state === "interrupted" ? `interrupted${j.interruptedAt != null ? ` ${fmtAge(now - j.interruptedAt)} ago` : ""}, resumes on its own`
+            : j.state === "failed" ? "last run failed"
+                : j.state === "waiting" ? "waiting" : "idle";
+    return [head, waiting, j.state !== "running" ? due : ""].filter(Boolean).join(" · ");
+}
+
+/** The last run in words: when, and what it did. */
+export function lastRunText(j: JobStatus, now: number): string {
+    const r = j.lastRun;
+    if (!r) return "No run recorded since the browser started.";
+    const what = [r.ok ? "finished" : `failed (${r.kind})`, `${fmtAge(now - r.t)} ago`];
+    if (r.ms != null) what.push(`took ${fmtDur(r.ms)}`);
+    if (r.bytes != null && r.ok) what.push(`freed ${formatBytes(r.bytes)}`);
+    if (!r.ok && typeof r.detail?.error === "string") what.push(r.detail.error);
+    return `Last run ${what.join(", ")}.`;
+}
+
+/**
+ * THE BACKGROUND WORK SECTION: every declared job's state, pending work, last run and next start, each opening onto its
+ * own housekeeping records. Read through DUMP_JOBS when the log changes and every few seconds while shown.
+ * @gallery none needs the service worker's DUMP_JOBS answer; tests/background-work.test.mjs renders it with one
+ */
+export function BackgroundWork({ events }: { events: HousekeepingEvent[] }) {
+    const [jobs, setJobs] = useState<JobStatus[] | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [now, setNow] = useState(Date.now());
+
+    useEffect(() => {
+        let live = true;
+        const read = () => chrome.runtime.sendMessage({ type: "DUMP_JOBS", payload: {} }, (r: { data?: JobStatus[]; error?: string } | undefined) => {
+            if (!live) return;
+            setNow(Date.now());
+            if (!r) setError(chrome.runtime.lastError?.message || "no answer from the service worker");
+            else if (r.error) setError(r.error);
+            else { setError(null); setJobs(r.data || []); }
+        });
+        read();
+        const t = setInterval(read, JOBS_POLL_MS);
+        return () => { live = false; clearInterval(t); };
+    }, [events]);
+
+    if (error) return <div class="hint err">could not read background jobs: {error}</div>;
+    if (!jobs?.length) return null;
+    return (
+        <section class="bgw" aria-label="Background work">
+            <div class="bgw-title">Background work</div>
+            {jobs.map((j) => {
+                const mine = events.filter((e) => e.subsystem === j.subsystem && j.kinds.includes(e.kind));
+                const { text, marks } = housekeepingText(mine);
+                return (
+                    <Disclosure key={j.id} label={<span>{j.title}</span>}
+                        note={<span class={`bgw-state ${j.state}`}>{jobStateText(j, now)}</span>}>
+                        <div class="bgw-body">
+                            <div class="hint">Runs {j.trigger}. {lastRunText(j, now)}{j.error ? ` Its live status could not be read: ${j.error}` : ""}</div>
+                            {text ? <OutputCell text><TimedOutput text={text} marks={marks} /></OutputCell> : null}
+                        </div>
+                    </Disclosure>
+                );
+            })}
+        </section>
     );
 }
