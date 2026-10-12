@@ -244,13 +244,23 @@ const ownUiHost = (attrs: string[] | undefined): boolean => {
  *  Each final match is resolved to a live JS handle (resolveNode) and callFunctionOn runs the describe fn ON it —
  *  so we get the element's real describe line + viewport centre for a coordinate click. Read-only: it never
  *  mutates; clicking is a SEPARATE cdpClick the caller makes with the returned centre. It never descends into the
- *  shell's own hosts (`isOwnUiId`): a page sends this message, and our closed roots are not the page's to read. */
+ *  shell's own roots: a page sends this message, and our closed roots are not the page's to read. A root is the shell's
+ *  when its host has an own-UI id (`isOwnUiId`) or, since the page can rename the host, when a child of the root has one
+ *  (the shell's stylesheet, `SB_STYLE`). The describe function runs in the page's main world, so a match inside our root
+ *  would hand the page the node itself through any builtin it patched. */
 export async function cdpShadowResolve(tabId: number, selector: string, cap = 25): Promise<{ ok: true; matches: CdpShadowMatch[] } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);
     if ("error" in at) return { error: at.error, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
     const send = <T = Record<string, unknown>>(method: string, params: Record<string, unknown>): Promise<T> =>
         chrome.debugger.sendCommand(target, method, params) as Promise<T>;
+    /** Is the shadow root `srId` one of the shell's? A child carries an own-UI id. Unreadable counts as ours: skipped. */
+    const ownUiRoot = async (srId: number): Promise<boolean> => {
+        try {
+            const r = await send<{ node?: { children?: { attributes?: string[] }[] } }>("DOM.describeNode", { nodeId: srId, depth: 1 });
+            return (r?.node?.children || []).some((c) => ownUiHost(c.attributes));
+        } catch { return true; }
+    };
     try {
         // getDocument (depth 0 — cheap) establishes the root node; querySelectorAll then resolves server-side
         // against the LIVE DOM (not the returned tree), so depth 0 is enough and we avoid shipping a huge tree.
@@ -278,7 +288,9 @@ export async function cdpShadowResolve(tabId: number, selector: string, cap = 25
                         if (!srId && sr.backendNodeId != null) {
                             try { const pushed = await send<{ nodeIds?: number[] }>("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: [sr.backendNodeId] }); srId = pushed?.nodeIds?.[0]; } catch { /* couldn't map → skip this root */ }
                         }
-                        if (srId) next.push(srId);
+                        // The host's id is the page's to change or remove, so the root is told by what is INSIDE it: the
+                        // shell's stylesheet (SB_STYLE), which the page can neither add to a root nor take out of ours.
+                        if (srId && !(await ownUiRoot(srId))) next.push(srId);
                     }
                 }
             }

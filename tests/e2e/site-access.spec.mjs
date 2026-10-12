@@ -709,6 +709,51 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
             expect(reach).toEqual({ host: true, root: null, throughHosts: 0, framesListed: 0, extensionIframes: 0 });
         } finally { await close(); }
     });
+
+    test("17c: an approved page that renames our host cannot read our closed root through the CDP shadow resolver", async () => {
+        // CDP pierces closed roots and CDP_SHADOW_RESOLVE is page-started. Our host's id is an attribute in the page's
+        // document, so the page can change it before it asks. The resolver's describe function also runs in the page's
+        // main world ON each match, so a patched builtin there is handed the node itself.
+        const { fake, site, ext, close } = await setup({ cdp: true });
+        try {
+            const page = await open(ext, site.url("evil.test"), { approve: true });
+            const idx = await sessions(ext);
+            fake.setScript([{ content: "first answer" }]);
+            const hash = await userStartsRun(ext, idx, page, "say something");
+            expect(await idx.settled(hash)).toBe("done");
+            // The highlight's root too, emptied again: then only the shell's stylesheet is in it.
+            expect(await idx.cmd({ type: "page.highlight", session: { runtime: "local", hash }, ref: { selector: "#next" } })).toMatchObject({ ok: true });
+            expect(await waitInShell(page, (roots) => !!roots.card?.querySelector("iframe") && !!roots.highlight?.getElementById("ml-highlight"))).toBe(true);
+            expect(await idx.cmd({ type: "page.highlight", session: { runtime: "local", hash }, ref: null })).toMatchObject({ ok: true });
+            expect(await waitInShell(page, (roots) => roots.highlight?.childElementCount === 1)).toBe(true);
+            const out = await page.evaluate(async () => {
+                // Every node a patched builtin is handed while the resolver's describe function runs.
+                const grabbed = [];
+                const filter = Array.prototype.filter;
+                Array.prototype.filter = function (...a) { if (this && typeof this.length === "number") for (let i = 0; i < this.length; i++) if (this[i] instanceof Node) grabbed.push(this[i]); return filter.apply(this, a); };
+                // The control: a sealed root of the page's own is read, so an empty answer for ours is about our roots.
+                const own = document.createElement("x-sealed");
+                const pageRoot = own.attachShadow({ mode: "closed" });
+                pageRoot.innerHTML = '<button class="in">Go</button>';
+                document.body.append(own);
+                const control = await window.__raw("CDP_SHADOW_RESOLVE_REQUEST", { selector: "x-sealed >>> .in" });
+                const host = document.getElementById("ml-sb-card");
+                const byId = await window.__raw("CDP_SHADOW_RESOLVE_REQUEST", { selector: "#ml-sb-card >>> *" });
+                host.id = "renamed";
+                const renamed = await window.__raw("CDP_SHADOW_RESOLVE_REQUEST", { selector: "#renamed >>> *" });
+                host.removeAttribute("id");
+                const noId = await window.__raw("CDP_SHADOW_RESOLVE_REQUEST", { selector: "html > div:not([id]) >>> *" });
+                document.getElementById("ml-sb-root-hl").id = "renamed-hl";
+                const hl = await window.__raw("CDP_SHADOW_RESOLVE_REQUEST", { selector: "#renamed-hl >>> *" });
+                Array.prototype.filter = filter;
+                const ours = filter.call(grabbed, (n) => { const r = n.getRootNode(); return r instanceof ShadowRoot && r !== pageRoot; }).length;
+                const lines = (r) => r.result ?? r;
+                return { control: control.result?.length ?? control, byId: lines(byId), renamed: lines(renamed), noId: lines(noId), hl: lines(hl), grabbed: ours };
+            });
+            expect(out.control, "the resolver reads a sealed root of the page's own").toBe(1);
+            expect(out).toEqual({ control: 1, byId: [], renamed: [], noId: [], hl: [], grabbed: 0 });
+        } finally { await close(); }
+    });
 });
 
 // PART 4b: an approved exec of a worker-built run on a page that is not approved runs in a CDP isolated world (the

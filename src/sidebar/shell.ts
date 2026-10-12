@@ -12,7 +12,7 @@
 // and we re-send the handshake on it, so a page-load race (our handshake landing before
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
-import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
+import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE } from "../ids";
 import { cleanImages } from "../contract/contract-run";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
@@ -685,6 +685,7 @@ function hlContainer(): ShadowRoot {
     hlHost.style.cssText = HOST_STYLE;
     hlRoot = hlHost.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
+    style.id = SB_STYLE;   // the mark sw-cdp.ts tells our root by (ids.ts)
     style.textContent = HIGHLIGHT_CSS;
     hlRoot.append(style);
     (document.documentElement || document.body).append(hlHost);
@@ -1271,6 +1272,7 @@ function mountOverlay(): void {
     shellRoot = root;
 
     const style = document.createElement("style");
+    style.id = SB_STYLE;   // the mark sw-cdp.ts tells our root by (ids.ts)
     style.textContent = SHELL_CSS;
     root.append(style);
 
@@ -1318,6 +1320,7 @@ function mountCard(): void {
     const root = cardHost.attachShadow({ mode: "closed" });
     cardRoot = root;
     const style = document.createElement("style");
+    style.id = SB_STYLE;   // the mark sw-cdp.ts tells our root by (ids.ts)
     style.textContent = CARD_CSS + LIGHTBOX_CSS;   // the card shadow also styles the lightbox (drawn here in card-only modes)
     root.append(style);
 
