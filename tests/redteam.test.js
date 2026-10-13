@@ -633,6 +633,83 @@ test("PART 5 — a destination that blocks its own re-adopt still has the run ha
     assert.ok(!JSON.stringify(w.bg.calls).includes("EVIL FROM THE RUN'S PAGE"));
 });
 
+// --- part 5: the hand-over at a revoke, which the revoked page cannot stop or delay ---
+
+test("PART 5 REVOKE — a page whose site is revoked while its run is in its call cannot stop or delay the hand-over: a flood of sends, re-adopts it sends and one it never sends leave the run the worker's from the revoke", async () => {
+    const A = "https://builder.example/start";
+    const page = { tab: { id: 7, url: A }, url: A, origin: "https://builder.example", frameId: 0, documentId: "doc-builder" };
+    const popup = { url: "chrome-extension://test/popup.html" };
+    const calls = [{ name: "scroll", args: {} }, { name: "look", args: { question: "Q-SECRET what is shown" } }];
+    let bg, driver = 0, handedAtRevoke = null, mark = null, backendMark = null;
+    const flood = [], readopts = [], after = [];
+    bg = loadBackground({
+        config: baseConfig({ model: "text-driver", ocrModel: "reader-vl" }), siteGate: true, local: { ml_site_always: ["https://builder.example"] },
+        openTabs: [{ id: 7, windowId: 1, active: true, url: A, title: "Builder" }],
+        onCaptureTab: async () => "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        onFetch: (call) => {
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "text-driver" }, { id: "reader-vl" }] });
+            if (call.url.endsWith("/api/show")) return call.body?.model === "reader-vl" ? jsonResponse({ capabilities: ["completion", "vision"], model_info: {} }) : jsonResponse({ capabilities: ["completion", "tools"], model_info: {} });
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (!call.body?.tools?.length) return jsonResponse({ choices: [{ message: { content: "the reader's words" } }] });
+            const next = calls[driver++];
+            return jsonResponse(next ? { choices: [{ message: { content: null, tool_calls: [{ id: `c${driver}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args) } }] } }] } : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            const p = msg.payload;
+            if (p.geometry) return { result: "", geometry: { seq: p.geometry.seq, reply: p.geometry.op === "view" ? { w: 1024, h: 768, dpr: 1, sx: 0, sy: 0 } : p.geometry.op === "legend" ? { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 } : null } };
+            if (p.finish || p.renderOnly || p.precheck || p.readonlyTry) return { result: "" };
+            if (p.name !== "scroll") return { result: `the page's own ${p.name}: Q-SECRET seen` };
+            // In the run's scroll, the page floods the worker with everything it knows to send for the run, unawaited,
+            // and the person revokes the site from the popup in the middle of it.
+            const revoked = bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "revoke", origin: "https://builder.example" } } }, popup);
+            for (let i = 0; i < 20; i++) {
+                for (const type of FORMER_RUN_TAB_TYPES) flood.push(sendBounded(bg, knowingMessage(type, "page-run"), page));
+                flood.push(sendBounded(bg, { type: "VALUE_COLUMNS", runId: "page-run", key: "k", names: ["a"] }, page));
+            }
+            await revoked;
+            // The popup's answer comes once the revoke is decided: the run is the worker's before the flood has settled.
+            handedAtRevoke = (await bg.context.__mlRunLog.all()).some((r) => r.run === "page-run" && r.kind === "handed-to-worker");
+            mark = bg.tabMessages.length; backendMark = bg.calls.length;
+            // From the revoke on, everything the page knows to send for the run is refused.
+            for (const type of FORMER_RUN_TAB_TYPES) after.push([type, await sendBounded(bg, knowingMessage(type, "page-run"), page)]);
+            after.push(["RESUME_RUN", await sendBounded(bg, { type: "RESUME_RUN", payload: { runId: "page-run", task: "EVIL TURN" } }, page)]);
+            after.push(["INJECT_MESSAGE", await sendBounded(bg, { type: "INJECT_MESSAGE", payload: { runId: "page-run", text: "EVIL STEER" } }, page)]);
+            after.push(["VALUE_COLUMNS", await sendBounded(bg, { type: "VALUE_COLUMNS", runId: "page-run", key: "k", names: ["a"] }, page)]);
+            // A page that re-adopts the run, over and over, from its still-loaded document, while it holds its call.
+            for (let i = 0; i < 5; i++) readopts.push(JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, page))));
+            await new Promise((r) => setTimeout(r, 200));
+            return { result: "scrolled" };
+        },
+    });
+    const tool = (name) => ({ name, description: name, parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: name === "look" ? ["vision"] : [] });
+    void bg.send({ type: "START_RUN", payload: { runId: "page-run", task: "go", systemPrompt: "sys", tools: ["scroll", "look"].map(tool), model: "text-driver", think: null, maxSteps: 10, surface: "off", crossOrigin: true, approvalRouting: "both",
+        rebuild: { toolNames: ["scroll", "look"], model: "text-driver", driverSees: false, visionModel: "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } } }, page);
+    for (let i = 0; i < 3000 && driver <= calls.length; i++) {
+        for (const g of bg.context.__mlApprovals.list()) bg.context.__mlApprovals.resolve(g.key, true);
+        await new Promise((r) => setTimeout(r, 2));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+    const settled = await Promise.all(flood);
+    assert.equal(handedAtRevoke, true, "handed over by the time the popup's revoke was answered, the flood still in flight");
+    assert.equal(driver, 3, "the run went on to its look and answered");
+    assert.ok(settled.every((r) => !r?.timeout), "every page send was answered: none was let through to a handler that hangs");
+    for (const r of readopts) {
+        const a = (r?.adopt ?? []).find((x) => x.runId === "page-run");
+        if (a) { assert.equal(a.rebuild.builtBy, "worker", `a re-adopt after the revoke is the worker's: ${JSON.stringify(a)}`); assert.equal(a.rebuild.model, null); }
+    }
+    for (const [type, r] of after) assert.match(r?.error || "", /^Refused/, `${type} after the revoke: ${JSON.stringify(r)}`);
+    const toPage = bg.tabMessages.slice(mark).map(([, m]) => JSON.parse(JSON.stringify(m)));
+    assert.deepEqual(toPage.filter((m) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "look" && !m.payload.renderOnly && !m.payload.geometry), [], "the look after the revoke ran in the worker");
+    assert.ok(toPage.some((m) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.geometry), "positive control: the page was asked for geometry, so the look ran");
+    assert.deepEqual(toPage.filter((m) => m.type !== "ML_DEBUG_TO_PAGE" && JSON.stringify(m).includes("Q-SECRET")).map((m) => m.type), [], "the question never reached the page");
+    const seen = JSON.stringify(bg.calls.filter((c) => c.body?.tools?.length).at(-1)?.body?.messages ?? []);
+    assert.ok(!seen.includes("EVIL"), "no turn or steer of the page's reached the run");
+    assert.ok(!JSON.stringify(bg.calls.slice(backendMark)).includes("EVIL FROM THE RUN'S PAGE"), "nothing the page sent after the revoke reached the backend");
+    assert.deepEqual((await bg.context.__mlRunLog.all()).filter((r) => r.run === "page-run" && r.kind === "handed-to-worker").map((r) => r.reason), ["site-revoked"]);
+});
+
 // --- the upgrade: what the code before part 5 left behind ---
 
 /** What the code before part 5 stored for a page-built run that had navigated onto an unapproved site and was in flight
