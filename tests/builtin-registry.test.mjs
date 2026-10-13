@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scan } from "../scripts/js-scan.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const reg = await import("../src/tools/tool-registry.ts");
@@ -115,7 +116,10 @@ test("every builtin's card line is the spec's wording, or none for a tool that r
         exec: "Run code on this page", click: CT, type: CT,
         fetch_url: "Read other websites (it asks you before each new one)", python_exec: "Run Python", look: SHOTS, locate: SHOTS,
         findByText: READ, interactives: READ, describeElement: READ, ancestors: READ, countMatches: READ, sampleText: READ,
-        pageInfo: READ, scroll: READ, wait: READ, answer: READ,
+        pageInfo: READ, wait: READ,
+        // scroll acts on the page (a scroll can mark a chat read or load more of a feed), so it is not "Read"; answer
+        // hands what the model chose to the person, and reaches nothing else.
+        scroll: "Scroll this page", answer: null,
         dereference: null, agent_api_docs: null, chat_metadata: null,
         navigate: "Open other pages of this site in this tab",
     };
@@ -135,13 +139,13 @@ test("defineBuiltinTool refuses a second declaration, an unknown realm and a dec
 // --- the other tables keyed by builtin name name only builtins ---
 
 test("every other table keyed by a builtin's name names a declared builtin", async () => {
-    const { SHADOW_TOOLS } = await import("../src/agent/prompts.ts");
+    const { SHADOW_TOOLS, SHADOW_TRIGGER_TOOLS } = await import("../src/agent/prompts.ts");
     const { ML_MEMBER_TOOL } = await import("../src/ml/ml-member-tools.ts");
     const { OUTPUT_CAP } = await import("../src/contract/contract-pointers.ts");
     const { CODE_LANG, CODE_INTENT } = await import("../src/sidebar/transcript/summaries.tsx");
     const { ACTIVITY } = await import("../src/sidebar/transcript/orb-status.ts");
     const tables = {
-        SHADOW_TOOLS: [...SHADOW_TOOLS], ML_MEMBER_TOOL: Object.values(ML_MEMBER_TOOL), OUTPUT_CAP: Object.keys(OUTPUT_CAP),
+        SHADOW_TOOLS: [...SHADOW_TOOLS], SHADOW_TRIGGER_TOOLS: [...SHADOW_TRIGGER_TOOLS], ML_MEMBER_TOOL: Object.values(ML_MEMBER_TOOL), OUTPUT_CAP: Object.keys(OUTPUT_CAP),
         CODE_LANG: Object.keys(CODE_LANG), CODE_INTENT: Object.keys(CODE_INTENT),
         // `screenshot` names no tool (none has been built under that name since `look` replaced it): a dead row, not a drift.
         ACTIVITY: Object.keys(ACTIVITY).filter((k) => k !== "screenshot"),
@@ -150,6 +154,37 @@ test("every other table keyed by a builtin's name names a declared builtin", asy
         for (const n of names) assert.ok(reg.isBuiltinTool(n), `${table} names ${n}, which the registry does not declare`);
     // The shadow clause's tools are page tools: the worker cannot pierce a shadow root.
     for (const n of SHADOW_TOOLS) assert.notEqual(reg.builtinTool(n).realm, "loop", n);
+    // The tools whose presence adds the clause are among the ones it names, or the clause would name none of them.
+    for (const n of SHADOW_TRIGGER_TOOLS) assert.ok(SHADOW_TOOLS.includes(n), `${n} triggers the shadow clause but is not in it`);
+});
+
+/** The string literals a file compares a tool's name with: `name === "exec"`, `t.name !== "answer"`, `tool === "navigate"`,
+ *  `n === "fetch_url"`, either way round. Comments and strings are stripped first, so only code is read. */
+function comparedToolNames(rel) {
+    const { code, strings } = scan(readFileSync(path.join(ROOT, rel), "utf8"));
+    // A bare `name`/`tool`/`n`, or the `.name` of a receiver that holds a tool or a call (`obj.name` is an AST node's).
+    const lhs = String.raw`(?:(?<![.\w$])(?:name|tool|n)\b|(?<![.\w$])(?:t|c|x|call|payload|tool)\.name\b)`;
+    const re = new RegExp(String.raw`${lhs}\s*[!=]==?\s*\0(\d+)\0|\0(\d+)\0\s*[!=]==?\s*${lhs}`, "g");
+    return [...code.matchAll(re)].map((m) => strings[+(m[1] ?? m[2])].value);
+}
+
+// The branches that special-case ONE builtin by name: the gate's grants (sw-run-host.ts records a consented origin for an
+// approved `navigate`, a fetch grant for `fetch_url`, a sheet for `python_exec`), the trusted-type check, the static
+// grant extraction from an `exec`'s code (grant-extract.ts), the same-origin auto-approval (agent-host.ts,
+// ml-agent-run.ts), pointer resolution and output caps (agent-loop.ts). They stay branches: each is behaviour of its
+// tool, not a property a list could hold. A misspelt or renamed name there is a branch that silently never runs.
+const BRANCH_FILES = ["src/sw/sw-run-host.ts", "src/sw/grant-extract.ts", "src/agent/agent-host.ts", "src/ml/ml-agent-run.ts",
+    "src/agent/run-assembly.ts", "src/agent/agent-loop.ts", "src/tools/tool-exec.ts", "src/sw/worker-tools.ts"];
+
+test("every tool name a per-tool branch compares with is a declared builtin", () => {
+    for (const rel of BRANCH_FILES) {
+        const names = comparedToolNames(rel);
+        assert.ok(names.length, `${rel}: no tool-name comparison found; the pattern no longer reads this file`);
+        for (const n of names) assert.ok(reg.isBuiltinTool(n), `${rel} compares a tool's name with "${n}", which the registry does not declare`);
+    }
+    // The security-relevant ones, by name, so a branch moved out of these files is noticed rather than unread.
+    const want = { "src/sw/grant-extract.ts": ["exec", "python_exec"], "src/sw/sw-run-host.ts": ["exec", "python_exec", "navigate", "fetch_url", "type"] };
+    for (const [rel, names] of Object.entries(want)) for (const n of names) assert.ok(comparedToolNames(rel).includes(n), `${rel} no longer branches on ${n}`);
 });
 
 // --- the ratchet: scripts/check-tools.mjs ---
@@ -186,6 +221,28 @@ test("check-tools reads a factory named by a constant, and ignores a commented-o
         { rel: check.REGISTRY, text: decl("dereference", ["src/a.ts"]) },
         { rel: "src/a.ts", text: `export const DEREF_TOOL = "dereference";\nexport const d = (T) => T({ name: DEREF_TOOL, description: "reads" });\n// const old = T({ name: "gone", description: "x" });\n/* return { name: "also_gone", description: "x" } */\n` },
         { rel: "src/b.ts", text: `export const s = (fn) => ({ name: fnName, description: fn.description });\nconst k = crypto.subtle.generateKey({ name: "Ed25519" }, false, []);\n` },
+    ];
+    assert.deepEqual(check.checkTools(files).problems, []);
+});
+
+test("check-tools finds a factory whose name is not its first key, and one held in a variable before defineTool", () => {
+    const files = [
+        { rel: check.REGISTRY, text: "" },
+        { rel: "src/a.ts", text: `export const a = (T) => T({\n    description: "does a thing",\n    name: "later_key",\n    run: async () => "",\n});\n` },
+        { rel: "src/b.ts", text: `const SPEC = { name: "held_spec", parameters: {}, description: "x" };\nexport const b = (T) => T(SPEC);\n` },
+        { rel: "src/c.ts", text: `export const c = (T) => T({ ...BASE, name: "after_spread", description: "y" });\n` },
+    ];
+    const found = check.checkTools(files).problems.map((p) => /\t(\w+): a builtin tool factory with no defineBuiltinTool/.exec(p)?.[1]).filter(Boolean);
+    assert.deepEqual(sorted(found), ["after_spread", "held_spec", "later_key"]);
+});
+
+test("check-tools does not take a nested name or a run-time name for a factory", () => {
+    const files = [
+        { rel: check.REGISTRY, text: "" },
+        // name and description at different depths: a schema property, not a tool
+        { rel: "src/a.ts", text: `const p = { properties: { name: { type: "string" } }, description: "x" };\nconst q = ({ inner: { name: "deep" }, description: "z" });\n` },
+        // a tool built from a server tool's fields at run time
+        { rel: "src/b.ts", text: `export const s = (fn) => T({ description: fn.description, name: fn.name });\n` },
     ];
     assert.deepEqual(check.checkTools(files).problems, []);
 });

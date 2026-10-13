@@ -2190,6 +2190,22 @@ test("_rebuildToolset reconstructs the builtin toolset from names (cross-page re
     assert.ok(nativeLook[0].capabilities && nativeLook[0].capabilities.includes("vision"), "native look keeps the vision capability");
 });
 
+test("_rebuildToolset rebuilds every builtin a run can delegate to the page, enumerated from the tool registry", async () => {
+    // The rebuild picks tools by NAME (ml-agent-handle.ts), a list of its own beside the registry: a builtin it misses is
+    // missing from the page after a navigation, and from every run the worker builds, which gets its page tools here too.
+    // `realm: "loop"` (dereference) is answered by the loop and never reaches the page.
+    const { builtinTools, isBuiltinTool } = await import("../src/tools/tool-registry.ts");
+    const { ml } = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const base = { model: "m", driverSees: false, visionModel: "vm", groundingModel: null, groundingRange: 1000, pierceClosed: false };
+    for (const d of builtinTools()) {
+        const names = ml._rebuildToolset({ ...base, toolNames: [d.name] }).map(t => t.name);
+        assert.deepEqual(names, d.realm === "loop" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
+    }
+    // A name the registry does not declare is the site's own tool: never conjured on the new page.
+    assert.equal(isBuiltinTool("my_site_tool"), false);
+    assert.deepEqual(ml._rebuildToolset({ ...base, toolNames: ["my_site_tool"] }), []);
+});
+
 test("navigate is approval-gated and its render shows the DESTINATION url (a consent card must show WHERE)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
     const nav = world.ml.navigateTool({ crossOrigin: true });
