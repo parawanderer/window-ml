@@ -82,9 +82,8 @@ never a page. The model learns which mode a call ran in from the call's result, 
 - **The free tier narrows to the roots.** A read-only call is free only when every path it names resolves inside a root,
   and never for a file that looks like a secret (`.env`, `*.pem`, `id_*`, a credentials file), wherever it is. Reading
   is the half of an exfiltration that the fetch gate does not see.
-- **Standing rules, on argv.** "Always allow `npm test` in this repo" is a rule on a structured argv prefix plus a root,
-  which is exact in a way a string pattern over shell text cannot be. Rules are the person's, kept with the workspace,
-  and shown where they apply.
+- **Standing rules**, which are policies (below): "always allow `npm test` in this repo" is a predicate over a
+  structured argv plus a root, exact in a way a string pattern over shell text cannot be.
 - **An OS sandbox, on by default (decided 2026-10-13).** Between a container and nothing: the host spawns each process
   under the OS's own sandbox (Seatbelt on macOS, bubblewrap on Linux) with writes confined to the roots and the
   network to an allowlist, keeping the person's tools and native speed. Both halves are needed, for the reason
@@ -159,6 +158,76 @@ Three tiers, decided per CALL, on the final argv:
 
 So the manifest blocks only the free tier. A first build where every call asks is useful, and correct, without it.
 
+## Policies: "run this without asking me"
+
+**A policy is a function over the call, evaluated by the read-only dialect** (Shane, 2026-10-13). The person can say
+"anything matching this runs without asking", globally or for one run, and say it as code over the call's arguments, not
+as a regex over a command line.
+
+```js
+// Global, set by the person: read-only git anywhere in my roots, except the flags that write or run code.
+(c) => c.argv[0] === "git" && ["status", "diff", "log", "show", "blame"].includes(c.argv[1])
+    && !c.argv.some((a) => /^--(output|ext-diff|exec|upload-pack)/.test(a))
+    && c.paths.every((p) => p.inRoot)
+
+// For one run, granted from an approval card ("allow calls like this for this run"):
+(c) => c.argv[0] === "npm" && ["test", "run lint"].includes(c.argv.slice(1).join(" "))
+```
+
+**What it is given.** One call, as facts the host resolved, never text to re-parse:
+
+| Field | What |
+| --- | --- |
+| `argv` | the final argument vector, after the sugar |
+| `program` | `argv[0]` resolved to the file that will run (`PATH` lookup done), so `git` cannot be a script named `git` in the cwd |
+| `cwd` | resolved, with `inRoot` |
+| `env` | the changes from the scrubbed base |
+| `paths` | each argument the manifest marks as a path: `{ arg, path, inRoot, secret }`, resolved with `realpath` |
+| `effects` | what the program's manifest says this call does (`read`, `write`, `runs-code`, `network`, or `unknown`) |
+| `mode`, `sandboxed` | where it would run |
+| `run` | the run it belongs to (its id; a run policy sees only its own run) |
+
+**Why the read-only dialect.** A policy runs on every call, in the approval path, so it must be pure, must halt, and
+must be unable to do anything but answer. The dialect is exactly that: it is the whitelist, it never compiles a string,
+it has a step budget, and it already has the halting and adversarial tests. A policy that throws, runs out of budget or
+reaches outside the dialect is **no opinion**, so the call asks: a broken policy fails closed.
+
+**What it decides, and what it cannot.**
+
+- A policy answers `allow`, `deny`, or nothing. `deny` wins over `allow` across policies; nothing means the tiers above
+  decide.
+- It changes only **whether the person is asked**, never what is enforced: the container, the OS sandbox and the
+  workspace roots bound the call whatever a policy says.
+- It never reaches the refused tier: a call from a page, or `ml.sh` from the page's world, is refused before any policy
+  runs.
+
+**The tiers are policies too.** The free tier ("the manifest says `read`, every path is inside a root and not a
+secret")
+is the built-in default policy: `(c) => c.effects === "read" && c.paths.every((p) => p.inRoot && !p.secret)`. The person's
+policies sit beside it. The manifest DESCRIBES a program (shipped or installed, pinned by hash); a policy DECIDES (the
+person's choice). A policy can lean on the manifest's facts (`c.effects`) so it never has to know which `git` flags write.
+
+**Scopes and who sets them.**
+
+| Scope | Set by | Lives |
+| --- | --- | --- |
+| global | the person, in DevTools Settings | until removed |
+| workspace | the person, for one set of roots | with the workspace |
+| run | the person: at the start, or from an approval card ("calls like this, for this run") | until the run ends |
+
+The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
+a page never can. A policy reached over the hub is set by a principal holding `approve`.
+
+**Showing what was approved.** This is the open point the grant-policy idea raised ("a tree, not a string": a predicate
+cannot be explained back faithfully). The rule here: a policy the person WROTE is shown as the code they wrote. A policy
+the model PROPOSED is shown with its evidence: the calls this run has made and the ones it would allow next, checked
+against it before it is granted, and a plain statement of its breadth (which programs it can match at all, and whether
+any matched call writes or reaches the network). A builder of typed nodes that renders to a sentence and to the same
+predicate is the stronger form, and is left to that work.
+
+**Every allowed call says which policy allowed it**, in the run log and on the call's row, and a run's policies are
+readable by the model without approval, since reading what you may do is not an escalation.
+
 ## What the model sees
 
 - **Nothing new in the prompt.** `ml.sh` is documented by its JSDoc through `agent_api_docs`, like every `ml` member.
@@ -219,13 +288,23 @@ What follows from it:
 4. **Placement**: a script naming only `ml.sh` evaluated at the host.
 5. **The host on the hub** as a desktop runtime: a shell on another machine.
 
+## The host's language: Node, for now (decided 2026-10-13)
+
+The host runs the text-pipe dialect and the read-only interpreter as they are, which "the operation goes to the value",
+policies and slice 4 all need, and Node already runs both (the repo's tests evaluate the interpreter under Node today).
+Anthropic's `sandbox-runtime` (the Seatbelt/bubblewrap layer Claude Code uses) is an npm package. Deno's packaging is
+cleaner, but its permission model restricts the host, not the processes it starts, so it does not replace the OS
+sandbox. Rust (the hub's language, chosen for memory per connection) would mean porting or embedding the TypeScript,
+and one host per machine does not have the hub's problem.
+
 ## Open questions
 
-- **The host's language.** Rust matches the hub (decided there for memory per connection); Node or Deno runs the
-  text-pipe dialect and the read-only interpreter as they are, which slice 3 and "the operation goes to the value"
-  both want. Leaning Deno (one binary, permissions, runs the TypeScript).
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
+- **Policies across a resume**: whether a run policy survives a resumed session (it changes what the resumed run may do
+  without asking).
+- **Resolve, then run**: the host resolves paths for the decision and then spawns; a symlink swapped between the two is
+  a race. The OS sandbox bounds it in host mode; a container bounds it by construction.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
   "start a process and send input" names it.
