@@ -7,8 +7,11 @@
 //   node --import tsx tests/e2e/bench/sync.mjs status [--json]                    what is here and not there, and how the last push went
 //   node --import tsx tests/e2e/bench/sync.mjs schedule [print|install|uninstall] a launchd job pushing every 30 min (macOS)
 //
-// EVERY PUSH SENDS EVERYTHING PENDING: every log's rows past this clone's cursor, every sweep's runs the store lacks, and
-// every sweep-level file that changed since (a mark added after the sweep was pushed). A sweep's end pushes the lot, not
+// EVERY PUSH SENDS EVERYTHING PENDING: every log's rows past this clone's cursor, every sweep's runs the store lacks,
+// every sweep-level file that changed since (a mark added after the sweep was pushed), and every LOOSE RUN: a directory
+// under tests/e2e/artifacts/ that another harness left (observe, converse, the old panel.mjs) holding a session's
+// events or export, sent as it is under loose/<clone>/<dir>/ (a `.nosync` file in it keeps it here; a demo that left
+// only screenshots is not a run). A sweep's end pushes the lot, not
 // only itself, so one push that failed is made good by the next, whoever starts it. Each push's outcome is kept in
 // ~/.cache/window-ml-bench/last-push-<clone>.json, which `status` and a sweep's end show.
 //
@@ -28,7 +31,7 @@
 
 import { createHash } from "node:crypto";
 import { readFile, writeFile, readdir, mkdir, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +50,8 @@ const ROOT = path.resolve(HERE, "../../..");
 export const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 /** Where `pull` puts what it fetches: never mixed with the sweeps this clone ran. */
 export const POOL = path.join(ROOT, "tests/e2e/artifacts/bench-pool");
+/** Where every other harness writes (observe, converse, the old panel.mjs, the demos): the loose runs live here. */
+export const LOOSE_ROOT = path.join(ROOT, "tests/e2e/artifacts");
 
 /** Rows per Parquet object: a sweep's worth is a few hundred, a box log's a few hundred thousand frames. */
 const BATCH = 50_000;
@@ -160,6 +165,51 @@ async function sweepDirs(root = ARTROOT) {
     return out;
 }
 
+// --- loose runs: what other harnesses left in tests/e2e/artifacts/ ---
+
+/** The artifacts directories that are never loose runs: the bench's own, the pool, and build output. */
+const NOT_LOOSE = new Set(["bench", "bench-pool", "builds"]);
+
+/**
+ * Whether a directory under tests/e2e/artifacts/ holds a RUN worth keeping: a session's events or export at its top
+ * (observe, converse: events.json or run.json), or one per model below it (the old panel.mjs: <model>/run.json). A demo
+ * or probe that left only screenshots is not one; a directory holding a `.nosync` file is never sent.
+ */
+export function isLooseRun(dir) {
+    if (existsSync(path.join(dir, ".nosync"))) return false;
+    if (existsSync(path.join(dir, "events.json")) || existsSync(path.join(dir, "run.json"))) return true;
+    try { return readdirSync(dir, { withFileTypes: true }).some((d) => d.isDirectory() && existsSync(path.join(dir, d.name, "run.json"))); } catch { return false; }
+}
+
+/** The loose run directories under `root`. */
+export async function looseDirs(root = LOOSE_ROOT) {
+    const out = [];
+    for (const d of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+        if (d.isDirectory() && !NOT_LOOSE.has(d.name) && isLooseRun(path.join(root, d.name))) out.push(path.join(root, d.name));
+    }
+    return out.sort();
+}
+
+/**
+ * What of a loose run the store has not got, file by file: each file whose bytes are not already under
+ * `loose/<clone>/<dir>/` (the ETag is the MD5 of a plain put). Under this clone's name, since two clones' `talk-qwen` are
+ * two different runs. `[{ key, path }]`.
+ */
+async function missingLoose(store, dir, clone, listed = null) {
+    const prefix = `loose/${clone}/${path.basename(dir)}/`;
+    const have = new Map((listed ?? await store.list(prefix)).filter((o) => o.key.startsWith(prefix)).map((o) => [o.key, o]));
+    const out = [];
+    for (const f of await filesUnder(dir)) {
+        const key = `${prefix}${f}`, file = path.join(dir, f), there = have.get(key);
+        if (there) {
+            const body = await readFile(file);
+            if (there.etag ? there.etag === createHash("md5").update(body).digest("hex") : there.size === body.length) continue;
+        }
+        out.push({ key, path: file });
+    }
+    return out;
+}
+
 /** Every file under `dir`, as paths relative to it. */
 async function filesUnder(dir, rel = "") {
     const out = [];
@@ -268,8 +318,8 @@ async function pushSweep(store, sweepDir, clone) {
  * Send what the store does not have: both logs' new rows, views.sql, and (unless `onlyDb`) the runs of `sweeps` (every
  * sweep under artifacts/bench by default). Resolves what was sent.
  */
-export async function push(store, { clone = cloneName(), sweeps = null, onlyDb = false, scoresDb = SCORES_DB, boxDb = BOX_DB, log = () => {} } = {}) {
-    const sent = { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0, files: 0 };
+export async function push(store, { clone = cloneName(), sweeps = null, onlyDb = false, scoresDb = SCORES_DB, boxDb = BOX_DB, loose = null, log = () => {} } = {}) {
+    const sent = { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0, files: 0, loose: 0 };
     const files = { scores: scoresDb, box: boxDb };
     for (const [table, t] of Object.entries(TABLES)) {
         if (!existsSync(files[t.log])) continue;
@@ -282,7 +332,16 @@ export async function push(store, { clone = cloneName(), sweeps = null, onlyDb =
     for (const table of Object.keys(TABLES)) if ((await store.list(`${table}/`)).some((o) => o.key.endsWith(".parquet"))) present.push(table);
     await store.put("views.sql", viewsSql(store.bucket ?? "wml-bench", present), "text/plain; charset=utf-8");
     if (!onlyDb) for (const dir of sweeps ?? await sweepDirs()) { const s = await pushSweep(store, dir, clone); sent.runs += s.runs; sent.files += s.files; }
-    log(`  store: ${sent.scores} score row(s), ${sent.calls} call(s), ${sent.snapshots} price snapshot(s), ${sent.box} box frame(s), ${sent.runs} run(s), ${sent.files} changed sweep file(s) sent`);
+    // The loose runs other harnesses left: every push, unless --only-db or a caller narrowed it to some sweeps.
+    if (!onlyDb && (loose ?? !sweeps)) {
+        const listed = await store.list(`loose/${clone}/`);
+        for (const dir of Array.isArray(loose) ? loose : await looseDirs()) {
+            const files = await missingLoose(store, dir, clone, listed);
+            for (const f of files) await store.put(f.key, await readFile(f.path));
+            sent.loose += files.length;
+        }
+    }
+    log(`  store: ${sent.scores} score row(s), ${sent.calls} call(s), ${sent.snapshots} price snapshot(s), ${sent.box} box frame(s), ${sent.runs} run(s), ${sent.files} changed sweep file(s), ${sent.loose} loose-run file(s) sent`);
     return sent;
 }
 
@@ -361,7 +420,7 @@ function insertFrames(db, rows) {
  * What this clone holds that the store has not got: rows past what it pushed, per log, and runs per sweep. `configured`
  * false (and nothing else) when there is no store. For merge-when-green, which keeps a worktree whose runs are only here.
  */
-export async function status(store, { clone = cloneName(), scoresDb = SCORES_DB, boxDb = BOX_DB, root = ARTROOT } = {}) {
+export async function status(store, { clone = cloneName(), scoresDb = SCORES_DB, boxDb = BOX_DB, root = ARTROOT, looseRoot = root === ARTROOT ? LOOSE_ROOT : null } = {}) {
     if (!store) return { configured: false };
     const out = { configured: true, clone, logs: {}, sweeps: [] };
     const files = { scores: scoresDb, box: boxDb };
@@ -376,7 +435,10 @@ export async function status(store, { clone = cloneName(), scoresDb = SCORES_DB,
         const { runs, files } = await missingOf(store, dir, clone);
         out.sweeps.push({ dir: path.relative(ROOT, dir), runs: (await syncableRuns(dir)).length, missing: runs.map((m) => path.relative(dir, m.dir)), changed: files.map((f) => f.name) });
     }
-    out.allPushed = Object.values(out.logs).every((l) => l.unpushed === 0) && out.sweeps.every((s) => !s.missing.length && !s.changed.length);
+    out.loose = [];
+    const listed = await store.list(`loose/${clone}/`);
+    for (const dir of looseRoot ? await looseDirs(looseRoot) : []) out.loose.push({ dir: path.relative(ROOT, dir), missing: (await missingLoose(store, dir, clone, listed)).length });
+    out.allPushed = Object.values(out.logs).every((l) => l.unpushed === 0) && out.sweeps.every((s) => !s.missing.length && !s.changed.length) && out.loose.every((l) => !l.missing);
     return out;
 }
 
@@ -428,6 +490,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         else {
             for (const [t, l] of Object.entries(s.logs)) console.log(`  ${t}: ${l.unpushed} row(s) not in the store`);
             for (const sw of s.sweeps) console.log(`  ${sw.dir}: ${sw.missing.length} of ${sw.runs} run(s) not in the store${sw.changed.length ? `; changed since pushed: ${sw.changed.join(", ")}` : ""}`);
+            const loose = s.loose.filter((l) => l.missing);
+            console.log(`  loose runs: ${s.loose.length} (observe, converse, old panels…), ${loose.length} with files not in the store${loose.length ? `: ${loose.map((l) => path.basename(l.dir)).join(", ")}` : ""}`);
             console.log(`  ${lastPushLine(await lastPush())}`);
         }
     } else if (cmd === "push" || cmd === "pull") {
