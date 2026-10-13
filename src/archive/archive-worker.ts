@@ -9,7 +9,7 @@
 //
 // chrome-free, like python-worker.ts: the wasm is found next to this script's own URL.
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
+import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
 import { folderState, monthFiles, writableFolder, writeMonthFile, type FolderState } from "./archive-folder";
 
 /** The operations this worker answers, and what each takes. */
@@ -27,7 +27,11 @@ export type ArchiveOp =
     /** a folder was just picked: every month is dirty, then sync */
     | { op: "resync"; args?: undefined }
     /** copy every month file in the folder into the archive (a restore into a fresh profile) */
-    | { op: "import"; args?: undefined };
+    | { op: "import"; args?: undefined }
+    /** up to `limit` PNG images still to re-encode as WebP, as data URLs, and how many wait in all */
+    | { op: "pngs"; args: { limit: number } }
+    /** put re-encoded images in place of their PNGs (`url: null` keeps one): the backfill's commit */
+    | { op: "replacePngs"; args: { items: { sha: string; url: string | null }[] } };
 
 /** What the folder operations answer, for Settings. */
 export interface FolderReport {
@@ -75,6 +79,8 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "read": return readArchived(db, req.args.hash);
         case "remove": return removeArchived(db, req.args.hash);
         case "stats": return archiveStats(db);
+        case "pngs": return { batch: pngBatch(db, req.args.limit), pending: pngPending(db) };
+        case "replacePngs": return replacePngs(db, req.args.items);
         case "export": return exportBytes();
         case "folder": return folderReport(db);
         case "resync": markAllDirty(db); return sync(db, raw, sqlite3);

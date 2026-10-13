@@ -104,3 +104,83 @@ export const compactionJob = (c: { status(): JobLive }): JobDecl => ({
     log: { subsystem: "sessions", start: "compact-pass", done: ["compact-pass-done"], failed: ["compact-images-failed"], also: ["compact-images"] },
     live: () => c.status(),
 });
+
+/** How many archived images one commit holds: a pass the worker is stopped in keeps every batch before it. */
+export const ARCHIVE_COMPACT_BATCH = 8;
+
+/**
+ * The BACKFILL: the same lossless re-encode, over the screenshots already in the session archive, which were moved
+ * there as PNG before compaction existed (or before a pass reached them). Batch by batch, each batch one archive
+ * transaction (`replacePngs`, db.ts), until no PNG waits. Logged as a pass (`archive/image-compact`, then
+ * `image-compact-done` or `image-compact-failed`); a pass the worker was stopped in resumes from what was committed.
+ * Only the archive's images: a chat's `ml_session_` record is what a resume sends the MODEL, which stays PNG for the
+ * reason the live store's history does.
+ */
+export function archiveImageCompactor(o: {
+    /** One archive operation (`archiveCall`). */
+    call: <T>(op: "pngs" | "replacePngs", args: unknown) => Promise<T>;
+    encode?: (url: string) => Promise<string | null>;
+    record?: (r: HousekeepingReport) => void;
+    /** A pass replaced images: the months holding them are dirty, so the folder's files are worth rewriting. */
+    onReplaced?: () => void;
+    quietMs?: number;
+    now?: () => number;
+}): { kick(): void; pass(): Promise<void>; status(): JobLive } {
+    const encode = o.encode ?? webpFromWorker, now = o.now ?? Date.now;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let dueAt: number | null = null;
+    let running: Promise<void> | null = null;
+    let pending: number | undefined;
+    const run = async (): Promise<void> => {
+        let first = await o.call<{ batch: { sha: string; url: string }[]; pending: number }>("pngs", { limit: ARCHIVE_COMPACT_BATCH });
+        pending = first.pending;
+        if (!first.batch.length) return;
+        const t0 = now();
+        let replaced = 0, kept = 0, saved = 0;
+        o.record?.({ subsystem: "archive", kind: "image-compact", detail: { pending: first.pending } });
+        try {
+            for (let b: typeof first | null = first; b && b.batch.length; ) {
+                const items: { sha: string; url: string | null }[] = [];
+                for (const { sha, url } of b.batch) items.push({ sha, url: await encode(url) });
+                const r = await o.call<{ replaced: number; kept: number; bytesBefore: number; bytesAfter: number; pending: number }>("replacePngs", { items });
+                replaced += r.replaced; kept += r.kept; saved += r.bytesBefore - r.bytesAfter; pending = r.pending;
+                b = r.pending ? await o.call<typeof first>("pngs", { limit: ARCHIVE_COMPACT_BATCH }) : null;
+            }
+        } catch (err) {
+            if (replaced) o.onReplaced?.();
+            o.record?.({ level: "warn", subsystem: "archive", kind: "image-compact-failed", ms: now() - t0, detail: { replaced, error: String((err as Error)?.message || err).slice(0, 200) } });
+            return;
+        }
+        if (replaced) o.onReplaced?.();
+        o.record?.({ subsystem: "archive", kind: "image-compact-done", bytes: saved, ms: now() - t0, detail: { replaced, kept } });
+    };
+    const pass = (): Promise<void> => {
+        if (running) return running;
+        const p = run().finally(() => { if (running === p) running = null; });
+        running = p;
+        return p;
+    };
+    return {
+        kick() {
+            if (timer) clearTimeout(timer);
+            const ms = o.quietMs ?? COMPACT_QUIET_MS;
+            dueAt = now() + ms;
+            timer = setTimeout(() => { timer = null; dueAt = null; void pass(); }, ms);
+        },
+        pass,
+        status: (): JobLive => ({
+            running: running != null,
+            ...(pending != null ? { pending, pendingLabel: pending === 1 ? "archived screenshot in PNG" : "archived screenshots in PNG" } : {}),
+            ...(dueAt != null ? { nextDue: dueAt } : {}),
+        }),
+    };
+}
+
+/** The archive backfill as a background job (job-registry.ts). */
+export const archiveCompactionJob = (c: { status(): JobLive }): JobDecl => ({
+    id: "archive.compact-images",
+    title: "Archive screenshot compaction",
+    trigger: "when the browser starts with the archive on, and every 6 hours, until no archived screenshot is PNG",
+    log: { subsystem: "archive", start: "image-compact", done: ["image-compact-done"], failed: ["image-compact-failed"] },
+    live: () => c.status(),
+});

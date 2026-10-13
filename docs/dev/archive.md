@@ -29,7 +29,13 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 - **Images once.** A `data:image/*` string anywhere in an event is stored decoded in `images`, keyed by the SHA-256 of
   the data URL, and replaced by `wml-archive-img:<sha>`; `readArchived` puts it back. `image_refs` lets a remove free
   images nothing else uses. A session compacted in the live store (chat-page.md, "Saved sessions") arrives with WebP
-  images; sessions archived before that keep their PNGs.
+  images. The PNGs archived before that are re-encoded in place by a BACKFILL (`archiveImageCompactor`,
+  sw-image-compact.ts; `pngBatch`/`replacePngs`, db.ts), batch by batch, each one transaction: the sha key is only an
+  identity and is never re-checked, so every event pointing at an image reads the WebP; an import never overwrites an
+  image the archive has, so an older month file cannot bring the PNG back; the months showing a replaced image are
+  marked dirty, and a folder sync follows. A PNG the encoder keeps (not opaque, no smaller) goes in `image_kept`, which
+  is created on first use and only in the archive, never in a month file. Only the events' images: the row's
+  `history`, what a resume sends the model, stays as stored.
 - **A failed move KEEPS the session.** Deleting what someone asked to have archived is the one outcome that cannot be
   undone. It is logged as `sessions/archive-failed` and not retried for an hour (`ARCHIVE_RETRY_MS`).
 - **Nothing starts SQLite unless the archive is on.** A delete, and the Storage report, ask the archive only then.
