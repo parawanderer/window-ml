@@ -34,7 +34,7 @@ import { exportSession, exportSessionJson } from "../sidebar/export/export";
 import { SessionPane } from "./chat-app";
 import { ChatStore } from "./chat-store";
 import { hostServices } from "./host-services";
-import { webPlatform, type ClientPlatform } from "./platform";
+import { clientUi, webPlatform, type ClientPlatform } from "./platform";
 import { calm, installViewPrefs } from "./view-mode";
 
 /** Post a message to the app. Outside the app (a desktop test page) it goes to `__nativeOut`, for the specs to read. */
@@ -210,6 +210,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
 
     // With a cache (the real app, not the demo), a session seen in an earlier launch replays from the phone at once.
     const store = new ChatStore(host, opts.cache ? { cache: opts.cache } : {});
+    store.ui = clientUi(nativePlatform);
     installServices(hostServices(store, nativePlatform));
     store.start();
     const open = signal<SessionKey | null>(null);

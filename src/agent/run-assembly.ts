@@ -390,14 +390,15 @@ type KitMl = Pick<MlApi, "clickTool" | "typeTool" | "pythonTool" | "chatMetaTool
  * worker assembles every such run from this (sw-run-start.ts).
  * @param ml the host's factories for the kit's extra tools
  * @param req what the person asked for
- * @param remote typed on another device: a fact of the channel the request came over, never a field of the request,
- *   which a page can send (`USER_START_RUN`)
+ * @param sender who sent it, as the channel the request came over knows it (`remote`, the hub sender's `scopes`, the
+ *   client's `ui` claim): never a field of the request, which a page can send (`USER_START_RUN`)
  * @returns the task (framed around a right-clicked element when there is one) and how to show it, the run's
  *   provenance, and the options to assemble it with
  */
-export function userRunOptions(ml: KitMl, req: UserRunRequest, remote = false): { task: string; display?: PromptDisplay; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
+export function userRunOptions(ml: KitMl, req: UserRunRequest, sender: Omit<PromptOrigin, "surface"> = {}): { task: string; display?: PromptDisplay; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
     const { text: task, display } = framePrompt(String(req.task || "").trim(), req.elementContext);
-    const origin: PromptOrigin = { surface: promptSurfaceOf(req.surface) ?? "hud", ...(remote ? { remote: true } : {}) };
+    const { remote, scopes, ui } = sender;
+    const origin: PromptOrigin = { surface: promptSurfaceOf(req.surface) ?? "hud", ...(remote ? { remote: true } : {}), ...(scopes ? { scopes } : {}), ...(ui ? { ui } : {}) };
     const proseClause = req.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
     const maxSteps = stepBudget(req.maxSteps);
     const model = typeof req.model === "string" && req.model.trim() ? req.model.trim() : undefined;

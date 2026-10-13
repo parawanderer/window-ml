@@ -10,6 +10,7 @@ import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { PromptOrigin } from "../contract/contract-run";
+import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
@@ -22,13 +23,21 @@ export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" 
 export const THIS_BROWSER: CommandFrom = { via: "this browser" };
 
 /**
- * Where a person's message in a command was typed. Only the chat page sends `session.send` and `agent.start`, so the
- * surface is always the chat app; the channel says whether it is this browser's or another device's.
+ * Where a person's message in a command was typed, and who sent it. Only the chat page sends `session.send` and
+ * `agent.start`, so the surface is always the chat app; the channel says whether it is this browser's or another
+ * device's, and for a hub sender which scopes it holds. `ui` is the one part the command itself supplies: a claim
+ * about the client's own screen, cut to short names (`clientUiOf`).
  * @param from the command's sender
+ * @param ui the command's `ui` field as it arrived
  * @returns the origin to stamp on the message
  */
-export function commandOrigin(from: CommandFrom): PromptOrigin {
-    return from.via === "hub" ? { surface: "chat", remote: true } : { surface: "chat" };
+export function commandOrigin(from: CommandFrom, ui?: unknown): PromptOrigin {
+    const claimed = clientUiOf(ui);
+    return {
+        surface: "chat",
+        ...(from.via === "hub" ? { remote: true, ...(from.scopes ? { scopes: [...from.scopes] } : {}) } : {}),
+        ...(claimed ? { ui: claimed } : {}),
+    };
 }
 
 /** Everything the commands reach outside themselves. */
@@ -367,7 +376,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
                 ...(c.stream === true ? { stream: true as const } : {}),
-            }, commandOrigin(from));
+            }, commandOrigin(from, c.ui));
             if (r.outcome === "started" && r.hash) {
                 if (!c.ephemeral) deps.keepSession(r.hash);
                 return ok({ session: { runtime: deps.runtime, hash: r.hash } });
@@ -497,9 +506,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             // navigated), and the inbox is the same one the handle's `say` reaches.
             if (running && !images.length && !c.elementContext) {
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
-                if (deps.steer(s.id.hash, text, commandOrigin(from))) return ok({ mode: "steer" });
+                if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from));
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");

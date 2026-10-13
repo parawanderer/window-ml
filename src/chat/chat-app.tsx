@@ -39,7 +39,7 @@ import { SettingsPage, settingsTab } from "./settings-page";
 import { formatRoute, parseRoute } from "./route";
 import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
-import { lightboxSrc, type ClientPlatform } from "./platform";
+import { clientUi, lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
 import { useMovedSince, SessionList } from "./session-list";
 import { useNarrow } from "./narrow";
@@ -581,6 +581,7 @@ function Lightbox({ platform }: { platform: ClientPlatform }) {
 
 /** The chat page. */
 export function ChatApp({ store, platform, extras }: { store: ChatStore; platform: ClientPlatform; extras?: ChatExtras }) {
+    store.ui = clientUi(platform);
     const narrow = useNarrow();
     useHashRoute();
     const v = view.value;

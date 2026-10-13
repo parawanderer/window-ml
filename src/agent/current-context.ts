@@ -11,6 +11,7 @@ import type { PromptSurface } from "../contract/contract-run";
 import type { LogLevel } from "../log/housekeeping";
 import type { RunLogEvent } from "../log/run-log";
 import { toolToken } from "../util";
+import type { CurrentClient } from "./current-client";
 
 /** What the loop records about a message at the moment it appends it. Every field is null when not known, which
  *  is the case for history a session carried in from an earlier turn: the turn that appended it is gone. */
@@ -20,6 +21,8 @@ export interface RecordedMeta {
     seq: number | null;
     tool: string | null;
     surface: PromptSurface | null;
+    /** Who sent a user message, from the channel it came over (current-client.ts `clientOf`). */
+    client: CurrentClient | null;
     /** The engine's own count for THIS message, or null when it gave none that measures it. */
     counted: number | null;
     /** The tool output in this message was cut BEFORE the model saw it. */
@@ -27,7 +30,7 @@ export interface RecordedMeta {
 }
 
 /** Nothing known: a message no turn of this loop appended. */
-export const UNRECORDED: RecordedMeta = { ts: null, step: null, seq: null, tool: null, surface: null, counted: null, truncated: false };
+export const UNRECORDED: RecordedMeta = { ts: null, step: null, seq: null, tool: null, surface: null, client: null, counted: null, truncated: false };
 
 /** Record the messages appended since `from`. One call per push: the loop measures `messages.length` either side,
  *  so a host's push helper that appends two messages (a tool result and its images) records both. */
@@ -52,6 +55,9 @@ export interface MessageMeta {
     gapMs: number | null;
     /** Where a user message was typed. Null for every other role, and for history. */
     surface: PromptSurface | null;
+    /** Who sent a user message: the same record as `ml.current.client`, so a model can see the conversation change
+     *  hands. Absent for every other role, and for a message whose sender is unknown (history, an older runtime). */
+    client?: CurrentClient;
     /** The size of this message as the ENGINE counted it: what compacting it would reclaim. Text only; see `images`.
      *  Present only when there is a count (a reply the model produced); otherwise `estimatedTokens` is, never both,
      *  so a message's size is `m.tokens ?? m.estimatedTokens`. Two names because a bare `tokens` was read as exact
@@ -128,6 +134,10 @@ export interface CurrentSnapshot {
     /** What the runtime this run executes in can do, read now: the same description it gives every client, with each
      *  capability a boolean. Present only where the host adds it (a worker-hosted run). */
     runtime?: CurrentRuntime;
+    /** Who sent the LATEST user message, and what they can do and see from there: the person at this browser, or a
+     *  device that reached it through the hub and cannot see the page. Use it for how to answer, never as permission.
+     *  Absent when that message's sender is unknown. */
+    client?: CurrentClient;
 }
 
 /** The runtime a run executes in, as it describes itself to its clients: what kind it is, and what it can do. */
@@ -229,6 +239,7 @@ export function snapshotCurrent(src: {
             ageMs: r.ts == null ? null : Math.max(0, src.now - r.ts),
             gapMs: r.ts == null || prev == null ? null : Math.max(0, r.ts - prev),
             surface: m.role === "user" ? r.surface : null,
+            ...(m.role === "user" && r.client ? { client: structuredClone(r.client) } : {}),
             ...(counted != null ? { tokens: counted } : { estimatedTokens: Math.ceil(textChars(m) / CHARS_PER_TOKEN) }),
             images: m.images?.length ?? 0,
             step: r.step,
@@ -239,7 +250,9 @@ export function snapshotCurrent(src: {
     });
     const records = currentLogRecords(src.log ?? []);
     const log = Object.assign(records, { text: logText(records) });
-    return { run: { ...src.run }, messages, meta, log };
+    let lastUser: MessageMeta | undefined;
+    messages.forEach((m, i) => { if (m.role === "user") lastUser = meta[i]; });
+    return { run: { ...src.run }, messages, meta, log, ...(lastUser?.client ? { client: structuredClone(lastUser.client) } : {}) };
 }
 
 /** The most of `ml.current` an approved `exec` is SENT, as JSON characters. An approved exec runs in a world of its own

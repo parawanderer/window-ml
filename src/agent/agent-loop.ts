@@ -18,6 +18,7 @@ import type { RenderDescriptor, ToolFeedback, TokenRender } from "../contract/co
 import type { SubcallUsage } from "../contract/contract-debug";
 import type { PromptOrigin } from "../contract/contract-run";
 import { promptSurfaceNote } from "./prompt-surface";
+import { clientOf } from "./current-client";
 import { tableOf } from "../table/table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "../contract/contract-chat";
 import { formatBytes } from "../resource/resource-model";
@@ -486,7 +487,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const role = (m as { role?: string }).role;
         if (role === "system") recordAppended(recorded, i, i + 1, { ts: startedTs, step: 0 });
         else if (i === messages.length - 1 && role === "user" && (m as { content?: unknown }).content === task)
-            recordAppended(recorded, i, i + 1, { ts: startedTs, step: 0, surface: opts.origin?.surface ?? null });
+            recordAppended(recorded, i, i + 1, { ts: startedTs, step: 0, surface: opts.origin?.surface ?? null, client: clientOf(opts.origin) });
     });
     let currentStep = 0;
     // A run with no hash still gets stable ids within itself.
@@ -790,7 +791,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // the page. A plain string carries no origin and leaves the current one standing.
             const text = typeof queued === "string" ? queued : queued.text;
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
-            pushed(() => deps.pushUser?.(messages, text), { surface: lastOrigin?.surface ?? null });
+            pushed(() => deps.pushUser?.(messages, text), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
         }
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.

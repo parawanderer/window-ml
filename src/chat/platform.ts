@@ -32,6 +32,20 @@ export interface ClientPlatform {
     pairing?: PairingApi;
 }
 
+/** Every OPTIONAL member of {@link ClientPlatform}: a record the compiler holds complete, so a new optional member
+ *  fails the build here until it is listed, and what a client reports about itself needs no other upkeep. */
+const OPTIONAL_MEMBERS = { printDoc: 1, pairing: 1 } satisfies { [K in keyof ClientPlatform as {} extends Pick<ClientPlatform, K> ? K : never]-?: 1 };
+
+/**
+ * What this client can show, as it tells a runtime on every message it sends (`ui` on `session.send` and
+ * `agent.start`, `ml.current.client.ui`): the names of the optional members this platform has.
+ * @param platform the device's adapter
+ * @returns the names present, in a fixed order
+ */
+export function clientUi(platform: ClientPlatform): string[] {
+    return (Object.keys(OPTIONAL_MEMBERS) as (keyof typeof OPTIONAL_MEMBERS)[]).filter((k) => platform[k] != null);
+}
+
 /** The image the web adapter's lightbox is showing, if any; the chat app renders it. */
 export const lightboxSrc = signal<string | null>(null);
 

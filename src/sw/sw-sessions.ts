@@ -209,7 +209,7 @@ export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval
     /** drop a finished run's resumable snapshot and pointer store */
     forgetRun(hash: string): void;
     /** start a run the user asked for, assembled in the worker (sw-run-start.ts) */
-    startUserRun(tabId: number, req: import("../agent/run-assembly").UserRunRequest, opts?: { remote?: true }): Promise<{ hash: string }>;
+    startUserRun(tabId: number, req: import("../agent/run-assembly").UserRunRequest, opts?: { sender?: Omit<import("../contract/contract-run").PromptOrigin, "surface"> }): Promise<{ hash: string }>;
     /** a message or Continue for a run the worker built; null when the run is not the worker's (sw-run-start.ts) */
     userRunAction(hash: string, action: "send" | "continue", body: Record<string, unknown>, fromTabId?: number, origin?: import("../contract/contract-run").PromptOrigin): Promise<PageOutcome | null>;
     /** register a run's builtin toolset in a tab's page and hear its context (the ADOPT_RUN_NOW push) */
@@ -369,7 +369,7 @@ export function configureSessionCommands(run: RunDeps): void {
         // Assembled in the worker, never by the page it acts on (docs/spec/SITE_ACCESS.md, slice 0).
         startAgent: async (tabId, opts, origin) => {
             try {
-                const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" }, origin?.remote ? { remote: true } : {});
+                const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
                 return { outcome: "started", hash };
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },

@@ -10,7 +10,7 @@
 // `session.delete` is refused here.
 //
 // chrome-free, over its inputs, so it is tested against the real hub; `sw-hub.ts` plugs it into the worker.
-import { COMMAND_SCOPE, type Command, type CommandFrom, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "../../session/session-host";
+import { COMMAND_SCOPE, type Command, type CommandFrom, type CommandResult, type CommandType, type Scope, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "../../session/session-host";
 import { SessionPublisher, hubPublish } from "./session-publisher";
 import { IndexPublisher, LivePreview } from "./session-relay";
 import type { HubClient, HubEvent } from "../client";
@@ -254,6 +254,12 @@ export class HubRuntime {
         let command: Command | null = null;
         let rotate = false;
         const reg = this.opts.devices;
+        // What this sender may do here: its certificate's scopes narrowed by the allowlist. Checked below, and handed
+        // on with the command, so `ml.current.client.may` is the set the gate used and not a second reading of it.
+        const leafScopes = CertificateBody.decode(opened.chain[0].body).scopes;
+        // (The certificate's are proto strings; `ml.current.client` keys `may` by the known scopes only, so an unknown one
+        // read through the cast is dropped there.)
+        const granted = (reg ? reg.allowed(hex(opened.from), leafScopes) : leafScopes) as readonly Scope[];
         try { command = JSON.parse(decoder.decode(opened.body)) as Command; } catch { /* below */ }
         if (!command || typeof command !== "object" || typeof command.type !== "string") {
             result = { ok: false, error: { code: "invalid", message: "not a command" } };
@@ -264,7 +270,7 @@ export class HubRuntime {
         } else if (reg && (reg.isRevoked(hex(opened.from)) || (await reg.revokes(opened.chain)))) {
             // The allowlist is the authoritative revocation: immediate, and needing nothing from the hub.
             result = { ok: false, error: { code: "forbidden", message: "this device was revoked" } };
-        } else if (reg && !reg.allowed(hex(opened.from), CertificateBody.decode(opened.chain[0].body).scopes).includes(opened.scope)) {
+        } else if (reg && !granted.includes(opened.scope)) {
             // NARROWED since its certificate was issued. The certificate still carries the wider set and this runtime
             // cannot change that, so the allowlist is what enforces it — the same place, and the same immediacy, as a
             // revocation. Worded as the account's decision rather than as a broken certificate.
@@ -274,7 +280,7 @@ export class HubRuntime {
         } else {
             const [localId] = local;
             try {
-                result = await this.opts.side.command(rehome(command, new Set([principal]), localId), { via: "hub" });
+                result = await this.opts.side.command(rehome(command, new Set([principal]), localId), { via: "hub", scopes: granted });
             } catch (e) {
                 result = { ok: false, error: { code: "failed", message: (e as Error)?.message || String(e) } };
             }
