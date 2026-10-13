@@ -8,16 +8,25 @@ description: Put one interview to several real models at once (DeepSeek, Gemini,
 The wrapper exists for models in general, not for any one model. A model reads only the text we wrote, so each
 misreading points at a sentence; one model's misreading can be that model, three models' is the text.
 
+**Run it through the bench with `--serve` by default**, so the person can watch along: the answers fill in side by
+side on a live page, each `expect()` shows as a badge, and they can mark a wrong line, which every later run of that
+model is checked against (`bench` skill, "Interviews"). Same file, same models, same cost. Hand over the URL its banner
+prints.
+
 ```bash
-USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json \
+USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json --serve \
     --models deepseek.deepseek-v4-pro,deepseek.deepseek-flash,litellm.google/gemini-flash-latest,litellm.anthropic/claude-opus-5-5,moonshot.kimi-k3
+```
+
+`panel.mjs` is the same interview with no page, for when nobody will watch:
+
+```bash
+USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json --models …
 # → tests/e2e/artifacts/panel-bloat-<time>/summary.md, plus each model's session in its own directory
 ```
 
 Each model's directory holds `run.md`, `run.json`, `outbox/turn-<n>.md` (one per turn, the answer then each step) and
-`run.log`. A PERSON reading a panel wants the bench's page instead: the same file through `bench/run.mjs` with
-`--models … --serve` sets the answers side by side in a browser and lets them mark a wrong line, which every later run
-of that model is checked against (`bench` skill, "Interviews"). A MODEL gets the same from the bench without the page:
+`run.log`. A MODEL gets the same from the bench without the page:
 `summary.md`, `timeline.md` and `page.json` in the sweep directory, and `node tests/e2e/bench/mark.mjs <sweep dir>
 --model <who> --turn <n> --quote "<line>"` to mark an answer wrong (the bench skill's "What it writes" table).
 
