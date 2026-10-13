@@ -156,6 +156,21 @@ Three tiers, decided per CALL, on the final argv:
    This is the property worth having: **what was approved is exactly what runs.**
 3. **Refused** — a program the person has blocked, a call from a page-started message, or `ml.sh` from the page's world.
 
+**The card has two answers: allow this call, or deny it (with a note).** Never a menu of guessed generalisations
+("allow `git` commands", "allow `git -C …` in this folder", "for this session", …), which is what makes approving shell
+commands elsewhere miserable (Shane, 2026-10-13). Those menus exist because the tool has to guess how to widen a shell
+STRING, and it hands the guess to the person mid-task, under fatigue, with the broad option one click from the narrow
+one. Here widening is never a button on a call:
+
+- **It is a policy**, written deliberately: by the person in Settings, or proposed by the model as ONE card that says
+  what it will match and shows the evidence ("Policies" below). One approval of a stated rule instead of a choice among
+  five guessed ones.
+- **A card may link to "make a rule from this"**, which opens the policy editor with a predicate built from the call's
+  resolved facts, as code, for the person to narrow or widen. Writing it is a separate act from answering the card,
+  and the card is answered either way.
+- **Fewer cards is the job of the tiers**, not of the card: the manifest, the sandbox and the person's policies decide
+  most calls before a card exists.
+
 So the manifest blocks only the free tier. A first build where every call asks is useful, and correct, without it.
 
 ## Policies: "run this without asking me"
