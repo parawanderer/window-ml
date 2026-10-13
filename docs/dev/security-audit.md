@@ -79,7 +79,7 @@ the worker, and the page answers geometry only):
       `look` shows a reader as an earlier capture (`withoutPageVision`). Held already, now tested: a page cannot
       overwrite, re-point or relabel an existing pointer, its `:in` slot is the model's call, answer media and inline
       images do not reach a worker-built run, odd tables leave the worker's prototypes alone, and the sidebar draws every
-      descriptor field as text: #PR.
+      descriptor field as text: #626.
 
 ## In progress
 
@@ -115,7 +115,7 @@ the worker, and the page answers geometry only):
             `pointer-events: none` and the clicks reach ours (clickjacking the card). Proposed: an occlusion check on
             the approval controls (IntersectionObserver v2 `trackVisibility`), refusing a click while they are covered.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only, drawn as text;
-      pictures are dropped since #PR).
+      pictures are dropped since #626).
 - [ ] A page's answer to a delegated call is kept whole: its render in the step's pointer (a 300,000-row table, a 20 MB
       capture) and its text result, which also reaches the model unclipped. Bounded only by Chrome's 64 MiB message cap
       and the pointer store's 200 entries. Owner decision on the bound (redteam-render-values.test.mjs, the `todo`).
