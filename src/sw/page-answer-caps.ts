@@ -92,11 +92,44 @@ export function capPageContext(info: unknown, clip = true): string | undefined {
     return typeof info === "string" && info ? (clip ? clipOut(info, UI_OUT_CAP) : info) : undefined;
 }
 
-type Cell = string | number | boolean | null;
+type Cell = string | number | boolean | null | Record<string, unknown> | unknown[];
+
+/** The marker a table view draws as "unrenderable <type>" (render-panel.tsx `dfCell`/`dfCellType`), the producer's own
+ *  for a cell it could not represent (python-runtime.ts). */
+const UNRENDERABLE = "__ml_unrenderable__";
+
+/**
+ * One table cell from a page within the cell cap, never made null: a value is a fact, and null reads as "missing".
+ * A string over `PAGE_TABLE_CAPS.cell` is cut. An object or array (a python frame's dict or list cell) is kept as it
+ * came while its JSON fits the cap, since that JSON is what the table view shows (`dfCell`); past the cap it becomes that
+ * JSON cut to the cap. One with no JSON (a cycle, a throwing getter or `toJSON`) becomes the view's "unrenderable <type>" marker.
+ * A non-finite number becomes its text, as the view prints it.
+ * @param v the cell as the page sent it
+ * @returns undefined when `v` is within the cap as it is, else the cell to keep and whether it was cut or converted
+ */
+export function capPageCell(v: unknown): { cell: Cell; kind: "cut" | "odd" } | undefined {
+    const C = PAGE_TABLE_CAPS;
+    if (v === null || typeof v === "boolean") return undefined;
+    if (typeof v === "string") return v.length > C.cell ? { cell: v.slice(0, C.cell), kind: "cut" } : undefined;
+    if (typeof v === "number") return Number.isFinite(v) ? undefined : { cell: String(v), kind: "odd" };
+    if (typeof v === "object") {
+        let j: string | undefined;
+        try { j = JSON.stringify(v); } catch { j = undefined; }
+        if (j === undefined) return { cell: { [UNRENDERABLE]: typeName(v) }, kind: "odd" };
+        return j.length > C.cell ? { cell: j.slice(0, C.cell), kind: "cut" } : undefined;
+    }
+    // undefined, a function, a symbol, a bigint: nothing a message carries, named by its type.
+    return { cell: { [UNRENDERABLE]: typeof v }, kind: "odd" };
+}
+
+/** A cell's type for the "unrenderable" marker, read so that nothing on the value can throw: its brand, never a getter. */
+function typeName(v: object): string {
+    try { return Array.isArray(v) ? "list" : Object.prototype.toString.call(v).slice(8, -1).toLowerCase() || "object"; } catch { return "object"; }
+}
 
 /**
  * A table from a page, within {@link PAGE_TABLE_CAPS}: at most `columns` columns and `rows` rows, rows kept from the top
- * while the cells fit `cells`, a cell string cut to `cell` characters and any other non-scalar cell made null (pageRead
+ * while the cells fit `cells`, a cell held to `cell` characters by {@link capPageCell} (never made null; pageRead
  * refuses both). A table cut short keeps its SOURCE's row count in `rowCount`: the page's own when it is a whole
  * number no smaller than the rows it sent, else the rows it sent.
  * @param t the table's fields (`columns`, `rows`, `rowCount`)
@@ -125,10 +158,10 @@ export function capPageTable<T extends { columns?: unknown; rows?: unknown; rowC
         const width = Math.min(r.length, C.columns);
         for (let i = 0; i < width; i++) {
             const v = r[i];
-            let w: Cell | undefined;
-            if (typeof v === "string") { if (v.length > C.cell) { w = v.slice(0, C.cell); longCells++; } }
-            else if (!(v === null || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v)))) { w = null; oddCells++; }
-            if (w !== undefined) { out ??= r.slice(0, width) as Cell[]; out[i] = w; }
+            const w = capPageCell(v);
+            if (!w) continue;
+            if (w.kind === "cut") longCells++; else oddCells++;
+            out ??= r.slice(0, width) as Cell[]; out[i] = w.cell;
         }
         if (!Array.isArray(row)) { oddCells++; out = []; }
         if (out) changed = true;

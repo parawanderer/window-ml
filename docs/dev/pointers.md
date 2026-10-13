@@ -170,7 +170,9 @@ service worker's side is `sw-values.ts`:
   `df`, a `python-in`'s loaded frames) is cut to 2,000 columns, 1,000,000 rows and 4,000,000 cells, rows kept from the
   top, and keeps its SOURCE's row count in `rowCount` (the page's own when it is a whole number no smaller than the rows
   it sent), so the pointer's `shape` and its description (`describeToken`: "the first N of M rows") stay honest. A
-  cell over 100,000 characters is cut; a cell that is not a scalar becomes null. A text or picture field over
+  cell over 100,000 characters is cut, and never made null (`capPageCell`): an object or list cell (a python frame's
+  dict) is kept while its JSON fits, else becomes that JSON cut to the cap; one with no JSON becomes the table view's
+  "unrenderable <type>" marker. A text or picture field over
   16,000,000 characters (a `capture`, a `stdout`, an `image`) is dropped whole and the model told after its copy
   (`droppedNote`). The page's text `result` is clipped by `clipOut` at the panel's cap (`UI_OUT_CAP`), or for exec and
   python_exec at three times the call's `OUTPUT_CAP`, room for both slots their producers write; a result that is not a

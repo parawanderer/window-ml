@@ -78,11 +78,32 @@ test("a cut is reported once per kind, with its size before and after", () => {
     ]);
 });
 
-test("a cell that is not a scalar becomes null, and a row that is not an array becomes empty, as pageRead would not take either", () => {
-    const { out, cuts } = capTable(["a", "b"], [[{ polluted: true }, 1], "not a row", [[1, [2]], Infinity]]);
-    assert.deepEqual(out.renderOut.rows, [[null, 1], [], [null, null]]);
-    assert.deepEqual(cuts.map((c) => [c.what, c.from]), [["cell-type", 4]]);
+test("an object or list cell survives capping with its content: a python frame's dict and list cells are values, never null", () => {
+    // What a pandas frame with dict and list cells sends (python-runtime.ts), and the producer's own marker for a cell it
+    // could not represent, which the table view draws as "unrenderable Probe" (render-panel.tsx `dfCell`).
+    const rows = [["a", { q1: 1 }], ["b", [1, [2, { x: "y" }]]], ["c", { __ml_unrenderable__: "Probe" }]];
+    const env = { result: "ok", renderOut: { type: "python-out", df: { columns: ["name", "meta"], rows, rowCount: 3 } } };
+    assert.equal(capPageAnswer(env, "python_exec", {}), env, "within the caps, the frame is the same object");
+    // And past another cap (the row cap), the cells of the rows kept still carry their content.
+    const { out } = capTable(["name", "meta"], [...rows, ...new Array(C.rows).fill(["d", null])]);
+    assert.deepEqual(out.renderOut.rows.slice(0, 3), rows);
 });
+
+test("a cell is held to the cell cap and never made null: an object's JSON cut to it, a non-finite number as its text, one with no JSON named by type", () => {
+    const deep = { k: "v".repeat(C.cell) };
+    const throwing = [{ toJSON() { throw new Error("no"); } }];
+    const cyc = {}; cyc.self = cyc;
+    const getter = { get boom() { throw new Error("no"); } };
+    const { out, cuts } = capTable(["a", "b", "c", "d", "e", "f"], [[deep, Infinity, NaN, cyc, getter, throwing], "not a row"]);
+    const [row, empty] = out.renderOut.rows;
+    assert.equal(row[0], JSON.stringify(deep).slice(0, C.cell), "an object past the cap is its JSON, cut to it");
+    assert.deepEqual(row.slice(1, 3), ["Infinity", "NaN"]);
+    assert.deepEqual(row.slice(3), [{ __ml_unrenderable__: "object" }, { __ml_unrenderable__: "object" }, { __ml_unrenderable__: "list" }]);
+    assert.ok(row.every((c) => c !== null), "no cell became null");
+    assert.deepEqual(empty, [], "a row that is not an array is empty: there is no cell to keep");
+    assert.deepEqual(cuts.map((c) => [c.what, c.from]), [["cell", 1], ["cell-type", 6]]);
+});
+
 
 test("a python frame, and the frames a python cell loaded, are held to the same caps", () => {
     const rows = new Array(C.rows + 1).fill([1]);
