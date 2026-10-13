@@ -36,10 +36,10 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants, isExtensionSender } from "./sw/sw-consent";
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
-import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
+import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { pageRebuild } from "./agent/run-assembly";
 import { PAGE_STARTED_TYPES } from "./page-relay";
@@ -98,6 +98,7 @@ startValueSweeps();
     dropAllLocalTools();
     dropAllAnswerMemory();
     dropAllVisionMemory();
+    dropHandedMemoryForTest();
     await hydratePersistedRuns();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
@@ -498,7 +499,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // page in the run's own debug events, so knowing it proves nothing. An extension page is not a page here.
     if ((message.type === "INJECT_MESSAGE" || message.type === "START_RUN" || message.type === "RESUME_RUN")
         && isWorkerRun((message.payload as { runId?: unknown } | undefined)?.runId) && !isExtensionSender(sender)) {
-        sendResponse(message.type === "INJECT_MESSAGE" ? { data: false } : { error: "Refused: this run was started from the extension, and only the extension can drive it." });
+        sendResponse(message.type === "INJECT_MESSAGE" ? { data: false } : { error: WORKER_RUN_REFUSED });
         return;
     }
     if (message.type === "INJECT_MESSAGE") {

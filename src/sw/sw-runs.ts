@@ -77,6 +77,9 @@ export function makeWorkerRun(runId: string): void {
     if (!handedToWorker.has(runId)) { handedToWorker.add(runId); saveHandedToWorker(); }
 }
 
+/** TEST-ONLY (`__mlEvictForTest`): forget the hand-overs held in memory, as an eviction does; storage keeps them. */
+export function dropHandedMemoryForTest(): void { handedToWorker.clear(); }
+
 /** Set a run's in-memory record to the worker's (its settled snapshot and its rebuild). */
 function markWorkerRun(runId: string): void {
     const stored = bgRuns.get(runId);
@@ -90,7 +93,8 @@ function markWorkerRun(runId: string): void {
  *  a run from it but the end of its snapshot. */
 const handedToWorker = new Set<string>();
 const HANDED_KEY = "ml_handed_to_worker";
-/** More would be runs whose snapshots are long gone; the oldest go first. */
+/** Past this many, the entries of runs the worker no longer holds are pruned. A run it still holds is never dropped: its
+ *  entry is all that keeps a restarted worker from giving it back to its page. */
 const HANDED_MAX = 200;
 defineState({
     id: "run.handed-to-worker", scope: "run", realm: "worker", audience: "human", lostOn: ["turn-end"],
@@ -98,8 +102,13 @@ defineState({
     read: ({ runId }) => (runId && handedToWorker.has(runId) ? true : undefined),
 });
 
+/** Whether the worker still holds a run: a snapshot (settled or restored), a live loop, or a live cross-page record. */
+function heldRun(runId: string): boolean {
+    return bgRuns.has(runId) || runControllers.has(runId) || runRebuilds.has(runId);
+}
+
 function saveHandedToWorker(): void {
-    while (handedToWorker.size > HANDED_MAX) handedToWorker.delete(handedToWorker.values().next().value!);
+    if (handedToWorker.size > HANDED_MAX) for (const runId of [...handedToWorker]) if (!heldRun(runId)) handedToWorker.delete(runId);
     // After the restore, which reads the stored list first: a write before it would drop the runs it holds.
     void hydrationDone.then(() => {
         try { void chrome.storage?.local?.set({ [HANDED_KEY]: [...handedToWorker] })?.catch?.(() => {}); } catch { /* storage unavailable */ }
