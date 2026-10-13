@@ -240,7 +240,7 @@ test("check-tools does not take a nested name or a run-time name for a factory",
     const files = [
         { rel: check.REGISTRY, text: "" },
         // name and description at different depths: a schema property, not a tool
-        { rel: "src/a.ts", text: `const p = { properties: { name: { type: "string" } }, description: "x" };\nconst q = ({ inner: { name: "deep" }, description: "z" });\n` },
+        { rel: "src/a.ts", text: `const p = { properties: { name: { type: "string" } }, description: "x" };\nconst q = ({ inner: { name: "deep", size: 1 }, description: "z" });\n` },
         // a tool built from a server tool's fields at run time
         { rel: "src/b.ts", text: `export const s = (fn) => T({ description: fn.description, name: fn.name });\n` },
     ];

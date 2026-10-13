@@ -12,10 +12,10 @@
 // none of those things: not gated by the worker, not citable, and shown on the start card as the SITE's own tool. A
 // declaration with no factory is a name a site's tool can take to be treated as ours.
 //
-// WHAT COUNTS AS A FACTORY: an object literal whose FIRST key is `name`, given as a string or a constant
-// (`name: DEREF_TOOL`; a lower-case variable is a tool built at run time, a server tool, and not a builtin), that also
-// has a `description`, opening right after a `(` or a `return` — the shape of
-// `defineTool({ name: "exec", … })` and of a tool returned as a plain object (`chat_metadata`). Comments and strings are
+// WHAT COUNTS AS A FACTORY: an object literal whose own keys hold a `name`, given as a string or a constant
+// (`name: DEREF_TOOL`; a lower-case variable is a tool built at run time, a server tool, and not a builtin), and a
+// `description`, in any order and wherever the literal opens — the shape of `defineTool({ name: "exec", … })`, of a
+// tool returned as a plain object (`chat_metadata`), and of a spec held in a variable first. Comments and strings are
 // stripped first (js-scan.mjs), so a commented-out tool is not one. Looked for in the worker, page and offscreen code:
 // src/ except the UI realms and the hub, which define no agent tools.
 //
@@ -57,6 +57,19 @@ export function constantsIn(text) {
     return out;
 }
 
+/** The text of the bracketed group opening at `open` with every nested group's contents left out: an object literal's
+ *  own keys and values, not those of an object inside it. */
+function topLevelAt(code, open) {
+    let depth = 0, out = "";
+    for (let i = open; i < code.length; i++) {
+        const c = code[i];
+        if (c === "{" || c === "[" || c === "(") { if (++depth === 1) continue; }
+        else if ((c === "}" || c === "]" || c === ")") && --depth === 0) return out;
+        if (depth === 1) out += c;
+    }
+    return out;
+}
+
 /**
  * The tool factories in one file's text.
  * @param {string} text the source
@@ -67,11 +80,15 @@ export function factoriesIn(text, constants = new Map()) {
     if (!/\bname\s*:/.test(text) || !/\bdescription\s*:/.test(text)) return [];
     const { code, strings } = scan(text);
     const out = [];
-    for (const m of code.matchAll(/(?:\(|\breturn)\s*(\{)\s*name\s*:\s*(?:\0(\d+)\0|([A-Z][A-Z0-9_]*))\s*,/g)) {
-        const open = m.index + m[0].indexOf("{");
-        if (!/(^|[,{\s])description\s*:/.test(objectAt(code, open))) continue;
-        const ref = m[2] != null ? JSON.stringify(strings[+m[2]]?.value) : m[3];
-        const name = m[2] != null ? strings[+m[2]]?.value ?? null : constants.get(m[3]) ?? null;
+    // Every object literal, wherever it opens (an argument, a `return`, a variable a factory passes on later), whose OWN
+    // keys hold a `name` that is a literal or a constant and a `description`, in any order. A `name` read from a
+    // lower-case variable or a member (`fn.name`) is a tool built at run time, a server tool, and not a builtin.
+    for (let open = code.indexOf("{"); open !== -1; open = code.indexOf("{", open + 1)) {
+        const own = topLevelAt(code, open);
+        const m = /(?:^|[,\s])name\s*:\s*(?:\0(\d+)\0|([A-Z][A-Z0-9_]*))\s*(?:,|$)/.exec(own);
+        if (!m || !/(?:^|[,\s])description\s*:/.test(own)) continue;
+        const ref = m[1] != null ? JSON.stringify(strings[+m[1]]?.value) : m[2];
+        const name = m[1] != null ? strings[+m[1]]?.value ?? null : constants.get(m[2]) ?? null;
         out.push({ name, ref, line: code.slice(0, open).split("\n").length });
     }
     return out;
@@ -108,7 +125,7 @@ export function declarationsIn(text) {
  */
 export function checkTools(files) {
     // Only the files that could define a constant some factory names are scanned for it: a scan is the slow part.
-    const refs = new Set(files.flatMap((f) => [...f.text.matchAll(/\bname\s*:\s*([A-Z][A-Z0-9_]*)\s*,/g)].map((m) => m[1])));
+    const refs = new Set(files.flatMap((f) => [...f.text.matchAll(/\bname\s*:\s*([A-Z][A-Z0-9_]*)\s*[,}]/g)].map((m) => m[1])));
     const constants = new Map();
     for (const f of files) {
         if (![...refs].some((r) => f.text.includes(`const ${r}`))) continue;

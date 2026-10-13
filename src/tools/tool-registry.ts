@@ -9,7 +9,10 @@
 // open. This file imports nothing, so every bundle that reads it reads all of it.
 //
 // A name the registry does not declare is the SITE's own tool (docs/spec/SITE_ACCESS_SLICE3.md, Q18). A site tool that
-// takes a builtin's name gets the builtin's treatment: gated if the builtin is, and the builtin's card line.
+// takes a builtin's name gets the builtin's treatment: gated if the builtin is, and the builtin's card line. The worker
+// cannot do better by name: a run the PAGE built holds every tool, the builtins included, as code in the page's main
+// world, which the page can replace, and its START_RUN carries only descriptors. So for a page-started run a card line
+// says what the extension's tool of that name does, and what the worker enforces is the gate on the gated names.
 
 /** Where a run the WORKER built executes the tool: `page` delegates it to the run's tab, `worker` runs it in the
  *  service worker (it never reads the page, or reads it as plain data), `loop` is answered by the agent loop itself.
@@ -35,7 +38,8 @@ export interface BuiltinToolDecl {
     citable: boolean;
     realm: ToolRealm;
     /** The start card's sentence for it (SITE_ACCESS_SLICE3.md 1.1). Tools that share a sentence give the same string,
-     *  and the card shows it once. `null`: no line, the tool reaches nothing outside the run and the extension. */
+     *  and the card shows it once. `null`: no line, the tool reaches nothing outside the run, the extension and the
+     *  person (`answer` hands its elements to the person). */
     cardLine: string | ((facts: CardFacts) => string) | null;
 }
 
@@ -69,10 +73,12 @@ defineBuiltinTool({ name: "ancestors", factories: ["src/tools/tools.ts"], gated:
 defineBuiltinTool({ name: "countMatches", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "page", cardLine: READ_PAGE });
 defineBuiltinTool({ name: "sampleText", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "page", cardLine: READ_PAGE });
 defineBuiltinTool({ name: "pageInfo", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "page", cardLine: READ_PAGE });
-defineBuiltinTool({ name: "scroll", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "page", cardLine: READ_PAGE });
+// scroll acts on the page rather than reading it: a scroll can mark a chat's messages read or load more of a feed.
+defineBuiltinTool({ name: "scroll", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "page", cardLine: "Scroll this page" });
 defineBuiltinTool({ name: "wait", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "page", cardLine: READ_PAGE });
 defineBuiltinTool({ name: "exec", factories: ["src/tools/tools.ts"], gated: true, citable: true, realm: "page", cardLine: "Run code on this page" });
-defineBuiltinTool({ name: "answer", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "worker", cardLine: READ_PAGE });
+// answer hands the elements the model chose to the person, and reaches nothing the read tools do not.
+defineBuiltinTool({ name: "answer", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "worker", cardLine: null });
 defineBuiltinTool({ name: "dereference", factories: ["src/tools/tools.ts"], gated: false, citable: false, realm: "loop", cardLine: null });
 
 defineBuiltinTool({ name: "look", factories: ["src/tools/builtin-tools.ts", "src/ml/ml-vision.ts"], gated: false, citable: true, realm: "worker", cardLine: SHOTS });
