@@ -22,7 +22,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { jsonResponse, streamResponse, loadBackground, loadPageWorld } = require("./helpers");
-const { HANDLE_MAP, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES, RUN_TAB_TYPES } = require("../src/page-relay.ts");
+const { HANDLE_MAP, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
@@ -148,21 +148,6 @@ test("GAIN blocked — EVERY page-started message type is refused from an unappr
     }
 });
 
-test("GAIN blocked — a tab hosting a run may send only what the run's tools send; run control, the model, sessions and dumps are refused", async () => {
-    for (const type of PAGE_STARTED_TYPES) {
-        const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
-        bg.context.__mlSeedActiveRunForTest(9, "run-on-tab");
-        const { res } = await attempt(bg, type, hostilePage());
-        const refused = /^Refused: https:\/\/evil\.example/.test(res?.error || "");
-        // The interim allowance is a recorded deviation (SITE_ACCESS.md): a run's own tools on that page still send
-        // RUN_TAB_TYPES. Everything else is refused as from any unapproved page.
-        assert.equal(refused, !RUN_TAB_TYPES.has(type), `${type}: ${refused ? "refused" : "allowed"} on a tab hosting a run`);
-    }
-    for (const type of RUN_TAB_TYPES) assert.ok(PAGE_STARTED_TYPES.has(type), `${type} is a page-started type (a typo would allow nothing and test nothing)`);
-    for (const type of [...RUN_CONTROL_TYPES, "SET_MODEL", "OLLAMA_UNLOAD", "SAVE_SESSION", "GET_SESSION", "EMBED", "DUMP_EVENTS", "ML_DEBUG_EVENT", "ML_SESSION_EVENT", "GET_INVOCATION"])
-        assert.ok(!RUN_TAB_TYPES.has(type), `${type} is never sent by a run's tools`);
-});
-
 test("GAIN blocked — a sender that can never be granted is refused even when its host IS approved", async () => {
     const approved = { ml_site_always: ["https://ok.example"] };
     const cases = [
@@ -238,7 +223,7 @@ test("GAIN blocked — the worker's question to the shell about where the extens
     const mapped = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
     for (const t of shotTypes) {
         assert.ok(!mapped.some((m) => String(m).startsWith(t)), `${t} is in HANDLE_MAP`);
-        assert.ok(!PAGE_STARTED_TYPES.has(t) && !RUN_TAB_TYPES.has(t), `${t} is page-startable`);
+        assert.ok(!PAGE_STARTED_TYPES.has(t), `${t} is page-startable`);
     }
     const relayed = await pageRelays(...shotTypes.flatMap((t) => [{ type: t }, { type: `${t}_REQUEST`, payload: {} }]));
     assert.deepEqual(relayed, [], "the content script relays none of them");
@@ -476,4 +461,250 @@ test("a page cannot make the worker replay a run's history to its tab again and 
     release();
     assert.ok(first > 0, "positive control: the run's history was buffered and the tab gets ML_DEBUG_TO_PAGE");
     assert.equal(replays(), first, `the same document got the history again: ${first} events after one CONTENT_READY, ${replays()} after three`);
+});
+
+// ── (g) PART 5: no page-started type for a page a run is on (docs/spec/SITE_ACCESS.md slice 2 part 5) ─────────────
+// Until part 5, a tab HOSTING a run could send what the run's tools sent from the page (`RUN_TAB_TYPES`), whatever its
+// origin. Part 5 moved the last of those tools to the worker and dropped the allowance: an unapproved page a run is on
+// gets exactly what any unapproved page gets. The types it used to get, by name, so this list is not read from the code
+// that removed them.
+const FORMER_RUN_TAB_TYPES = [
+    "FETCH_LLM", "ABORT_TASK", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG",
+    "CAPTURE_TAB", "FETCH_IMAGE_B64", "FETCH_URL", "PYTHON_EXEC", "FETCH_SHEET",
+    "LIST_SERVER_TOOLS", "SERVER_TOOL_EXEC", "CDP_SHADOW_RESOLVE",
+];
+
+/** `bg.send`, raced against a bound: a type let through to a handler that never answers must fail the test, not hang it. */
+const sendBounded = (bg, msg, sender, ms = 3000) => Promise.race([bg.send(msg, sender), new Promise((r) => setTimeout(() => r({ timeout: true }), ms))]);
+
+/** A message of `type` carrying everything a page knows about the run: its id, as a run id, a session hint and a
+ *  request id, with a payload each handler would act on. */
+const knowingMessage = (type, runId) => ({
+    type, requestId: `wml-${runId}`,
+    payload: {
+        runId, hint: { use: "agent", session: `wml-${runId}` }, messages: [{ role: "user", content: "EVIL FROM THE RUN'S PAGE" }],
+        url: "https://docs.google.com/spreadsheets/d/abc/export?format=csv", selector: "x >>> y", code: "print('EVIL')", hardened: false,
+        toolId: "tool", name: "fn", args: {}, model: "default-model",
+    },
+});
+
+// --- part 5: a page a run is on is lent nothing ---
+
+test("PART 5 — a tab hosting a run gets nothing an unapproved page would not: every page-started type is refused, the former run-tab types included", async () => {
+    for (const type of FORMER_RUN_TAB_TYPES) assert.ok(PAGE_STARTED_TYPES.has(type), `${type} is a page-started type (a typo would test nothing)`);
+    for (const type of PAGE_STARTED_TYPES) {
+        const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
+        bg.context.__mlSeedActiveRunForTest(9, "run-on-tab");
+        const { res, fetched, toTabs, captured } = await attempt(bg, type, hostilePage());
+        assert.match(res?.error || "", /^Refused: https:\/\/evil\.example is not approved/, `${type}: refused on a tab hosting a run`);
+        assert.deepEqual({ fetched, toTabs, captured }, { fetched: 0, toTabs: 0, captured: 0 }, `${type}: nothing reached the backend, a tab or the screen`);
+    }
+    // The positive control: the same tab's page, on an approved origin, is let through (the gate is what refused).
+    const ok = loadBackground({ config: baseConfig(), siteGate: true, local: { ml_site_always: ["https://evil.example"] }, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    ok.context.__mlSeedActiveRunForTest(9, "run-on-tab");
+    assert.equal((await ok.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, hostilePage())).data, "ok");
+});
+
+test("PART 5 — an unapproved page that knows the run's id gets nothing from a former run-tab type while the run is live on it, in the middle of its own tool call", async () => {
+    const SITE = { id: 9, windowId: 1, active: true, url: "https://evil.example/attack", title: "Evil" };
+    const answers = {};
+    let sawCall = false, attempted = null;
+    const bg = loadBackground({
+        config: baseConfig({ cdp: true }), siteGate: true, openTabs: [SITE],
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const driver = bg.calls.filter((c) => c.url.includes("/chat/completions") && c.body?.tools?.length).length;
+            return jsonResponse(driver === 1
+                ? { choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "findByText", arguments: JSON.stringify({ text: "code" }) } }] } }] }
+                : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            const p = msg.payload;
+            if (p.finish || p.renderOnly || p.precheck || p.readonlyTry || p.geometry) return { result: "" };
+            // The run's own call is in the page: the page uses the moment, naming the run in every way it can.
+            sawCall = true;
+            const before = { fetched: bg.calls.length, captured: bg.captures.length };
+            for (const type of FORMER_RUN_TAB_TYPES) answers[type] = await sendBounded(bg, knowingMessage(type, p.runId), { tab: { id: 9, url: SITE.url }, url: SITE.url, origin: "https://evil.example", frameId: 0, documentId: "doc-9" });
+            await tick();
+            attempted = { fetched: bg.calls.length - before.fetched, captured: bg.captures.length - before.captured };
+            return { result: "found: code 4417" };
+        },
+    });
+    const { hash } = await bg.context.__mlStartUserRunForTest(9, { task: "what is the code?", surface: "hud" });
+    for (let i = 0; i < 500 && !bg.calls.some((c) => c.body?.tools?.length && JSON.stringify(c.body.messages).includes("4417")); i++) await tick();
+    assert.ok(sawCall, "positive control: the run's own tool call reached the page, so the run was live on it");
+    assert.ok(hash, "the run started");
+    for (const type of FORMER_RUN_TAB_TYPES) assert.match(answers[type]?.error || "", /^Refused: https:\/\/evil\.example is not approved/, `${type}: ${JSON.stringify(answers[type])}`);
+    assert.deepEqual(attempted, { fetched: 0, captured: 0 }, "nothing the page sent reached the backend or the screen");
+    assert.ok(!JSON.stringify(bg.calls).includes("EVIL FROM THE RUN'S PAGE"));
+});
+
+// --- part 5: the hand-over on navigation, which the destination cannot stop ---
+
+/**
+ * A page-built run on tab 7, built by an approved page (builder.example), whose driver navigates to `dest` and then
+ * calls `look`. `onDestination(bg, ctx)` plays the destination's page from the commit on; `readopt` sends the
+ * destination's own CONTENT_READY and RUN_READOPTED afterwards. Returns what reached the page and the run's log.
+ */
+async function navigatedRun(dest, { onDestination = async () => {}, readopt = true } = {}) {
+    const A = "https://builder.example/start";
+    const tab = { id: 7, windowId: 1, active: true, url: A, title: "Builder" };
+    let bg, driver = 0;
+    const calls = [{ name: "navigate", args: { url: dest } }, { name: "look", args: { question: "Q-SECRET what is shown" } }];
+    const destSender = (extra = {}) => ({ tab: { id: 7, url: dest }, url: dest, origin: new URL(dest).origin, frameId: 0, documentId: "doc-dest", ...extra });
+    const go = async () => {
+        tab.url = dest;
+        bg.commit(7, { documentId: "doc-dest", url: dest });
+        await onDestination(bg, { destSender, builderSender: { tab: { id: 7, url: A }, url: A, origin: "https://builder.example", frameId: 0, documentId: "doc-builder" } });
+        if (!readopt) return;
+        await bg.send({ type: "CONTENT_READY" }, destSender());
+        await bg.send({ type: "RUN_READOPTED", payload: { runId: "nav-run", pageInfo: "the destination" } }, destSender());
+    };
+    bg = loadBackground({
+        config: baseConfig({ model: "text-driver", ocrModel: "reader-vl" }), siteGate: true, local: { ml_site_always: ["https://builder.example"] }, openTabs: [tab],
+        onCaptureTab: async () => "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        onFetch: (call) => {
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "text-driver" }, { id: "reader-vl" }] });
+            if (call.url.endsWith("/api/show")) return call.body?.model === "reader-vl" ? jsonResponse({ capabilities: ["completion", "vision"], model_info: {} }) : jsonResponse({ capabilities: ["completion", "tools"], model_info: {} });
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (!call.body?.tools?.length) return jsonResponse({ choices: [{ message: { content: "the reader's words" } }] });
+            const next = calls[driver++];
+            return jsonResponse(next ? { choices: [{ message: { content: null, tool_calls: [{ id: `c${driver}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args) } }] } }] } : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            const p = msg.payload;
+            if (p.geometry) return { result: "", geometry: { seq: p.geometry.seq, reply: p.geometry.op === "view" ? { w: 1024, h: 768, dpr: 1, sx: 0, sy: 0 } : p.geometry.op === "legend" ? { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 } : null } };
+            if (p.finish || p.renderOnly || p.precheck || p.readonlyTry) return { result: "" };
+            if (p.name === "navigate") { setTimeout(() => void go(), 5); return { result: `Navigating to ${dest}` }; }
+            return { result: `the page's own ${p.name}: Q-SECRET seen` };
+        },
+    });
+    const tool = (name) => ({ name, description: name, parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: name === "look" ? ["vision"] : [] });
+    void bg.send({ type: "START_RUN", payload: { runId: "nav-run", task: "go", systemPrompt: "sys", tools: ["navigate", "look"].map(tool), model: "text-driver", think: null, maxSteps: 10, surface: "off", crossOrigin: true, approvalRouting: "both",
+        rebuild: { toolNames: ["navigate", "look"], model: "text-driver", driverSees: false, visionModel: "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } } },
+        { tab: { id: 7, url: A }, url: A, origin: "https://builder.example", frameId: 0, documentId: "doc-builder" });
+    for (let i = 0; i < 3000 && driver <= calls.length; i++) {
+        for (const g of bg.context.__mlApprovals.list()) bg.context.__mlApprovals.resolve(g.key, true);
+        await new Promise((r) => setTimeout(r, 2));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+    const pageCalls = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
+    const log = (await bg.context.__mlRunLog.all()).filter((r) => r.run === "nav-run").map((r) => JSON.parse(JSON.stringify(r)));
+    const lastDriver = bg.calls.filter((c) => c.body?.tools?.length).at(-1);
+    return { bg, driver, pageCalls, log, seen: JSON.stringify(lastDriver?.body?.messages ?? []) };
+}
+
+test("PART 5 — the unapproved page a page-built run navigates onto cannot stop the hand-over: run control, a reclaiming START_RUN and the departing page's re-adopt all leave it the worker's", async () => {
+    const tried = {};
+    const w = await navigatedRun("https://evil.example/landing", {
+        onDestination: async (bg, { destSender, builderSender }) => {
+            // The document being left races the destination with a re-adopt from the approved builder's URL.
+            await bg.send({ type: "CONTENT_READY" }, builderSender);
+            // The destination knows the run's id (its debug events carry it) and tries every way to keep or end it.
+            tried.cancel = await sendBounded(bg, { type: "PAGE_CANCEL_RUN", payload: { runId: "nav-run" } }, destSender());
+            tried.resume = await sendBounded(bg, { type: "RESUME_RUN", payload: { runId: "nav-run", task: "EVIL TURN" } }, destSender());
+            tried.inject = await sendBounded(bg, { type: "INJECT_MESSAGE", payload: { runId: "nav-run", text: "EVIL STEER" } }, destSender());
+            tried.reclaim = await sendBounded(bg, { type: "START_RUN", payload: { runId: "nav-run", task: "EVIL RECLAIM", systemPrompt: "evil", tools: [], model: "text-driver", maxSteps: 2, surface: "off", rebuild: { toolNames: [], model: "text-driver" } } }, destSender());
+            for (const type of FORMER_RUN_TAB_TYPES) tried[type] = await sendBounded(bg, knowingMessage(type, "nav-run"), destSender());
+        },
+    });
+    for (const [what, r] of Object.entries(tried)) assert.match(r?.error || "", /^Refused/, `${what}: ${JSON.stringify(r)}`);
+    assert.equal(w.driver, 3, "the run was not stopped: it went on to its look and answered");
+    assert.ok(w.log.some((r) => r.kind === "handed-to-worker" && r.reason === "navigated-to-unapproved-site"), "handed over");
+    const looks = w.pageCalls.filter((p) => p.name === "look" && !p.renderOnly && !p.precheck && !p.geometry);
+    assert.deepEqual(looks, [], "the look after the navigation ran in the worker: the page was never sent it");
+    assert.ok(w.pageCalls.some((p) => p.geometry), "positive control: the page was asked for geometry, so the look ran");
+    assert.ok(!w.seen.includes("the page's own look"), "the model never saw a look the page answered");
+    assert.ok(!w.seen.includes("EVIL"), "no turn, steer or reclaim of the page's reached the run");
+});
+
+test("PART 5 — a destination that blocks its own re-adopt still has the run handed over, and its page still gets nothing", async () => {
+    const tried = {};
+    const w = await navigatedRun("https://evil.example/landing", {
+        readopt: false,
+        onDestination: async (bg, { destSender }) => { for (const type of FORMER_RUN_TAB_TYPES) tried[type] = await sendBounded(bg, knowingMessage(type, "nav-run"), destSender()); },
+    });
+    assert.ok(w.log.some((r) => r.kind === "handed-to-worker"), "handed over at the commit, with nothing from the destination");
+    for (const type of FORMER_RUN_TAB_TYPES) assert.match(tried[type]?.error || "", /^Refused: https:\/\/evil\.example is not approved/, `${type}: ${JSON.stringify(tried[type])}`);
+    assert.ok(!JSON.stringify(w.bg.calls).includes("EVIL FROM THE RUN'S PAGE"));
+});
+
+// --- the upgrade: what the code before part 5 left behind ---
+
+/** What the code before part 5 stored for a page-built run that had navigated onto an unapproved site and was in flight
+ *  when the worker went away: its durable-resume snapshot (sw-runs.ts `persistRun`), page-built (no `builtBy`), its
+ *  rebuild naming the page's models, as that code wrote it. `version` is the build that wrote it. */
+const oldSnapshot = (version) => ({
+    p: {
+        runId: "old-run", task: "summarise", systemPrompt: "sys", model: "text-driver", think: null, maxSteps: 10, surface: "off", crossOrigin: true, approvalRouting: "both",
+        autoApprovePython: false, autoApproveReadonly: false,
+        tools: [{ name: "look", description: "look", parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: ["vision"] }],
+        rebuild: { toolNames: ["look"], model: "text-driver", driverSees: false, visionModel: "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+        pageOrigin: "https://builder.example", pageUrl: "https://builder.example/start",
+    },
+    tabId: 7,
+    messages: [{ role: "system", content: "sys" }, { role: "user", content: "summarise" }],
+    version, ts: Date.now(),
+});
+
+/** A worker restarting over `local` storage, with tab 7 on the unapproved site, whose driver calls `look` once. */
+function restartedWorker(local) {
+    const UNAPPROVED = "https://evil.example/landing";
+    let driver = 0;
+    const bg = loadBackground({
+        config: baseConfig({ model: "text-driver", ocrModel: "reader-vl" }), siteGate: true, manifestVersion: "9.9.9",
+        local: { ml_site_always: ["https://builder.example"], ...local }, openTabs: [{ id: 7, windowId: 1, active: true, url: UNAPPROVED, title: "Evil" }],
+        onCaptureTab: async () => "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        onFetch: (call) => {
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "text-driver" }, { id: "reader-vl" }] });
+            if (call.url.endsWith("/api/show")) return call.body?.model === "reader-vl" ? jsonResponse({ capabilities: ["completion", "vision"], model_info: {} }) : jsonResponse({ capabilities: ["completion", "tools"], model_info: {} });
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (!call.body?.tools?.length) return jsonResponse({ choices: [{ message: { content: "the reader's words" } }] });
+            return jsonResponse(driver++ === 0 ? { choices: [{ message: { content: null, tool_calls: [{ id: "u1", type: "function", function: { name: "look", arguments: "{}" } }] } }] } : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            const p = msg.payload;
+            if (p.geometry) return { result: "", geometry: { seq: p.geometry.seq, reply: p.geometry.op === "view" ? { w: 1024, h: 768, dpr: 1, sx: 0, sy: 0 } : p.geometry.op === "legend" ? { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 } : null } };
+            return { result: "" };
+        },
+    });
+    const sender = { tab: { id: 7, url: UNAPPROVED }, url: UNAPPROVED, origin: "https://evil.example", frameId: 0, documentId: "doc-after" };
+    return { bg, sender, driverCalls: () => driver };
+}
+
+test("PART 5 UPGRADE — a page-built run in flight under the old rule, its snapshot on disk, resumes on its unapproved page as the worker's, and that page gets nothing", async () => {
+    const { bg, sender, driverCalls } = restartedWorker({ "ml_bgrun_old-run": oldSnapshot("9.9.9") });
+    const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender)));
+    const adopt = (ready?.adopt ?? []).find((a) => a.runId === "old-run");
+    assert.ok(adopt, `the run is re-adopted: ${JSON.stringify(ready)}`);
+    assert.equal(adopt.rebuild.builtBy, "worker", "the worker's run");
+    assert.equal(adopt.rebuild.model, null, "the old snapshot's model names stay in the worker");
+    assert.ok(!JSON.stringify(adopt).includes("reader-vl"));
+    void bg.send({ type: "RUN_READOPTED", payload: { runId: "old-run", pageInfo: "here" } }, sender);   // fire-and-forget: never answered
+    // While it runs, the page's own sends of what the old rule let it send are refused.
+    const tried = {};
+    for (const type of FORMER_RUN_TAB_TYPES) tried[type] = await sendBounded(bg, knowingMessage(type, "old-run"), sender);
+    for (let i = 0; i < 500 && driverCalls() < 2; i++) await tick();
+    assert.equal(driverCalls(), 2, "the run continued: its look, then its answer");
+    const looks = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "look" && !m.payload.renderOnly && !m.payload.geometry);
+    assert.deepEqual(looks, [], "its look ran in the worker");
+    for (const type of FORMER_RUN_TAB_TYPES) assert.match(tried[type]?.error || "", /^Refused/, `${type}: ${JSON.stringify(tried[type])}`);
+    assert.ok(!JSON.stringify(bg.calls).includes("EVIL FROM THE RUN'S PAGE"));
+});
+
+test("PART 5 UPGRADE — a snapshot written by the build before the update is not resumed, and its tab's page is not lent anything for it", async () => {
+    const { bg, sender, driverCalls } = restartedWorker({ "ml_bgrun_old-run": oldSnapshot("9.9.8") });
+    const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender)));
+    assert.deepEqual((ready?.adopt ?? []).map((a) => a.runId), [], "a cross-version snapshot is dropped, never re-adopted");
+    assert.equal(bg.localStore["ml_bgrun_old-run"], undefined, "and deleted");
+    const r = await sendBounded(bg, knowingMessage("FETCH_LLM", "old-run"), sender);
+    assert.match(r?.error || "", /^Refused/);
+    await tick();
+    assert.equal(driverCalls(), 0, "nothing resumed it");
 });

@@ -26,18 +26,25 @@ import { invocationInfo } from "./sw-invocation";
 import { senderTrust } from "./sw-consent";
 import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
+import { typeFromExtension } from "../dom/dom";
+import type { PageTableData } from "./worker-page-read";
 
 /** The builtin tools a worker-built run executes in the worker rather than the page. `look` and `locate` are built per
  *  call, over a vision host pinned to the call's document (worker-look.ts, worker-locate.ts); naming them here gives a
  *  run whose only worker tool they are the state their model calls are metered into from the start. */
 export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate"]);
 
-/** What a run's python_exec asks of the worker's vision (worker-media.ts), handed in by whoever builds the run's tools
- *  (sw-local-tools.ts), so this module does not reach the vision host: an `image` shot from the worker's own capture
- *  with its crop transform, and a `cast`'s token minted in the page's registry. */
+/** What a run's worker tools ask of the worker's vision (worker-media.ts) and of the run's page (worker-page-read.ts),
+ *  handed in by whoever builds the run's tools (sw-local-tools.ts), so this module reaches neither: python_exec's `image`
+ *  shot from the worker's own capture with its crop transform, a `cast`'s token minted in the page's registry, a page
+ *  table read from the page's DOM, and the page's live document for a `fetch_url` session render of it. */
 export interface WorkerPyMedia {
     image(image: string, margin: number): Promise<{ image: string; imageBox: ShotBox | null; documentId: string }>;
     mint: MintToken;
+    /** a page table (a CSS selector, or `"current"`), as the page reads it, checked */
+    table?(src: string, raw: boolean): Promise<{ label: string; data: PageTableData }>;
+    /** the HTML of the document the tab holds now, checked, refused unless the tab is on `url` */
+    document?(url: string): Promise<string>;
 }
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
@@ -98,8 +105,8 @@ export function workerFetchCached(runId: string, url: string): FetchResult | und
 
 /**
  * Record the person's approval of this run's worker-side `fetch_url`. The RUN's, never the tab's: a grant on the tab is
- * one any script on it could spend through its own `FETCH_URL` while the run is there (it is in `RUN_TAB_TYPES`), or
- * spend first, racing the worker's call for a one-time as-you read.
+ * one any script on it could spend through its own `FETCH_URL` while the run is there (on an approved site, which may
+ * send it), or spend first, racing the worker's call for a one-time as-you read.
  * @param runId the run
  * @param url the approved URL
  * @param credentials an as-you fetch: one call, never remembered
@@ -125,45 +132,6 @@ export function runFetchConsented(runId: string, url: string): boolean | undefin
 
 /** Forget a run's worker-tool state, with its local tools. */
 export function dropWorkerTools(runId: string): void { runs.delete(runId); }
-
-/** Whether a send must still go to the page: a session render of the page the run is on is answered from its live DOM,
- *  which is that page's own content and only exists there. */
-export function pageOnlyFetch(args: Record<string, unknown> | undefined, tabUrl: string): boolean {
-    return !!args?.credentials && !!args?.rendered && typeof args?.url === "string" && !!tabUrl && isCurrentPage(args.url, tabUrl);
-}
-
-/** Whether a python_exec send needs the page: a page table by CSS selector, or `current` (the page's own sheet or
- *  table). A table by value, a URL the run fetched and an external sheet do not, and neither does a `@tool:` table
- *  pointer: the loop resolves it to a table by value before the call is sent, but the precheck reads the args before
- *  that, so the raw pointer string must not count as a selector (agent-loop.ts `resolveTablePointers`). An `image` does
- *  not either: the worker shoots it from its own capture (worker-media.ts). */
-export function pageOnlyPython(args: Record<string, unknown> | undefined): boolean {
-    const t = args?.tables;
-    const sources = typeof t === "string" ? [t] : Array.isArray(t) ? t : t && typeof t === "object" ? Object.values(t) : [];
-    return sources.some((src) => typeof src === "string" && (src === "current" || (!/^https?:\/\//i.test(src) && !/^\s*@tool:/.test(src))));
-}
-
-/**
- * The refusal for a worker-built run's python_exec that cannot run anywhere, or null. One that needs the page (a page
- * table by selector, or `current`) and ALSO names an external sheet: the worker cannot read the page part, and sending
- * it to the page would put the sheet grant on the TAB, where any script on it could spend it while the call ran
- * (red-team T3 on #442). One that needs the page and ALSO an `image`: the image is the worker's to shoot, and the page
- * takes no screenshot for a run the worker built (site-access part 3), so it is split the same way.
- * @param args the call's arguments
- * @param externalSheets how many external sheets the call names (dom.ts `externalSheetIds`)
- * @returns the sentence the model is shown, or null
- */
-export function mixedPythonRefusalFor(args: Record<string, unknown> | undefined, externalSheets: number): string | null {
-    if (!pageOnlyPython(args)) return null;
-    if (externalSheets) return "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call.";
-    if (args?.image) return "Refused: a python_exec for this run cannot mix an `image` with a page table (a CSS selector, or \"current\"). Load the table in its own call (its result is a table you can pass back as `tables: \"@tool:<id>\"`), then call again with that and the `image`.";
-    return null;
-}
-
-/** Whether a worker tool's send of `name` with `args` must go to the page instead. */
-export function pageOnlySend(name: string | undefined, args: Record<string, unknown> | undefined, tabUrl: string): boolean {
-    return name === "fetch_url" ? pageOnlyFetch(args, tabUrl) : name === "python_exec" ? pageOnlyPython(args) : false;
-}
 
 /**
  * Send one model request for a run's worker tool and count what it spent into the run's sub-call tally: the one path
@@ -211,6 +179,18 @@ function runMl(ctx: RunCtx): MlApi {
             const credentials = !!opts.credentials, rendered = !!opts.rendered;
             const format = opts.format === "html" ? "html" : "markdown";
             const tabUrl = ctx.tabUrl();
+            // A SESSION RENDER OF THE PAGE THE RUN IS ON: what the page's own `ml.fetch` answers from its live DOM, with
+            // no request and no grant (injected.ts). The worker asks the page for that document's HTML, as plain data,
+            // and runs the rest of the tool here, so an `ask` over it is the worker's model call, not the page's.
+            if (credentials && rendered && tabUrl && isCurrentPage(String(url), tabUrl)) {
+                if (!ctx.media?.document) throw new Error("the page the run is on cannot be read here.");
+                const text = await ctx.media.document(tabUrl);
+                const live: FetchResult = { url: tabUrl, status: 200, ok: true, type: "html", typeByHeader: null, typeByContent: "html",
+                    typeByExtension: typeFromExtension(tabUrl), contentType: "text/html", text, rendered: true, live: true };
+                const md = await htmlToMarkdownOffscreen(text).catch(() => undefined);
+                derivedFetchFields(live, { markdown: () => md, python: ctx.python });
+                return live;
+            }
             const trust = await senderTrust({ tab: { id: ctx.tabId, url: tabUrl } as chrome.tabs.Tab, url: tabUrl });
             const r = await fetchUrlFor({ url: String(url), credentials, rendered, format }, {
                 tabId: ctx.tabId, frameUrl: tabUrl, tabUrl, untrusted: trust === "untrusted", disclose: false,
@@ -242,8 +222,9 @@ function runMl(ctx: RunCtx): MlApi {
 }
 
 /** One `tables` source, loaded in the worker: a table by value (the page's own loader, which needs no DOM), a URL this
- *  run's fetch_url read (its cache), or an external Google Sheet, read with the person's cookies only when this call was
- *  approved for it. */
+ *  run's fetch_url read (its cache), a Google Sheet (an external one, or `"current"` on a sheet's page), read with the
+ *  person's cookies only when this call was approved for it, or a page table (a CSS selector, or `"current"` on any other
+ *  page), which the page reads from its DOM and the worker checks (worker-page-read.ts). */
 async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
     if (isTableValue(src)) return _loadTable.call({} as MlApi, name, src, raw);   // the by-value branch reads no DOM
     // A source is a URL string or nothing: a wrapped one (`[url]`, `{s:[url]}`) is NOT coerced back with
@@ -251,8 +232,10 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
     // before this runs; this refusal is the second line — a shape no loader was written for must not become a
     // credentialed read through a coercion nobody approved (red-team T2 on #442).
     if (typeof src !== "string") throw new Error(`pythonExec tables — "${name}" is not a loadable source: pass a URL string or a table value, not a ${Array.isArray(src) ? "list" : typeof src}.`);
-    const url = src;
-    const csvUrl = googleSheetCsvUrl(url);
+    // `current` on a Google Sheet's page is that sheet, as the page's loader reads it (ml-python.ts `_loadTable`).
+    const sheetPage = src === "current" && googleSheetCsvUrl(ctx.tabUrl()) ? ctx.tabUrl() : null;
+    const url = sheetPage ?? src;
+    const csvUrl = /^https?:\/\//i.test(url) ? googleSheetCsvUrl(url) : null;
     if (csvUrl) {
         const id = googleSheetId(url);
         const tabUrl = ctx.tabUrl();
@@ -260,7 +243,14 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
         if (!trusted && !(id && ctx.pyCall?.sheets.has(id))) throw new Error("Refused: this sheet hasn't been approved for this run's python_exec.");
         const { csv, name: sheetName } = await fetchSheetCsv(csvUrl);
         const sheet = tableFromDelimited(csv, { delimiter: ",", raw });
-        return { name, source: { kind: "sheet-external", label: id || url, name: sheetName }, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
+        return { name, source: sheetPage ? { kind: "sheet-current", label: "current sheet" } : { kind: "sheet-external", label: id || url, name: sheetName }, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
+    }
+    // A page table: read by the page from its own DOM, the one thing about this call it is asked.
+    if (!/^https?:\/\//i.test(url)) {
+        if (/^\s*@tool:/.test(url)) throw new Error(`pythonExec tables — "${url}" is a pointer that was not resolved to a table. Pass it as tables: {df: "@tool:<id>"} for a table a tool returned.`);
+        if (!ctx.media?.table) throw new Error(`pythonExec tables — "${url}" is a page table, and this run cannot read the page here.`);
+        const t = await ctx.media.table(url, raw);
+        return { name, source: { kind: "dom", label: t.label }, data: t.data };
     }
     const cached = ctx.cache.get(url);
     if (cached?.table) return { name, source: { kind: "fetch", label: cached.url }, data: { kind: "rows", columns: cached.table.columns, rows: cached.table.rows } };

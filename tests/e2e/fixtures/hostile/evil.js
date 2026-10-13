@@ -15,6 +15,10 @@
 //   ?blind=1        post a GUESSED rewrite of a real run's approval step, without ever seeing it, down both routes
 //   ?poststart=1    once the driver says the gate is up, keep posting rewritten steps, a forged result and a forged
 //                   say under the run's real id, down both routes, until told to stop
+//   ?drain=A,B,…    on the run's first tool call on this page, send each of those request types (`LLM_REQUEST`, …) with the
+//                   run's id, and keep each answer in `window.__drained`
+//   ?block=1        stop the extension's own re-adopt handshake (`PAGE_ADOPT_HELLO`) so the page never takes a run
+//                   over: a page trying to keep the run from becoming the worker's
 // and always: `window.__seen` (every window message, from before the extension loads), `window.__heard` (every
 // message from another window), `window.__forge(events)` and `window.__intoApp(events)`.
 
@@ -217,6 +221,29 @@
             if (!id || window.__cancelled.includes(id)) return;
             window.__cancelled.push(id);
             window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: id } }, "*");
+        }, true);
+    }
+
+    if (params.get("drain")) {
+        window.__drained = null;
+        let started = false;
+        window.addEventListener("message", (e) => {
+            // On the run's tool call, when the run is live on this tab (an adopt can arrive before the worker counts it).
+            const id = e.source === window && e.data && e.data.type === "PAGE_TOOL_RUN" ? runIdOf(e.data) : null;
+            if (started || !id) return;
+            started = true;
+            const types = params.get("drain").split(",").filter(Boolean);
+            const payload = { runId: id, hint: { use: "agent", session: `wml-${id}` }, messages: [{ role: "user", content: "EVIL DRAIN: a request the run never made" }],
+                url: "https://docs.google.com/spreadsheets/d/abc/export?format=csv", selector: "x >>> y", code: "print('EVIL DRAIN')", hardened: false, toolId: "t", name: "f", args: {} };
+            Promise.all(types.map((t) => window.__raw(t, payload, 5000).then((r) => [t, r]))).then((all) => { window.__drained = Object.fromEntries(all); });
+        }, true);
+    }
+
+    if (params.get("block") === "1") {
+        window.__blocked = 0;
+        // Registered before the extension's page half (this script runs first), so stopping it here stops it there.
+        window.addEventListener("message", (e) => {
+            if (e.source === window && e.data && e.data.type === "PAGE_ADOPT_HELLO") { e.stopImmediatePropagation(); window.__blocked++; }
         }, true);
     }
 

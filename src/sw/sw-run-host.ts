@@ -22,6 +22,7 @@ import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-mes
 import type { MlConfig } from "../contract/contract-config";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
+import { sealedDescribe } from "../tools/tools";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
@@ -40,7 +41,7 @@ import { withEnv } from "./sw-current-env";
 import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
-import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython, mixedPythonRefusalFor } from "./worker-tools";
+import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
@@ -299,12 +300,16 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         };
         if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
-            const local = await runLocalTool({ ...payload, tabUrl: tabUrl() }, onStream);
+            const local = await runLocalTool(payload, onStream);
             if (local) return local;
-            // A remote tool has nowhere else to run; a builtin declined here (fetch_url's render of this very page) does.
+            // Nowhere else to run: a remote tool has no page side, and a worker builtin sent to the page would put what
+            // it reads there and have the page send for it (site access part 5), so neither falls back to the page.
             if (p.tools.some((t) => t.name === payload.name && t.remote))
                 return { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
-            return toPage();
+            // `look` and `locate` are not built here (each call is, above): only their preview reaches this, and the page
+            // draws it from the target alone (`lookPreviewArgs`).
+            if (payload.name === "look" || payload.name === "locate") return toPage();
+            return { result: `Error: "${payload.name}" could not be set up for this run. Try again.` };
         }
         return (await runLocalTool(payload, onStream)) ?? toPage(documentId);
     };
@@ -329,11 +334,6 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // only reading the pointer back faulted with "nothing has been captured in this run".
     const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
     const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
-    /** The refusal for a worker-built run's python_exec that needs the page (a selector, `current`) and ALSO names an
-     *  external sheet or an `image`, or null (worker-tools.ts `mixedPythonRefusalFor`). Checked in the precheck (before
-     *  the gate) and where the call is delegated (the auto-approved path skips the precheck). */
-    const mixedPythonRefusal = (name: string, args: Record<string, unknown>): string | null =>
-        name === "python_exec" && byWorker() ? mixedPythonRefusalFor(args, externalSheetIds(args).length) : null;
     const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
     // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
     // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
@@ -541,12 +541,6 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const callKey = {};
                 // Every routing decision below reads `byWorker()`: a navigation's hand-over must be decided first.
                 await handOverSettled(tabId);
-                // The mixed-call refusal again, for the call the precheck never saw: one AUTO-approved because an
-                // earlier call got its sheet approved skips the gate and the precheck with it. Refused before any
-                // grant is minted or anything is sent, with the same two-call steer (the tab grant staying unminted,
-                // below, is the second layer).
-                const mixed = mixedPythonRefusal(name, args);
-                if (mixed) return { result: mixed };
                 // Where an approved exec of a run the worker built runs (exec-routing.ts): the page's world, an isolated
                 // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
                 const js = name === "exec" && byWorker() && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
@@ -596,16 +590,17 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const remote = p.tools.find(t => t.name === name)?.remote;
                 // A python_exec the WORKER runs gets its grants as the RUN's call grant (worker-tools.ts): on the tab
                 // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
-                // page could use while the call ran. One that needs the page (an image, a selector) still mints the
-                // tab's, which that page call sends.
-                const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name) && !pageOnlyPython(args as Record<string, unknown>);
+                // page could use while the call ran. Every python_exec of a run the worker drives runs there (an image
+                // and a page table are asked of the page as data, worker-media.ts, worker-page-read.ts); only a
+                // page-built run's still runs on its page, an approved site's, and mints the tab's.
+                const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name);
                 if (pyInWorker) {
                     await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
                     grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
                 }
                 // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
-                // fetch URLs, a server tool's exact call, a page-run python_exec's full-mode code, and its sheets only for a
-                // run the page built. Minted only when there is something to mint, so a call with none holds no entry.
+                // fetch URLs, a server tool's exact call, and a page-built run's python_exec's full-mode code and sheets.
+                // Minted only when there is something to mint, so a call with none holds no entry.
                 const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: byWorker(), pyInWorker,
                     ...(remote ? { remoteKey: serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>) } : {}) });
                 if (minted.fetchUrls) grantsFor(tabId, callKey).fetchUrls = new Set(minted.fetchUrls);
@@ -727,6 +722,19 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                     // above, and the trusted background performs the CDP click (the page can't). Gated on
                     // the off-by-default `cdpClick` flag (cdpClick() itself checks the debugger permission).
+                    // describeElement into a SEALED shadow root, for a run the worker drives: the worker resolves the MODEL's
+                    // selector through the debugger and writes the result (tools.ts `sealedDescribe`), where the page used to
+                    // send CDP_SHADOW_RESOLVE itself. A page-built run's page resolves its own (an approved site's).
+                    // Only describeElement asks for it: the page's echo on another tool is dropped, so it cannot drive the debugger.
+                    if (env?.cdpShadowResolve && name !== "describeElement") { env = { ...env }; delete env.cdpShadowResolve; }
+                    if (env?.cdpShadowResolve && byWorker()) {
+                        const sel = typeof (args as { selector?: unknown }).selector === "string" ? (args as { selector: string }).selector : "";
+                        // A `>>>` path is all the worker can check: whether its first hop is sealed is the page's DOM's to say.
+                        const hops = sel.split(">>>").map((h) => h.trim()).filter(Boolean).length;
+                        const r = hops >= 2 && (await getConfig()).cdp ? await cdpShadowResolve(tabId, sel) : null;
+                        env = { ...env, result: sealedDescribe(sel, r && "matches" in r ? r.matches : null) };
+                        delete env.cdpShadowResolve;
+                    }
                     if (env?.cdpClick) {
                         const cfg = await getConfig();
                         if (!cfg.cdp) return { result: `${env.result || ""}\n\nThis needs a debugger (CDP) click, which is OFF — enable "Debugger-based actions (CDP)" in window.ml Settings → Advanced (cross-origin iframes / sealed shadow roots).`, renderIn: env.renderIn, renderOut: env.renderOut };
@@ -937,13 +945,6 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
             // that HAVE a precheck (avoids a useless round-trip on every gated call).
             precheck: async (name, args) => {
-                // A worker-built run's python_exec that names BOTH an external sheet and something only the page can
-                // supply (an image, a selector, `current`) cannot run anywhere safely: the worker cannot read the page
-                // part, and sending it to the page would put the sheet grant on the TAB, where any script on it could
-                // spend it while the call ran. So it runs nowhere — refused here, BEFORE the gate, rather than putting
-                // the person through approving a call that must then fail (red-team T3 on #442).
-                const mixed = mixedPythonRefusal(name, args);
-                if (mixed) return mixed;
                 if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                 const env = await sendTool({ runId, name, args, precheck: true })
                     .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;

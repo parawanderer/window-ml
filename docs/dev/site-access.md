@@ -15,16 +15,13 @@ listener. Refused: the sender gets `{ error: "Refused: …" }`, including for a 
 that answers asynchronously keeps the channel; one that never answers gets `sendResponse(undefined)`, so a content
 script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate as a `FETCH_LLM`.
 
-`pageRefusal` reads only `sender` (`origin`, `url`, `frameId`, `tab`), which the browser sets:
-
-1. A tab hosting a live background run (`activeRuns`) may send `RUN_TAB_TYPES` (page-relay.ts) from its top frame,
-   whatever its origin: what that run's delegated tools send while they still run in the page (a vision tool's model
-   call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config a vision tool
-   or an exec reads). An isolated exec sends none of them: its `ml` has nothing that sends. Never run control, a model change, an unload, a session, an embedding or a dump. The list
-   shrinks as slice 2 moves tools to the worker, and goes with the last one. It is also why a run on a local `file:`
-   page keeps working.
-2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
-   (`decide`), or, over https only, its host on `pageApprovalDomains`.
+`pageRefusal` reads only `sender` (`origin`, `url`, `frameId`, `tab`), which the browser sets: the sender must be
+grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved (`decide`), or, over https only,
+its host on `pageApprovalDomains`. A tab hosting a run gets nothing more (part 5). Until then it was lent what the
+run's in-page tools sent (`RUN_TAB_TYPES`: a vision tool's model call and screenshot, `fetch_url`, `python_exec`, a
+sheet, a server tool, a shadow resolve, the config); every one of those tools now runs in the worker, or asks the page
+only for plain data about itself (below), so a run's page sends nothing for it. A run on a local `file:` page needs
+nothing either.
 
 **A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
 on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only while the sender's tab is the one its
@@ -128,28 +125,36 @@ A builtin tool that never reads the page runs in the worker for a run the worker
 `src/sw/worker-tools.ts`), so what it reads never enters the page's world: the same tool from the same factory, given
 an `ml` the worker answers. Today: `fetch_url`, through `fetchUrlFor` (`sw-fetch-url.ts`) with the run's tab as an
 untrusted caller. Its approvals are the RUN's (`grantRunFetch`: the consent and the one-time as-you grant live in the
-run's worker state, never on the tab), so no script on the tab can spend them through its own `FETCH_URL`, which it
-may still send (`RUN_TAB_TYPES`); after an eviction they are rebuilt empty, and a call then asks again. Its Markdown comes
-from the offscreen document (`HTML_TO_MD`) and its reader's model call is metered as the call's `subUsage`. The one
-`fetch_url` still answered by the page is a session render of the page the run is on, from its own live DOM. A
-read-only survey re-reads the run's fetches from the worker's cache (`_fetchCached` in `worker-readonly-ml.ts`), and a
-miss defers to the page's. Both caches hold frozen copies (`cacheCopy`), so a survey cannot rewrite what a later
-re-read shows. `RUN_TAB_TYPES` keeps `FETCH_URL` until approved exec is isolated (part 4): an approved script's inline
-`ml.fetch` and a page-built run still send it.
+run's worker state, never on the tab), so no script on the tab can spend them through its own `FETCH_URL` (which only an
+approved site may send at all); after an eviction they are rebuilt empty, and a call then asks again. Its Markdown comes
+from the offscreen document (`HTML_TO_MD`) and its reader's model call is metered as the call's `subUsage`. A session
+render of the page the run is on (`credentials` and `rendered`, this page's URL) needs no request: the worker asks the
+page for its live document's HTML as plain data (`pageRead`, below) and runs the rest of the tool itself, an `ask`'s
+reader call included. A read-only survey re-reads the run's fetches from the worker's cache (`_fetchCached` in
+`worker-readonly-ml.ts`), and a miss defers to the page's. Both caches hold frozen copies (`cacheCopy`), so a survey
+cannot rewrite what a later re-read shows.
 
-`python_exec` runs there too, unless it needs the page (a page table by selector, `current`): `pageOnlyPython` sends
-those to the page as before. An `image` does not need the page: the worker shoots it from its own capture and mints a
-`cast`'s token in the page's registry through the `mint` geometry op (`src/sw/worker-media.ts`), so a call with an
-image and a page table is refused before the gate with a two-call steer, as one with an external sheet is
-(`mixedPythonRefusalFor`). In the worker its tables load without a DOM (a table by value, a
-URL the run's fetch_url read, an external sheet), and the call goes through `runPython` (`sw-python.ts`) with the run as
-the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the full-mode code), set
+`python_exec` runs there too, whatever it loads. An `image`: the worker shoots it from its own capture and mints a
+`cast`'s token in the page's registry through the `mint` geometry op (`src/sw/worker-media.ts`). A page table (a CSS
+selector, or `current` on a page that is not a Google Sheet): the page reads it from its DOM with the page loader's
+own reader (`pageTable`, ml-python.ts) and hands the cells back as plain data (`pageRead`), which the worker rebuilds
+field by field within bounds (`checkPageTable`, `src/sw/worker-page-read.ts`). `current` on a Sheet's page is that
+sheet, read by the worker like an external one. The page is asked for the source and nothing else of the call (not its
+code, not its other tables), and a call mixing an image, a sheet and a page table runs whole in the worker, where it
+used to be refused with a two-call steer because its page part ran on the page. Its other tables load without a DOM (a
+table by value, a URL the run's fetch_url read, an external sheet), and the call goes through `runPython`
+(`sw-python.ts`) with the run as the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the full-mode code), set
 around the one call and never on the tab, so a page cannot read the sheet with the person's cookies or run the approved
 full-mode code itself while it runs. Live stdout goes straight to the call's output.
 
+`describeElement` stays a page tool, but its one privileged step does not: a `>>>` path into a SEALED shadow root of a
+run the worker drives comes back as `cdpShadowResolve` instead of the page sending `CDP_SHADOW_RESOLVE`, and the
+worker resolves the MODEL's selector through the debugger (when the CDP setting is on) and writes the result
+(`sealedDescribe`, tools.ts). The page's echo of a selector is never resolved.
+
 `agent_api_docs` runs there too (`apiDocsTool` in `src/tools/api-docs-tool.ts`, given a `DocsSource`): the worker reads
-the live shortcut (`invocationInfo`, `sw-invocation.ts`) and the config itself, so `GET_INVOCATION` left
-`RUN_TAB_TYPES`. `GET_CONFIG` stays until the vision tools move (part 3). Its within-dig dedup memory is the worker's,
+the live shortcut (`invocationInfo`, `sw-invocation.ts`) and the config itself, so the page sends neither
+`GET_INVOCATION` nor `GET_CONFIG` for it. Its within-dig dedup memory is the worker's,
 keyed by the run's local tools, so `runLocalTool` counts each call the page runs towards its streak (`countDocsStreak`),
 which the page's `executeTool` used to do; a read-only try counts on neither side.
 
@@ -261,8 +266,11 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 - **Where it runs.** A tool run in the page puts its inputs and results into the page's world. Prefer the worker; if
   it must run in the page, name what of the run it puts there (another site's content, a pointer's value, the system
   prompt) and why the page may see it.
-- **What it sends while it runs.** Each page-started type it needs joins `RUN_TAB_TYPES`, which any script on a run's
-  tab may then send whatever its origin. Test that type sent by the page itself, outside the tool.
+- **What it sends while it runs.** Nothing, from the page: there is no allowance for a page a run is on (part 5), so a
+  page-started type the tool sent there would be refused on an unapproved site. What the tool needs of the page it asks
+  for as plain data about the page (`geometry`, `pageRead`, `answerSelect`), checked field by field in the worker. Test
+  that the page sends nothing for it (the ratchet, `tests/e2e/media-in-worker.spec.mjs`), and what the page answers
+  forged, oversized and malformed.
 - **What the page can forge.** Its result (`PAGE_TOOL_RESULT`) and its live lines: a forged one may misreport only the
   page's own content, never another site's or the run's.
 - **An `ml.*` member.** Refused from an unapproved origin is automatic (the red-team suite enumerates `HANDLE_MAP`).
@@ -283,13 +291,19 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 - `tests/run-start.test.mjs`, section "where a read-only survey of a worker-built run is evaluated": the routing and
   its log, against the bundle.
 - `tests/redteam.test.js`, section "(f)": every page-started type refused from an unapproved origin with nothing
-  reaching the backend, a tab or the screen; on a tab hosting a run, only `RUN_TAB_TYPES` allowed, every other type enumerated; a
-  sender that can never be granted refused even when its host is approved; revoke and deny without reload; a page
-  cannot edit the lists; the stream port.
+  reaching the backend, a tab or the screen; a sender that can never be granted refused even when its host is
+  approved; revoke and deny without reload; a page cannot edit the lists; the stream port. Section "(g)", part 5: the
+  same on a tab hosting a run; the former run-tab types, by name, from a page that knows the run's id in the middle of
+  its tool call; the page a page-built run navigates onto cannot stop the hand-over; and the upgrade (an old in-flight
+  snapshot resumes as the worker's, a cross-version one is dropped).
+- `tests/nav-handover.test.mjs`: the hand-over at the commit, and the rest of a turn handed over mid-way.
+- `tests/worker-page-read.test.mjs`: python_exec over a page table, a `fetch_url` session render with an `ask`, and a
+  sealed `describeElement`, each in the worker; `checkPageTable`; the page's half over a real DOM.
 - `tests/redteam-page-run-builtby.test.mjs`: a page START_RUN claiming `builtBy`/`rebuild.builtBy` stays page-built,
   its `pageOrigin`/`pageUrl` are the sender's, its auto-approve flags and `requiresApproval` never undercut the worker's,
   its run id is its own tab's, and its `approvalRouting` never resolves or skips a gate.
-- `tests/e2e/site-access.spec.mjs`: the hostile site, against a real browser.
+- `tests/e2e/site-access.spec.mjs`: the hostile site, against a real browser; "part 5": the page a run is on, and the one
+  a page-built run navigates onto while blocking its own re-adopt, get nothing from any former run-tab type.
 
 The vm harness approves a test sender's origin unless `loadBackground({ siteGate: true })`, and gives a URL-less test
 sender a page at `https://page.test/`, because a real content script always has one. The e2e harness's `waitForMl`

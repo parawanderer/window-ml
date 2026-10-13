@@ -922,7 +922,9 @@ function shadowCdp(method, params) {
         return { nodeIds: [] };
     }
     if (method === "DOM.describeNode" && params.nodeId === 10) return { node: { shadowRoots: [{ nodeId: 20 }] } };
-    if (method === "DOM.resolveNode" && params.nodeId === 30) return { object: { objectId: "obj30" } };
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "F1" } } };
+    if (method === "Page.createIsolatedWorld") return { executionContextId: 5 };
+    if (method === "DOM.resolveNode" && params.nodeId === 30) return { object: { objectId: params.executionContextId === 5 ? "obj30" : "main30" } };
     if (method === "Runtime.callFunctionOn" && params.objectId === "obj30") return { result: { value: { line: 'button.inner "Go"', cx: 50, cy: 60, w: 40, h: 20 } } };
     return undefined;   // Runtime.releaseObject etc.
 }
@@ -2651,19 +2653,54 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     // A LOCAL page is refused too — for another file, and for ITS OWN URL in any mode that needs the file's
     // BYTES (Chrome's fetch has no file scheme). A session render of itself is answered page-side from the live
     // DOM and never reaches here, so each refusal names that mode, and the model stops retrying the same thing.
-    // A local page is never an approved site (docs/spec/SITE_ACCESS.md), so with no run on it the origin gate answers
-    // before this handler does. With a run on it, its tools reach the handler, and these are the refusals they get.
+    // A local page is never an approved site (docs/spec/SITE_ACCESS.md), so the origin gate answers before this handler
+    // does, with a run on it too (site access part 5: a run's tools send nothing from its page). Its run's fetch_url
+    // runs in the worker, which gets the handler's local-file refusals (below, "a worker-run fetch_url on a local page").
     const local = { tab: { id: 9, url: "file:///Users/me/page.html#top" } };
     const gated = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
     assert.match(gated.error, /only an http or https page can use window\.ml/);
     bg.context.__mlSeedActiveRunForTest(9, "local-run");   // the tab now hosts a run, as when a person starts one there
-    const other = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
-    assert.match(other.error, /cannot read local files.*the page you are on \(file:\/\/\/Users\/me\/page\.html\), with rendered: true and credentials: true/i);
-    const own = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/page.html" } }, local);
-    assert.match(own.error, /is the page you are on, but a local file's bytes cannot be fetched\. Use rendered: true with credentials: true/i);
+    const hosting = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
+    assert.match(hosting.error, /only an http or https page can use window\.ml/, "a run on the page lends it nothing");
     assert.equal(fetched, false, "and still no request for any of them");
     const c = await bg.send({ type: "FETCH_URL", payload: { url: "chrome://settings" } }, { tab: { id: 9, url: "https://evil.example/" } });
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
+});
+
+test("a worker-run fetch_url on a local page: another file is refused naming the one mode that works, and the page's own bytes are refused too", async () => {
+    // The refusals the FETCH_URL handler gives a local page, reached the way they are reached now: by the run's own
+    // fetch_url, which the worker runs for the tab (site access part 5). A run never starts on a local page; this one
+    // is on a web page the person then leaves for a local file (the commit below). No request is made for either.
+    const FILE = "file:///Users/me/page.html#top";
+    const calls = [{ url: "file:///Users/me/.ssh/id_ed25519" }, { url: "file:///Users/me/page.html" }];
+    let driver = 0, last = null, fetched = false, bg;
+    bg = loadBackground({
+        config: baseConfig(), openTabs: [{ id: 9, windowId: 1, active: true, url: "https://site.example/" }],
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) { if (!call.url.startsWith("http://host/")) fetched = true; return jsonResponse({}); }
+            last = call.body.messages;
+            if (driver === 0) {
+                bg.commit(9, { documentId: "doc-file", url: FILE });
+                const sender = { tab: { id: 9, url: FILE }, url: FILE, frameId: 0, documentId: "doc-file" };
+                void bg.send({ type: "CONTENT_READY" }, sender).then(() => { void bg.send({ type: "RUN_READOPTED", payload: { pageInfo: "" } }, sender); });
+            }
+            const next = calls[driver++];
+            return jsonResponse(next ? { choices: [{ message: { content: null, tool_calls: [{ id: `f${driver}`, type: "function", function: { name: "fetch_url", arguments: JSON.stringify(next) } }] } }] } : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined),
+    });
+    await bg.context.__mlStartUserRunForTest(9, { task: "read my key", surface: "hud" }, { approvalRouting: "both" });
+    for (let i = 0; i < 3000 && driver <= calls.length; i++) {
+        for (const g of bg.context.__mlApprovals.list()) bg.context.__mlApprovals.resolve(g.key, true);
+        await new Promise((r) => setTimeout(r, 2));
+    }
+    const out = (last ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
+    assert.equal(out.length, 2, JSON.stringify(out));
+    assert.match(out[0], /cannot read local files.*the page you are on \(file:\/\/\/Users\/me\/page\.html\), with rendered: true and credentials: true/i);
+    assert.match(out[1], /is the page you are on, but a local file's bytes cannot be fetched\. Use rendered: true with credentials: true/i);
+    assert.equal(fetched, false, "no request for either");
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "fetch_url" && !m.payload.renderOnly && !m.payload.precheck);
+    assert.deepEqual(toPage, [], "the calls ran in the worker");
 });
 
 test("SECURITY (FETCH_URL): an as-you GET of the sender's OWN page needs no grant; its render and the rest of the origin still do", async () => {

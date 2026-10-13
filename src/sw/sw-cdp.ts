@@ -298,9 +298,17 @@ export async function cdpShadowResolve(tabId: number, selector: string, cap = 25
             if (!scopes.length) break;
         }
         const matches: CdpShadowMatch[] = [];
+        if (!scopes.length) return { ok: true, matches };
+        // Each match is described by JS run ON it, so in a world of this resolver's own: in the page's main world the
+        // describe would call builtins the page can have patched, and hand every node it reads to them.
+        const tree = await send<{ frameTree?: { frame?: { id?: string } } }>("Page.getFrameTree", {}).catch(() => null);
+        const frameId = tree?.frameTree?.frame?.id;
+        const world = frameId ? await send<{ executionContextId?: number }>("Page.createIsolatedWorld", { frameId, worldName: "wml-shadow-describe", grantUniveralAccess: false }).catch(() => null) : null;
+        const executionContextId = world?.executionContextId;
+        if (typeof executionContextId !== "number") return { error: "the CDP shadow resolve could not make a world of its own to read the page in." };
         for (const nodeId of scopes.slice(0, cap)) {
             try {
-                const { object } = await send<{ object?: { objectId?: string } }>("DOM.resolveNode", { nodeId });
+                const { object } = await send<{ object?: { objectId?: string } }>("DOM.resolveNode", { nodeId, executionContextId });
                 if (!object?.objectId) continue;
                 const { result } = await send<{ result?: { value?: CdpShadowMatch } }>("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: CDP_SHADOW_DESC_FN, returnByValue: true });
                 await send("Runtime.releaseObject", { objectId: object.objectId }).catch(() => { /* best-effort */ });

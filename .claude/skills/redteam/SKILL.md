@@ -35,8 +35,8 @@ A security test never seen to fail may test nothing (a fixture that never loaded
 
 **The oracle**: a refusal the page can see AND nothing reached the backend, a tab or the screen that the run did not
 make itself. Count requests, tab messages and captures before and after, as `attempt()` in `tests/redteam.test.js`
-does. Enumerate inputs instead of sampling them: loop over `PAGE_STARTED_TYPES`, `RUN_TAB_TYPES`, every contract
-event kind, every sender shape.
+does. Enumerate inputs instead of sampling them: loop over `PAGE_STARTED_TYPES`, every contract event kind, every
+sender shape. (A tab hosting a run is lent nothing since site access part 5; `RUN_TAB_TYPES` is gone.)
 
 ## The two harnesses
 

@@ -59,19 +59,8 @@ export const PAGE_STARTED_TYPES: ReadonlySet<string> = new Set<string>([
     ...PAGE_RELAYED_EXTRA,
 ]);
 
-/** The page-started types that START, CONTINUE, STEER or STOP a run. Never allowed from an unapproved page, not even
- *  one a run is currently on: the other page-started types are, until delegation tokens replace that allowance
- *  (sw-site-access.ts, slice 2). */
+/** The page-started types that START, CONTINUE, STEER or STOP a run. Refused from an unapproved page like every other
+ *  page-started type; named so the red-team tests can say which refusals keep a run the person's. (A tab hosting a run
+ *  used to be allowed what the run's in-page tools sent, `RUN_TAB_TYPES`; site access part 5 moved those tools to the
+ *  worker and dropped it.) */
 export const RUN_CONTROL_TYPES: ReadonlySet<string> = new Set<string>(["START_RUN", "RESUME_RUN", "INJECT_MESSAGE", "PAGE_CANCEL_RUN"]);
-
-/** What a tab HOSTING a background run may send from its top frame whatever its origin: what that run's own tools send
- *  while they run in the page (a vision tool's model call and screenshot, `fetch_url`, `python_exec`, a sheet, a server
- *  tool, a shadow root's CDP resolve, the config a vision tool or an exec reads, and the abort of one of those requests).
- *  Nothing that changes the model, unloads it, saves or reads sessions, embeds, or dumps a log: a page a run visits
- *  gains only what the run itself needs there. It shrinks as tools move to the worker (docs/spec/SITE_ACCESS.md slice
- *  2) and goes when none run in the page. */
-export const RUN_TAB_TYPES: ReadonlySet<string> = new Set<string>([
-    "FETCH_LLM", "ABORT_TASK", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG",
-    "CAPTURE_TAB", "FETCH_IMAGE_B64", "FETCH_URL", "PYTHON_EXEC", "FETCH_SHEET",
-    "LIST_SERVER_TOOLS", "SERVER_TOOL_EXEC", "CDP_SHADOW_RESOLVE",
-]);

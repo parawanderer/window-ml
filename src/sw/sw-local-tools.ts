@@ -16,7 +16,7 @@ import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { dropAnswer } from "./worker-answer";
 import { dropVisionMemory } from "./worker-vision";
-import { buildWorkerTools, dropWorkerTools, pageOnlySend, spendDelta, workerSpend, WORKER_TOOL_NAMES, type WorkerPyMedia } from "./worker-tools";
+import { buildWorkerTools, dropWorkerTools, spendDelta, workerSpend, WORKER_TOOL_NAMES, type WorkerPyMedia } from "./worker-tools";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -76,7 +76,7 @@ export function noteLocalStep(runId: string, name: string): void {
 }
 
 /** One tool send, as `RUN_TOOL_IN_PAGE` carries it. */
-interface ToolSend { runId: string; name?: string; args?: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; stream?: boolean; tabUrl?: string; }
+interface ToolSend { runId: string; name?: string; args?: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; stream?: boolean; }
 
 /**
  * Answer a tool send here if the tool is one of the run's local tools, mirroring what the page does for the same
@@ -89,10 +89,9 @@ export async function runLocalTool(send: ToolSend, onStream?: (text: string, ts?
     const set = localToolsets.get(send.runId);
     const tool = send.name ? set?.byName[send.name] : undefined;
     const args = send.args || {};
-    // What the page answers itself: a session render of the page the run is on (its live DOM), and a python_exec that
-    // needs a screenshot or a page table. The approval preview is drawn here either way.
-    const toPage = !tool || (!send.renderOnly && send.tabUrl !== undefined && pageOnlySend(send.name, args, send.tabUrl));
-    if (!set || toPage) {
+    // A local tool runs here whole: what it needs of the page (a page table, the live document for a session render of
+    // the page the run is on) it asks for as plain data (worker-page-read.ts), so no send of it goes to the page.
+    if (!set || !tool) {
         // A call the page runs is still a step of this run: agent_api_docs, run here, counts it towards its dedup.
         if (set && send.name && !send.renderOnly && !send.precheck && !send.readonlyTry) countDocsStreak(toolContext(set.byName).docsMemory!, send.name);
         return null;

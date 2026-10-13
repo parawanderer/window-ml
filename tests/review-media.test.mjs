@@ -16,10 +16,8 @@ import { pageGeometry, answerGeometry } from "../src/dom/page-geometry.ts";
 import { _shotBox } from "../src/ml/ml-vision.ts";
 import { mintPoint, mintBox } from "../src/util.ts";
 import { answerMediaShape } from "../src/tools/tools.ts";
-import { pageOnlyPython, mixedPythonRefusalFor } from "../src/sw/worker-tools.ts";
-import { externalSheetIds } from "../src/dom/dom.ts";
 import { GEOMETRY_REFUSED, TEXT_CAPS } from "../src/sw/geometry-check.ts";
-import { RUN_TAB_TYPES, PAGE_STARTED_TYPES } from "../src/page-relay.ts";
+import { PAGE_STARTED_TYPES } from "../src/page-relay.ts";
 
 const require = createRequire(import.meta.url);
 const { loadBackground, jsonResponse } = require("./helpers");
@@ -392,46 +390,22 @@ test("a worker-built run's python_exec with an image and a cast sends no image, 
     });
 });
 
-// --- mixedPythonRefusalFor: every combination of image and table source ---
-
-test("python_exec routing over every combination of image × table source: refused exactly when a page source meets an image or an external sheet; to the page exactly when a page source is alone", T, () => {
-    const SHEET = "https://docs.google.com/spreadsheets/d/abc123/edit";
-    const images = [undefined, "", "#save", "@pt:abcdef12", "@box:abcdef12"];
-    const tables = [
-        [undefined, false], ["table#t", true], ["current", true], ["@tool:abc1234", false], [" @tool:abc1234", false], ["https://example.com/a.csv", false], [SHEET, false],
-        [{ t: "table#t" }, true], [["table#t"], true], [{ a: "@tool:abc1234", b: "current" }, true], [{ a: "@tool:abc1234", b: SHEET }, false],
-        [{ a: "table#t", s: SHEET }, true], [["current", SHEET], true], [{ v: { columns: ["a"], rows: [[1]] } }, false],
-    ];
-    let n = 0;
-    for (const image of images) {
-        for (const [t, page] of tables) {
-            const args = { code: "x", ...(image !== undefined ? { image } : {}), ...(t !== undefined ? { tables: t } : {}) };
-            const sheets = externalSheetIds(args).length;
-            const label = JSON.stringify(args);
-            assert.equal(pageOnlyPython(args), page, `pageOnly ${label}`);
-            const refusal = mixedPythonRefusalFor(args, sheets);
-            const expect = page && (sheets > 0 || !!image);
-            assert.equal(refusal !== null, expect, `refusal ${label}: ${refusal}`);
-            if (expect) assert.match(refusal, sheets ? /external Google Sheet/ : /cannot mix an `image`/, label);
-            n++;
-        }
-    }
-    assert.equal(n, images.length * tables.length);
-});
+// (python_exec routing over every image × table source is tests/worker-page-read.test.mjs: since site access part 5
+// every combination runs in the worker, and the page is asked only for its own tables.)
 
 // --- the ratchet (tests/e2e/media-in-worker.spec.mjs): what it would notice ---
 
 const SPEC = readFileSync(new URL("./e2e/media-in-worker.spec.mjs", import.meta.url), "utf8");
 
-test("the ratchet's RUN_TAB_TYPES, read from the source by regex, is exactly the exported set: a type added to it is counted", T, () => {
-    const body = readFileSync(new URL("../src/page-relay.ts", import.meta.url), "utf8").match(/export const RUN_TAB_TYPES[^[]*\[([^\]]*)\]/);
-    assert.ok(body, "the spec's regex still finds the declaration");
-    assert.deepEqual([...body[1].matchAll(/"([A-Z_0-9]+)"/g)].map((m) => m[1]).sort(), [...RUN_TAB_TYPES].sort());
-    assert.ok(SPEC.includes("export const RUN_TAB_TYPES[^[]*\\[([^\\]]*)\\]"), "the spec uses this regex");
+test("RUN_TAB_TYPES is gone from the relay and the gate (site access part 5), and the ratchet no longer reads it", T, () => {
+    const relay = readFileSync(new URL("../src/page-relay.ts", import.meta.url), "utf8");
+    assert.doesNotMatch(relay, /export const RUN_TAB_TYPES/);
+    assert.doesNotMatch(readFileSync(new URL("../src/sw/sw-site-access.ts", import.meta.url), "utf8"), /RUN_TAB_TYPES|activeRuns/, "the gate has no allowance for a tab hosting a run");
+    assert.doesNotMatch(SPEC, /[^_]RUN_TAB_TYPES = /, "the ratchet holds a page to every page-started type, not a list of exceptions");
 });
 
 test("the ratchet is held against every page-started type, so a new HANDLE_MAP type the page sends for a worker-built run fails it", T, () => {
-    const uncounted = [...PAGE_STARTED_TYPES].filter((t) => !RUN_TAB_TYPES.has(t) && !["CAPTURE_TAB", "FETCH_LLM", "MODEL_CAPS", "GET_CONFIG", "FETCH_IMAGE_B64"].includes(t));
-    assert.ok(uncounted.length > 0, "positive control: some page-started types are outside RUN_TAB_TYPES");
+    const uncounted = [...PAGE_STARTED_TYPES].filter((t) => !["CAPTURE_TAB", "FETCH_LLM", "MODEL_CAPS", "GET_CONFIG", "FETCH_IMAGE_B64"].includes(t));
+    assert.ok(uncounted.length > 0, "positive control: some page-started types are outside the five vision types");
     assert.ok(/PAGE_STARTED_TYPES|HANDLE_MAP/.test(SPEC), `the ratchet does not notice a page sending any of: ${uncounted.join(", ")}`);
 });

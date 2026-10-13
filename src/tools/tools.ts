@@ -6,7 +6,7 @@
 
 import type { MlTool, ToolResult, ToolContext } from "../contract/contract-agent";
 import type { AnswerMedia } from "../contract/contract-render";
-import type { VerifyArea } from "./builtin-tools";
+import { verifiesInWorker, type VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
 export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "highlight") => Promise<AnswerMedia[]>;
@@ -73,6 +73,18 @@ function derefValue(read: DerefRead): DerefText {
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
 // a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
+/**
+ * describeElement's result for a `>>>` path into a sealed shadow root: what the debugger resolved inside it, or the
+ * sentence for nothing found (or the debugger off). One text for the page's resolve and the worker's (sw-run-host.ts).
+ * @param selector the model's `>>>` selector
+ * @param matches the resolved describe lines, or null when nothing was resolved
+ * @returns the tool's result
+ */
+export function sealedDescribe(selector: string, matches: { line: string }[] | null): string {
+    if (matches && matches.length) return `${firstOfNote(selector, matches.length)}${matches.length} element${matches.length === 1 ? "" : "s"} inside a sealed shadow root (reached via the debugger — a page selector can't enter it):\n${matches.map((x, i) => `#${i}: ${x.line}`).join("\n")}\n\nAct on one with click({ selector: "${selector}", index: N }).`;
+    return `"${selector}" points inside a SEALED (closed/declarative) shadow root a page selector can't enter, and the debugger either found nothing there or isn't enabled — turn on "Debugger-based actions (CDP)" in window.ml Settings → Advanced to reach sealed roots.`;
+}
+
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
@@ -288,11 +300,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // A `>>>` path into a SEALED (closed/declarative) shadow root finds nothing HERE. If the
                     // debugger is on, resolve it via CDP (which pierces the closed root) and LIST what's inside —
                     // so the model can discover the content, then click({ selector, index }) reaches it the same way.
-                    if (firstHopSealed(selector)) return (async (): Promise<string> => {
-                        const m = shadowResolve ? await shadowResolve(selector).catch(() => null) : null;
-                        if (m && m.length) return `${firstOfNote(selector, m.length)}${m.length} element${m.length === 1 ? "" : "s"} inside a sealed shadow root (reached via the debugger — a page selector can't enter it):\n${m.map((x, i) => `#${i}: ${x.line}`).join("\n")}\n\nAct on one with click({ selector: "${selector}", index: N }).`;
-                        return `"${selector}" points inside a SEALED (closed/declarative) shadow root a page selector can't enter, and the debugger either found nothing there or isn't enabled — turn on "Debugger-based actions (CDP)" in window.ml Settings → Advanced to reach sealed roots.`;
-                    })();
+                    // For a run the worker drives, the WORKER resolves it (the page sends nothing for such a run).
+                    if (firstHopSealed(selector) && verifiesInWorker(ctx)) return { content: "", cdpShadowResolve: { selector } };
+                    if (firstHopSealed(selector)) return (async (): Promise<string> => sealedDescribe(selector, shadowResolve ? await shadowResolve(selector).catch(() => null) : null))();
                     return `No element matches "${selector}".`;
                 }
                 // If the matched element is ITSELF a sealed host, describeSkeleton stops at its boundary — point the

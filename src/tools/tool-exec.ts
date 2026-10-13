@@ -138,6 +138,8 @@ export interface ToolEnvelope {
     cdpExec?: { source: string };
     /** sealed-shadow (`>>>` into a closed/declarative root) click → the executor CDP-resolves + clicks it */
     cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
+    /** sealed-shadow discovery for a run the worker drives → the worker CDP-resolves it (ToolResult `cdpShadowResolve`) */
+    cdpShadowResolve?: { selector: string };
     /** trusted-keyboard type (canvas / WebGL / remote-desktop / sealed field) → the executor types via CDP */
     cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
@@ -195,7 +197,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs, ...(r.verifyRequest ? { verifyRequest: r.verifyRequest } : {}) };
+            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, ...(r.cdpShadowResolve ? { cdpShadowResolve: r.cdpShadowResolve } : {}), cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs, ...(r.verifyRequest ? { verifyRequest: r.verifyRequest } : {}) };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
