@@ -53,11 +53,43 @@ separate program, the **process host**, which the browser runtime reaches and wh
 One program, two transports. The hub form is the "desktop runtime holds a shell" the hub spec already names; the
 native form is the same thing attached to one browser.
 
-**Inside the host, a container by default.** Each session gets its own container with the work folder mounted and the
-network off unless granted. The container bounds the damage; the manifest (below) decides what runs without asking.
-Without a container ("host mode", the person's real filesystem) the same calls work, every effectful one asks, and the
-person turns it on knowing that. A container's state can be kept per session or thrown away, and its inputs mounted
-read-only by hash, which is what the notebook-signing gaps need ([`NOTEBOOK_TOOLING.md`](NOTEBOOK_TOOLING.md) §10).
+### Two modes: a container, or the real filesystem
+
+**Both are supported (Shane, 2026-10-13).** A container is the safe default for work that can be isolated. Working on
+the person's own machine (their repo, their toolchain, their `git` and credentials), the way Claude Code and similar
+tools run, is the other half, and it is not a lesser mode: for most real work it is the point.
+
+| | **Container** | **Host** (the real filesystem) |
+| --- | --- | --- |
+| What it reaches | the folders mounted into it, nothing else | the person's machine, as the user running the host |
+| Network | off unless granted | the machine's |
+| Effects | discardable: a session's container can be thrown away or kept | permanent: files written stay written, nothing rolls back |
+| Tools | what the image has | the person's own (`node`, `cargo`, `gh`, their shell config not applied: no shell) |
+| Credentials | none unless mounted | whatever the user's files and helpers hold (`~/.ssh`, `git` credential helpers, cloud CLIs) |
+| What runs without asking | the manifest's read-only calls, anywhere in the container | the manifest's read-only calls whose PATH arguments resolve inside a workspace root |
+| Provenance | inputs mountable read-only by hash ([`NOTEBOOK_TOOLING.md`](NOTEBOOK_TOOLING.md) §10) | inputs are live files: the call log records paths and output hashes, not pinned inputs |
+| Cost | a VM on macOS (Docker, Podman, Apple's `container`) | none: native speed |
+
+**Who chooses:** the person, per workspace, in DevTools Settings (the superset rule in AGENTS.md); never the model,
+never a page. The model learns which mode a call ran in from the call's result, as it learns where an exec ran.
+
+**What host mode needs that a container gives for free:**
+
+- **Workspace roots.** The person names the folders the agent works in. `cwd` stays inside them; a path argument is
+  resolved (`realpath`, so `..` and symlinks cannot step out) and judged against them. The manifest marks which
+  arguments are paths, so the host can resolve them; an argument the manifest does not describe is not a path the host
+  can vouch for, and the call asks.
+- **The free tier narrows to the roots.** A read-only call is free only when every path it names resolves inside a root,
+  and never for a file that looks like a secret (`.env`, `*.pem`, `id_*`, a credentials file), wherever it is. Reading
+  is the half of an exfiltration that the fetch gate does not see.
+- **Standing rules, on argv.** "Always allow `npm test` in this repo" is a rule on a structured argv prefix plus a root,
+  which is exact in a way a string pattern over shell text cannot be. Rules are the person's, kept with the workspace,
+  and shown where they apply.
+- **An optional OS sandbox.** Between a container and nothing: the host spawns each process under the OS's own sandbox
+  (Seatbelt on macOS, bubblewrap or Landlock on Linux) with writes confined to the roots and the network to an
+  allowlist, keeping the person's tools and native speed. What Claude Code's own sandbox mode does.
+- **The environment is scrubbed** to a whitelist in both modes; in host mode that matters more, since the host's own
+  environment is the person's login session.
 
 ## Where the script runs
 
@@ -104,7 +136,7 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
 Three tiers, decided per CALL, on the final argv:
 
 1. **Free** — the program's manifest says this program, subcommand and flags only read (`git diff` without `--output`,
-   `rg`, `ls`), and the env is clean. Allowed in a read-only survey, charged to its step budget (the manifest's cost
+   `rg`, `ls`), the env is clean, and in host mode every path it names is inside a workspace root and is not a secret. Allowed in a read-only survey, charged to its step budget (the manifest's cost
    tier). **This tier waits on** [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md); until then nothing is
    free.
 2. **Asks, per call** — anything else, including an unannotated program. The card shows the argv, cwd and env changes
@@ -162,12 +194,14 @@ What follows from it:
 
 ## Slices
 
-1. **The host, attached by native messaging, in a container, every call asking.** `ml.sh.run`, `pipe`, `glob`; outputs
-   as host-held pointers with `ml.pipe` run at the host; `capabilities.shell`; the routing rule; red-team tests.
+1. **The host, attached by native messaging, both modes, every call asking.** A container, or host mode within workspace
+   roots. `ml.sh.run`, `pipe`, `glob`; outputs as host-held pointers with `ml.pipe` run at the host;
+   `capabilities.shell`; the routing rule; red-team tests. Every call asking is what makes host mode safe to ship first.
 2. **The free tier**, once the library manifest exists: manifests for a handful of read-only programs (`git`, `rg`,
    `ls`, `cat`, `wc`, `find` without its effectful flags).
-3. **Placement**: a script naming only `ml.sh` evaluated at the host.
-4. **The host on the hub** as a desktop runtime: a shell on another machine.
+3. **Standing rules and the OS sandbox** for host mode.
+4. **Placement**: a script naming only `ml.sh` evaluated at the host.
+5. **The host on the hub** as a desktop runtime: a shell on another machine.
 
 ## Open questions
 
@@ -176,6 +210,10 @@ What follows from it:
   both want. Leaning Deno (one binary, permissions, runs the TypeScript).
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
+- **Host mode's default**: plain, or under the OS sandbox unless the person turns it off.
+- **Which mode is offered**, and how the model learns it before its first call: `capabilities.shell` becomes `true`
+  under the projection rule whatever detail it carries, so the modes would need their own booleans (`shellContainer`,
+  `shellHost`) or be learned from the first result.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
   "start a process and send input" names it.
