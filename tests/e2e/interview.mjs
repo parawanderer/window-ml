@@ -79,8 +79,12 @@ export function turnReport(n, events, fromTs, result) {
 
 /** What one turn did, parsed back out of its report: the answer, the tools called in order, and whether it hit the cap. */
 export function parseTurnReport(md) {
-    const answer = (md.split("## Answer")[1] ?? "").split("\n## Steps")[0].trim();
-    const tools = [...md.matchAll(/^- \*\*([A-Za-z_][\w.-]*)\*\*/gm)].map((m) => m[1]);
+    // The answer is the model's own Markdown, so a bulleted, bolded list in it reads like a step line: tools are read
+    // from the Steps section only, the LAST one (turnReport writes it after the answer, which may quote a "## Steps").
+    const cut = md.lastIndexOf("\n## Steps");
+    const head = cut >= 0 ? md.slice(0, cut) : md, steps = cut >= 0 ? md.slice(cut) : "";
+    const answer = (head.split("## Answer")[1] ?? "").trim();
+    const tools = [...steps.matchAll(/^- \*\*([A-Za-z_][\w.-]*)\*\*/gm)].map((m) => m[1]);
     return { answer, tools, capped: /Stopped at the \d+-step cap/.test(answer) };
 }
 

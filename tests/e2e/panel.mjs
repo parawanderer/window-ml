@@ -4,98 +4,36 @@
 //   USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json \
 //       --models deepseek.deepseek-v4-pro,litellm.google/gemini-flash-latest,openrouter.anthropic/claude-sonnet-5.5
 //
+// It IS the bench, without its page: `bench/run.mjs <interview> --models …` with the same options, so a panel is a
+// sweep under tests/e2e/artifacts/bench/<interview name>/ like any other (summary.md with every answer side by side,
+// each model's session in its run directory, timeline.md, page.json), logged to the scoreboard, counted by the memory
+// budget, and pushed to the bench store with everything else. Add `--serve` to watch it and mark a wrong answer. Until
+// 2026-10-13 it wrote tests/e2e/artifacts/panel-<name>-<time>/ instead, which no push sent.
+//
 // An interview file (tests/e2e/panel/*.json) is { task, asks?: string[], surface?, sharedWatches?, watchNotes? }: the
 // first message, then each follow-up, sent once the turn before it has ended. `<name>.interview.ts` (`defineInterview`,
-// bench/spec.ts) is the same as code, with checks on the answers (`expect`) and conditional `followUps`. Before anything starts every model is
-// PROBED with one tool call through the configured backend, and one that cannot make it is reported and skipped (a
-// misconfigured connection otherwise looks like a model that ignored the task). The result is <out>/summary.md: per
-// model, the calls each turn took and how it ended, then every answer side by side, turn by turn. Each model's whole
-// session is in <out>/<model>/ (run.md, run.json, outbox/turn-<n>.md, run.log).
+// bench/spec.ts) is the same as code, with checks on the answers (`expect`) and conditional `followUps`. Every model is
+// PROBED with one tool call first, and one that cannot make it is reported and skipped.
 //
-// The same interview is a bench sweep too, for a person to read in the browser (answers side by side, each one
-// markable as wrong): `node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json --models a,b --serve`.
-// Both drive interview.mjs (the probe, the per-turn report, the follow-up driver, the summary).
-//
-// Options: --models a,b,c (or PANEL_MODELS), --out <dir> (default tests/e2e/artifacts/panel-<name>-<time>),
-// --surface hud|console (overrides the file; hud is a run started as from the UI), --turn-minutes N (default 15).
+// Options, as run.mjs takes them: --models a,b,c (or PANEL_MODELS), --surface hud|console, --turn-minutes N (default
+// 15), and any other run.mjs flag (--repeats, --jobs, --no-sync, …). `--out` is gone: a sweep lives under its name.
+// The real backend from .env is the default (USE_ENV=1), unless E2E_BACKEND names another.
 // See .claude/skills/panel/SKILL.md for reading the results.
 
-import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runOnce, resolveBackendFromEnv } from "./run-once.mjs";
-import { joinLedger, roomWarning } from "./bench/memory-budget.mjs";
-import { loadInterviewFile, probe, driverFor, readTurns, readFollowUps, askText, promptChars, panelSummary, modelSlug } from "./interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-
-/** The command line: the interview file, then `--name value` options. */
-function parseArgs(argv) {
-    const opts = { file: null, models: (process.env.PANEL_MODELS || "").split(","), out: null, surface: null, turnMinutes: 15 };
-    for (let i = 0; i < argv.length; i++) {
-        const a = argv[i];
-        if (a === "--models") opts.models = argv[++i].split(",");
-        else if (a === "--out") opts.out = argv[++i];
-        else if (a === "--surface") opts.surface = argv[++i];
-        else if (a === "--turn-minutes") opts.turnMinutes = Number(argv[++i]);
-        else if (!opts.file) opts.file = a;
-        else throw new Error(`panel: unexpected argument ${a}`);
-    }
-    opts.models = opts.models.map((m) => m.trim()).filter(Boolean);
-    if (!opts.file || !opts.models.length) throw new Error("usage: panel.mjs <interview.json> --models a,b,c [--out dir] [--surface hud|console]");
-    return opts;
+const argv = process.argv.slice(2);
+if (argv.includes("--out")) {
+    console.error("panel: --out is gone. A panel is a bench sweep now, written to tests/e2e/artifacts/bench/<interview name>/.");
+    process.exit(2);
 }
-
-/** One model's whole interview, in its own browser: the task, each follow-up as the turn before it ends, then done. */
-async function interview(model, iv, opts, outDir, backend) {
-    const dir = path.join(outDir, modelSlug(model));
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.mkdirSync(dir, { recursive: true });
-    const log = fs.openSync(path.join(dir, "run.log"), "w");
-    const { nextTurn, statuses } = driverFor({ ...iv, task: askText(iv.task), ...(typeof iv.task === "object" ? { expect: iv.task.expect, why: iv.task.why } : {}) }, dir, model);
-    const surface = opts.surface ?? iv.surface ?? null;
-    let error = null;
-    try {
-        const r = await runOnce({
-            task: askText(iv.task), start: iv.start ?? "/step3",
-            sharedWatches: iv.sharedWatches ?? [], watchNotes: iv.watchNotes ?? {},
-            surface: surface && surface !== "console" ? surface : null,
-            backend: { ...backend, model }, artDir: dir, approve: "auto", nextTurn,
-            timeoutMs: opts.turnMinutes * 60_000,
-            warm: process.env.WARM !== "0", synthetic: process.env.SYNTHETIC !== "0",
-            focusSidebar: false, hold: false,
-            log: (s) => fs.writeSync(log, s + "\n"),
-        });
-        error = r?.error ?? null;
-    } catch (e) { error = String(e?.message || e); }
-    fs.closeSync(log);
-    if (error && !statuses.length) statuses.push(`failed: ${error.slice(0, 200)}`);
-    const expected = iv.asks.length + 1;
-    return { model, dir, turns: readTurns(dir, expected), followUps: readFollowUps(dir), statuses, prompt: promptChars(dir), expected };
+if (!argv.some((a) => !a.startsWith("-"))) {
+    console.error("usage: panel.mjs <interview.json | .interview.ts> --models a,b,c [--surface hud|console] [--turn-minutes N] [run.mjs flags]");
+    process.exit(2);
 }
-
-async function main() {
-    const opts = parseArgs(process.argv.slice(2));
-    // Its browsers (one per model, all at once) count against every bench sweep's memory budget while it runs.
-    joinLedger({ tool: "panel", cmd: [path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2)].join(" "), repo: path.resolve(HERE, "../..") });
-    const iv = await loadInterviewFile(opts.file);
-    const outDir = path.resolve(opts.out || path.join(HERE, "artifacts", `panel-${iv.name}-${Date.now()}`));
-    fs.mkdirSync(outDir, { recursive: true });
-    const backend = await resolveBackendFromEnv({ ...process.env, USE_ENV: process.env.E2E_BACKEND ? "" : "1" });
-    if (!backend) throw new Error("panel: no backend (set USE_ENV=1 with .env, or E2E_BACKEND)");
-    console.log(`panel ${iv.name}: probing ${opts.models.length} model(s) for a tool call…`);
-    const probed = await Promise.all(opts.models.map(async (model) => ({ model, why: await probe(backend, model) })));
-    const skipped = probed.filter((p) => p.why);
-    for (const s of skipped) console.log(`  ✗ ${s.model}: ${s.why}`);
-    const ok = probed.filter((p) => !p.why).map((p) => p.model);
-    console.log(`  running ${ok.length}: ${ok.join(", ")}  →  ${outDir}`);
-    const short = roomWarning(ok.length);
-    if (short) console.log(`  ⚠ ${short}`);
-    const results = await Promise.all(ok.map((m) => interview(m, iv, opts, outDir, backend)));
-    const surface = opts.surface ?? iv.surface ?? null;
-    fs.writeFileSync(path.join(outDir, "summary.md"), panelSummary(iv.name, iv, results, skipped, surface));
-    for (const r of results) console.log(`  ${r.model}: ${r.turns.map((t) => t.tools.length + (t.capped ? "(cap)" : "")).join(" / ")} calls`);
-    console.log(`summary: ${path.join(outDir, "summary.md")}`);
-}
-
-main().catch((e) => { console.error(e?.stack || String(e)); process.exit(1); });
+const env = { ...process.env, ...(process.env.E2E_BACKEND || process.env.USE_ENV ? {} : { USE_ENV: "1" }) };
+const r = spawnSync(process.execPath, [...process.execArgv, path.join(HERE, "bench", "run.mjs"), ...argv], { stdio: "inherit", env });
+process.exit(r.status ?? 1);

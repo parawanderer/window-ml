@@ -18,15 +18,17 @@ USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json -
     --models deepseek.deepseek-v4-pro,deepseek.deepseek-flash,litellm.google/gemini-flash-latest,litellm.anthropic/claude-opus-5-5,moonshot.kimi-k3
 ```
 
-`panel.mjs` is the same interview with no page, for when nobody will watch:
+`panel.mjs` is the same command with no page, for when nobody will watch: it runs `bench/run.mjs` with your arguments,
+so a panel is a bench sweep (scoreboard, memory budget, pushed to the store with the rest):
 
 ```bash
 USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json --models …
-# → tests/e2e/artifacts/panel-bloat-<time>/summary.md, plus each model's session in its own directory
+# → tests/e2e/artifacts/bench/panel-bloat/summary.md, each model's session in its run directory
 ```
 
-Each model's directory holds `run.md`, `run.json`, `outbox/turn-<n>.md` (one per turn, the answer then each step) and
-`run.log`. A MODEL gets the same from the bench without the page:
+Before 2026-10-13 it wrote `tests/e2e/artifacts/panel-<name>-<time>/` instead, outside the bench; `--out` is gone.
+Each model's run directory holds `run.md`, `run.json`, `outbox/turn-<n>.md` (one per turn, the answer then each step).
+A MODEL reads the sweep without the page:
 `summary.md`, `timeline.md` and `page.json` in the sweep directory, and `node tests/e2e/bench/mark.mjs <sweep dir>
 --model <who> --turn <n> --quote "<line>"` to mark an answer wrong (the bench skill's "What it writes" table).
 
@@ -110,4 +112,3 @@ ids, whose OpenAI-compatibility route does no caching); on OpenRouter `openroute
 `openrouter.z-ai/glm-5.3-flash` and `openrouter.minimax/minimax-m3`; and Moonshot's own `moonshot.kimi-k3` (also
 `moonshot.kimi-k2.6`). Local Ollama models work when the GPU is free; ask first. The probe is the source of truth: run it rather than trusting this list.
 
-Its browsers count against every bench sweep's memory budget while it runs (it joins the bench's memory ledger as a `tool`; `node --import tsx tests/e2e/bench/hold.mjs --ledger` lists it); it warns before starting more browsers than the budget has room for.

@@ -149,7 +149,7 @@ export const update = (pid, patch, file = LEDGER_FILE) => withLedger((l) => l.ma
 export const unregister = (pid, file = LEDGER_FILE) => withLedger((l) => l.filter((e) => e.pid !== pid), file);
 
 /**
- * Count a bench tool that starts browsers outside a sweep (panel.mjs, converse.mjs, observe.mjs) in the ledger while it
+ * Count a bench tool that starts browsers outside a sweep (converse.mjs, observe.mjs) in the ledger while it
  * runs: its process tree, the browsers it launches with it, is measured with the rest, so every sweep's budget sees it
  * (kind `tool`). Left on exit, and dropped on the next read should the process die. An entry already there for this
  * process (one a sweep made) is left as it is. Never throws: a tool runs whether or not the ledger can be written.
