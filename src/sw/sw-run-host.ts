@@ -57,10 +57,16 @@ import { topDocument } from "./worker-vision";
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
 
-/** What the page that started a turn is answered when its run was handed to the worker during it: no result, no history. */
 /** The answer to a page's START_RUN, RESUME_RUN or steer for a run the worker holds. */
 export const WORKER_RUN_REFUSED = "Refused: this run was started from the extension, and only the extension can drive it.";
 
+/** How long a page's START_RUN or RESUME_RUN waits for the worker to restore its runs before it is refused. */
+export const RESTORE_WAIT_MS = 10_000;
+
+/** The answer to a page's START_RUN or RESUME_RUN when the worker's runs are not restored within `RESTORE_WAIT_MS`. */
+export const RESTORE_PENDING = "Refused for now: the extension is still restoring its runs. Try again.";
+
+/** What the page that started a turn is answered when its run was handed to the worker during it: no result, no history. */
 const HANDED_ANSWER = "This run was handed to the extension: this site may no longer use window.ml, so its result is not sent here.";
 
 /** A tool call built for a page-built run whose run was handed to the worker before the call was sent. */
@@ -127,7 +133,16 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
      *  the router: the router's check reads the maps as they are, which are empty on a worker this message woke until
      *  the runs are restored from storage. */
     const workerHeld = (): boolean => !isExtensionSender(sender) && isWorkerRun(runId);
-    hydrationDone.catch(() => {}).then(() => {
+    // Bounded, and closed when the bound is hit: judged against maps not yet restored, a run the worker holds would
+    // read as nobody's. A restore that never settles answers the page with an error rather than never.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const restored = Promise.race([
+        hydrationDone.then(() => true, () => true),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), RESTORE_WAIT_MS); }),
+    ]);
+    void restored.then((done) => {
+        clearTimeout(timer);
+        if (!done) { sendResponse({ error: RESTORE_PENDING }); return; }
         if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
         if (message.type !== "START_RUN") { hostRun(message, tabId, sendResponse); return; }
         return getConfig().then((cfg) => {
@@ -1190,18 +1205,18 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // AFTER this one's steps rather than colliding with them.
             saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });
             let answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
-            // A run the WORKER built has no page-side caller to assemble the turn's curated answer from the page's
-            // answer set, so it is asked for here. Page data, exactly as a tool result is; absent if the page is gone.
-            // Close the inbox FIRST: a message sent while the page is asked for the answer must not be reported as a
-            // steer into an inbox nothing reads any more (it reads as "busy", and the person sends it again).
+            // Close the inbox FIRST: a message sent from here to the end of the turn must not be reported as a steer into
+            // an inbox nothing reads any more (it reads as "busy", and the person sends it again).
             runInboxes.delete(runId);
             await handOverSettled(tabId);
             const workerNow = byWorker();
             // The page's finish only ends the run's registration there, so it carries the run id and nothing of the run:
             // no summary, which the page's world would read. A run the worker holds lends its page nothing, whether it
             // built the run or was handed it (a navigation onto an unapproved site, a revoke, nav-handover.ts). Its answer
-            // is the worker's set (worker-answer.ts), and what the page answers is not read.
-            if (workerNow) await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true } }).catch(() => null);
+            // is the worker's set (worker-answer.ts). Sent and not awaited: nothing the page answers is read, and a page
+            // that never answers (content.ts waits two minutes) would hold the run's result and its next turn. A next
+            // turn's adopt goes out behind it on the same channel, so the page still ends the old registration first.
+            if (workerNow) void delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true } }).catch(() => null);
             const own = workerNow ? await answerFor(runId) : undefined;
             const answer = own ? (finalizeAnswer(own, res.summary) || undefined) : undefined;
             if (own) { const m = own.media(); answerMedia = m.length ? m : undefined; }

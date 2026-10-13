@@ -563,6 +563,33 @@ test("a run a page built, handed to the worker during its FIRST turn, is the wor
     assert.ok(!JSON.stringify(bg.calls).includes("PAGE TURN"));
 });
 
+// --- a page that never answers the finish (review of #625) ---
+
+test("HALTING: a page that never answers the finish holds neither the run's result nor its next turn", T, async () => {
+    // The finish only ends the run's registration in the page, and the worker reads nothing of the page's reply. A
+    // page that swallows it (content.ts waits up to two minutes for an answer) must not hold the run open: the result
+    // would not reach the person, and a follow-up would read as busy.
+    let finishes = 0, n = 0;
+    const bg = loadBackground({
+        config, openTabs: [SITE],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: `answer ${++n}` } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish) { finishes++; return new Promise(() => {}); }
+            return undefined;
+        },
+    });
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "go", surface: "hud" });
+    const result = (i) => bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash)[i];
+    for (let i = 0; i < 400 && !result(0); i++) await new Promise((r) => setTimeout(r, 2));
+    assert.equal(finishes, 1, "positive control: the page was sent the finish");
+    assert.equal(result(0)?.event.summary, "answer 1", "the turn's result reached the person");
+    const next = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and then", surface: "hud" } }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+    assert.equal(next.data, "turn", "the follow-up started the next turn");
+    for (let i = 0; i < 400 && !result(1); i++) await new Promise((r) => setTimeout(r, 2));
+    assert.equal(result(1)?.event.summary, "answer 2", "the next turn ended too, its finish unanswered as well");
+});
+
 // --- where a read-only survey of a worker-built run is evaluated (slice 2 part 1b) ---
 
 /** A worker-built run whose model calls `exec` once per script in `scripts`, then answers; the page answers a

@@ -787,6 +787,26 @@ test("control: an approved page's own START_RUN delivered while the restore is h
     assert.equal(r?.data?.summary, "ran", JSON.stringify(r).slice(0, 300));
 });
 
+test("HALTING: a page's START_RUN and RESUME_RUN while the run restore never finishes are refused within the bound, and run nothing", T, async () => {
+    // Closed, not open: judged against the empty maps a run the worker holds would read as nobody's.
+    const chats = [];
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, holdRestore: new Promise(() => {}), local: { ml_site_always: [BUILDER_ORIGIN] },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+        onFetch: async (call) => { if (call.url.includes("/chat/completions")) chats.push(call); return jsonResponse({ choices: [{ message: { content: "ran" } }] }); },
+    });
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" };
+    const start = bg.send({ type: "START_RUN", payload: { runId: "stuck-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 3, surface: "off", crossOrigin: true,
+        rebuild: { toolNames: [], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } } }, sender);
+    const resume = bg.send({ type: "RESUME_RUN", payload: { runId: "stuck-run", task: "again" } }, sender);
+    const within = (p) => Promise.race([p, sleep(15000).then(() => "no answer")]);
+    const [s, r] = (await Promise.all([within(start), within(resume)])).map(plain);
+    assert.match(String(s?.error), /^Refused for now: the extension is still restoring/, JSON.stringify(s));
+    assert.match(String(r?.error), /^Refused for now: the extension is still restoring/, JSON.stringify(r));
+    assert.equal(chats.length, 0, "no model call ran");
+});
+
 // --- more hand-overs than the store's cap ---
 
 test("more than 200 runs handed over at once: every one stays the worker's across a restart, the oldest included", T, async () => {
