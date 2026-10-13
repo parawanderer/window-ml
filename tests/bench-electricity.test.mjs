@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSDOM } from "jsdom";
-import { reading, intervals, measured, attribute, genSpan, rateAt, priceShare, runEnergy, energyByModel, sweepEnergy, energyLine, MAX_GAP_MS } from "../tests/e2e/bench/electricity.mjs";
+import { reading, intervals, measured, attribute, genSpan, placement, channels, rateAt, priceShare, runEnergy, energyByModel, sweepEnergy, energyLine, MAX_GAP_MS } from "../tests/e2e/bench/electricity.mjs";
 import { statusText } from "../tests/e2e/bench/status.mjs";
 import { staticPage } from "../tests/e2e/bench/serve.mjs";
 import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
@@ -77,7 +77,67 @@ test("with no rest in reach, the tail is not given away and nothing is said abov
     assert.equal(none.restW, null);
     assert.equal(none.sessions.get("wml-a").aboveJ, null);
     close(none.sessions.get("wml-a").tailJ, 0, "no tail");
-    close(attribute(intervals(busy), [SPAN_A], { restW: 50 }).sessions.get("wml-a").tailJ, 800, "the box's rest, supplied");
+    close(attribute(intervals(busy), [SPAN_A], { restBy: { "gpu:0": 50 } }).sessions.get("wml-a").tailJ, 800, "the box's rest, supplied");
+});
+
+// --- which GPU ---
+
+/** A frame's compute and models: two cards at the given watts, and where each model sits (its VRAM per card). */
+const twoCards = (w0, w1, cpuMj = null) => ({ supported_gpus: [{ gpu_id: "0", power: { draw_mw: w0 * 1000 } }, { gpu_id: "1", power: { draw_mw: w1 * 1000 } }],
+    ...(cpuMj == null ? {} : { power_sources: [rapl(cpuMj)] }) });
+const PS = [{ name: "big:31b", gpus: [{ gpu_id: "0", size_vram: 40e9 }] }, { name: "small:4b", gpus: [{ gpu_id: "1", size_vram: 4e9 }] },
+    { name: "split:70b", gpus: [{ gpu_id: "0", size_vram: 30e9 }, { gpu_id: "1", size_vram: 10e9 }] }];
+/** Ten seconds of readings at constant draw, a reading a second. */
+const steady = (w0, w1, cpuW = null) => intervals(Array.from({ length: 11 }, (_, i) => reading(i * 1000, twoCards(w0, w1, cpuW == null ? null : i * cpuW * 1000), PS)));
+const span = (session, model, from = 0, to = 10_000) => ({ from, to, session, model });
+
+test("where a model sits: its VRAM per card as shares, read off the frame, the registry prefix and :latest dropped", () => {
+    assert.deepEqual(placement([...PS, { name: "registry.ollama.ai/library/glm:latest", gpus: [{ gpu_id: "1", size_vram: 1 }] }, { name: "cpu-only", gpus: [] }]),
+        { "big:31b": { 0: 1 }, "small:4b": { 1: 1 }, "split:70b": { 0: 0.75, 1: 0.25 }, glm: { 1: 1 } });
+    const [iv] = steady(350, 150);
+    assert.deepEqual(iv.gpuBy, { 0: 350, 1: 150 });
+    assert.deepEqual(channels(iv).ch.map((c) => [c.key, c.J]), [["gpu:0", 350], ["gpu:1", 150]], "GPUs only: no box channel");
+});
+
+test("two models on two cards each pay their own card's draw, not half the sum", () => {
+    const { sessions } = attribute(steady(350, 150), [span("A", "big:31b"), span("B", "small:4b")]);
+    close(sessions.get("A").J, 3500, "big on GPU0 at 350 W for 10 s");
+    close(sessions.get("B").J, 1500, "small on GPU1 at 150 W");
+    close(sessions.get("A").ms, 10_000, "generation time is the span's, once");
+});
+
+test("two models on ONE card split it by overlap; the other card, drawing for nobody, is nobody's", () => {
+    const ps = [{ name: "a", gpus: [{ gpu_id: "0", size_vram: 1 }] }, { name: "b", gpus: [{ gpu_id: "0", size_vram: 1 }] }];
+    const ivs = intervals(Array.from({ length: 11 }, (_, i) => reading(i * 1000, twoCards(400, 30), ps)));
+    const { sessions } = attribute(ivs, [span("A", "a"), span("B", "b", 5000, 10_000)]);
+    close(sessions.get("A").J, 400 * 5 + 400 * 5 * (2 / 3) * 0 + 200 * 5, "alone for 5 s, then half the card");
+    close(sessions.get("B").J, 200 * 5, "half the card for its 5 s");
+    close(sessions.get("A").J + sessions.get("B").J, 4000, "GPU1's 300 J went to nobody");
+});
+
+test("a model split across both cards pays each card by its share of it; the CPU is the box's, split by overlap", () => {
+    const { sessions } = attribute(steady(300, 100, 50), [span("S", "split:70b"), span("B", "small:4b")]);
+    // GPU0: only split sits there → all 3000 J. GPU1: split (share 0.25) and small (share 1), both all 10 s: 0.2 / 0.8.
+    // CPU: 500 J between the two, by overlap: half each.
+    close(sessions.get("S").J, 3000 + 1000 * 0.2 + 250, "S");
+    close(sessions.get("B").J, 1000 * 0.8 + 250, "B");
+    assert.deepEqual(Object.keys(sessions.get("S").scopes).sort(), ["cpu", "gpu"]);
+});
+
+test("where a model sits is unknown (no ps in the frame): it counts as on every card", () => {
+    const ivs = intervals(Array.from({ length: 11 }, (_, i) => reading(i * 1000, twoCards(350, 150))));
+    const { sessions } = attribute(ivs, [span("A", "big:31b"), span("B", "small:4b")]);
+    close(sessions.get("A").J, 2500, "half of each card, as before per-card readings");
+});
+
+test("a card's tail goes only to what ended on that card; each card has its own rest", () => {
+    // GPU0 rests at 20 W and GPU1 at 30 W; A (on GPU0) runs 40-44 s at 400 W, then GPU0 clocks down at 100 W to 50 s.
+    const w0 = (t) => (t >= 40_000 && t <= 44_000 ? 400 : t > 44_000 && t <= 50_000 ? 100 : 20);
+    const ivs = intervals(Array.from({ length: 121 }, (_, i) => reading(i * 1000, twoCards(w0(i * 1000), 30), PS)));
+    const { restBy, sessions } = attribute(ivs, [span("A", "big:31b", 40_000, 44_000), span("B", "small:4b", 40_000, 44_000)]);
+    assert.deepEqual(restBy, { "gpu:0": 20, "gpu:1": 30 });
+    close(sessions.get("A").tailJ, (250 - 20) + 5 * 80 + (60 - 20), "GPU0's draw above its rest after A");
+    close(sessions.get("B").tailJ, 0, "GPU1 never rose: B has no tail, and none of A's");
 });
 
 test("a generation's span runs back from its gen.end for its prompt and decode time; one with no timings has none", () => {

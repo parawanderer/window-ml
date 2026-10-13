@@ -384,7 +384,10 @@ A local model's cost is electricity (`electricity.mjs`), read from the box log (
 the scores files are written: the box's power readings (GPU board watts, and `compute.power_sources` counters such as
 RAPL by their differences across a wrap) integrated between samples, each interval's energy given to the generations
 running in it (a run's are the gens whose `hint.session` is `wml-<run hash>`, so a cloud-driven run's local vision
-calls count too), plus the draw above rest in the 30 s after each generation. Nested scopes are never added: the wall
+calls count too), plus the draw above rest in the 30 s after each generation. Per GPU: each card's energy goes only to
+generations of models resident on it (by their share of its VRAM, from the frame's `ps.models[].gpus`), concurrent ones
+on one card split it by overlap, and the CPU (or the wall less the GPUs) is split among everything generating; each
+card has its own rest and tail. Nested scopes are never added: the wall
 when the box reports one, else GPUs + CPU, and the section says which. scores.md/json and the scores page's Spend card
 gain `energy` (Wh, and above what the box draws at rest) and `electricity` (each moment at the tariff rate it fell in,
 from the price each run's calls recorded); a run with no electricity price shows energy only, with a warning to set
