@@ -3,7 +3,8 @@
 **Status: building.** Hostile-site suite first (#373, every attack shown working against the old build); slice 0 (#374)
 and slice 1 (#378, origin gate, lists, settings) merged; slice 2 merged in parts (attacks 15 and 16 #392, parts 1b to 4b
 #410 to #583, part 5 #606 and #611; see "Where the build differs from this spec"); slices 3 and 4 not started (slice 3's
-two levels decided in #578). Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only when
+two levels decided in #578; its implementation reference, decided 2026-10-13, is
+[SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md)). Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only when
 the extension holds "on all sites"): this gates every site, whatever the browser's site-access setting is.
 
 ## The problem
@@ -178,6 +179,8 @@ and approval happens from the popup only.
 
 ### The self-approval whitelist (slice 3; DRAFT, wording for the owner to approve)
 
+Implementation reference and the decided wording: [SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md), sections 1.4, 1.6 and Q14.
+
 Agreed with the owner on 2026-10-06, after slice 1: the whitelist (`pageApprovalDomains`, "sites trusted to supply their
 own approval gate") gets the same treatment as the approved list, and an approved site may ask for it.
 
@@ -209,6 +212,9 @@ and asserts what a person sees after the upgrade.
 
 ### Two levels: using `window.ml`, and starting agents (slice 3; decided 2026-10-10, wording for the owner to approve)
 
+Implementation reference, the decided card wording and the 2026-10-13 decisions (budgets, page-turn attribution, page-hosted
+loops, navigation): [SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md).
+
 Approving a site lets it use `window.ml`: chat, models, fetch and the other primitives. Starting an AGENT is a
 separate level, because it is the most a page can do: a page-started run spends the person's model and budget, acts
 with their tools, and raises approval cards in the extension's own UI for a task the page wrote. A card asking to
@@ -216,16 +222,17 @@ fetch a bank statement looks the same whoever wrote the task.
 
 - **Two levels per approved origin:** "may use `window.ml`" and "may start agents". The second is off unless the
   person turns it on. Runs the PERSON starts are unaffected: the worker builds them and they work on any page.
-- **What the agent level gates:** START_RUN, RESUME_RUN and INJECT_MESSAGE (`RUN_CONTROL_TYPES` in
-  `src/page-relay.ts`), checked in the background from `sender`, like the origin gate. PAGE_CANCEL_RUN stays allowed:
-  a page may always stop its own run. Without the level, START_RUN resolves with a refusal sentence and nothing runs.
+- **What the agent level gates:** START_RUN, RESUME_RUN and INJECT_MESSAGE, a set of its own (`AGENT_LEVEL_TYPES`, to be
+  added to `src/page-relay.ts`; `RUN_CONTROL_TYPES` there also holds the cancel), checked in the background from
+  `sender`, like the origin gate. PAGE_CANCEL_RUN stays allowed: a page may always stop its own run. Without the level, START_RUN resolves with a refusal sentence and nothing runs.
 - **Every page-started agent asks to start, even with the level on.** A card in the extension's UI shows the origin
   verbatim, the task verbatim and labelled as the site's own words, the tools, the model and the step budget, and
   "started by this page, not by you". Allow once, always allow agents from this site, or deny. "Always" is today's
   behaviour, for a person running `ml.agent` from the console on their own page.
-- **One approval per session, not per turn.** A `createAgent` handle sends every turn as a new START_RUN for the same
-  run id; its later turns and INJECT_MESSAGE steering ride on the first approval. A RESUME_RUN of a settled run is
-  the same session, unless it asks for a step budget past the one approved, which asks again.
+- **One approval per session, not per turn.** A `createAgent` handle running in the worker sends every turn as a new
+  START_RUN for the same run id; its later turns and INJECT_MESSAGE steering ride on the first approval. A RESUME_RUN of
+  a settled run is the same session. The step budget is per turn; turns the page drives draw from a page turn budget
+  approved on the card and ask again past it (decided 2026-10-13, see the slice 3 reference).
 - **Nobody watching:** a start while the person is elsewhere shows as a pending card (and on the toolbar badge, as a
   pending access request does), never a silent start. Unanswered, it times out to deny.
 - **`requestAccess` asks for a level:** `ml.requestAccess({ agents: true, reason })` asks for both. The popup and
@@ -252,10 +259,21 @@ only partly met.
 
 ## Upgrading an existing install
 
-Out of scope for now: the only install is the author's. The one step kept is seeding the approved list from
-`pageApprovalDomains` on first start, because it is three lines and those sites are already trusted for more than
-this. If the extension ever has other users, the upgrade (what breaks for an existing userscript, and the notice
-that explains it) needs its own design and a fixture test, per the repo's rule on testing upgrades.
+Slice 1 kept one step: it implies approval for the `https://` origin of each host in `pageApprovalDomains`, read live,
+so those sites keep working. Since then the upgrade has been designed, and each part has a fixture test of what the old
+code stored, read by the new code, asserting what a person sees (the repo's rule on testing upgrades):
+
+- **Slice 2 (#606, #611, #625):** a tab hosting a run is judged by its own origin, not by an allowance. Upgrade tests
+  cover the former run-tab types and the hand-over.
+- **Slice 3, the two levels (#578):** an origin approved before the agent level keeps it, with start approval on, so
+  nothing breaks silently and the person meets the card on the first start.
+- **Slice 3, the self-approval list by origin:** each stored host becomes its `https://` origin on the default port,
+  with no loopback special case (#628). An `http://` origin or another port is added by the person, as its exact
+  origin; Settings lists the origins a bare entry no longer covers, each with an Add. The list moves from
+  `chrome.storage.sync` to `chrome.storage.local` (`ml_site_selfapprove`) and the old key is read once and left in
+  place. A self-approving origin gets agents "always".
+
+The migration, its fixture and the notice text are in [SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md), PR 1.
 
 ## Tests
 
@@ -349,10 +367,11 @@ wait is on a run finishing or a state change, never a timer.
    `injected.js` but every call is refused. Red-team enumeration tests.
 2. The run's events and the extension's own iframe out of the page's reach (built first: attacks 15 and 16).
    Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
-3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7. The agent level and start approval
+3. `requestAccess` (the full API's member), with the badge and popup entry. Tests 3 to 7. The agent level and start approval
    ([above](#two-levels-using-windowml-and-starting-agents-slice-3-decided-2026-10-10-wording-for-the-owner-to-approve)). The self-approval whitelist moves to
    origins, and an approved site may ask for it ([above](#the-self-approval-whitelist-slice-3-draft-wording-for-the-owner-to-approve)).
-4. Not injecting the full API on unapproved pages, and `use_dynamic_url`.
+4. The stub (`window.ml` with only `requestAccess`) and not injecting the full API on unapproved pages, and
+   `use_dynamic_url`.
 
 The README's security paragraph changes after slice 2, not before: until then a run on a page still lends it the
 API.

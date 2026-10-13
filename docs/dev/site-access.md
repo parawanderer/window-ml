@@ -1,6 +1,8 @@
 # Site access: which pages may use `window.ml`
 
 The design and its reasons are `docs/spec/SITE_ACCESS.md`. This is how the built parts work and where to change them.
+Slice 3 (`requestAccess`, the badge and popup, the self-approval list by origin, the agent level and its start card) is not
+built yet; its implementation reference is [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md).
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 
 ## The gate

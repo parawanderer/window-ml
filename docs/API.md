@@ -465,18 +465,25 @@ what page you're on:
   only fetches `docs.google.com` exports), and an inline-approval decision is
   accepted only from an **extension-origin** sender.
 
-But **`window.ml` lives in the page's *main world*** (that's the point — you call it
-from the console/userscripts). So **any page the extension is active on can call it,
-and a *hostile* page can manipulate it**: it can override `window.confirm` to defeat
-the approval prompt, forge the extension's internal page-side messages, or feed
-**prompt-injection** into an `ml.agent` run's context to steer the model. The
-approval gates and `window.ml`'s page-side behavior are human-in-the-loop consent
-against the *model's* proposals — they are **not** a defense against a malicious page,
-because the page owns that world.
+**Which sites may use `window.ml`.** A page can use `window.ml` only once you allow its site, from the toolbar
+button or in DevTools Settings → Permissions. Every call from any other page is refused by the background worker,
+whatever the browser's own site-access setting says. A site is one origin: `http://` and `https://`, and every
+port, are separate decisions. A site can be allowed for the browser session or always, and a denial is final until
+you lift it in Settings. Runs you start yourself (from the HUD, the chat page or the sidebar) work on any page,
+because the extension builds them, not the page; the page they are on is lent nothing. A site you list under
+"self-approval" may answer its own approval prompts, which is the strongest grant there is: add only a site you
+control. Not built yet: a site asking for access with `ml.requestAccess()`, and a separate permission for starting
+agents. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference for the
+remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
 
-**Practical guidance:** keep **Site access** on **"On click"** or a whitelist of
-**pages you trust** ([SETUP.md](SETUP.md), step 1), so `window.ml` only exists where you deliberately
-invoke it. Don't run `ml.agent` on a page you don't trust — a malicious page can
-prompt-inject the model or subvert the approval flow. The extension can't protect the
-main world from the page it's injected into; it can only protect your credentials and
-the privileged (background) operations, which it does.
+**What an allowed page still owns.** `window.ml` lives in the page's *main world* (that's the point: you call it
+from the console and userscripts), so a *hostile* page you have allowed can manipulate it: it can override
+`window.confirm` to defeat the approval prompt, forge the extension's internal page-side messages, or feed
+**prompt-injection** into an `ml.agent` run's context to steer the model. The approval gates and `window.ml`'s
+page-side behavior are human-in-the-loop consent against the *model's* proposals. They are **not** a defense
+against a malicious page you have allowed, because the page owns that world.
+
+**Practical guidance:** allow only sites you trust. Don't run `ml.agent` on a page you don't trust: a malicious
+page can prompt-inject the model or subvert the approval flow. The extension can't protect the main world from the
+page it's injected into; it can only protect your credentials and the privileged (background) operations, which it
+does.
