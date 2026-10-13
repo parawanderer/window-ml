@@ -52,7 +52,7 @@ function geometry(g) {
  * `navigate` call moves the tab to its `url`: the page answers it, then the browser commits the new document and, unless
  * `readopt` is false, the destination re-adopts the run. `page(payload)` plays the page for any other tool call.
  */
-async function run({ calls, page = () => undefined, readopt = true, onNavigated = async () => {}, onStart = () => {}, tools = ["navigate", "look", "scroll"], local = { ml_site_always: ["https://builder.example", "https://friend.example"] }, session = {}, config = {}, payload = {}, answer = "done" }) {
+async function run({ calls, page = () => undefined, readopt = true, onNavigated = async () => {}, onStart = () => {}, tools = ["navigate", "look", "scroll"], local = { ml_site_always: ["https://builder.example", "https://friend.example"] }, session = {}, config = {}, payload = {}, answer = "done", idb, onPyRun }) {
     const tab = { id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" };
     const driverBodies = [], subs = [], adopts = [];
     let bg, docN = 1;
@@ -68,7 +68,7 @@ async function run({ calls, page = () => undefined, readopt = true, onNavigated 
     };
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", ocrModel: "reader-vl", debugMode: "off", cdp: false, ...config },
-        siteGate: true, local, session,
+        siteGate: true, local, session, indexedDB: idb, onPyRun,
         openTabs: [tab],
         onCaptureTab: async () => png(1024, 768),
         onFetch: async (call) => {
@@ -881,4 +881,31 @@ test("the vm's chrome.storage.local hands out and keeps copies on every read and
     written.n = 99; written.list.push("mutated");
     assert.deepEqual(plain(bg.localStore.ml_probe), { n: 1, list: ["a"] }, "a read's object is not the stored one");
     assert.deepEqual(plain(bg.localStore.ml_written), { n: 2, list: ["b"] }, "a write's object is not the stored one");
+});
+
+// --- a handed-over run's stored values ---
+
+test("control: a page-built run handed to the worker keeps the stored value it held from its page: its python_exec, the worker's now, reads it", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
+    const idb = new IDBFactory();
+    const store = new ValueStore({ idb, budgetBytes: () => 1e9 });
+    // What the builder page's own fetch stored and disclosed to its tab (sw-fetch-url.ts).
+    const { key } = await store.put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "page:7" });
+    const w = await run({
+        idb, tools: ["navigate", "probe", "python_exec"], payload: { toolTokens: true },
+        calls: [
+            { name: "probe", args: { token: "orders" } },
+            { name: "navigate", args: { url: UNAPPROVED } },
+            { name: "python_exec", args: { code: "df", tables: { df: '@tool:"orders"' } } },
+        ],
+        page: (p) => (p.name === "probe" ? { result: "ran", renderOut: { type: "table", columns: ["a"], rows: [[1]], rowCount: 2, value: key } } : undefined),
+        onPyRun: (m) => (m.type === "PY_RUN" ? { ok: true, stdout: "", value: null } : { ok: true, prewarm: "started" }),
+    });
+    assert.equal(w.driverBodies.length, 4, JSON.stringify(w.results()));
+    assert.deepEqual((await w.log()).filter((r) => r.kind === "handed-to-worker").map((r) => r.reason), ["navigated-to-unapproved-site"]);
+    assert.ok(!w.calls().some((p) => p.name === "python_exec"), "the python_exec ran in the worker, not on the unapproved page");
+    assert.deepEqual((await store.rows()).find((r) => r.key === key)?.sessions, ["page-run"], "the run's claim outlived the page's, which went with its document");
+    const handed = w.bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => JSON.stringify(m.tables ?? []));
+    assert.ok(handed.some((t) => t.includes(key)), `the worker's sandbox was handed the run's stored value: ${handed} / ${w.results().at(-1)}`);
 });

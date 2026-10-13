@@ -131,6 +131,17 @@ test("store: a claim with a `may` is taken only when it allows the holders as th
     assert.deepEqual(seen, [["other"], []]);
 });
 
+test("store: two sessions racing to claim one unheld value under `may` = 'nobody holds it': exactly one gets it", async () => {
+    const { store } = makeStore({ budget: 10_000 });
+    for (let i = 0; i < 20; i++) {
+        const { key } = await store.put(blob(10), { format: "csv" });
+        const may = (holders) => !holders.length;
+        const won = await Promise.all(["a", "b", "c"].map((s) => store.claim(key, s, may)));
+        assert.equal(won.filter(Boolean).length, 1, `round ${i}: ${won}`);
+        assert.equal((await store.get(key)).row.sessions.length, 1, "the predicate saw the holders the write was made over");
+    }
+});
+
 test("store: the sweep takes idle orphans and forgets tombstones after a week", async () => {
     const { store, evicted, tick } = makeStore({ budget: 10_000 });
     const orphan = await store.put(blob(10), { format: "text" });
