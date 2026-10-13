@@ -372,6 +372,10 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
   (`page-relay.ts`) from an unapproved origin, reading `sender`, never anything the page says; a run the USER starts is
   built by the worker and works on any page. → site-access.md
 
+- **An error's text never carries the server URL, the API key or the model filter to a page or the model**: every
+  answer to a page-started message, the stream port's error, and every tool result a worker-hosted run's model reads
+  go through `sw-scrub.ts`; only extension pages and the run log's `key` keep the raw text. → site-access.md
+
 - **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`, or
   the page is not approved (`exec-routing.ts`): never hand either to the page's main world. → site-access.md
 

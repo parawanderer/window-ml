@@ -58,6 +58,9 @@ export interface RunAgentHostDeps {
     // `onStream` (opt-in streaming) is forwarded to the PAGE tool as its ctx.stream, so live output
     // (console.log / print) streams back while the delegated tool runs. Omitted → no live output.
     delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void): Promise<ToolRunResult>;
+    /** A tool result as the model may read it: the host's one crossing into model context for every result a tool
+     *  run, a read-only try or a precheck returns (sw-scrub.ts takes the config's secrets out). Omitted → the result unchanged. */
+    forModel?(name: string, result: string): Promise<string>;
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
@@ -155,14 +158,23 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         });
     };
 
+    /** The result as the model reads it, through `deps.forModel`; the loop, its log and its pointers all see this one. */
+    const modelSafe = async (name: string, r: ToolRunResult): Promise<ToolRunResult> =>
+        deps.forModel && typeof r?.result === "string" ? { ...r, result: await deps.forModel(name, r.result) } : r;
     const loopDeps: AgentLoopDeps = {
         callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step, ...(o.after ? { after: o.after } : {}) }),
         // Live tool output on the background path: `onStream` rides to the PAGE tool as its ctx.stream
         // (RUN_TOOL_IN_PAGE `stream` → the page posts PAGE_TOOL_STREAM chunks back, correlated by runId).
-        runTool: (name, args, onStream) => deps.delegateTool(name, args, onStream),
-        tryReadonly: deps.tryReadonly,
+        runTool: async (name, args, onStream) => modelSafe(name, await deps.delegateTool(name, args, onStream)),
+        tryReadonly: deps.tryReadonly ? async (name, args, live) => {
+            const r = await deps.tryReadonly!(name, args, live);
+            return r ? modelSafe(name, r) : r;
+        } : undefined,
         renderFor: deps.renderFor,
-        precheck: deps.precheck,
+        precheck: deps.precheck ? async (name, args) => {
+            const r = await deps.precheck!(name, args);
+            return r && deps.forModel ? deps.forModel(name, r) : r;
+        } : undefined,
         approve: deps.approve,
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
         // (friction, never less safety — see auto-approve.ts).

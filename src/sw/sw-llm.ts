@@ -1265,10 +1265,11 @@ export async function setModel(model: unknown): Promise<string> {
         throw new Error("setModel expects a model id string.");
     }
     const { ids } = await listAvailableModels();
-    if (!ids.includes(model)) {
-        throw new Error(`Unknown model "${model}". Available: ${ids.join(", ")}`);
-    }
     const config = await getConfig();
+    if (!ids.includes(model)) {
+        // Only the models the filter lets through: the rest are what LIST_MODELS hides from a page.
+        throw new Error(`Unknown model "${model}". Available: ${ids.filter((id) => modelFilterAllows(id, config.modelFilter)).join(", ")}`);
+    }
     if (!modelFilterAllows(model, config.modelFilter)) {
         throw new Error(`Model "${model}" is blocked by the model filter (/${config.modelFilter}/). Pick a matching model, or change the filter in the extension settings.`);
     }

@@ -23,6 +23,18 @@ sheet, a server tool, a shadow resolve, the config); every one of those tools no
 only for plain data about itself (below), so a run's page sends nothing for it. A run on a local `file:` page needs
 nothing either.
 
+**An error a page or the model reads names no secret of the config.** The worker's errors are written for the person
+("Couldn't reach the server at <url>", "HTTP 500 from <url>: <body>", "blocked by the model filter (/<regex>/)"), and
+`GET_CONFIG` withholding the URL, the key and the filter meant nothing while those reached the page as `{ error }`. The
+rule is in one place, `src/secret-scrub.ts` (`secretsOf`: the chat URL as configured, its origin and its host, the price
+service's URL, the key, the filter), applied at the two crossings by `src/sw/sw-scrub.ts`: `forPage` on every answer
+to a page-started message and on the stream port's error (every `error` string at any depth; a data field is the
+handler's answer and is left alone), and `forModel` on every result a worker-hosted run's tool, read-only try or
+precheck hands its model (`forModel` in `agent-host.ts`), which records the raw text in the execution log's `key`
+(`tool`/`scrubbed`). Extension pages (the popup, the DevTools panel, Settings) are answered unscrubbed: they are where
+a person diagnoses a wrong URL. `SET_MODEL`'s unknown-model error lists only the models the filter allows.
+`tests/error-scrub.test.mjs` walks every page-started type under each backend failure.
+
 **A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
 on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only while the sender's tab is the one its
 window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a
