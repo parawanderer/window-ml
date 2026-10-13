@@ -24,6 +24,12 @@ it would make if it started again.
 - **One environment.** `notebooks/pyproject.toml` with a committed `uv.lock`; `node scripts/nb.mjs setup` builds the
   root `.venv` (the kernel VS Code offers). Add a dependency there, never with `uv pip install`. The standard set is
   pandas, numpy, scipy and matplotlib; SQLite is read with `wmlnb.open_ro`, which is safe while a sweep writes.
+- **Sweeps and the store.** `wmlnb.find_sweep(name)` finds a sweep's folder in this checkout, in `bench-pool/`, or in
+  a sibling `window-ml*` clone, never a hard-coded path. `wmlnb.store()` opens the bench store on mlbox
+  (`tests/e2e/bench/sync.mjs`) as DuckDB with the store's own `views.sql` loaded (`scores`, `calls`,
+  `price_snapshots`, `box_frames`, one row per key); query those views inside `extract`, never `read_parquet` over
+  the objects, which can hold a row twice. It reads `BENCH_STORE_*` from `.env`; its errors never name the endpoint or
+  key, and a notebook must not print them either. `store-tour.ipynb` is the pattern.
 - **Plot from the extract**, so a plot can always be redrawn; keep large images out.
 
 ## What the check does not do

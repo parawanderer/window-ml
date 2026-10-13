@@ -1,0 +1,86 @@
+{
+  "commit": "71f0d3258b72c7351dc8bbea371950bd00088749",
+  "extracted_at": "2026-10-13T21:32:13+00:00",
+  "rows": [
+    {
+      "run_dirs": 10,
+      "sweep": "cuts2-pilot"
+    },
+    {
+      "run_dirs": 32,
+      "sweep": "cuts2-python-fix"
+    },
+    {
+      "run_dirs": 32,
+      "sweep": "cuts2-python-fix-glm"
+    },
+    {
+      "run_dirs": 193,
+      "sweep": "cuts2-recheck2"
+    },
+    {
+      "run_dirs": 1,
+      "sweep": "panel-environment"
+    },
+    {
+      "run_dirs": 5,
+      "sweep": "panel-environment-after"
+    },
+    {
+      "run_dirs": 1,
+      "sweep": "panel-environment-debrief"
+    },
+    {
+      "run_dirs": 8,
+      "sweep": "panel-environment-panel"
+    },
+    {
+      "run_dirs": 8,
+      "sweep": "panel-shell-shapes"
+    },
+    {
+      "run_dirs": 264,
+      "sweep": "prompt-budget-cuts2"
+    },
+    {
+      "run_dirs": 343,
+      "sweep": "prompt-budget-tool-details"
+    },
+    {
+      "run_dirs": 18,
+      "sweep": "smoke"
+    },
+    {
+      "run_dirs": 48,
+      "sweep": "tool-details-findout"
+    },
+    {
+      "run_dirs": 9,
+      "sweep": "tool-details-navdebrief"
+    },
+    {
+      "run_dirs": 144,
+      "sweep": "tool-details-navfix"
+    },
+    {
+      "run_dirs": 10,
+      "sweep": "tool-details-pilot"
+    },
+    {
+      "run_dirs": 49,
+      "sweep": "tool-details-pilot2"
+    },
+    {
+      "run_dirs": 330,
+      "sweep": "tool-details-v2"
+    },
+    {
+      "run_dirs": 1,
+      "sweep": "watch-check"
+    }
+  ],
+  "source": {
+    "glob": "traces/**/cell.json",
+    "store": "bench store (sync.mjs)"
+  }
+}

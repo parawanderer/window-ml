@@ -15,6 +15,9 @@ NB_REFRESH=1 node scripts/nb.mjs run …                   # re-extract the pinn
 node scripts/check-notebooks.mjs                         # what the hook and CI check
 ```
 
+Inputs: `wmlnb.find_sweep(name)` for a sweep's folder (any clone), `wmlnb.store()` for the bench store on mlbox as
+DuckDB (views `scores`, `calls`, `price_snapshots`, `box_frames`; pattern: `notebooks/bench/make-store-tour.py`).
+
 A new notebook: copy `notebooks/bench/make-prompt-cuts2.py` as the pattern (a markdown cell with the question, a
 setup cell, `wmlnb.extract` for the rows, then one cell per table), add a line for it to the folder's README, run
 `make`, and commit the generator, the `.ipynb` and its `data/<name>/` together. Edit the generator, never the notebook.

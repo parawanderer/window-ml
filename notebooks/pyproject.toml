@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "ipykernel", "nbclient", "nbconvert", "nbformat",
     "numpy", "pandas", "scipy", "matplotlib",
+    "duckdb",
 ]
 
 [build-system]
