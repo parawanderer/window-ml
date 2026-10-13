@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
 const { PAGE_STARTED_TYPES } = await import("../src/page-relay.ts");
 const { scrubSecrets, secretsOf, scrubErrors } = await import("../src/secret-scrub.ts");
+const { runAgentLoop } = await import("../src/agent/agent-loop.ts");
 
 const T = { timeout: 30000 };
 const URL_ = "http://secret-box.example:4123/api/chat/completions";
@@ -186,4 +187,40 @@ test("control: the run's execution log keeps the raw text for the person, in its
     const scrubbed = (log?.data?.events ?? []).filter((r) => r.kind === "scrubbed");
     assert.ok(scrubbed.length, `a scrubbed record was written: ${JSON.stringify(log).slice(0, 400)}`);
     assert.ok(scrubbed.some((r) => (r.key ?? "").includes(URL_)), "its key holds the real URL");
+});
+
+// --- the model: every way a step of the shared loop produces text goes through forModel once ---
+
+test("loop: whatever a step produced (a result, a throw, a read-only try, a precheck, a gate that threw, a denial), the model, transcript and log read it through forModel", async () => {
+    const secret = `HTTP 500 from ${URL_}`;
+    const boom = () => { throw new Error(secret); };
+    const danger = { name: "danger", requiresApproval: true };
+    const cases = {
+        run: { runTool: async () => ({ result: secret }) },
+        "run throws": { runTool: async () => boom() },
+        readonly: { tryReadonly: async () => ({ result: secret }) },
+        precheck: { precheck: async () => secret },
+        "approve throws": { approve: async () => boom() },
+        denied: { approve: async () => ({ approved: false, feedback: secret }) },
+    };
+    for (const [name, over] of Object.entries(cases)) {
+        let turn = 0;
+        const pushed = [], emitted = [], scrubbed = [];
+        const deps = {
+            callModel: async () => (turn++ === 0 ? { content: "", tool_calls: [{ id: "c1", name: "danger", arguments: {} }] } : { content: "done", tool_calls: [] }),
+            runTool: async () => ({ result: "ok" }),
+            approve: async () => true,
+            autoApprove: () => null,
+            buildMessages: (task) => [{ role: "user", content: task }],
+            pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+            pushToolResult: (m, call, result) => { pushed.push(result); m.push({ role: "tool", tool_call_id: call.id, content: result }); },
+            emit: (ev) => { if (ev.result != null) emitted.push(ev.result); },
+            forModel: async (tool, text) => { scrubbed.push(tool); return scrubSecrets(text, secretsOf(config)); },
+            ...over,
+        };
+        const res = await runAgentLoop("x", { tools: [danger] }, deps);
+        assert.deepEqual(scrubbed, ["danger"], `${name}: one crossing per step`);
+        assert.deepEqual(leaksIn([pushed, emitted, res.transcript]), [], `${name}: ${JSON.stringify(pushed)}`);
+        assert.match(pushed[0], /\[server\]/, `${name}: the model read the scrubbed text`);
+    }
 });
