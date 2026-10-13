@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { signV4 } from "../tests/e2e/bench/s3.mjs";
-import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S } from "../tests/e2e/bench/sync.mjs";
+import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S, isLooseRun, looseDirs } from "../tests/e2e/bench/sync.mjs";
 import { openScores, logRuns, readRuns } from "../tests/e2e/bench/scores.mjs";
 import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
 
@@ -201,7 +201,7 @@ test("every push sends everything pending: each sweep's missing runs, and a swee
     assert.equal(first.runs, 2, "both sweeps' runs, from one push");
     const puts = [];
     const watched = { ...store(), put: async (k, body, t) => { puts.push(k); return store().put(k, body, t); } };
-    assert.deepEqual(await push(watched, { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: both }), { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0, files: 0 });
+    assert.deepEqual(await push(watched, { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: both }), { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0, files: 0, loose: 0 });
     assert.deepEqual(puts.filter((k) => k.startsWith("traces/")), [], "nothing unchanged is sent again: not a run, not a report");
     writeFileSync(path.join(a.dir, "marks.jsonl"), JSON.stringify({ line: "wrong", by: "shane" }) + "\n");
     const st = await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root: a.root });
@@ -214,6 +214,40 @@ test("every push sends everything pending: each sweep's missing runs, and a swee
     puts.length = 0;
     assert.equal((await push(watched, { clone: "main", scoresDb: "/x", boxDb: "/x", sweeps: both })).files, 0);
     assert.deepEqual(puts.filter((k) => k.startsWith("traces/")), []);
+});
+
+// --- loose runs ---
+
+/** An artifacts directory as the other harnesses leave it: observe/converse runs, an old panel, a demo, the bench's own. */
+function artifacts() {
+    const root = tmp();
+    const put = (rel, body = "x") => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), body); };
+    put("talk-qwen/events.json", "[]"); put("talk-qwen/run.md", "# run"); put("talk-qwen/outbox/turn-1.md", "# Turn 1");
+    put("panel-old-123/deepseek.deepseek-flash/run.json", "{}"); put("panel-old-123/summary.md", "# summary");
+    put("table-demo/1-csv-head.png", "png");                       // screenshots only: a demo, not a run
+    put("private-site/events.json", "[]"); put("private-site/.nosync", "");
+    put("bench/s/sweeps.jsonl", "{}"); put("builds/abc/x.js", "js"); put("bench-pool/scores.sqlite", "db");
+    return root;
+}
+
+test("a loose run is a directory holding a session's events or export, or one per model; a demo, a .nosync and the bench's own are not", async () => {
+    const root = artifacts();
+    assert.deepEqual((await looseDirs(root)).map((d) => path.basename(d)), ["panel-old-123", "talk-qwen"]);
+    assert.equal(isLooseRun(path.join(root, "private-site")), false, ".nosync keeps it here");
+});
+
+test("every push sends the loose runs under loose/<clone>/<dir>/, each file once, a changed file again; a sweep-only push sends none", async () => {
+    objects.clear();
+    const root = artifacts(), loose = await looseDirs(root);
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [] })).loose, 0, "narrowed to some sweeps: no loose runs");
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [], loose })).loose, 5);
+    assert.ok(objects.has("loose/a/talk-qwen/outbox/turn-1.md") && objects.has("loose/a/panel-old-123/deepseek.deepseek-flash/run.json"));
+    assert.ok(![...objects.keys()].some((k) => /table-demo|private-site|builds|bench-pool/.test(k)), "nothing that is not a run, nothing marked .nosync");
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [], loose })).loose, 0, "unchanged: nothing again");
+    writeFileSync(path.join(root, "talk-qwen/outbox/turn-2.md"), "# Turn 2");
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [], loose })).loose, 1, "a later turn goes alone");
+    const st = await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root: path.join(root, "bench"), looseRoot: root });
+    assert.deepEqual(st.loose.map((l) => [path.basename(l.dir), l.missing]), [["panel-old-123", 0], ["talk-qwen", 0]]);
 });
 
 test("each push's outcome is recorded for this clone, a failure saying what to run; the next push makes it good", async () => {

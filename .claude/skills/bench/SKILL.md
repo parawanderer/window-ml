@@ -116,8 +116,10 @@ once: the box has one generation slot per model, so they take turns.
 
 **The bench store pools results off the laptop (`sync.mjs`), opt-in.** With `BENCH_STORE_URL`, `BENCH_STORE_KEY_ID` and
 `BENCH_STORE_SECRET` in `.env`, a sweep ends by pushing EVERYTHING pending (every log's new rows, every sweep's runs the
-store lacks, every sweep file changed since, such as a mark added on the page later), so a push that failed is made good
-by the next. `--no-sync` and `--only-db` keep that sweep's run directories on this machine for good (recorded in its
+store lacks, every sweep file changed since, such as a mark added on the page later, and every LOOSE RUN: a directory
+under `tests/e2e/artifacts/` another harness left with a session's `events.json`/`run.json` in it, such as observe,
+converse or an old `panel-*`, sent as-is under `loose/<clone>/<dir>/`; a `.nosync` file in it keeps it here), so a push
+that failed is made good by the next. `--no-sync` and `--only-db` keep that sweep's run directories on this machine for good (recorded in its
 page.json, so no later push sends them), as `sync: false` on a spec or a task does: screenshots, page text, logged-in
 pages included. A run against the fake LLM never goes (`isFake`), so a throwaway check needs no flag. Each push's outcome
 is kept in `~/.cache/window-ml-bench/last-push-<clone>.json`; a failed one is printed at a sweep's end and by `status`.
