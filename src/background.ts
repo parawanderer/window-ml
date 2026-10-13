@@ -45,6 +45,7 @@ import { pageRebuild } from "./agent/run-assembly";
 import { PAGE_STARTED_TYPES } from "./page-relay";
 import { originOf, type SiteEdit } from "./site-access";
 import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/sw-site-access";
+import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
@@ -221,9 +222,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
     void pageRefusal(message.type, sender).then((refusal) => {
         if (refusal) { sendResponse({ error: refusal }); return; }
-        // An async handler keeps the channel itself; a fire-and-forget one never answers, so close it here (a second
-        // sendResponse after a handler's own is ignored by the browser).
-        if (route(message, sender, sendResponse) !== true) sendResponse(undefined);
+        // Every answer to a page goes through `forPage`: an error's text never carries the server's URL, the key or the
+        // model filter (sw-scrub.ts). The person's own surfaces are extension pages and take the branch above.
+        let answered = false;
+        const toPage = (r?: unknown): void => { answered = true; void forPage(r).then(sendResponse); };
+        // An async handler keeps the channel itself; a fire-and-forget one never answers, so close it here.
+        if (route(message, sender, toPage) !== true && !answered) sendResponse(undefined);
     });
     return true;
 });
@@ -1076,7 +1080,12 @@ chrome.runtime.onConnect.addListener((port) => {
         if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
         streamLLM(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal)
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
-            .catch((err) => { if (!closed) port.postMessage({ type: "error", error: err.message }); });
+            .catch((err) => {
+                const error = String(err?.message || err);
+                // A content script's port answers a page; an extension page's is the person's (sw-scrub.ts).
+                void (port.sender?.tab && !isExtensionSender(port.sender) ? forPage({ error }) : Promise.resolve({ error }))
+                    .then((r) => { if (!closed) port.postMessage({ type: "error", error: r.error }); });
+            });
     });
 });
 

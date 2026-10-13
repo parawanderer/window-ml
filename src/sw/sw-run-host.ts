@@ -7,6 +7,7 @@ import { runBackgroundAgent } from "../agent/agent-host";
 import { evalReadonlyInWorker } from "./sw-readonly";
 import { workerReadonlyMl } from "./worker-readonly-ml";
 import { recordRunLog, runLog } from "./sw-run-log";
+import { forModel, forModelHistory } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -526,6 +527,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             return { ...got, documentId: doc };
         }, (doc, selector, index, media) => workerAnswerMedia(runId, tabId, doc, selector, index, media));
     }
+    let historyScrubbed = false;   // the resumed history has crossed `forModel` (callModel's first call)
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
@@ -533,6 +535,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
           ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },
         {
             callModel: async (messages, opts) => {
+                // A resumed history was written before this run, perhaps before the scrub or under another config: its
+                // tool results reach the model again here, so they cross `forModel` too, once, in place (and are stored so).
+                if (!historyScrubbed) { historyScrubbed = true; if (resumeMessages?.length) await forModelHistory(messages); }
                 // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                 const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
                 // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
@@ -570,6 +575,13 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 }
                 const r = await fetchLLM({ messages, tools: toolDefs, model: modelNow(), think: p.think, raw: true, hint }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
+            },
+            // Every result crosses into the model's context here, without the config's secrets; the text as the tool
+            // wrote it goes to the execution log's `key`, which the person reads and the model never does.
+            forModel: async (name, result) => {
+                const r = await forModel(result);
+                if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: "config-secret", key: result, detail: { tool: name } });
+                return r.text;
             },
             // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
             // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.

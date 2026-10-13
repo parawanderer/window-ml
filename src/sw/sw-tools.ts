@@ -8,6 +8,7 @@
 //
 // Contract: docs/spec/REMOTE_TOOL_EXECUTION.md. Endpoint: parawanderer/open-webui, ml/tool-execute-api.
 import { getConfig, authHeaders } from "./sw-llm";
+import { clipClear, secretsOf } from "../secret-scrub";
 import { createToolStream, type ToolFrame, type ToolStreamEnd } from "../tool-protocol";
 
 export interface ServerToolCall {
@@ -55,7 +56,7 @@ export async function executeServerTool({ toolId, name, args, onFrame, signal }:
         const body = await res.text().catch(() => "");
         return {
             ok: false,
-            transportError: `the tool endpoint returned ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+            transportError: `the tool endpoint returned ${res.status}${body ? `: ${clipClear(body, 300, secretsOf(config))}` : ""}`,
             state: stream.state(),
         };
     }

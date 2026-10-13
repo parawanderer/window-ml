@@ -112,6 +112,10 @@ export interface AgentLoopDeps {
      *  decides whether to ask, into asking). Told so the host can record it (the worker's execution log); never asked
      *  for a decision. Not called for a throw while the run is cancelled, which still ends the run. */
     toolThrew?(name: string, phase: ToolThrowPhase, error: unknown): void;
+    /** A step's result as the model will read it, applied once to whatever the step produced (a tool's answer, a
+     *  read-only try, a precheck, a thrown dispatch, a denial) before the transcript, the log, pointers or the model see
+     *  it: the worker's one crossing into model context (sw-scrub.ts). Omitted → the result unchanged. */
+    forModel?(name: string, result: string): Promise<string>;
 }
 
 /** Where in a tool call's dispatch a throw happened: the read-only try, the auto-approve decision, the doomed-action
@@ -949,6 +953,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             }
             fan?.done();   // the tool finished — stop any trailing live emit; the DONE below carries the full result
             result = String(result);
+            if (deps.forModel) {
+                try { result = String(await deps.forModel(call.name, result)); }
+                catch { result = `Error: the "${call.name}" call's result could not be checked before you read it, so it is withheld.`; }
+            }
             const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
             // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated
             // path). They reach the caller's res.transcript / onStep, never the model.
