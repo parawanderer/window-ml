@@ -142,6 +142,38 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
   running code. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
 
+## The API's shape: borrowed, not invented
+
+The calls above are illustrative. The SHAPE should be one models already know, executed differently underneath: the
+Snowpark move, which kept PySpark's DataFrame API while running it in Snowflake over HTTP. Popular wrappers to borrow
+from (to confirm against their docs when this is built):
+
+| Language | Library | Shape | Underneath |
+| --- | --- | --- | --- |
+| JS | execa | `execa("git", ["diff", "--stat"])`; a `$` template since v8 | no shell by default: argv |
+| JS | zx (Google) | `` await $`git diff ${ref}` `` with interpolations escaped | runs through bash |
+| JS | Bun Shell, dax (Deno) | `` $`…` `` templates | their own shell-like parser, no `/bin/sh` |
+| Python | `sh` | `sh.git.diff("HEAD~1", stat=True)`, `_cwd=`, `_env=`, `_ok_code=` | argv |
+| Python | plumbum | `local["git"]["diff"]`, pipes as `ls["-a"] \| grep["py"]` | argv, pipes between processes, no shell |
+| Python | `subprocess` | `subprocess.run(["git", "diff"], capture_output=True, text=True)` | argv unless `shell=True` |
+
+What the borrowing gives and where it stops:
+
+- **The template form is argv-safe without a shell**: a tagged template hands over its static parts and its
+  interpolations separately, so `${ref}` is always ONE argument, never re-split or interpreted. The static parts are
+  split on whitespace only; a shell metacharacter in them (`|`, `>`, `;`, `$(`, a glob) is refused with a steer to the
+  explicit form (`.pipe()`, `stdoutTo:`, `ml.sh.glob`), never passed on. (The read-only dialect has no tagged templates
+  today; adding them is a dialect change, with its adversarial tests.)
+- **Python can keep `subprocess`**: a shim module in Pyodide whose `run`/`check_output` take the argv forms and call
+  `ml.sh`, and refuse `shell=True` with a steer. Models write `subprocess.run([...])` more than anything else, so this
+  may matter more than any sugar.
+- **Where a borrowed shape implies a shell, ours does not.** zx's default bash, `sh`'s `_bg` and TTY options, and a
+  global `cd()` that mutates process state are not copied; the session's `cwd` is data.
+- **Compatible results have a size limit.** `CompletedProcess.stdout` is a string in Python; ours is a pointer held at the
+  host. A compatible object materialises output up to a cap and says plainly when it stopped, pointing at the pointer.
+- **Which shapes to offer is measured, not chosen**: the panel and bench step above runs each candidate against a mock
+  host that records calls, and keeps the ones models write correctly.
+
 ## Approval
 
 Three tiers, decided per CALL, on the final argv:
@@ -210,7 +242,8 @@ reaches outside the dialect is **no opinion**, so the call asks: a broken policy
 **What it decides, and what it cannot.**
 
 - A policy answers `allow`, `deny`, or nothing. `deny` wins over `allow` across policies; nothing means the tiers above
-  decide.
+  decide. **"Always reject" is a policy like any other** (Shane, 2026-10-13): a call it matches is refused without a
+  card, and the model is told which policy refused it, so it can stop trying rather than rephrase.
 - It changes only **whether the person is asked**, never what is enforced: the container, the OS sandbox and the
   workspace roots bound the call whatever a policy says.
 - It never reaches the refused tier: a call from a page, or `ml.sh` from the page's world, is refused before any policy
@@ -228,10 +261,28 @@ person's choice). A policy can lean on the manifest's facts (`c.effects`) so it 
 | --- | --- | --- |
 | global | the person, in DevTools Settings | until removed |
 | workspace | the person, for one set of roots | with the workspace |
-| run | the person: at the start, or from an approval card ("calls like this, for this run") | until the run ends |
+| run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session: it **survives a resume** (decided 2026-10-13), and is listed with it until removed |
 
 The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
 a page never can. A policy reached over the hub is set by a principal holding `approve`.
+
+**One page lists every policy**, global, workspace and each session's, one line per policy (Shane, 2026-10-13). Each
+line can be edited or deleted on its own, which is the reason for building policies from typed nodes: a line is a
+readable sentence, not a blob of code to diff. Global (persistent) policies are edited there the same way as a run's.
+The model can PROPOSE removing several at once ("these five no longer match anything this session does"), as one card
+the person confirms; removing narrows what runs without asking, so it cannot escalate, but it is still the person's
+list.
+
+**A change takes effect at once**, on every call not yet spawned:
+
+- **A removed `allow`** turns the calls it covered back into asking (or refused, when an `always reject` now matches).
+  A call is judged at the moment it is spawned, so a script mid-loop meets the change on its next call.
+- **A process already running is not killed** by a removal: the decision was right when it was made. The person can
+  cancel it, as any running call.
+- **A card already showing** is re-judged when a policy changes: a new `allow` answers it, a new `always reject`
+  refuses it, and the card closes saying why.
+- **A run that relied on a policy is told** when its next call meets the change: the result says the call now needs the
+  person (or was refused) because the policy that covered it was removed, not that the call itself changed.
 
 **Showing what was approved.** This is the open point the grant-policy idea raised ("a tree, not a string": a predicate
 cannot be explained back faithfully). The rule here: a policy the person WROTE is shown as the code they wrote. A policy
@@ -317,8 +368,7 @@ and one host per machine does not have the hub's problem.
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
-- **Policies across a resume**: whether a run policy survives a resumed session (it changes what the resumed run may do
-  without asking).
+- **Policies and a forked session**: whether a fork inherits its parent's run policies (a resume does).
 - **Resolve, then run**: the host resolves paths for the decision and then spawns; a symlink swapped between the two is
   a race. The OS sandbox bounds it in host mode; a container bounds it by construction.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
