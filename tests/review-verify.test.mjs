@@ -57,7 +57,8 @@ function honestGeometry(g, state) {
 
 /** tests/worker-verify.test.mjs's `run`, with a second tab in the window (`OTHER`) and fresh tab objects per run. */
 async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = {}, builtBy = "worker", reader = "It changed.", geometry = honestGeometry, builderUrl = SITE0.url } = {}) {
-    const SITE = { ...SITE0 }, OTHER = { ...OTHER0 };
+    // A page-built run's tab shows its builder's page until the test moves it (`page`'s fourth argument).
+    const SITE = { ...SITE0, ...(builtBy === "page" ? { url: builderUrl } : {}) }, OTHER = { ...OTHER0 };
     const driverBodies = [], subs = [];
     let bg;
     let n = 0;
@@ -85,7 +86,7 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
             if (p.geometry) return { result: "", geometry: { seq: p.geometry.seq, reply: geometry(p.geometry, state) } };
             if (p.finish) return { result: "" };
             if (p.renderOnly || p.precheck) return { result: "" };
-            const r = await page(p, n++, bg);
+            const r = await page(p, n++, bg, SITE);
             return r !== undefined ? r : { result: `ran ${p.name}` };
         },
     });
@@ -284,8 +285,8 @@ test("a click that opens a new foreground tab before its verify: no capture of t
 
 test("a reply that arrives after a mid-call hand-over cannot carry the page's picture or spend into the now-worker run", T, async () => {
     const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", calls: [{ name: "scroll", args: {} }, { name: "click", args: { selector: "#save", verify: true } }],
-        page: async (p, n, bg) => {
-            if (n === 0) { await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "take over" }); return { result: "Scrolled.", ...FORGERY }; }
+        page: async (p, n, bg, tab) => {
+            if (n === 0) { tab.url = SITE0.url; await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "take over" }); return { result: "Scrolled.", ...FORGERY }; }
             return { result: "Clicked.", verifyRequest: { kind: "area", center: { x: 100, y: 25 } } };
         } });
     const [scroll, click] = w.runCalls().filter((p) => (p.name === "scroll" || p.name === "click") && !p.renderOnly && !p.precheck);
@@ -298,8 +299,9 @@ test("a reply that arrives after a mid-call hand-over cannot carry the page's pi
 test("a page's own model call during a handed-over run's first turn cannot be filed under the run", T, async () => {
     let hint;
     const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", calls: [{ name: "scroll", args: {} }, { name: "click", args: { selector: "#save", verify: true } }],
-        page: async (p, n, bg) => {
+        page: async (p, n, bg, tab) => {
             if (n !== 0) return { result: "Clicked.", verifyRequest: { kind: "area", center: { x: 100, y: 25 } } };
+            tab.url = SITE0.url;   // the run's page left its builder's site
             await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "take over" });
             await pageChat(bg, `wml-${p.runId}`);
             return { result: "Scrolled." };

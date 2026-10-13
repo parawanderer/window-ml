@@ -506,6 +506,16 @@ Recorded as each slice lands, with the reason.
   - Untested against a real browser: how `userScripts.execute` reports a script that does not parse (handled as
     "no result": a probe of a start marker decides whether to try the body form, so a script is never run twice).
     The e2e browser has no "Allow User Scripts" toggle set, so only the vm tests cover that path.
+- **Part 5 (first part): a page-built run that navigates onto a site that may not use window.ml is handed to the
+  worker at the commit** (owner's decision 2026-10-10; `src/sw/nav-handover.ts`). The trigger is the browser's
+  `webNavigation.onCommitted`, not the destination's re-adopt, so a page that never re-adopts cannot keep the run; the
+  re-adopt and every tool send wait for the decision. The spec's "runs on pages that are not approved" had a page-built
+  run keep the page's tools; it now continues exactly as a run the worker built. Found while building it: the run host
+  branched on the turn's START payload (`p.builtBy`) for every worker path but vision, so a run handed over in the middle
+  of a turn (by this, or by a person's message from an unapproved site) ran its `answer`, `python_exec`, `fetch_url`,
+  exec routing and grants as the page's until the turn ended. Each decision now reads who drives the run when it is
+  made. One way: a run that returns to an approved site stays the worker's. A revoke while a page-built run is on an
+  approved site does not hand it over (there is no navigation to act on).
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

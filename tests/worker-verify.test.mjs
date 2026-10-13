@@ -73,8 +73,10 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
     const driverBodies = [], subs = [];
     let bg, n = 0;
     const state = {};
+    // A page-built run's tab shows its builder's page until the test moves it (`page`'s fourth argument).
+    const tab = { ...SITE, ...(builtBy === "page" ? { url: builderUrl } : {}) };
     bg = loadBackground({
-        config: config({ model, ...cfg }), openTabs: [SITE],
+        config: config({ model, ...cfg }), openTabs: [tab],
         onCaptureTab: async () => SHOT,
         onDebuggerCommand: (m) => (m === "Page.captureScreenshot" ? { data: SHOT.split(",")[1] } : undefined),
         onFetch: async (call) => {
@@ -98,7 +100,7 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
             if (p.geometry) return { result: "", geometry: { seq: p.geometry.seq, reply: geometry(p.geometry, state) } };
             if (p.finish) return { result: "" };
             if (p.renderOnly || p.precheck) return { result: "" };
-            const r = await page(p, n++, bg);
+            const r = await page(p, n++, bg, tab);
             return r !== undefined ? r : { result: `ran ${p.name}` };
         },
     });
@@ -121,7 +123,7 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
     const toolMessages = () => (driverBodies.at(-1)?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
     const steps = () => plain(bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-step" && m.event.id === hash).map((m) => m.event));
     const runCalls = () => bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m, o]) => ({ ...plain(m.payload), pinned: o?.documentId }));
-    return { bg, hash, driverBodies, subs, toolMessages, steps, runCalls,
+    return { bg, tab, hash, driverBodies, subs, toolMessages, steps, runCalls,
         /** The run's sub-call spend as its steps last reported it (0 when none). */
         spend: () => Math.max(0, ...steps().map((e) => e.subUsage?.calls ?? 0)),
         /** Everything the driver was sent after its first turn, as text. */
@@ -384,6 +386,7 @@ test("a page-built run handed to the worker takes its verifies in the worker fro
         w.driverBodies.push(body);
         return jsonResponse(asked++ === 0 ? { choices: [{ message: { content: null, tool_calls: [{ id: "h1", type: "function", function: { name: "click", arguments: JSON.stringify({ selector: "#save", verify: true }) } }] }, finish_reason: "tool_calls" }] } : { choices: [{ message: { content: "done" } }] });
     };
+    w.tab.url = SITE.url;   // the run's page left its builder's site, onto one nobody approved
     assert.equal(await w.bg.context.__mlUserRunActionForTest(w.hash, "send", { text: "click save" }), "turn");
     for (let i = 0; i < 2000 && asked < 2; i++) await new Promise((r) => setTimeout(r, 2));
     await new Promise((r) => setTimeout(r, 30));
@@ -405,6 +408,7 @@ test("a page-built run handed to the worker runs its locate in the worker from i
         w.driverBodies.push(body);
         return jsonResponse(asked++ === 0 ? { choices: [{ message: { content: null, tool_calls: [{ id: "h1", type: "function", function: { name: "locate", arguments: JSON.stringify({ description: "the save button", strategy: "marks" }) } }] }, finish_reason: "tool_calls" }] } : { choices: [{ message: { content: "done" } }] });
     };
+    w.tab.url = SITE.url;   // the run's page left its builder's site, onto one nobody approved
     assert.equal(await w.bg.context.__mlUserRunActionForTest(w.hash, "send", { text: "find save" }), "turn");
     for (let i = 0; i < 2000 && asked < 2; i++) await new Promise((r) => setTimeout(r, 2));
     await new Promise((r) => setTimeout(r, 30));
@@ -429,6 +433,7 @@ async function handedNextTurn(call, pageVision, page) {
         w.driverBodies.push(body);
         return jsonResponse(asked++ === 0 ? { choices: [{ message: { content: null, tool_calls: [{ id: "h1", type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] }, finish_reason: "tool_calls" }] } : { choices: [{ message: { content: "done" } }] });
     };
+    w.tab.url = SITE.url;   // the run's page left its builder's site, onto one nobody approved
     assert.equal(await w.bg.context.__mlUserRunActionForTest(w.hash, "send", { text: "go on" }), "turn");
     for (let i = 0; i < 2000 && asked < 2; i++) await new Promise((r) => setTimeout(r, 2));
     await new Promise((r) => setTimeout(r, 30));
@@ -449,8 +454,8 @@ test("a run handed over after its first turn still has its page-written vision f
 test("a page-built run handed to the worker mid-turn takes its next verify in the worker", T, async () => {
     // The person writes to the run while it works on a tab nobody approved: the run is the worker's from then on.
     const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", calls: [{ name: "scroll", args: {} }, { name: "click", args: { selector: "#save", verify: true } }],
-        page: async (p, n, bg) => {
-            if (n === 0) { await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "and then save" }); return { result: "Scrolled." }; }
+        page: async (p, n, bg, tab) => {
+            if (n === 0) { tab.url = SITE.url; await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "and then save" }); return { result: "Scrolled." }; }
             return { result: "Clicked.", verifyRequest: { kind: "area", center: { x: 100, y: 25 } }, ...FORGERY };
         } });
     const [scroll, click] = w.runCalls().filter((p) => (p.name === "click" || p.name === "scroll") && !p.renderOnly && !p.precheck);

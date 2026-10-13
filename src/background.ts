@@ -5,6 +5,7 @@
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage } from "./sw/sw-isolated-exec";
+import { forgetHandOverTab, handOverOnCommit } from "./sw/nav-handover";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
@@ -141,6 +142,9 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // The old document is gone and any page-hosted run in it with it: drop what that tab was entitled to read.
         // A BACKGROUND run survives the navigation and keeps its own per-run claim, so this never cuts one short.
         if (d.frameId === 0) releaseSessionValues(pageValueSession(d.tabId));
+        // A page-built run on the tab is the worker's from here when the new document's site may not use window.ml
+        // (nav-handover.ts). Started now, at the browser's report; the re-adopt and every tool send wait for it.
+        if (d.frameId === 0) void handOverOnCommit(d.tabId, d.url);
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
         // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
@@ -148,7 +152,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -336,7 +340,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const tabId = sender.tab?.id;
         // Await the startup rehydrate first — a page loading right after an SW respawn must see the in-flight
         // runs storage restored, or it would miss the re-adopt + auto-resume.
-        void hydrationDone.then(() => {
+        // And the hand-over of a page-built run whose tab is now on a site that may not use window.ml (nav-handover.ts):
+        // the commit started it; asked again here from the sender's own URL, in case this worker never saw the commit.
+        const handOver = tabId != null && (sender.frameId ?? 0) === 0 ? handOverOnCommit(tabId, sender.url ?? sender.tab?.url) : Promise.resolve([]);
+        void Promise.all([hydrationDone, handOver.catch(() => [])]).then(() => {
             const ids = tabId != null ? activeRuns.get(tabId) : undefined;
             // An INTERRUPTED (evicted) run is continued by the WORKER once the page has re-registered its tools, never by
             // the page. It always meets a fresh document, so nothing page-side is left to own it: it becomes the worker's.
