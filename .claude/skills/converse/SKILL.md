@@ -46,3 +46,5 @@ no TypeScript loader.
 - **One driver per directory.** Two drivers on one inbox take turns' messages from each other.
 - **`turn-<n>.md` is clipped** (arguments 800, results 1200 characters). Read `run.md` for the full record.
 - **It is real traffic to a real backend**: requests say `synthetic` like observe's unless `SYNTHETIC=0`.
+
+Its browser counts against every bench sweep's memory budget while it runs (it joins the bench's memory ledger as a `tool`; `node --import tsx tests/e2e/bench/hold.mjs --ledger` lists it).

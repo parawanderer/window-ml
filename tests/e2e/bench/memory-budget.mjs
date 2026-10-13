@@ -148,6 +148,43 @@ export const update = (pid, patch, file = LEDGER_FILE) => withLedger((l) => l.ma
 /** Drop the entry for `pid`. */
 export const unregister = (pid, file = LEDGER_FILE) => withLedger((l) => l.filter((e) => e.pid !== pid), file);
 
+/**
+ * Count a bench tool that starts browsers outside a sweep (panel.mjs, converse.mjs, observe.mjs) in the ledger while it
+ * runs: its process tree, the browsers it launches with it, is measured with the rest, so every sweep's budget sees it
+ * (kind `tool`). Left on exit, and dropped on the next read should the process die. An entry already there for this
+ * process (one a sweep made) is left as it is. Never throws: a tool runs whether or not the ledger can be written.
+ * @returns a function that leaves the ledger now
+ */
+export function joinLedger({ tool, cmd = null, repo = null, file = LEDGER_FILE } = {}) {
+    let joined = false;
+    try {
+        withLedger((l) => {
+            if (l.some((e) => e.pid === process.pid)) return undefined;
+            joined = true;
+            return [...l, { at: new Date().toISOString(), kind: "tool", tool, pid: process.pid, repo, cmd }];
+        }, file);
+    } catch { return () => {}; }
+    if (!joined) return () => {};
+    const leave = () => { try { unregister(process.pid, file); } catch { /* dropped on the next read */ } };
+    process.once("exit", leave);
+    return leave;
+}
+
+/**
+ * Whether `n` more browsers fit the bench's budget right now, for a tool about to start them (panel.mjs): null when they
+ * fit (or the ledger cannot be read), else a line saying what the budget holds and what is short. The limit is the
+ * machine-wide one, else half the RAM, as a sweep with no --memory-limit resolves it.
+ */
+export function roomWarning(n, { file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
+    try {
+        const lim = resolveLimit({ machine: readLimit(file), total });
+        const st = budgetState({ limit: lim.bytes, entries: measure(), available: avail(), total, reserveFrac: lim.handSet ? 0 : RESERVE_FRAC });
+        const need = n * ASSUMED_BROWSER;
+        const a = admits(st, need);
+        return a.ok ? null : `${n} browser${n === 1 ? "" : "s"} (about ${fmtBytes(need)}) do not fit the bench's memory budget: ${a.why.replace("one more browser takes", "these take")}. Every sweep on this machine counts them; \`node --import tsx tests/e2e/bench/hold.mjs --ledger\` lists what holds memory.`;
+    } catch { return null; }
+}
+
 /** Measure every entry's process tree now (`rss`, and its `peak` so far), each without the trees of the others. */
 export function measureLedger({ file = LEDGER_FILE, table = processTable() } = {}) {
     return withLedger((l) => {

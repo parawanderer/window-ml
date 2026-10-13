@@ -24,6 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOnce, resolveBackendFromEnv } from "./run-once.mjs";
+import { joinLedger, roomWarning } from "./bench/memory-budget.mjs";
 import { loadInterviewFile, probe, driverFor, readTurns, readFollowUps, askText, promptChars, panelSummary, modelSlug } from "./interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -75,6 +76,8 @@ async function interview(model, iv, opts, outDir, backend) {
 
 async function main() {
     const opts = parseArgs(process.argv.slice(2));
+    // Its browsers (one per model, all at once) count against every bench sweep's memory budget while it runs.
+    joinLedger({ tool: "panel", cmd: [path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2)].join(" "), repo: path.resolve(HERE, "../..") });
     const iv = await loadInterviewFile(opts.file);
     const outDir = path.resolve(opts.out || path.join(HERE, "artifacts", `panel-${iv.name}-${Date.now()}`));
     fs.mkdirSync(outDir, { recursive: true });
@@ -86,6 +89,8 @@ async function main() {
     for (const s of skipped) console.log(`  ✗ ${s.model}: ${s.why}`);
     const ok = probed.filter((p) => !p.why).map((p) => p.model);
     console.log(`  running ${ok.length}: ${ok.join(", ")}  →  ${outDir}`);
+    const short = roomWarning(ok.length);
+    if (short) console.log(`  ⚠ ${short}`);
     const results = await Promise.all(ok.map((m) => interview(m, iv, opts, outDir, backend)));
     const surface = opts.surface ?? iv.surface ?? null;
     fs.writeFileSync(path.join(outDir, "summary.md"), panelSummary(iv.name, iv, results, skipped, surface));

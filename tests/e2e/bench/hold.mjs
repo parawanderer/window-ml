@@ -271,7 +271,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         const lim = resolveLimit({ machine: readLimit() });
         const st = budgetState({ limit: lim.bytes, entries: l, available: availableMemory(), reserveFrac: lim.handSet ? 0 : RESERVE_FRAC });
         console.log(`the bench holds ${fmtBytes(st.used)} of a ${fmtBytes(st.limit)} limit (${limitWhence(lim)}); ${fmtBytes(st.available)} available${st.reserve ? `, ${fmtBytes(st.reserve)} kept free` : ""}`);
-        for (const e of l) console.log(`  ${e.kind.padEnd(8)} pid ${String(e.pid).padEnd(7)} ${fmtBytes(e.rss).padStart(8)} (peak ${fmtBytes(e.peak)})${e.heap ? ` heap ${fmtBytes(e.heap)}` : ""}  ${e.cell ?? e.sweep ?? ""}${e.repo ? `  ${e.repo}` : ""}`);
+        for (const e of l) console.log(`  ${e.kind.padEnd(8)} pid ${String(e.pid).padEnd(7)} ${fmtBytes(e.rss).padStart(8)} (peak ${fmtBytes(e.peak)})${e.heap ? ` heap ${fmtBytes(e.heap)}` : ""}  ${e.cell ?? e.sweep ?? e.tool ?? ""}${e.repo ? `  ${e.repo}` : ""}`);
         if (!l.length) console.log("  (nothing)");
     } else if (argv[0] === "--limit") {
         // The machine-wide limit (memory-budget.mjs): every bench process here reads it on its next measurement.

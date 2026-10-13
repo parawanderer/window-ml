@@ -100,3 +100,5 @@ prompt-cached; not the `openrouter.anthropic/*` ids, which cost several times mo
 ids, whose OpenAI-compatibility route does no caching); on OpenRouter `openrouter.openai/gpt-6-luna`,
 `openrouter.z-ai/glm-5.3-flash` and `openrouter.minimax/minimax-m3`; and Moonshot's own `moonshot.kimi-k3` (also
 `moonshot.kimi-k2.6`). Local Ollama models work when the GPU is free; ask first. The probe is the source of truth: run it rather than trusting this list.
+
+Its browsers count against every bench sweep's memory budget while it runs (it joins the bench's memory ledger as a `tool`; `node --import tsx tests/e2e/bench/hold.mjs --ledger` lists it); it warns before starting more browsers than the budget has room for.
