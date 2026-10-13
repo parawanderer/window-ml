@@ -116,7 +116,8 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts, onTabsGet }) {
+// `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts, onTabsGet, holdRestore }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -226,14 +227,18 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 onChanged: { addListener: (fn) => syncListeners.push(fn) },
                 local: {
                     get: async (key) => {
-                        if (key == null) return { ...localStore };   // get(null) → ALL keys (hydratePersistedRuns/purgeAllBgRuns)
+                        // get(null) → ALL keys (hydratePersistedRuns/purgeAllBgRuns). `holdRestore` (a promise) slows exactly this
+                        // read, so a test can deliver a message to a worker that has not restored its runs yet.
+                        // A copy, as the browser's storage returns: a worker that changes what it read does not change storage.
+                        if (key == null) { if (holdRestore) await holdRestore; return structuredClone(localStore); }
                         const keys = typeof key === "string" ? [key] : Array.isArray(key) ? key : Object.keys(key || {});
                         const out = {};
-                        for (const k of keys) if (k in localStore) out[k] = localStore[k];
+                        for (const k of keys) if (k in localStore) out[k] = structuredClone(localStore[k]);
                         return out;
                     },
                     // Like the browser, a write fires storage.onChanged in this worker too (area "local").
-                    set: async (obj) => { const changes = changesOf(localStore, obj); Object.assign(localStore, obj); fireChanged(changes, "local"); },
+                    // Copies both ways, as the browser does (and as the session area below does).
+                    set: async (obj) => { const changes = changesOf(localStore, obj); Object.assign(localStore, structuredClone(obj)); fireChanged(changes, "local"); },
                     remove: async (keys) => { const ks = Array.isArray(keys) ? keys : [keys]; const changes = Object.fromEntries(ks.filter((k) => k in localStore).map((k) => [k, { oldValue: localStore[k] }])); for (const k of ks) delete localStore[k]; fireChanged(changes, "local"); },
                 },
                 session: {

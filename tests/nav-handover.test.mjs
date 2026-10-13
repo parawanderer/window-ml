@@ -52,7 +52,7 @@ function geometry(g) {
  * `navigate` call moves the tab to its `url`: the page answers it, then the browser commits the new document and, unless
  * `readopt` is false, the destination re-adopts the run. `page(payload)` plays the page for any other tool call.
  */
-async function run({ calls, page = () => undefined, readopt = true, onNavigated = async () => {}, onStart = () => {}, tools = ["navigate", "look", "scroll"], local = { ml_site_always: ["https://builder.example", "https://friend.example"] }, session = {}, config = {}, payload = {} }) {
+async function run({ calls, page = () => undefined, readopt = true, onNavigated = async () => {}, onStart = () => {}, tools = ["navigate", "look", "scroll"], local = { ml_site_always: ["https://builder.example", "https://friend.example"] }, session = {}, config = {}, payload = {}, answer = "done" }) {
     const tab = { id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" };
     const driverBodies = [], subs = [], adopts = [];
     let bg, docN = 1;
@@ -79,7 +79,7 @@ async function run({ calls, page = () => undefined, readopt = true, onNavigated 
             driverBodies.push(call.body);
             const next = calls[driverBodies.length - 1];
             return next ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${driverBodies.length}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args) } }] }, finish_reason: "tool_calls" }] })
-                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+                : jsonResponse({ choices: [{ message: { content: answer } }] });
         },
         onTabMessage: async (_tabId, msg) => {
             if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
@@ -692,4 +692,193 @@ test("VALUE_COLUMNS: a value disclosed to an APPROVED page reads back under the 
     const no = plain(await bg.send({ type: "VALUE_COLUMNS", runId: "x", key: mine.key, names: ["a"] }, page));
     assert.match(String(no.error), /^Refused/);
     assert.equal(no.columns, undefined);
+});
+
+// --- what a run the worker holds sends its page when it ends: the finish, with nothing of the run ---
+
+const SUMMARY = "SUMMARY-SECRET-6060 the total is 42";
+
+/** Every message the tab was sent that its page's world can read (the shell's own run events go to the content script),
+ *  and every re-adopt the worker answered, that carries the run's final answer. */
+function summaryReached(w) {
+    const sent = w.bg.tabMessages.map(([, m]) => plain(m)).filter((m) => m.type !== "ML_DEBUG_TO_PAGE" && JSON.stringify(m).includes("SUMMARY-SECRET-6060"));
+    const adopted = w.adopts.filter((a) => JSON.stringify(a).includes("SUMMARY-SECRET-6060"));
+    return [...sent, ...adopted];
+}
+
+/** The finish messages the tab was sent for the run. */
+const finishes = (w) => w.bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload?.finish).map(([, m]) => plain(m.payload));
+
+test("a page-built run handed over at a navigation onto an unapproved site: its finish carries only the run id, and the run's answer never reaches the page", T, async () => {
+    const w = await run({ answer: SUMMARY, calls: [{ name: "navigate", args: { url: UNAPPROVED } }, { name: "scroll", args: {} }] });
+    assert.equal(w.driverBodies.length, 3, "the run went through its calls and answered");
+    assert.deepEqual((await w.log()).filter((r) => r.kind === "handed-to-worker").map((r) => r.reason), ["navigated-to-unapproved-site"]);
+    assert.deepEqual(finishes(w), [{ runId: "page-run", finish: true }], "the finish names the run and nothing else");
+    assert.deepEqual(summaryReached(w), [], "the run's answer reached the page by no message");
+    // The answer still reached the person: the shell's own result event carries it.
+    const result = w.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === "page-run");
+    assert.equal(result?.event.summary, SUMMARY);
+});
+
+test("a page-built run handed over at a revoke of its site: its finish carries only the run id, and the run's answer never reaches the page", T, async () => {
+    let bgRef = null;
+    const w = await run({ answer: SUMMARY, calls: [{ name: "scroll", args: {} }, { name: "scroll", args: {} }],
+        onStart: (bg) => { bgRef = bg; },
+        page: async (p) => { if (p.name === "scroll" && bgRef.localStore.ml_site_always.includes(BUILDER_ORIGIN)) await edit(bgRef, POPUP, { op: "revoke", origin: BUILDER_ORIGIN }); return undefined; } });
+    assert.equal(w.driverBodies.length, 3);
+    assert.deepEqual((await w.log()).filter((r) => r.kind === "handed-to-worker").map((r) => r.reason), ["site-revoked"]);
+    assert.deepEqual(finishes(w), [{ runId: "page-run", finish: true }], "the finish names the run and nothing else");
+    assert.deepEqual(summaryReached(w), [], "the run's answer reached the page by no message");
+    assert.match(JSON.stringify(plain(await w.started)), /handed to the extension/, "the page's own START_RUN gets no result either");
+});
+
+test("control: a page-built run never handed over gets its answer back on its own START_RUN, and needs no finish", T, async () => {
+    const w = await run({ answer: SUMMARY, calls: [{ name: "scroll", args: {} }] });
+    const r = plain(await w.started);
+    assert.equal(r?.data?.summary, SUMMARY, "the page that built the run is answered with its result");
+    assert.deepEqual(finishes(w), [], "the page-side caller ends its own run");
+});
+
+// --- a page's START_RUN or RESUME_RUN that wakes the worker, with the run restore slowed ---
+
+test("a page's START_RUN or RESUME_RUN under the id of a run the worker holds, delivered while the worker's run restore is still reading storage, is refused and runs nothing", T, async () => {
+    const p = { runId: "held-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 5, surface: "off", crossOrigin: true, pageUrl: BUILDER, pageOrigin: BUILDER_ORIGIN,
+        rebuild: { toolNames: ["scroll"], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } };
+    const cases = [];
+    for (const type of ["START_RUN", "RESUME_RUN"]) for (const [label, extra] of [["handed over after its last checkpoint", { ml_handed_to_worker: ["held-run"] }], ["built by the worker", null]]) cases.push({ type, label, extra });
+    for (const { type, label, extra } of cases) {
+        const tasks = [];
+        let release;
+        const holdRestore = new Promise((r) => { release = r; });
+        const snap = { p: extra ? p : { ...p, builtBy: "worker", rebuild: { ...p.rebuild, builtBy: "worker" } }, tabId: 7, messages: [{ role: "user", content: "the person's task" }], version: "9.9.9", ts: Date.now() };
+        const bg = loadBackground({
+            config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+            siteGate: true, holdRestore, local: { ml_site_always: [BUILDER_ORIGIN], "ml_bgrun_held-run": snap, ...(extra ?? {}) },
+            openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+            onFetch: async (call) => { if (call.url.includes("/chat/completions")) tasks.push(JSON.stringify(call.body)); return jsonResponse({ choices: [{ message: { content: "the page took it" } }] }); },
+        });
+        const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" };
+        const payload = type === "START_RUN" ? { ...p, task: "the page's own task", rebuild: p.rebuild } : { runId: "held-run", task: "the page's own task" };
+        const answered = bg.send({ type, payload }, sender);
+        // The origin gate and the config read finish while the restore is held.
+        await sleep(60);
+        release();
+        const r = plain(await Promise.race([answered, sleep(3000).then(() => "no answer")]));
+        assert.match(String(r?.error), /^Refused/, `${type}, ${label}: refused: ${JSON.stringify(r).slice(0, 300)}`);
+        assert.ok(!tasks.some((b) => b.includes("the page's own task")), `${type}, ${label}: no model call ran the page's task`);
+    }
+});
+
+test("control: an approved page's own START_RUN delivered while the restore is held runs once the restore is done", T, async () => {
+    let release;
+    const holdRestore = new Promise((r) => { release = r; });
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, holdRestore, local: { ml_site_always: [BUILDER_ORIGIN] },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+        onFetch: async () => jsonResponse({ choices: [{ message: { content: "ran" } }] }),
+    });
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" };
+    const answered = bg.send({ type: "START_RUN", payload: { runId: "fresh-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 3, surface: "off", crossOrigin: true,
+        rebuild: { toolNames: [], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } } }, sender);
+    await sleep(60);
+    release();
+    const r = plain(await Promise.race([answered, sleep(3000).then(() => "no answer")]));
+    assert.equal(r?.data?.summary, "ran", JSON.stringify(r).slice(0, 300));
+});
+
+test("HALTING: a page's START_RUN and RESUME_RUN while the run restore never finishes are refused within the bound, and run nothing", T, async () => {
+    // Closed, not open: judged against the empty maps a run the worker holds would read as nobody's.
+    const chats = [];
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, holdRestore: new Promise(() => {}), local: { ml_site_always: [BUILDER_ORIGIN] },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+        onFetch: async (call) => { if (call.url.includes("/chat/completions")) chats.push(call); return jsonResponse({ choices: [{ message: { content: "ran" } }] }); },
+    });
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" };
+    const start = bg.send({ type: "START_RUN", payload: { runId: "stuck-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 3, surface: "off", crossOrigin: true,
+        rebuild: { toolNames: [], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } } }, sender);
+    const resume = bg.send({ type: "RESUME_RUN", payload: { runId: "stuck-run", task: "again" } }, sender);
+    const within = (p) => Promise.race([p, sleep(15000).then(() => "no answer")]);
+    const [s, r] = (await Promise.all([within(start), within(resume)])).map(plain);
+    assert.match(String(s?.error), /^Refused for now: the extension is still restoring/, JSON.stringify(s));
+    assert.match(String(r?.error), /^Refused for now: the extension is still restoring/, JSON.stringify(r));
+    assert.equal(chats.length, 0, "no model call ran");
+});
+
+// --- more hand-overs than the store's cap ---
+
+test("more than 200 runs handed over at once: every one stays the worker's across a restart, the oldest included", T, async () => {
+    const N = 205;
+    const local = { ml_site_always: [BUILDER_ORIGIN] };
+    const ids = Array.from({ length: N }, (_, i) => `many-${i}`);
+    for (const runId of ids) {
+        local[`ml_bgrun_${runId}`] = { p: { runId, task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 5, surface: "off", crossOrigin: true, pageUrl: BUILDER, pageOrigin: BUILDER_ORIGIN,
+            rebuild: { toolNames: ["scroll"], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } }, tabId: 7, messages: [], version: "9.9.9", ts: Date.now() };
+    }
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, local, openTabs: [{ id: 7, windowId: 3, active: true, url: UNAPPROVED, title: "Elsewhere" }],
+    });
+    bg.commit(7, { documentId: "doc-elsewhere", url: UNAPPROVED });
+    await sleep(100);
+    const handed = (await bg.context.__mlRunLog.all()).filter((r) => r.kind === "handed-to-worker").length;
+    assert.equal(handed, N, "every run on the tab was handed over");
+    const stored = plain(bg.localStore.ml_handed_to_worker);
+    assert.equal(stored.length, N, `the store keeps every run the worker holds: ${stored.length}`);
+    assert.ok(stored.includes("many-0"), "the oldest hand-over is kept");
+    // The restart, on the builder's approved page: the first run handed over is refused to it.
+    const calls = [];
+    const bg2 = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, local: plain(bg.localStore), openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+        onFetch: async (call) => { calls.push(call.url); return jsonResponse({ choices: [{ message: { content: "page took it" } }] }); },
+    });
+    await sleep(50);
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-back" };
+    const r = plain(await Promise.race([bg2.send({ type: "RESUME_RUN", payload: { runId: "many-0", task: "mine again" } }, sender), sleep(2000).then(() => "no answer")]));
+    assert.match(String(r?.error), /Refused/, `the page's resume of the oldest hand-over was refused: ${JSON.stringify(r)}`);
+    assert.ok(!calls.some((u) => u.includes("/chat/completions")));
+});
+
+// --- the eviction seam forgets what a real eviction forgets ---
+
+test("after __mlEvictForTest the hand-overs held in memory are gone, as after an eviction: a run handed over again is stored again", T, async () => {
+    const p = { runId: "evict-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 5, surface: "off", crossOrigin: true, pageUrl: BUILDER, pageOrigin: BUILDER_ORIGIN,
+        rebuild: { toolNames: ["scroll"], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } };
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, local: { ml_site_always: [BUILDER_ORIGIN], "ml_bgrun_evict-run": { p, tabId: 7, messages: [], version: "9.9.9", ts: Date.now() }, ml_handed_to_worker: ["evict-run"] },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+    });
+    await sleep(30);
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" };
+    const resume = async () => plain(await Promise.race([bg.send({ type: "RESUME_RUN", payload: { runId: "evict-run", task: "x" } }, sender), sleep(2000).then(() => "no answer")]));
+    assert.match(String((await resume())?.error), /Refused/, "control: restored as the worker's from the stored hand-over");
+    // Storage loses the hand-over; the eviction then keeps only what storage holds, so the run restores as its page's.
+    delete bg.localStore.ml_handed_to_worker;
+    await bg.context.__mlEvictForTest();
+    // The tab moves to an unapproved site: the run is handed over again, and that is stored, as on a worker that never
+    // knew of the first hand-over.
+    bg.commit(7, { documentId: "doc-elsewhere", url: UNAPPROVED });
+    await sleep(50);
+    assert.deepEqual(plain(bg.localStore.ml_handed_to_worker), ["evict-run"], "the second hand-over was stored");
+});
+
+test("the vm's chrome.storage.local hands out and keeps copies on every read and write, as the browser does, so a worker that changes what it read or wrote changes nothing stored", T, async () => {
+    // The harness fix in #625 copied only get(null). A get by key or a set that shares objects with the store lets the
+    // worker change storage by mutating them, which the browser never does, and a test then passes on state no
+    // browser would keep.
+    const bg = loadBackground({ local: { ml_probe: { n: 1, list: ["a"] } } });
+    const local = bg.context.chrome.storage.local;
+    for (const read of [() => local.get("ml_probe"), () => local.get(["ml_probe"]), () => local.get({ ml_probe: null }), () => local.get(null)]) {
+        const got = await read();
+        got.ml_probe.n = 99; got.ml_probe.list.push("mutated");
+    }
+    const written = { n: 2, list: ["b"] };
+    await local.set({ ml_written: written });
+    written.n = 99; written.list.push("mutated");
+    assert.deepEqual(plain(bg.localStore.ml_probe), { n: 1, list: ["a"] }, "a read's object is not the stored one");
+    assert.deepEqual(plain(bg.localStore.ml_written), { n: 2, list: ["b"] }, "a write's object is not the stored one");
 });

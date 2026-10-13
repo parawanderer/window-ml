@@ -7,7 +7,8 @@ description: The red-team pass for a new agent tool, `ml.*` member or page-start
 
 **The threat model** is a web page, or any script on one (an ad, an analytics tag). It shares the main world with
 `window.ml` and with any tool code the extension runs in the page, so it can patch prototypes, read and post every
-window message, reach the extension's shadow roots (they are OPEN), see every iframe the extension adds, and learn
+window message, reach the extension's shadow HOSTS but not inside them (the roots are CLOSED since #610, and the
+hosts sit in the top layer since #599), see every iframe the extension adds, and learn
 every run id that reaches the page. It cannot read the extension's isolated world, its frames' state, or the
 worker's memory. The person approves origins; an unapproved one must get nothing it can use, and a run the person
 starts may visit any page and must lend it nothing.

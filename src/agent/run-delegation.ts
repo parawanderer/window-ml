@@ -354,13 +354,12 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, summary, answerShape, answerSelect, geometry, pageRead } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
-        // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
-        // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
+        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, answerShape, answerSelect, geometry, pageRead } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
+        // The END of a turn of a run the WORKER holds (sw-run-host.ts): it ends the run's registration here, as the page
+        // path's caller does. Nothing of the run comes with it (the worker keeps the run's answer), and nothing goes back.
         if (finish) {
-            const run = endRun(runId);
-            const a = run ? runAnswer(run, typeof summary === "string" ? summary : "") : null;
-            window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "", ...(a?.answer ? { answer: a.answer } : {}), ...(a?.media.length ? { answerMedia: a.media } : {}) } }, "*");
+            endRun(runId);
+            window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "" } }, "*");
             return;
         }
         // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts back up the

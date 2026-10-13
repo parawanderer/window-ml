@@ -27,7 +27,7 @@ import { sealedDescribe } from "../tools/tools";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
-import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
+import { isExtensionSender, grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
@@ -44,7 +44,7 @@ import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated
 import { handOverSettled } from "./nav-handover";
 import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, valueHolders, readStoredColumns } from "./sw-values";
 import { isoServer } from "./iso-channel";
@@ -56,6 +56,15 @@ import { topDocument } from "./worker-vision";
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
+
+/** The answer to a page's START_RUN, RESUME_RUN or steer for a run the worker holds. */
+export const WORKER_RUN_REFUSED = "Refused: this run was started from the extension, and only the extension can drive it.";
+
+/** How long a page's START_RUN or RESUME_RUN waits for the worker to restore its runs before it is refused. */
+export const RESTORE_WAIT_MS = 10_000;
+
+/** The answer to a page's START_RUN or RESUME_RUN when the worker's runs are not restored within `RESTORE_WAIT_MS`. */
+export const RESTORE_PENDING = "Refused for now: the extension is still restoring its runs. Try again.";
 
 /** What the page that started a turn is answered when its run was handed to the worker during it: no result, no history. */
 const HANDED_ANSWER = "This run was handed to the extension: this site may no longer use window.ml, so its result is not sent here.";
@@ -119,16 +128,34 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     // sender.tab.id is the delegation + debug-fanout target.
     const tabId = sender.tab?.id;
     if (tabId == null) { sendResponse({ error: `${message.type} must come from a tab (content script).` }); return; }
-    if (message.type !== "START_RUN") { hostRun(message, tabId, sendResponse); return; }
-    getConfig().then((cfg) => {
-        // A run id another tab holds (running, or settled and resumable) is that tab's: starting a turn under it from
-        // here would take over its abort, its inbox and its stored history. Checked after the config read, so a run
-        // the other tab started meanwhile counts.
-        const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
-        const owner = typeof runId === "string" ? runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId : undefined;
-        if (owner != null && owner !== tabId) { sendResponse({ error: `Run "${String(runId)}" belongs to another tab.` }); return; }
-        hostRun({ ...message, payload: pageStartPayload(message.payload, sender, cfg) }, tabId, sendResponse);
-    }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+    const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
+    /** A page may not start or continue a turn in a run the worker holds (built, or handed it). Asked here as well as in
+     *  the router: the router's check reads the maps as they are, which are empty on a worker this message woke until
+     *  the runs are restored from storage. */
+    const workerHeld = (): boolean => !isExtensionSender(sender) && isWorkerRun(runId);
+    // Bounded, and closed when the bound is hit: judged against maps not yet restored, a run the worker holds would
+    // read as nobody's. A restore that never settles answers the page with an error rather than never.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const restored = Promise.race([
+        hydrationDone.then(() => true, () => true),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), RESTORE_WAIT_MS); }),
+    ]);
+    void restored.then((done) => {
+        clearTimeout(timer);
+        if (!done) { sendResponse({ error: RESTORE_PENDING }); return; }
+        if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
+        if (message.type !== "START_RUN") { hostRun(message, tabId, sendResponse); return; }
+        return getConfig().then((cfg) => {
+            // Again after the config read: a hand-over may have landed meanwhile.
+            if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
+            // A run id another tab holds (running, or settled and resumable) is that tab's: starting a turn under it from
+            // here would take over its abort, its inbox and its stored history. Checked after the config read, so a run
+            // the other tab started meanwhile counts.
+            const owner = typeof runId === "string" ? runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId : undefined;
+            if (owner != null && owner !== tabId) { sendResponse({ error: `Run "${String(runId)}" belongs to another tab.` }); return; }
+            hostRun({ ...message, payload: pageStartPayload(message.payload, sender, cfg) }, tabId, sendResponse);
+        }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+    });
 }
 
 /** The builtin tools whose factories set `requiresApproval`: the worker mints grants or consents for their calls, or
@@ -1178,19 +1205,20 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // AFTER this one's steps rather than colliding with them.
             saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });
             let answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
-            // A run the WORKER built has no page-side caller to assemble the turn's curated answer from the page's
-            // answer set, so it is asked for here. Page data, exactly as a tool result is; absent if the page is gone.
-            // Close the inbox FIRST: a message sent while the page is asked for the answer must not be reported as a
-            // steer into an inbox nothing reads any more (it reads as "busy", and the person sends it again).
+            // Close the inbox FIRST: a message sent from here to the end of the turn must not be reported as a steer into
+            // an inbox nothing reads any more (it reads as "busy", and the person sends it again).
             runInboxes.delete(runId);
             await handOverSettled(tabId);
             const workerNow = byWorker();
-            const fin = workerNow
-                ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null
-                : null;
-            // A worker-built run's answer is the worker's set (worker-answer.ts); the page's finish only ends its registration.
+            // The page's finish only ends the run's registration there, so it carries the run id and nothing of the run:
+            // no summary, which the page's world would read. A run the worker holds lends its page nothing, whether it
+            // built the run or was handed it (a navigation onto an unapproved site, a revoke, nav-handover.ts). Its answer
+            // is the worker's set (worker-answer.ts). Sent and not awaited: nothing the page answers is read, and a page
+            // that never answers (content.ts waits two minutes) would hold the run's result and its next turn. A next
+            // turn's adopt goes out behind it on the same channel, so the page still ends the old registration first.
+            if (workerNow) void delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true } }).catch(() => null);
             const own = workerNow ? await answerFor(runId) : undefined;
-            const answer = own ? (finalizeAnswer(own, res.summary) || undefined) : typeof fin?.answer === "string" && fin.answer ? fin.answer : undefined;
+            const answer = own ? (finalizeAnswer(own, res.summary) || undefined) : undefined;
             if (own) { const m = own.media(); answerMedia = m.length ? m : undefined; }
             emitLifecycle({
                 kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },

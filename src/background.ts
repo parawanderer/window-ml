@@ -36,10 +36,10 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants, isExtensionSender } from "./sw/sw-consent";
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
-import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
+import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { pageRebuild } from "./agent/run-assembly";
 import { PAGE_STARTED_TYPES } from "./page-relay";
@@ -98,6 +98,7 @@ startValueSweeps();
     dropAllLocalTools();
     dropAllAnswerMemory();
     dropAllVisionMemory();
+    dropHandedMemoryForTest();
     await hydratePersistedRuns();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
@@ -299,6 +300,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // copying the whole thing would carry anything the panel happened to put on it. The cost is that a new
         // field must be added HERE too — a step budget added everywhere else still arrived undefined until it was.
         const toPage = (): void => {
+            // A run the worker holds is never a page's to drive, and the person's message for it goes to no page: not to
+            // the panel's tab when the run is on another (userRunAction answers null there), and not when that failed.
+            if (typeof message.hash === "string" && isWorkerRun(message.hash)) return;
             try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
         };
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
@@ -498,7 +502,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // page in the run's own debug events, so knowing it proves nothing. An extension page is not a page here.
     if ((message.type === "INJECT_MESSAGE" || message.type === "START_RUN" || message.type === "RESUME_RUN")
         && isWorkerRun((message.payload as { runId?: unknown } | undefined)?.runId) && !isExtensionSender(sender)) {
-        sendResponse(message.type === "INJECT_MESSAGE" ? { data: false } : { error: "Refused: this run was started from the extension, and only the extension can drive it." });
+        sendResponse(message.type === "INJECT_MESSAGE" ? { data: false } : { error: WORKER_RUN_REFUSED });
         return;
     }
     if (message.type === "INJECT_MESSAGE") {
