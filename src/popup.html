@@ -61,6 +61,7 @@
     .row { display: flex; gap: 6px; align-items: flex-end; }
     .row input { flex: 1; }
     .hint { font-size: 11px; color: var(--fg-faint); margin-top: 2px; }
+    .hint.warn { color: var(--warn, var(--err)); }
     button {
         padding: 6px 12px; border: none; border-radius: 6px;
         background: var(--panel-2); color: var(--fg); font-size: 13px;
@@ -201,10 +202,11 @@
         <label for="permDomain">Trusted domains (self-approval)</label>
         <div class="hint">Sites allowed to supply their own <code>ml.agent</code> approval gate. Every other site routes a privileged tool call through the extension's approval card, so a page can't self-approve.</div>
         <div class="row">
-            <input id="permDomain" type="text" placeholder="example.com">
+            <input id="permDomain" type="text" placeholder="example.com, or http://host:port">
             <button id="permAdd">Add</button>
         </div>
         <div id="permList" class="perm-list"></div>
+        <div id="permUncovered"></div>
 
         <div class="perm-sep"></div>
 

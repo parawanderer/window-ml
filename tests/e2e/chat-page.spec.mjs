@@ -796,7 +796,7 @@ test("a PAGE-hosted run's state comes from the page it runs in: its context and 
         // A site on the page-approval list runs its agent IN THE PAGE: the worker holds no start payload, no history and
         // no pointer store for it. Its sessions reach the index from the page's own bus (`listPageSessions`).
         await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off",
-            autoApproveReadonly: false, listPageSessions: true, pageApprovalDomains: [new URL(site.url).hostname] });
+            autoApproveReadonly: false, listPageSessions: true, pageApprovalDomains: [new URL(site.url).origin] });
         fake.setScript([{ tool: "exec", args: { js: "document.title = 'held'; 'ok'" } }, { content: "done" }]);
         const site1 = await ext.context.newPage();
         await site1.goto(site.url + "/");

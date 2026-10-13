@@ -30,7 +30,7 @@ try {
         model: env.OPENWEBUI_MODEL || "", debugMode: "off",
         // The probe calls the primitive DIRECTLY, with no agent run to approve it — so the test origin is
         // trusted for this run only. A page NOT on this list is refused, which server-tools.spec.mjs covers.
-        pageApprovalDomains: ["127.0.0.1", "localhost"],
+        pageApprovalDomains: [new URL(site.url).origin],
     });
 
     const page = await ext.context.newPage();

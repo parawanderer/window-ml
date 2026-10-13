@@ -73,7 +73,7 @@ test("off mode: a page's own sessions are not listed until listPageSessions is o
         expect(await rows()).toEqual([]);
 
         // The site is on the page-approval list, so its agent runs page-hosted: reported only by the page's own bus.
-        await configureExtension(ext.sw, { listPageSessions: true, pageApprovalDomains: [new URL(site.url).hostname] });
+        await configureExtension(ext.sw, { listPageSessions: true, pageApprovalDomains: [new URL(site.url).origin] });
         await page.reload();
         await waitForMl(page);
         // An agent, not a chat: the card mounts on agent events, so this is what would put it on screen for a run the

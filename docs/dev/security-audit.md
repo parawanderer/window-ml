@@ -82,6 +82,12 @@ the worker, and the page answers geometry only):
       overwrite, re-point or relabel an existing pointer, its `:in` slot is the model's call, answer media and inline
       images do not reach a worker-built run, odd tables leave the worker's prototypes alone, and the sidebar draws every
       descriptor field as text: #626.
+- [x] The self-approval whitelist (`pageApprovalDomains`) is read by origin at every reader: `senderTrust` (`CDP_CLICK`,
+      `SERVER_TOOL_EXEC`, `FETCH_SHEET`, full-mode `PYTHON_EXEC`, `FETCH_URL`, a worker run's fetch, sheets and Python),
+      `pageApprovalAllowed` (`GET_CONFIG`, the worker's config) and the gate's implied approval go through one rule
+      (`selfApproves`), so plain http, another port, a subdomain or a sub-frame of a whitelisted host no longer gets the
+      https site's self-approval, and the gate no longer implies approval for another port. Tested as a table over sender
+      shapes x readers, with the upgrade from a stored list of hosts (self-approval-origin.test.js): #628.
 
 ## In progress
 

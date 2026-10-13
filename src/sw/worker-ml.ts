@@ -10,6 +10,7 @@
 
 import type { AssemblyMl } from "../agent/run-assembly";
 import { modelFilterAllows, publicConfig } from "../contract/contract-config";
+import { senderSelfApproves } from "./sw-site-access";
 import type { MlApi } from "../contract";
 import { defineTool, lookTool, locateTool, navigateTool, fetchTool, clickTool, typeTool, pythonTool, chatMetaTool } from "../ml/ml-tool-factories";
 import { _resolveVisionModel, _modelSees, _nativeLookTool, ocrRequest } from "../ml/ml-vision";
@@ -20,7 +21,7 @@ import { makeDomTools } from "../tools/tools";
 /**
  * Build the worker's `ml` for assembling one run on a tab.
  * @param tabUrl the tab's URL as the browser reports it (`chrome.tabs`), for the one config field that depends on the
- *   page (`pageApprovalAllowed`)
+ *   page (`pageApprovalAllowed`, decided by `senderSelfApproves`)
  * @returns an `ml` that `assembleRun` accepts, plus the Commander kit's factories and the one tool body that does run
  *   here: a remote tool's call to the backend (`execServerTool`)
  */
@@ -28,7 +29,7 @@ export function workerMl(tabUrl: string): WorkerMl {
     const ml = {
         defineTool,
         domTools: makeDomTools(defineTool),
-        config: async () => publicConfig(await getConfig(), tabUrl),
+        config: async () => publicConfig(await getConfig(), await senderSelfApproves({ url: tabUrl })),
         capabilities: async (model: string) => modelCapabilities(await getConfig(), model),
         // What `ml.models()` answers a page: the server's list, through the model filter.
         models: async () => {

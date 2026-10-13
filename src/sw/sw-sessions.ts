@@ -20,7 +20,7 @@ import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
-import { isExtensionSender } from "./sw-consent";
+import { isExtensionSender } from "./sw-site-access";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";

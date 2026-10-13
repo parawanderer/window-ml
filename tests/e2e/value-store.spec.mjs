@@ -179,8 +179,9 @@ test("a PAGE-hosted run reads its stored table too, and only on the tab the work
     // A page-hosted run is what a console call gets with no debug surface open: the loop stays in the page, so the
     // worker has no run id to vouch for. Whitelisting the origin for page approval is what keeps it there — otherwise
     // an approval-requiring toolset routes the whole run to the background ("off"-mode card).
-    const host = new URL(fake.url).hostname;   // the background whitelists by HOSTNAME, port excluded
-    await configureExtension(ext.sw, { pageApprovalDomains: [host] });
+    // A bare host on the whitelist means its https origin only; this page is plain http on a port, so it is listed as
+    // that exact origin (site-access.ts `selfApprovalOrigin`).
+    await configureExtension(ext.sw, { pageApprovalDomains: [new URL(fake.url).origin] });
     await page.reload();
     await waitForMl(page);
 

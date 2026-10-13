@@ -16,7 +16,7 @@
 // operation must be authorized HERE, at the choke point, against `sender` — which Chrome sets and a page cannot forge.
 
 import type { ApprovalDecision } from "../contract/contract-agent";
-import { getConfig } from "./sw-llm";
+import { selfApprovalFacts, senderSelfApproves } from "./sw-site-access";
 import { defineState } from "../state-registry";
 
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
@@ -178,25 +178,11 @@ export const tabGrants = (tabId: number): TabGrants | undefined => {
     return all;
 };
 
-/** Whether a message or port comes from one of the extension's OWN pages or frames (the sidebar app, the popup, the
- *  chat page, a DevTools panel, the offscreen document), as opposed to a content script speaking for a web page. Read
- *  from the browser-stamped `sender.url`, which a page cannot set. The one test for "is this the extension", so the
- *  places that ask it cannot disagree. */
-export function isExtensionSender(sender: chrome.runtime.MessageSender | undefined): boolean {
-    return (sender?.url || "").startsWith(chrome.runtime.getURL(""));
-}
-
-/** Hostname of the message's real sender (the browser-stamped tab URL — a page can't forge it). */
-function senderHost(sender: chrome.runtime.MessageSender): string {
-    try { return new URL(sender.tab?.url || sender.url || "").hostname.toLowerCase(); } catch { return ""; }
-}
-
 /** Trust tier of a message's sender: `surface` = internal extension page (fully trusted); `whitelisted` =
- *  a domain the user trusts to self-gate; `untrusted` = a page that must present a per-call grant. Uses the
- *  same origin derivation GET_CONFIG does for `pageApprovalAllowed`. */
+ *  an origin the user trusts to self-gate; `untrusted` = a page that must present a per-call grant. `whitelisted` is
+ *  `senderSelfApproves`, the one rule `pageApprovalAllowed` also reads: the whitelisted host's https origin only,
+ *  top frame, and approved by the site gate. Never plain http, another port or a subdomain of it. */
 export async function senderTrust(sender: chrome.runtime.MessageSender): Promise<"surface" | "whitelisted" | "untrusted"> {
     if (sender.tab == null) return "surface";
-    const host = senderHost(sender);
-    const cfg = await getConfig();
-    return host && (cfg.pageApprovalDomains || []).includes(host) ? "whitelisted" : "untrusted";
+    return await senderSelfApproves(selfApprovalFacts(sender)) ? "whitelisted" : "untrusted";
 }
