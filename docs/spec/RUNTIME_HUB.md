@@ -1,7 +1,9 @@
 # Spec: the runtime hub, driving agents from anywhere
 
-**Status: agreed direction, not started** (2026-09-15). Security comes first in this document because it is the
-whole design: everything after it is plumbing that must not weaken it.
+**Status: built** (agreed 2026-09-15). The hub is `parawanderer/window-ml-hub`, pinned in
+`tests/fixtures/hub-harness.mjs`; the extension's half is `src/hub/` and `src/pairing/` (the index over a hub #182, a
+session's stream #187, pairing #212, #215 and #227; exec output reaching a hub client, #407). Security comes first in
+this document because it is the whole design: everything after it is plumbing that must not weaken it.
 
 ## What it is
 
@@ -427,10 +429,10 @@ headless runtimes are still open.
 
 ## Open
 
-- **MV3 lifetime.** The extension's service worker is evicted when idle. A websocket with regular traffic is believed
-  to keep it alive in current Chrome (since around Chrome 116); if not, the socket lives in the offscreen document.
-  To verify before building.
-- The pairing flow's exact UI, and key storage on each side.
+- ~~**MV3 lifetime.**~~ Answered by an idle test on 2026-09-19: the hub's 20 s pings keep a connected worker alive,
+  and a one-minute alarm, created only while paired, restarts one the browser stopped (`docs/dev/hub-client.md`).
+- ~~The pairing flow's exact UI, and key storage on each side.~~ Built: the pairing screens (#212, QR #227) and the
+  keyring (`src/hub/keyring.ts`).
 - Group keys for box telemetry: rotation when a device is unpaired.
 - Whether the local chat page also connects to the hub to show other runtimes, or stays local-only.
 - How much history a client can pull (the rings are bounded; saved sessions live on the runtime).

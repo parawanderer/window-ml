@@ -1,8 +1,9 @@
 # Pointers that address values
 
-**Status: draft, not started.** Written 2026-09-16, out of the table work (`fetch_url` returning parsed CSV and
-Parquet, PR #74). It replaces nothing yet; it describes what a `@tool:` pointer should BE, so that the pieces
-built on top of pointers stop each inventing their own answer.
+**Status: built.** Slices 1 to 8 of the Implementation order below were finished on 2026-09-17 (the last two are
+#124 and #126). Written 2026-09-16, out of the table work (`fetch_url` returning parsed CSV and Parquet, PR #74). It
+describes what a `@tool:` pointer should BE, so that the pieces built on top of pointers stop each inventing their own
+answer.
 
 The goal in one sentence: **a pointer names one value, held once, readable from JavaScript and from Python
 without either side making its own copy of it.**

@@ -1,11 +1,12 @@
 # Spec: the model reads its own context (`ml.current`)
 
-**Status: the READ half is built, not yet reachable** (written 2026-10-05; built 2026-10-06). The snapshot
+**Status: the READ half is built and reachable** (written 2026-10-05; built 2026-10-06, #380). The snapshot
 (`current-context.ts`), the loop recording each message (`agent-loop.ts`, `contextSink`), the dialect reading it in
 a WORKER realm (`readonly-exec.ts`) and the worker-side evaluator (`sw-readonly.ts`) exist and are tested
-(`tests/readonly-current.test.mjs`). What makes it reachable is the host calling that evaluator first, in
-`sw-run-host.ts`'s `tryReadonly`, which is the site-access work's slice 2. Until then no contract type is added (see
-below). Where the build departed from the first draft of this document, the section says so and why.
+(`tests/readonly-current.test.mjs`). The host calls that evaluator first in `sw-run-host.ts`'s `tryReadonly` since the
+site-access work's slice 2 part 1b (#410); the system prompt names it behind `selfIntrospection` (#435); the contract
+type is `MlApi.current` (`contract.ts`); `ml.current.runtime` landed in #616. Where the build departed from the first
+draft of this document, the section says so and why.
 
 This is the first step of [`AGENT_COMPACTION.md`](AGENT_COMPACTION.md) — the model deciding what in its own history
 it no longer needs — and it is deliberately only the step that cannot break anything. Everything here is read-only.
@@ -505,8 +506,8 @@ as on). On, a worker-hosted run's surveys get `ml.current` and its system prompt
 type it names into `agent_api_docs`. The line is added only where a survey can reach the snapshot (read-only exec
 auto-approved) and is stripped from a page-hosted run's prompt. Off: no snapshot in the worker and no line.
 
-An approved `exec` has no `ml.current`: it runs in the page's main world. Whether it can once `exec` runs isolated
-(SITE_ACCESS.md, part 4) is asked of the site-access work (session-mail, 2026-10-08).
+An approved `exec` that names `ml.current` runs in an isolated world with a frozen copy, never in the page's main
+world (site access part 4, #453; `src/sw/exec-routing.ts`).
 
 ## What it owes before it ships
 
@@ -548,8 +549,8 @@ later rather than now:
   exact, and the `estimated` ones — every user and tool message, so most of the context — are ~chars/4 with
   no tokenizer. An estimate is probably right for deciding WHAT to drop and wrong for deciding WHETHER to.
   The two names are what make that measurable at all rather than one number nobody can audit.
-- **The wiring.** The host calling `evalReadonlyInWorker` first, and handing the worker's `ml` a `dereference`, is the
-  site-access work's slice 2. The contract type, and with it `agent_api_docs`, lands with that, not before.
+- ~~**The wiring.**~~ Done: the host calls the worker evaluator first since #410, and the contract type
+  (`MlApi.current`, and with it `agent_api_docs`) landed with it.
 - Nothing is specified about a message arriving over the hub from a REMOTE runtime, where the context lives on
   another machine. The snapshot would have to cross a seal, and `LIVE_PREVIEW_CHARS` exists because that path
   already caps text once.

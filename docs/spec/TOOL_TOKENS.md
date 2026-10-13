@@ -1,6 +1,9 @@
 # Tool tokens — deterministic tool output woven into the final answer
 
-**Status:** spec / not yet built. Author: design discussion, 2026-09-01.
+**Status:** built, 2026-09-01 onward: the `answer` set (`eef676a4`, step 1), minting and surfacing (`4afe6efc`, step
+2), resolving citations with provenance (`d13a6b9d`, step 3). The `toolTokens` flag is in
+`src/contract/contract-agent.ts`, both exports resolve citations (`src/sidebar/export/export.ts`), and `latex` is a
+cast in `src/pointers/token-pipe.ts`. Author: design discussion, 2026-09-01.
 
 ## Problem
 
