@@ -35,7 +35,8 @@ import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants, isExtensionSender } from "./sw/sw-consent";
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
+import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteDecision } from "./sw/sw-site-access";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -44,7 +45,6 @@ import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-s
 import { pageRebuild } from "./agent/run-assembly";
 import { PAGE_STARTED_TYPES } from "./page-relay";
 import { originOf, type SiteEdit } from "./site-access";
-import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/sw-site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
@@ -815,9 +815,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // Non-secret config the page may read (model/OCR model/format). The URL
         // and API key are deliberately withheld — see the security invariants.
         getConfig()
-            // Whether THIS page's origin is on the page-approval whitelist is computed from the trusted `sender` (the
-            // content script's tab URL), NOT anything the page sends, and only that boolean crosses to the page.
-            .then(config => sendResponse({ data: publicConfig(config, sender.tab?.url || sender.url || "") }))
+            // Whether THIS page's origin is on the page-approval whitelist is computed from the trusted `sender` (its
+            // origin, frame and URL, as the browser stamps them), NOT anything the page sends, and only that boolean crosses.
+            .then(async config => sendResponse({ data: publicConfig(config, sender.tab != null && await senderSelfApproves(selfApprovalFacts(sender))) }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
 

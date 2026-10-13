@@ -6,9 +6,8 @@
 // may this sender start this message? The sender's origin comes from `sender`, which the browser sets. Nothing the
 // page says is read.
 
-import { type SiteEdit, type SiteLists, SITE_ACCESS_KEYS, applyEdit, decide, grantableOrigin } from "../site-access";
+import { type SenderFacts, type SiteEdit, type SiteLists, SITE_ACCESS_KEYS, applyEdit, decide, grantableOrigin, selfApproves } from "../site-access";
 import { PAGE_STARTED_TYPES } from "../page-relay";
-import { isExtensionSender } from "./sw-consent";
 import { getConfig } from "./sw-llm";
 
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -45,6 +44,39 @@ export async function siteDecision(origin: string): Promise<ReturnType<typeof de
 }
 
 /**
+ * The facts about a message's sender that the site gate and the self-approval whitelist read: the browser-stamped
+ * origin, the frame's URL (the tab's when there is none) and the frame id. One derivation, so the two cannot disagree.
+ * @param sender a `chrome.runtime.MessageSender`, or the `{ tab, url }` a worker-built run stands in for its tab with
+ * @returns the facts
+ */
+export function senderFacts(sender: chrome.runtime.MessageSender): SenderFacts {
+    return { origin: sender.origin, url: sender.url ?? sender.tab?.url, frameId: sender.frameId };
+}
+
+/**
+ * The facts the self-approval whitelist judges a sender by. A web page's are its own (`senderFacts`). One of the
+ * extension's own frames inside a tab (the overlay sidebar, its Python bench) speaks for the tab it sits in, so it is
+ * judged by that tab's top-frame URL, as before the whitelist was read by origin.
+ * @param sender the browser's facts about who sent the message
+ * @returns the facts
+ */
+export function selfApprovalFacts(sender: chrome.runtime.MessageSender): SenderFacts {
+    return isExtensionSender(sender) && sender.tab ? { url: sender.tab.url, frameId: 0 } : senderFacts(sender);
+}
+
+/**
+ * Whether a sender may act as a site on the self-approval whitelist (`pageApprovalDomains`): `selfApproves` over the
+ * lists and the setting as stored now. Every reader of the whitelist asks this: `senderTrust` for the privileged
+ * handlers, and `pageApprovalAllowed` in the config a page or a run reads.
+ * @param facts the sender's facts (`senderFacts`), or `{ url }` for a tab's top frame
+ * @returns true when the sender self-approves
+ */
+export async function senderSelfApproves(facts: SenderFacts): Promise<boolean> {
+    const [lists, cfg] = await Promise.all([readSiteLists(), getConfig()]);
+    return selfApproves(lists, facts, cfg.pageApprovalDomains || []);
+}
+
+/**
  * The router's gate. Null when the message may go on to its handler; otherwise the refusal to answer it with.
  *
  * Applies only to a type a page can start (`PAGE_STARTED_TYPES`) arriving from a tab that is not one of the
@@ -57,11 +89,19 @@ export async function siteDecision(origin: string): Promise<ReturnType<typeof de
 export async function pageRefusal(type: unknown, sender: chrome.runtime.MessageSender): Promise<string | null> {
     if (typeof type !== "string" || !PAGE_STARTED_TYPES.has(type)) return null;
     if (sender.tab == null || isExtensionSender(sender)) return null;
-    const g = grantableOrigin({ origin: sender.origin, url: sender.url ?? sender.tab.url, frameId: sender.frameId });
+    const g = grantableOrigin(senderFacts(sender));
     if ("refused" in g) return `Refused: ${g.refused}.`;
     const decision = await siteDecision(g.origin);
     if (decision === "always" || decision === "session") return null;
     return decision === "denied"
         ? `Refused: ${g.origin} is not allowed to use window.ml.`
         : `Refused: ${g.origin} is not approved to use window.ml. Allow it from the extension's toolbar button.`;
+}
+
+/** Whether a message or port comes from one of the extension's OWN pages or frames (the sidebar app, the popup, the
+ *  chat page, a DevTools panel, the offscreen document), as opposed to a content script speaking for a web page. Read
+ *  from the browser-stamped `sender.url`, which a page cannot set. The one test for "is this the extension", so the
+ *  places that ask it cannot disagree. */
+export function isExtensionSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+    return (sender?.url || "").startsWith(chrome.runtime.getURL(""));
 }

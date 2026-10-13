@@ -216,7 +216,8 @@ export interface MlConfig {
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
      *  so a hostile page can't self-approve. Managed only in the trusted Settings/popup UI; the
      *  page never sees this list — GET_CONFIG returns only a computed `pageApprovalAllowed` for
-     *  the requesting tab's own origin. Exact-hostname match (e.g. "docs.google.com"). */
+     *  the requesting tab's own origin. A bare hostname (e.g. "docs.google.com") means its https origin on the default
+     *  port only; an entry written as an origin means that origin (site-access.ts `selfApprovalOrigin`). */
     pageApprovalDomains: string[];
     /** Optional visual-grounding model for ml.agent's `locate` tool (coordinate
      *  output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in. */
@@ -348,16 +349,11 @@ export type MlPublicConfig = Pick<MlConfig,
  * worker hands its own run assembly (`workerMl`), so a run assembled in either place reads one config. The URL, the
  * API key and the model filter are left out on purpose: that omission is a security boundary.
  * @param config the full stored config
- * @param senderUrl the URL of the page this view is for, as the BROWSER reports it (a tab URL, never a value the page
- *   sent), used only to compute `pageApprovalAllowed`
+ * @param pageApprovalAllowed whether the page this view is for self-approves, decided by the caller from what the
+ *   BROWSER reports about it (sw-site-access.ts `senderSelfApproves`, the rule every reader of the whitelist applies)
  * @returns the public subset
  */
-export function publicConfig(config: MlConfig, senderUrl: string): MlPublicConfig {
-    let pageApprovalAllowed = false;
-    try {
-        const host = senderUrl ? new URL(senderUrl).hostname : "";
-        pageApprovalAllowed = !!host && (config.pageApprovalDomains || []).includes(host);
-    } catch { /* opaque/blank origin → not allowed */ }
+export function publicConfig(config: MlConfig, pageApprovalAllowed: boolean): MlPublicConfig {
     return {
         model: config.model, ocrModel: config.ocrModel, ocrNumCtx: config.ocrNumCtx, apiFormat: config.apiFormat,
         defaultModelVision: config.defaultModelVision,
@@ -368,7 +364,7 @@ export function publicConfig(config: MlConfig, senderUrl: string): MlPublicConfi
         selfIntrospection: config.selfIntrospection !== false,
         pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
         groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
-        groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,
+        groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed: pageApprovalAllowed === true,
     } as MlPublicConfig;
 }
 

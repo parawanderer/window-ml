@@ -953,7 +953,7 @@ test("the bench KEEPS its variables between runs — per mode, listed, completab
         // is an extension iframe inside the page's tab), so the bench's full mode is refused on any page not
         // whitelisted. A known, separate issue — not what this test is about — so the page is whitelisted
         // rather than the gate changed in passing.
-        await configureExtension(ext.sw, { pageApprovalDomains: [new URL(fake.url).hostname] });
+        await configureExtension(ext.sw, { pageApprovalDomains: [new URL(fake.url).origin] });
         await frame.locator(".bench-mode select").selectOption("full");
         await runInBench(frame, "grid");
         await expect(frame.locator(".bench-outbody")).toContainText("NameError");

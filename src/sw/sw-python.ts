@@ -2,7 +2,8 @@
 // WASM), the choke point that decides whether a caller may run `full` mode, and the live stdout relay back to
 // whoever is awaiting the run. Created lazily on first use and reused after.
 
-import { senderTrust, tabGrants, isExtensionSender } from "./sw-consent";
+import { senderTrust, tabGrants } from "./sw-consent";
+import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import { activeRuns, execReads, isWorkerRun, pageValueSession } from "./sw-runs";

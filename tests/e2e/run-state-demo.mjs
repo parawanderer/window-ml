@@ -136,7 +136,7 @@ try {
 
     // A run on a site trusted to gate its own approvals runs its loop in the page.
     await narrate(chat, "8 · A run whose loop is in the page", { sub: "a site on the page-approval list hosts its own run. The worker holds no context for it, so the page answers for it, and every such row is marked as the page's" });
-    await configureExtension(ext.sw, { listPageSessions: true, pageApprovalDomains: ["127.0.0.1"] });
+    await configureExtension(ext.sw, { listPageSessions: true, pageApprovalDomains: [origin] });
     await site.reload();
     await waitForMl(site);
     fake.setScript([{ tool: "exec", args: { js: "document.title = 'checked'; 'ok'" } }, { content: "Checked." }]);

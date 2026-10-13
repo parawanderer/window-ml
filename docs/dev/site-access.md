@@ -16,8 +16,8 @@ that answers asynchronously keeps the channel; one that never answers gets `send
 script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate as a `FETCH_LLM`.
 
 `pageRefusal` reads only `sender` (`origin`, `url`, `frameId`, `tab`), which the browser sets: the sender must be
-grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved (`decide`), or, over https only,
-its host on `pageApprovalDomains`. A tab hosting a run gets nothing more (part 5). Until then it was lent what the
+grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved (`decide`), or on the
+self-approval whitelist (`pageApprovalDomains`) by origin ("The self-approval whitelist", below). A tab hosting a run gets nothing more (part 5). Until then it was lent what the
 run's in-page tools sent (`RUN_TAB_TYPES`: a vision tool's model call and screenshot, `fetch_url`, `python_exec`, a
 sheet, a server tool, a shadow resolve, the config); every one of those tools now runs in the worker, or asks the page
 only for plain data about itself (below), so a run's page sends nothing for it. A run on a local `file:` page needs
@@ -151,7 +151,7 @@ that wakes the worker is judged against the restored runs, not the empty maps th
 ## The lists
 
 `site-access.ts` is pure: `originOf`, `grantableOrigin`, `decide` (a denial beats an approval), `applyEdit`,
-`originFromInput`. `sw-site-access.ts` keeps them in storage, under `SITE_ACCESS_KEYS`: `always` and `denied` in
+`originFromInput`, and the whitelist's `selfApprovalOrigin` / `selfApproves`. `sw-site-access.ts` keeps them in storage, under `SITE_ACCESS_KEYS`: `always` and `denied` in
 `chrome.storage.local`, `session` in `chrome.storage.session`. Read on EVERY gated message, so a revoke applies to the
 next call with no reload.
 
@@ -160,6 +160,29 @@ DevTools Settings → Permissions → "Sites that may use window.ml" (`SiteAppro
 popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set). An approval
 that only the self-approval whitelist implies is reported `implied`, and the popup offers no Revoke for it: the
 whitelist is edited in Settings.
+
+### The self-approval whitelist
+
+`pageApprovalDomains` (sync) lists sites trusted to answer their own approval prompts. It is still stored as bare
+hosts (slice 3 moves it to origins), but it is READ by origin, through one rule in `site-access.ts`:
+`selfApprovalOrigin` turns an entry into the one origin it trusts (a bare host is `https://host` on the default port;
+an entry written as an origin, as the e2e specs write `http://127.0.0.1:<port>`, is that origin; a bare host with a
+port or a path trusts nothing), and `selfApproves(lists, sender, hosts)` holds only when the sender's origin, read as
+the gate reads it (`grantableOrigin`), is on the whitelist and the gate approves it (a denial wins). Plain http, another
+port, a subdomain, a sub-frame or an opaque origin of a whitelisted host is never trusted as the https site.
+
+Every reader goes through it, so none can disagree with the gate:
+
+| Reader | What it decides |
+| --- | --- |
+| `decide` (`siteDecision`: `pageRefusal`, `SITE_ACCESS`'s `implied`, `sw-run-start.ts` resume, `sw-isolated-exec.ts` `pageApproved`) | the whitelist implies approval for window.ml |
+| `senderTrust` (`sw-consent.ts`) via `senderSelfApproves(selfApprovalFacts(sender))` | `whitelisted`: `CDP_CLICK`, `SERVER_TOOL_EXEC`, `FETCH_SHEET`, full-mode `PYTHON_EXEC`, `FETCH_URL` without a per-call grant; a worker-built run's `fetch_url`, sheet tables and Python, judged by its tab's URL |
+| `pageApprovalAllowed` (`publicConfig`, which takes the decision as an argument) | `GET_CONFIG`, `workerMl`, a worker run's `agent_api_docs` config: whether a page-hosted `ml.agent` honours the page's own `approve()` |
+
+One of the extension's own frames inside a tab (the overlay sidebar's bench) is judged by its tab's top-frame URL
+(`selfApprovalFacts`), as before. `nav-handover.ts` `changesSiteAccess` only watches the key. The table over sender
+shapes x readers, and the upgrade from a stored list of hosts: `tests/self-approval-origin.test.js`, with the pure
+rule in `tests/site-access.test.mjs`.
 
 ## The page's cancel
 
