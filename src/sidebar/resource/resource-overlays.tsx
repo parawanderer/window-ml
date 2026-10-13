@@ -16,6 +16,7 @@ import { phaseFill } from "./lane-paint";
 import { crosshair, timeGrid } from "../store";
 import { clockAt } from "../timestamps";
 import { hoverModel } from "./vram-focus";
+import { CursorRule } from "../ui-kit";
 
 /** The instants to rule through a plot, placed against its own segments. Shared, because writing them inline
  *  in one view is exactly how the Overview preset ended up with no rules at all while the per-pool tracks had
@@ -97,21 +98,12 @@ export function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     // whole sample's width on a short history (measured at 0.601 against 0.500, one poll apart).
     const snap = runs ? snapUnder(runs) : null;
     const frac = snap ? snap.frac : c.frac;
-    // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
-    const flip = frac > 0.72;
-    return (
-        <div class={`rc-cross${snap ? " snapped" : ""}`} style={{ left: `${frac * 100}%` }}>
-            {/* The DOTS are drawn inside each plot, on the band boundaries they are points of — see
-                StackedArea. Nothing here: a mark riding at the pointer's height is the cursor with a circle on
-                it, not a datapoint. */}
-            {/* Snapped, the label names the SAMPLE's own instant rather than the interpolated one under the
-                pointer — the dot is on a measurement, so the clock beside it has to be that measurement's. */}
-            {(() => {
-                const t = snap && runs ? (runs[snap.run]?.[snap.index]?.t ?? c.t) : c.t;
-                return t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(t, c.msPerPx ?? Infinity)}</span> : null;
-            })()}
-        </div>
-    );
+    // The DOTS are drawn inside each plot, on the band boundaries they are points of — see StackedArea. Nothing here:
+    // a mark riding at the pointer's height is the cursor with a circle on it, not a datapoint.
+    // Snapped, the label names the SAMPLE's own instant rather than the interpolated one under the pointer — the dot
+    // is on a measurement, so the clock beside it has to be that measurement's.
+    const t = snap && runs ? (runs[snap.run]?.[snap.index]?.t ?? c.t) : c.t;
+    return <CursorRule frac={frac} snapped={!!snap} label={t != null ? clockAt(t, c.msPerPx ?? Infinity) : undefined} />;
 }
 
 /** Track the pointer along the time axis. The fraction positions the line; the TIME comes from the axis, the same

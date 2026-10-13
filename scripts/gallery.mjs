@@ -84,6 +84,9 @@ async function build() {
         });
         cpSync(path.join(ROOT, "src/gallery/gallery.html"), path.join(stage, "index.html"));
         for (const f of ["src/sidebar/sidebar.css", "src/chat/chat.css", "src/sidebar/page-kit.css", "src/gallery/gallery.css"]) cpSync(path.join(ROOT, f), path.join(stage, path.basename(f)));
+        // The bench page's stylesheet, applied only inside a bench component's tile (gallery-stage.tsx gives it
+        // `gl-bench`): its page-wide rules (body, *, .dim) must not restyle every other component in the gallery.
+        writeFileSync(path.join(stage, "bench-page.css"), `@scope (.gl-bench) {\n${readFileSync(path.join(ROOT, "tests/e2e/bench/page/page.css"), "utf8")}\n}\n`);
         const fonts = path.join(ROOT, "node_modules/katex/dist/fonts");
         if (existsSync(fonts)) {
             mkdirSync(path.join(stage, "fonts"), { recursive: true });
