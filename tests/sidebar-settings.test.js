@@ -739,3 +739,61 @@ test("settings search: Escape in the box clears it", async () => {
     assert.ok(w.shadow.querySelector(".set-tab"), "the tabs are back");
     assert.equal(w.shadow.querySelector(".settings .set-search").value, "");
 });
+
+// --- the self-approval whitelist: what Settings stores, shows and removes ---------------------------------
+
+/** The whitelist section's parts: its add box, its chips' text, and a chip's remove button by entry. */
+const whitelistParts = (w) => {
+    const sec = [...w.shadow.querySelectorAll("details.set-section")].find((d) => d.querySelector("summary")?.textContent.trim() === "Self-approval whitelist");
+    const input = sec.querySelector("input.perm-input");
+    const chips = [...sec.querySelectorAll(".perm-list .perm-chip .perm-host")].map((e) => e.textContent);
+    const add = [...sec.querySelectorAll("button.test-btn")].find((b) => b.textContent.trim() === "Add" && !b.closest(".perm-chip"));
+    const remove = (entry) => sec.querySelector(`.perm-x[aria-label="Remove ${entry}"]`);
+    return { input, sec, chips, add, remove };
+};
+
+test("self-approval whitelist: an origin entry is added, shown and removed as typed, and a bare host is stored bare", async () => {
+    const stored = ["127.0.0.1", "http://127.0.0.1:5123", "docs.example"];
+    const w = await loadSidebarWorld({ sync: { pageApprovalDomains: stored } });
+    await openSettings(w, "Permissions");
+    await w.flush();
+    let p = whitelistParts(w);
+    assert.deepEqual(p.chips, stored, "every stored entry is shown exactly as stored, an origin with its scheme and port");
+    // Add an http origin: stored as that origin, never cut down to its host (which would mean https://127.0.0.1).
+    p.input.value = "http://127.0.0.1:5124/some/page";
+    p.input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    whitelistParts(w).add.click();
+    await w.flush();
+    assert.deepEqual(w.syncStore.pageApprovalDomains, ["127.0.0.1", "docs.example", "http://127.0.0.1:5123", "http://127.0.0.1:5124"].sort());
+    // A bare host typed as an https URL is stored as the bare host, as every earlier build stored it.
+    p = whitelistParts(w);
+    p.input.value = "https://Other.Example/x";
+    p.input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    whitelistParts(w).add.click();
+    await w.flush();
+    assert.ok(w.syncStore.pageApprovalDomains.includes("other.example"));
+    // Removing the origin entry removes exactly it, leaving the bare host of the same address alone.
+    whitelistParts(w).remove("http://127.0.0.1:5123").click();
+    await w.flush();
+    assert.deepEqual(w.syncStore.pageApprovalDomains, ["127.0.0.1", "docs.example", "http://127.0.0.1:5124", "other.example"]);
+    assert.deepEqual(whitelistParts(w).chips, w.syncStore.pageApprovalDomains);
+});
+
+test("UPGRADE (Settings): a bare LAN host's http origin that stopped self-approving is listed, and Add trusts that exact origin", async () => {
+    // What an install before #628 held: bare hosts, and the http origins allowed to use window.ml.
+    const w = await loadSidebarWorld({ sync: { pageApprovalDomains: ["localhost", "mlbox.lan"] },
+        siteLists: { always: ["http://localhost:3000", "http://mlbox.lan:8080"], session: [], denied: [] } });
+    await openSettings(w, "Permissions");
+    await w.flush();
+    const sec = whitelistParts(w).sec;
+    const note = sec.querySelector(".set-warn");
+    assert.ok(note, "the person is told");
+    assert.match(note.textContent, /no longer answer their own approval prompts/);
+    assert.deepEqual([...note.querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://mlbox.lan:8080"], "the LAN origin only: loopback still self-approves");
+    note.querySelector('button[aria-label="Trust http://mlbox.lan:8080 to self-approve"]').click();
+    await w.flush();
+    assert.deepEqual(w.syncStore.pageApprovalDomains, ["http://mlbox.lan:8080", "localhost", "mlbox.lan"]);
+    assert.equal(whitelistParts(w).sec.querySelector(".set-warn"), null, "the notice is gone once the origin is trusted");
+});

@@ -131,6 +131,30 @@ test("UPGRADE: a stored whitelist of bare hosts keeps working for https senders,
     }
 });
 
+test("UPGRADE: a bare loopback entry self-approves the local http ports the person allowed, at every reader; a LAN host's do not", async () => {
+    // What an install before #628 held: bare hosts on the whitelist, and the http origins allowed in the site gate so
+    // those pages could use window.ml at all. Each self-approved by host before.
+    const stored = ["localhost", "127.0.0.1", "mlbox.lan"];
+    const always = ["http://localhost:3000", "http://127.0.0.1:8080", "http://mlbox.lan:8080"];
+    const cases = [["http://localhost:3000/app", true], ["http://127.0.0.1:8080/", true], ["http://mlbox.lan:8080/", false]];
+    const wrong = [];
+    for (const [reader, run] of READERS) for (const [url, want] of cases) {
+        const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: stored }), siteGate: true, local: { ml_site_always: always }, onFetch, onPyRun: async () => ({ ok: true, value: 2, stdout: "" }) });
+        const got = await run(bg, page(url));
+        if (got !== want) wrong.push(`${reader} x ${url}: ${got ? "trusted" : "refused"}, want ${want ? "trusted" : "refused"}`);
+    }
+    assert.deepEqual(wrong, []);
+});
+
+test("a whitelisted origin also approved for this session self-approves, at every reader", async () => {
+    const wrong = [];
+    for (const [reader, run] of READERS) {
+        const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: WHITELIST }), siteGate: true, session: { ml_site_session: ["https://trusted.example"] }, onFetch, onPyRun: async () => ({ ok: true, value: 2, stdout: "" }) });
+        if (!await run(bg, page("https://trusted.example/p"))) wrong.push(reader);
+    }
+    assert.deepEqual(wrong, []);
+});
+
 // --- every reader is enumerated: nothing else reads the whitelist ---
 
 test("the whitelist is read only through the one rule: no other source file matches a sender against it", () => {
@@ -144,6 +168,34 @@ test("the whitelist is read only through the one rule: no other source file matc
     // site-access.ts holds the rule; sw-site-access.ts reads the setting for it. The rest only declare, edit or watch it:
     // the config type and default, the two settings editors, and the change detector that re-decides runs on an edit.
     assert.deepEqual(readers, ["contract/contract-config.ts", "popup.ts", "sidebar/settings/settings.tsx", "site-access.ts", "sw/nav-handover.ts", "sw/sw-site-access.ts"]);
+    // Pinned to the LINE as well, so a new reader inside one of those files fails here too: a whitelist read anywhere
+    // but `siteDecision` and `senderSelfApproves` must go through `selfApproves`. Comments are left out.
+    const uses = [];
+    for (const f of files) {
+        const rel = path.relative(root, f).split(path.sep).join("/");
+        for (const raw of fs.readFileSync(f, "utf8").split("\n")) {
+            const line = raw.trim();
+            if (/^(\/\/|\*|\/\*)/.test(line)) continue;
+            const code = line.replace(/\s\/\/\s.*$/, "").replace(/\s+/g, " ");
+            if (/pageApprovalDomains/.test(code)) uses.push(`${rel}: ${code}`);
+        }
+    }
+    assert.deepEqual(uses.sort(), [
+        "contract/contract-config.ts: pageApprovalDomains: [],",
+        "contract/contract-config.ts: pageApprovalDomains: string[];",
+        "popup.ts: await chrome.storage.sync.set({ pageApprovalDomains: next });",
+        "popup.ts: const next = fn(pageApprovalDomains as string[]);",
+        "popup.ts: const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });",
+        "popup.ts: const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });",
+        "popup.ts: renderPermList(pageApprovalDomains as string[]);",
+        "popup.ts: renderUncovered(pageApprovalDomains as string[]);",
+        "sidebar/settings/settings.tsx: chrome.storage.sync.set({ pageApprovalDomains: list });",
+        "sidebar/settings/settings.tsx: config.value = { ...config.value, pageApprovalDomains: list };",
+        "sidebar/settings/settings.tsx: const domains = c.pageApprovalDomains || [];",
+        "sw/nav-handover.ts: if (area === \"sync\") return \"pageApprovalDomains\" in changes;",
+        "sw/sw-site-access.ts: return decide(lists, origin, cfg.pageApprovalDomains || []);",
+        "sw/sw-site-access.ts: return selfApproves(lists, facts, cfg.pageApprovalDomains || []);",
+    ].sort(), "a new read of the whitelist: route it through selfApproves (site-access.ts), then add its line here");
     const config = fs.readFileSync(path.join(root, "contract/contract-config.ts"), "utf8");
     assert.doesNotMatch(config.replace(/\/\*\*[\s\S]*?\*\//g, ""), /\.pageApprovalDomains/, "contract-config.ts matches against the whitelist itself");
 });
