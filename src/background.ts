@@ -300,6 +300,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // copying the whole thing would carry anything the panel happened to put on it. The cost is that a new
         // field must be added HERE too — a step budget added everywhere else still arrived undefined until it was.
         const toPage = (): void => {
+            // A run the worker holds is never a page's to drive, and the person's message for it goes to no page: not to
+            // the panel's tab when the run is on another (userRunAction answers null there), and not when that failed.
+            if (typeof message.hash === "string" && isWorkerRun(message.hash)) return;
             try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
         };
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).

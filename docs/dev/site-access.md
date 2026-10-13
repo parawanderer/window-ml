@@ -129,7 +129,11 @@ reads, since the turn's answer is the worker's set (`worker-answer.ts`). Until #
 which content.ts posted on the page's window, so a page the run was handed away from read its answer. content.ts and
 the page no longer relay a `summary` with a finish at all. The other messages at the end of a turn carry no run
 content to the page's world: the run's events (`ML_DEBUG_TO_PAGE`) go to the shell only, and a re-adopt names the
-tools and flags of a worker's run with no model (`pageRebuild`).
+tools and flags of a worker's run with no model (`pageRebuild`). The finish is sent and not awaited: a page that never
+answers it would otherwise hold the run's result and its next turn for as long as content.ts waits (two minutes).
+`tests/worker-held-page-messages.test.mjs` checks every message to such a run's tab, by type, against what it may
+carry; a new message type fails there until it is classified. A DevTools composer message for a run the worker holds
+goes to no page, also when it comes from the panel of another tab (`ML_SESSION_REMOTE`).
 
 The decision outlives the worker: `makeWorkerRun` stores the run id under `ml_handed_to_worker` at once (the run's own
 snapshot is rewritten only at its next checkpoint), `hydratePersistedRuns` applies the list over the restored
@@ -139,7 +143,8 @@ under the same id is never handed over by an old entry. Past `HANDED_MAX` entrie
 longer holds (no snapshot, loop or cross-page record) are pruned; a held run's entry is never dropped. One way:
 re-approving the site leaves the run the worker's, and the page's `RESUME_RUN` for it is refused. `startBackgroundRun`
 awaits `hydrationDone` and asks `isWorkerRun` again before it takes a page's `START_RUN` or `RESUME_RUN`, so a message
-that wakes the worker is judged against the restored runs, not the empty maps the router saw.
+that wakes the worker is judged against the restored runs, not the empty maps the router saw. The wait is bounded
+(`RESTORE_WAIT_MS`) and closed: past it the page is refused (`RESTORE_PENDING`), never judged against empty maps.
 
 ## The lists
 
