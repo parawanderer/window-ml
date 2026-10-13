@@ -45,6 +45,11 @@ the worker, and the page answers geometry only):
       run's python_exec over a page table, `fetch_url` session render with an `ask`, and sealed describeElement run in
       the worker (`pageRead`, `worker-page-read.ts`); red-team tests for every former run-tab type, the hand-over that
       cannot be stopped, and the upgrade; attack 9 closed: #611.
+- [x] A tool call that throws anywhere in its dispatch (delegateTool's setup on an odd argument, a page's malformed
+      envelope, an isolated world's odd return, auto-approve, the precheck, the gate and its bookkeeping) is an error
+      result the model reads, or a gate for a step that only decides, and a `tool`/`threw` record in the execution log;
+      it no longer ends the run. A throw while the run is cancelled still ends it (redteam-tool-throw.test.mjs,
+      agent-loop.test.mjs "a dispatch that THROWS"): #618.
 
 ## In progress
 

@@ -616,3 +616,71 @@ test("a cap raised mid-run is the one the budget note counts from", async () => 
     assert.match(msgs[0], /\[1 step left this turn/, "with a cap of 2, step 1 leaves 1");
     assert.doesNotMatch(msgs[1], /left this turn/, "after the cap rose to 10, step 2 says nothing");
 });
+
+// --- a dispatch that THROWS: an error result the model reads, never the run's end (both loops share this) ---
+test("a throw in each part of a tool call's dispatch becomes an error result or a gate, the run goes on, and the host hears of it", async () => {
+    const boom = () => { throw new TypeError("odd input"); };
+    const cases = [
+        // [phase, the dep that throws, what the step ends as]
+        ["run", { runTool: async () => boom() }, /failed inside the extension \(odd input\)/],
+        ["readonly", { tryReadonly: async () => boom() }, /^ran:danger$/],      // falls through to the gate, which approves
+        ["auto-approve", { autoApprove: boom }, /^ran:danger$/],               // likewise
+        ["precheck", { precheck: async () => boom() }, /^ran:danger$/],         // likewise
+        ["approve", { approve: async () => boom() }, /failed inside the extension/],
+    ];
+    for (const [phase, over, want] of cases) {
+        const { deps, calls } = makeDeps({ turns: [toolCall("danger"), reply("done")] });
+        const heard = [];
+        Object.assign(deps, over, { toolThrew: (name, ph, e) => heard.push([name, ph, e.message]) });
+        const res = await runAgentLoop("x", { tools: [danger] }, deps);
+        assert.equal(res.summary, "done", `${phase}: the run went on to its answer`);
+        assert.match(res.transcript[0].result, want, phase);
+        assert.deepEqual(heard, [["danger", phase, "odd input"]], phase);
+        if (phase === "approve") assert.equal(calls.runTool.length, 0, "SECURITY: a gate that threw decided nothing, so the tool never ran");
+    }
+});
+
+test("a throw while the run is cancelled is not turned into a result: the run still ends", async () => {
+    const ctrl = new AbortController();
+    const { deps } = makeDeps({ turns: [toolCall("danger"), reply("done")] });
+    const heard = [];
+    deps.runTool = async () => { ctrl.abort(); throw new DOMException("aborted", "AbortError"); };
+    deps.toolThrew = (...a) => heard.push(a);
+    await assert.rejects(runAgentLoop("x", { tools: [danger], signal: ctrl.signal }, deps), /aborted/);
+    assert.deepEqual(heard, [], "a cancel's throw is not recorded as a tool's");
+});
+
+test("a step that only decides and throws reaches the gate: a denial runs nothing, however the step threw", async () => {
+    // The fall-through must end at the PERSON: a throw in the read-only try, auto-approve or the precheck (synchronous,
+    // async, or a verdict that cannot be read as text) never runs the tool unasked.
+    const boom = () => { throw new TypeError("odd input"); };
+    const odd = { toString: 1 };
+    const cases = [
+        ["readonly", { tryReadonly: async () => boom() }],
+        ["readonly", { tryReadonly: async () => ({ result: odd }) }],
+        ["auto-approve", { autoApprove: boom }],
+        ["precheck", { precheck: async () => boom() }],
+        ["precheck", { precheck: boom }],
+        ["precheck", { precheck: async () => odd }],
+    ];
+    for (const [phase, over] of cases) {
+        const { deps, calls } = makeDeps({ turns: [toolCall("danger"), reply("done")], approve: () => false });
+        const heard = [];
+        Object.assign(deps, over, { toolThrew: (name, ph) => heard.push([name, ph]) });
+        const res = await runAgentLoop("x", { tools: [danger] }, deps);
+        assert.equal(res.summary, "done", `${phase}: the run went on to its answer`);
+        assert.equal(calls.approve.length, 1, `${phase}: the person was asked`);
+        assert.equal(calls.runTool.length, 0, `SECURITY (${phase}): a denied call never ran`);
+        assert.match(res.transcript[0].result, /^Denied by the user/, phase);
+        assert.deepEqual(heard, [["danger", phase]], phase);
+    }
+});
+
+test("a tool's answer that cannot be made text is an error result, not the run's end", async () => {
+    // A host's answer is data from wherever the tool ran (a page's envelope): `{ toString: 1 }` throws on String().
+    const { deps } = makeDeps({ turns: [toolCall("danger"), reply("done")] });
+    deps.runTool = async () => ({ result: { toString: 1 } });
+    const res = await runAgentLoop("x", { tools: [danger] }, deps);
+    assert.equal(res.summary, "done");
+    assert.match(res.transcript[0].result, /failed inside the extension/);
+});

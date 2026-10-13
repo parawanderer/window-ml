@@ -107,6 +107,29 @@ export interface AgentLoopDeps {
     // This turn's DELEGATED-sub-call token tally (look/locate/verify's own vision calls) — spend the loop
     // never sees directly, metered where those events are suppressed (bus.ts). Omit → no delegated calls.
     subcallTokens?(): SubcallUsage;
+    /** A tool's dispatch THREW (`phase`: where), and the loop turned it into an error result (or, for a step that only
+     *  decides whether to ask, into asking). Told so the host can record it (the worker's execution log); never asked
+     *  for a decision. Not called for a throw while the run is cancelled, which still ends the run. */
+    toolThrew?(name: string, phase: ToolThrowPhase, error: unknown): void;
+}
+
+/** Where in a tool call's dispatch a throw happened: the read-only try, the auto-approve decision, the doomed-action
+ *  precheck, the approval gate itself, or running the tool. */
+export type ToolThrowPhase = "readonly" | "auto-approve" | "precheck" | "approve" | "run";
+
+/** What the model is told when a tool call threw inside the extension instead of answering: the call ended with this
+ *  error and nothing else, so it can retry or try another way. */
+export function toolThrewResult(name: string, error: unknown): string {
+    let msg: string;
+    try { msg = error instanceof Error ? error.message || error.name : String(error); } catch { msg = "unknown error"; }
+    return `Error: the "${name}" call failed inside the extension (${msg.slice(0, 300)}). It did not complete; check its arguments, then call it again or try another way.`;
+}
+
+/** A tool result whose `result` is the text the model reads. The host's answer can carry anything (a page's
+ *  envelope, a read-only survey's value), and one that cannot be made a string throws HERE, inside the step that
+ *  produced it, where the throw is an error result or a gate rather than the run's end. */
+function withText(r: ToolRunResult): ToolRunResult {
+    return typeof r?.result === "string" ? r : { ...r, result: String(r?.result) };
 }
 
 /** The machine's devices and memory for chat_metadata, in GiB like every other memory figure. One line per device
@@ -715,7 +738,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     let turnReturnedAt: number | undefined;
     /** That gap, for the step being emitted. */
     let lastDispatchMs: number | undefined;
-    /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
+    /**
+     * A tool's dispatch threw at `phase`. While the run is cancelled the throw is the cancel's, and is rethrown so the
+     * run still ends; otherwise the host is told (`toolThrew`) and the caller turns it into an error result or a gate.
+     */
+    const threw = (name: string, phase: ToolThrowPhase, e: unknown): void => {
+        if (signal?.aborted) throw e;
+        try { deps.toolThrew?.(name, phase, e); } catch { /* a record that cannot be written is not the run's end */ }
+    };
+    /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. A throw
+     *  from the tool or its host becomes an error result the model reads, never the run's end (`threw`). */
     const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
         const t0 = Date.now();
         // The gap since the model call returned, minus any time a human held the gate open — that wait is
@@ -724,8 +756,17 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
-            return "error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push);
+            return withText("error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push));
+        } catch (e) {
+            threw(name, "run", e);
+            return { result: toolThrewResult(name, e) };
         } finally { lastToolMs = Date.now() - t0; if (waited !== "human") waited = "tool"; }
+    };
+    /** The doomed-action precheck's verdict as text, or "" to go on to the gate. A throw, synchronous or not, and a
+     *  verdict that cannot be made a string go on to the gate too (`threw`). */
+    const precheckText = async (name: string, a: Record<string, unknown>): Promise<string> => {
+        try { const v = await deps.precheck?.(name, a); return v ? String(v) : ""; }
+        catch (e) { threw(name, "precheck", e); return ""; }
     };
     let seq = 0;
     // WHAT THE NEXT MODEL CALL WAITED ON, for the request hint: a person at an approval gate outranks a tool
@@ -823,10 +864,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
-                const ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args, fan ?? undefined) : null;
+                // A throw in any step that only DECIDES (the read-only try, auto-approve, the precheck) falls through to
+                // the gate: the person is asked, which is never less safe than the step that threw.
+                let ro: ToolRunResult | null = null;
+                try { ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args, fan ?? undefined) : null; if (ro) ro = withText(ro); }
+                catch (e) { threw(call.name, "readonly", e); ro = null; }
                 // A refused try leaves nothing behind, and lines it streamed are something (docs/dev/readonly-exec.md).
                 if (!ro) fan?.discard();
-                const autoRaw = ro ? null : (deps.autoApprove?.(call.name, args) || null);
+                let autoRaw: ReturnType<NonNullable<AgentLoopDeps["autoApprove"]>> = null;
+                try { autoRaw = ro ? null : (deps.autoApprove?.(call.name, args) || null); }
+                catch (e) { threw(call.name, "auto-approve", e); autoRaw = null; }
                 // autoApprove may return the bare provenance OR { approval, reused } (grants it reused).
                 const auto = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
                 if (ro) {
@@ -836,7 +883,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     approval = auto.approval;
                     tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // trusted auto-approve → execute
                     if (auto.reused?.length) tr = { ...tr, reused: [...(tr.reused || []), ...auto.reused] };   // surface the reused grants
-                } else if (deps.precheck && (result = (await deps.precheck(call.name, args)) || "")) {
+                } else if (deps.precheck && (result = await precheckText(call.name, args))) {
                     // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
                     // the action can only fail (no element / stale @pt / bad selector), so return that error
                     // WITHOUT gating — approving something that will just fail is pointless friction. It
@@ -852,40 +899,47 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     // the picture entirely made a step that waited two minutes for a click look identical to
                     // one that ran instantly.
                     const gateT0 = Date.now();
-                    const rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step });
+                    // A gate that THREW decided nothing: the call does not run, and the model reads why.
+                    let rawDecision: ApprovalDecision | undefined, gateErr: { e: unknown } | undefined;
+                    try { rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step }); }
+                    catch (e) { threw(call.name, "approve", e); gateErr = { e }; }
                     lastApproveMs = Date.now() - gateT0;
-                    // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
-                    // came through the external channel (a harness, an orchestrator): that is code, in
-                    // milliseconds, and there is no honest label for it, so it adds none.
-                    if (!(typeof rawDecision === "object" && rawDecision?.source === "external")) waited = "human";
-                    const d = normalize(rawDecision, args);
-                    // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
-                    // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
-                    // resolved this gate with a cancellation decision). The SECOND is essential when the
-                    // controller is GONE (an evicted/re-adopted run): aborting can't reach the loop, so without
-                    // it the gate would resolve to a plain `false` → read as a DENY → the loop steps on forever
-                    // ("auto-denied + can't Stop", the reported bug). Store a generic, non-accusatory result —
-                    // NOT "denied" — and set `stopRun` so the loop EXITS after this step's DONE even if the
-                    // signal never aborted (the top-of-step signal check alone wouldn't catch the no-controller
-                    // case). The DONE emit below clears the approve/deny buttons on every surface.
-                    if (signal?.aborted || d.cancelled) {
-                        approval = "cancelled";
-                        result = "The user cancelled the run. Stop here and wait for their next instructions — do not retry this call.";
-                        stopRun = true;
+                    if (gateErr) {
+                        result = toolThrewResult(call.name, gateErr.e);
                     } else {
-                        if (!d.approved) {
-                            approval = "denied";
-                            // Attribute the denial accurately: a human in a browser surface, or an external
-                            // approver (the __mlApprovals IPC channel — an orchestrator / policy driver).
-                            const who = d.source === "external" ? "an external approver" : "the user";
-                            result = d.feedback
-                                ? `Denied by ${who}: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
-                                : `Denied by ${who}. Do not retry this exact call; try another approach.`;
-                            // NB: runTool is NOT called — the security invariant.
+                        // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
+                        // came through the external channel (a harness, an orchestrator): that is code, in
+                        // milliseconds, and there is no honest label for it, so it adds none.
+                        if (!(typeof rawDecision === "object" && rawDecision?.source === "external")) waited = "human";
+                        const d = normalize(rawDecision as ApprovalDecision, args);
+                        // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
+                        // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
+                        // resolved this gate with a cancellation decision). The SECOND is essential when the
+                        // controller is GONE (an evicted/re-adopted run): aborting can't reach the loop, so without
+                        // it the gate would resolve to a plain `false` → read as a DENY → the loop steps on forever
+                        // ("auto-denied + can't Stop", the reported bug). Store a generic, non-accusatory result —
+                        // NOT "denied" — and set `stopRun` so the loop EXITS after this step's DONE even if the
+                        // signal never aborted (the top-of-step signal check alone wouldn't catch the no-controller
+                        // case). The DONE emit below clears the approve/deny buttons on every surface.
+                        if (signal?.aborted || d.cancelled) {
+                            approval = "cancelled";
+                            result = "The user cancelled the run. Stop here and wait for their next instructions — do not retry this call.";
+                            stopRun = true;
                         } else {
-                            approval = "user";
-                            args = d.arguments;                                   // possibly gate-edited
-                            tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                            if (!d.approved) {
+                                approval = "denied";
+                                // Attribute the denial accurately: a human in a browser surface, or an external
+                                // approver (the __mlApprovals IPC channel — an orchestrator / policy driver).
+                                const who = d.source === "external" ? "an external approver" : "the user";
+                                result = d.feedback
+                                    ? `Denied by ${who}: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
+                                    : `Denied by ${who}. Do not retry this exact call; try another approach.`;
+                                // NB: runTool is NOT called — the security invariant.
+                            } else {
+                                approval = "user";
+                                args = d.arguments;                                   // possibly gate-edited
+                                tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                            }
                         }
                     }
                 }
@@ -952,14 +1006,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // rather than minting a second, so the step the answer resolves to is the step that produced it.
             const mintedView = mintedViews.get(s);
             let heldChars: number | undefined;   // what the pointer holds past the model's copy, when it holds more
-            const tokenId = mintedView
+            let tokenId = mintedView
                 ?? ((opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined);
-            if (tokenId && !mintedView) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             // The pointer carries the value's TYPE, taken from the render descriptor the step already produced —
             // so `dereference … | keys` on a DataFrame means its COLUMNS, without re-parsing a rendered grid.
             // A minted VIEW was already stored by mintView, with the label and kind that describe the
             // reduction. Re-noting it here would overwrite that with the dereference step's own result.
-            if (tokenId && !mintedView) {
+            // The render descriptor is the tool host's data (a page's envelope can carry any shape): a pointer that
+            // cannot be described from it is not minted, and the step keeps its result (`threw`, phase "run").
+            if (tokenId && !mintedView) try {
                 const r = tr?.renderOut;
                 const df = r?.type === "python-out" ? r.df : undefined;
                 // Described through tableOf, so a POINTER to a table carries the same pandas surface a fetched
@@ -994,6 +1049,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     ?? (r?.type === "image" ? r.src : r?.type === "look" ? r.image : r?.type === "python-out" ? r.image : undefined);
                 const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
                 tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: s, ...(tbl ? { table: tbl } : {}), ...(value ? { value } : {}) });
+                tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
+            } catch (e) {
+                threw(call.name, "run", e);
+                tokenId = undefined; heldChars = undefined;
             }
             // Not for a minted view: mintView appended its own line explaining what the reduction is, and
             // `dereference`'s `token` PARAMETER is the pointer being READ, so `wantsToken` is true for every

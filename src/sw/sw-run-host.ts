@@ -67,6 +67,12 @@ async function documentOn(tabId: number): Promise<string | undefined> {
     return typeof frame?.documentId === "string" ? frame.documentId : undefined;
 }
 
+/** A thrown value as an execution-log `key`: its message, bounded; never a throw of its own (a value whose conversion
+ *  throws is what made the call fail in the first place). */
+function thrownKey(e: unknown): string {
+    try { return String((e as Error)?.message ?? e).slice(0, 200); } catch { return "unprintable error"; }
+}
+
 /** Resolve the pointer reads an approved `exec` script names, against the run's store: each one's value, or the error
  *  the read raises (a MemoryFault, a bad pipe), which the page then throws where the script reads it. */
 function preReadsFor(runId: string, js: string): PreRead[] {
@@ -941,6 +947,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     if (live) delegateStreams.delete(runId);
                 }
             } : undefined,
+            // A tool call that threw (a page's malformed answer, odd arguments) became an error result in the loop; the
+            // execution log is where the person sees what threw. The message is free text, so it goes in `key`, which the
+            // model's view of the log never carries.
+            toolThrew: (name, phase, e) => recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: phase,
+                key: thrownKey(e), detail: { tool: name } }),
             // Doomed-action precheck (click/type): ask the page to resolve the target side-effect-free.
             // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
             // that HAVE a precheck (avoids a useless round-trip on every gated call).
@@ -976,28 +987,35 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     pendingApprovals.set(key, {
                         resolve: (decision) => {
                             const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
-                            if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
-                            // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
-                            // (repeat navs to it then skip the gate).
-                            if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
-                            // Approving a fetch_url: a CREDENTIALED one (fetch-as-the-user — raw cookies, or a
-                            // rendered load in your session) mints a ONE-TIME grant, NEVER persisted, so it
-                            // always re-prompts. An UNCREDENTIALED one (a raw uncredentialed GET, or an
-                            // INCOGNITO rendered load — no session, lower risk) consents to that EXACT url for
-                            // the session (repeat fetches auto-approve — the rememberable path).
-                            if (ok && tool === "fetch_url") {
-                                const u = String((args as { url?: unknown }).url ?? "");
-                                const cred = !!(args as { credentials?: unknown }).credentials;
-                                // A worker-built run's fetch_url runs in the worker: its approval is the RUN's, so no
-                                // script on the tab can use it (worker-tools.ts `grantRunFetch`), and it is NEVER minted
-                                // on the tab, even when this worker lost the run's state (an eviction): then nothing is
-                                // granted and the call is refused, rather than lent to the page. Else the tab's.
-                                if (u && byWorker() && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
-                                else if (u) { if (cred) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                            // What a decision remembers (consents, grants) is read from the model's arguments, which can be
+                            // anything: a throw there must not leave the gate hanging, so the decision is still delivered.
+                            // A grant that was not minted fails closed: the call it was for is refused.
+                            try {
+                                if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
+                                // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
+                                // (repeat navs to it then skip the gate).
+                                if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
+                                // Approving a fetch_url: a CREDENTIALED one (fetch-as-the-user — raw cookies, or a
+                                // rendered load in your session) mints a ONE-TIME grant, NEVER persisted, so it
+                                // always re-prompts. An UNCREDENTIALED one (a raw uncredentialed GET, or an
+                                // INCOGNITO rendered load — no session, lower risk) consents to that EXACT url for
+                                // the session (repeat fetches auto-approve — the rememberable path).
+                                if (ok && tool === "fetch_url") {
+                                    const u = String((args as { url?: unknown }).url ?? "");
+                                    const cred = !!(args as { credentials?: unknown }).credentials;
+                                    // A worker-built run's fetch_url runs in the worker: its approval is the RUN's, so no
+                                    // script on the tab can use it (worker-tools.ts `grantRunFetch`), and it is NEVER minted
+                                    // on the tab, even when this worker lost the run's state (an eviction): then nothing is
+                                    // granted and the call is refused, rather than lent to the page. Else the tab's.
+                                    if (u && byWorker() && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
+                                    else if (u) { if (cred) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                                }
+                                // button #3: "Approve + remember" — also persist the exec's static ml.fetch
+                                // literals for the session (a positive `persist` decision only).
+                                if (ok && typeof decision === "object" && decision.persist) persistGrants(tabId, grants);
+                            } catch (e) {
+                                recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: "approve", key: thrownKey(e), detail: { tool } });
                             }
-                            // button #3: "Approve + remember" — also persist the exec's static ml.fetch
-                            // literals for the session (a positive `persist` decision only).
-                            if (ok && typeof decision === "object" && decision.persist) persistGrants(tabId, grants);
                             // Clear the gate on EVERY surface the INSTANT it's decided — not only when the
                             // tool's DONE lands (which for a slow fetch is seconds off). Without this, a
                             // second UI (the other of DevTools panel / HUD card) kept showing approve/deny
