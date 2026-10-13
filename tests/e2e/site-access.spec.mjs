@@ -326,6 +326,53 @@ test.describe("@security part 5: a page a run is on is lent nothing", () => {
             expect(log).toEqual([["navigated-to-unapproved-site", site.origin("evil.test")]]);
         } finally { await stopApprover(); await close(); }
     });
+
+    test("a page-built run whose site is revoked while it runs, with no navigation, is the worker's from the revoke: its next exec never runs in the page, which is sent none of the run's values", async () => {
+        const { fake, site, ext, close } = await setup();
+        const origin = site.origin("approved.test");
+        let stop = false, revokedAt = null;
+        // The approver outside the browser: when the run's exec waits at its gate, the site is revoked by another surface
+        // (a storage write, as a sync or a second window makes it), and only once the run is handed over is the call approved.
+        const approver = (async () => {
+            while (!stop) {
+                const gates = await ext.sw.evaluate(() => globalThis.__mlApprovals?.list?.() ?? []).catch(() => []);
+                for (const g of gates) {
+                    if (g.tool === "exec" && revokedAt == null) {
+                        revokedAt = Date.now();
+                        await ext.sw.evaluate(async (o) => {
+                            const got = await chrome.storage.local.get("ml_site_always");
+                            await chrome.storage.local.set({ ml_site_always: (got.ml_site_always ?? []).filter((x) => x !== o) });
+                        }, origin);
+                        await expect.poll(() => ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).some((x) => x.kind === "handed-to-worker")), { timeout: 10000 }).toBe(true);
+                    }
+                    await ext.sw.evaluate(({ key }) => globalThis.__mlApprovals.resolve(key, true), { key: g.key }).catch(() => {});
+                }
+                await new Promise((r) => setTimeout(r, 100));
+            }
+        })();
+        try {
+            const page = await open(ext, site.url("approved.test"), { approve: true });
+            fake.setScript([
+                { tool: "findByText", args: { text: "code" } },
+                { tool: "exec", args: { js: "window.__ranAfterRevoke = 1; return @tool:findByText" } },
+                { content: "finished" },
+            ]);
+            const events = [];
+            const watch = await watchRunEvents(ext, page, (ev) => events.push(ev));
+            await page.evaluate(() => { window.ml.agent("read the code", { env: false, toolTokens: true, approvalRouting: "external" }); return true; });
+            await expect.poll(() => events.find((e) => e.kind === "agent-result") ?? null, { timeout: 60000 }).not.toBeNull();
+            await watch.close();
+            expect(revokedAt, "positive control: the exec reached its gate, and the site was revoked there").not.toBeNull();
+            // Positive control: before the revoke the run's findByText ran in the page and read it.
+            expect(JSON.stringify(fake.calls()), "the page's findByText answered").toContain("4417");
+            expect(await page.evaluate(() => window.__ranAfterRevoke), "the exec never ran in the page's world").toBeUndefined();
+            const log = await ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).filter((x) => x.kind === "handed-to-worker").map((x) => [x.reason, x.detail?.origin]));
+            expect(log).toEqual([["site-revoked", origin]]);
+            // The page's own requests from the revoke on are refused.
+            const after = await page.evaluate(() => window.ml.getModel().then((m) => ({ m }), (e) => ({ error: String(e?.message || e) })));
+            expect(after.error ?? "", JSON.stringify(after)).toMatch(/Refused|not approved/i);
+        } finally { stop = true; await approver; await close(); }
+    });
 });
 
 test.describe("@security approval", () => {

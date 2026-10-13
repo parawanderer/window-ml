@@ -161,6 +161,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         const list = localStore.ml_site_always || (localStore.ml_site_always = []);
         if (!list.includes(o)) list.push(o);
     };
+    /** storage.onChanged's `changes` for a write of `obj` over `store`. */
+    const changesOf = (store, obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, { oldValue: store[k], newValue: v }]));
+    /** Fire storage.onChanged as the browser does after a write; nothing fires for an empty change. */
+    const fireChanged = (changes, area) => { if (Object.keys(changes).length) for (const fn of [...syncListeners]) fn(changes, area); };
     const sessionStore = { ...session };   // seed chrome.storage.session (e.g. a housekeeping heartbeat left by an "earlier" worker)
     let offscreenDoc = false;
 
@@ -228,12 +232,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                         for (const k of keys) if (k in localStore) out[k] = localStore[k];
                         return out;
                     },
-                    set: async (obj) => { Object.assign(localStore, obj); },
-                    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) delete localStore[k]; },
+                    // Like the browser, a write fires storage.onChanged in this worker too (area "local").
+                    set: async (obj) => { const changes = changesOf(localStore, obj); Object.assign(localStore, obj); fireChanged(changes, "local"); },
+                    remove: async (keys) => { const ks = Array.isArray(keys) ? keys : [keys]; const changes = Object.fromEntries(ks.filter((k) => k in localStore).map((k) => [k, { oldValue: localStore[k] }])); for (const k of ks) delete localStore[k]; fireChanged(changes, "local"); },
                 },
                 session: {
                     get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter((k) => k in sessionStore).map((k) => [k, structuredClone(sessionStore[k])])),
-                    set: async (obj) => { Object.assign(sessionStore, structuredClone(obj)); },
+                    set: async (obj) => { const changes = changesOf(sessionStore, obj); Object.assign(sessionStore, structuredClone(obj)); fireChanged(changes, "session"); },
                 },
             },
             // GET_INVOCATION reads the manifest's suggested key + the contextMenus permission.
@@ -376,6 +381,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             if (!open) resolve(undefined);
         }),
         emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
+        /** Write chrome.storage.local the way another extension surface would (the popup, a Settings panel, a sync of
+         *  the lists): stored, then storage.onChanged with area "local". */
+        setLocal: (obj) => { const changes = changesOf(localStore, obj); Object.assign(localStore, obj); fireChanged(changes, "local"); },
         /** Change synced settings the way the settings panel does: stored, then storage.onChanged with area "sync". */
         setSync: (obj) => {
             const changes = Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, { oldValue: stored[k], newValue: v }]));

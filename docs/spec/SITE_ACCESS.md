@@ -526,7 +526,7 @@ Recorded as each slice lands, with the reason.
   of a turn (by this, or by a person's message from an unapproved site) ran its `answer`, `python_exec`, `fetch_url`,
   exec routing and grants as the page's until the turn ended. Each decision now reads who drives the run when it is
   made. One way: a run that returns to an approved site stays the worker's. A revoke while a page-built run is on an
-  approved site does not hand it over (there is no navigation to act on).
+  approved site did not hand it over at first (there was no navigation to act on); it does now (below).
 - **Part 5 (second part): `RUN_TAB_TYPES` is gone.** A tab hosting a run is judged by its own origin like any other
   page, so attack 9 is closed. What a run's page still sent for it moved to the worker, each for its own reason:
   `PYTHON_EXEC` and `FETCH_SHEET` (a python_exec over a page table, or `current`) now run in the worker, which asks the
@@ -541,7 +541,16 @@ Recorded as each slice lands, with the reason.
   table used to be refused with a two-call steer, because its page part ran on the page and would have put the sheet
   grant on the tab; it now runs whole in the worker. A worker builtin that cannot be set up in the worker reports an
   error instead of falling back to the page. A page-built run on an approved site still sends from its page, which is
-  approved; a revoke while it runs refuses its page's next send (no hand-over without a navigation).
+  approved; a revoke while it runs hands it to the worker (below).
+- **Part 5 (a revoke with no navigation): a page-built run whose site is revoked while it runs is handed to the
+  worker** (owner's decision 2026-10-12), as when it navigates onto an unapproved site; it used to fail closed, its
+  page's sends refused while its tool calls, and the pointer values an exec named, still went to the revoked page. The
+  trigger is the storage change every editing path makes (`chrome.storage.onChanged`), decided again at every tool send
+  and once when the worker starts, so neither a lost event nor an eviction leaves the run the page's. Found while
+  building it: a call built for the page (its exec's pointer reads included) could still be sent after a hand-over that
+  landed between its routing and its send; it is now built again as the worker's. And `VALUE_COLUMNS`, which the
+  content script sends outside the gate, now refuses a page whose site is not approved, so a page whose call was in
+  flight at the revoke cannot read the stored table that call named.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

@@ -80,6 +80,31 @@ worker run: its worker tools, the run's grants, its answer set, isolated exec, w
 the page-side caller can no longer fan. One way: a run back on an approved site stays the worker's. Each hand-over is an
 execution-log record (`routing`, `handed-to-worker`, reason `navigated-to-unapproved-site`, the origin).
 
+**A page-built run whose site is revoked while it runs is the worker's from the revoke** (owner's decision 2026-10-12),
+with no navigation. Every path that takes a site off the approved set writes storage: the popup and DevTools Settings
+(`SITE_ACCESS`: revoke, deny, an approval for the session revoked), another surface or a sync writing the lists
+(`chrome.storage.onChanged`, local or session area), and a host removed from the self-approval whitelist
+(`pageApprovalDomains`, sync area). `background.ts` listens to `onChanged` for those keys (`changesSiteAccess`) and calls
+`handOverOnRevoke`, which decides every tab holding a page-built run from the URL its top frame shows now
+(`webNavigation.getFrame`) and hands the runs on a tab that may no longer use window.ml to the worker (reason
+`site-revoked`). `SITE_ACCESS` awaits the same decision before it answers the editor, and a worker that starts decides
+once after it restores its runs, for a change made while it was evicted (reason `site-not-approved` when it cannot tell
+a navigation from a revoke). Nothing the page sends is read, so it cannot stop or delay the decision.
+
+Every send of the run decides again first: `handOverSettled` checks the top frame's URL against the lists on each tool
+send, so a revoke whose storage event has not arrived yet, or arrived at a worker since evicted, is decided before
+anything reaches the tab. A call built for the page (`pageRouted`, its exec routed to the main world with its pointer
+reads) whose run is handed over before it is sent is not sent: `sendTool` and `delegateSend`'s `beforeSend` throw
+`HandedOverMidCall`, and `againIfHandedOver` builds the call again as the worker's (an exec naming a pointer goes to
+an isolated world or is refused on the now unapproved page). A call already on the page at the revoke finishes there,
+and its answer is held to the worker's rules (`withoutPageVision`); a `VALUE_COLUMNS` read the page makes during it is
+refused, since a stored table's columns go only to a page on an approved site.
+
+The decision outlives the worker: `makeWorkerRun` stores the run id under `ml_handed_to_worker` at once (the run's own
+snapshot is rewritten only at its next checkpoint), `hydratePersistedRuns` applies the list over the restored
+snapshots, and `deleteRun` drops a run from it when its snapshot goes. One way: re-approving the site leaves the run the
+worker's, and the page's `RESUME_RUN` for it is refused.
+
 ## The lists
 
 `site-access.ts` is pure: `originOf`, `grantableOrigin`, `decide` (a denial beats an approval), `applyEdit`,
@@ -294,16 +319,20 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
   reaching the backend, a tab or the screen; a sender that can never be granted refused even when its host is
   approved; revoke and deny without reload; a page cannot edit the lists; the stream port. Section "(g)", part 5: the
   same on a tab hosting a run; the former run-tab types, by name, from a page that knows the run's id in the middle of
-  its tool call; the page a page-built run navigates onto cannot stop the hand-over; and the upgrade (an old in-flight
+  its tool call; the page a page-built run navigates onto cannot stop the hand-over, nor can a revoked page flooding
+  sends and re-adopts; and the upgrade (an old in-flight
   snapshot resumes as the worker's, a cross-version one is dropped).
-- `tests/nav-handover.test.mjs`: the hand-over at the commit, and the rest of a turn handed over mid-way.
+- `tests/nav-handover.test.mjs`: the hand-over at the commit, and the rest of a turn handed over mid-way; the hand-over
+  at a revoke by each path that changes the approved set, during a call in flight, while a call is being built (the
+  revoke placed at each step), across an eviction and a restart, and one way when the site is approved again.
 - `tests/worker-page-read.test.mjs`: python_exec over a page table, a `fetch_url` session render with an `ask`, and a
   sealed `describeElement`, each in the worker; `checkPageTable`; the page's half over a real DOM.
 - `tests/redteam-page-run-builtby.test.mjs`: a page START_RUN claiming `builtBy`/`rebuild.builtBy` stays page-built,
   its `pageOrigin`/`pageUrl` are the sender's, its auto-approve flags and `requiresApproval` never undercut the worker's,
   its run id is its own tab's, and its `approvalRouting` never resolves or skips a gate.
 - `tests/e2e/site-access.spec.mjs`: the hostile site, against a real browser; "part 5": the page a run is on, and the one
-  a page-built run navigates onto while blocking its own re-adopt, get nothing from any former run-tab type.
+  a page-built run navigates onto while blocking its own re-adopt, get nothing from any former run-tab type; a run
+  whose site is revoked mid-run by a storage write is handed over and its next exec never runs in the page.
 
 The vm harness approves a test sender's origin unless `loadBackground({ siteGate: true })`, and gives a URL-less test
 sender a page at `https://page.test/`, because a real content script always has one. The e2e harness's `waitForMl`

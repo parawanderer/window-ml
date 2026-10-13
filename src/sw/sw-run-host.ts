@@ -56,6 +56,23 @@ import { topDocument } from "./worker-vision";
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
 
+/** A tool call built for a page-built run whose run was handed to the worker before the call was sent. */
+class HandedOverMidCall extends Error {
+    constructor() { super("The run was handed to the worker before this call reached the page."); }
+}
+
+/**
+ * Run a delegated call, and build it again from the start when its run was handed to the worker while it was being
+ * built for the page (`HandedOverMidCall`): a hand-over is one way, so the second build is the worker's.
+ * @param call one build and send of the call
+ * @returns what the call returned
+ */
+async function againIfHandedOver<T>(call: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+        try { return await call(); } catch (e) { if (!(e instanceof HandedOverMidCall) || attempt >= 2) throw e; }
+    }
+}
+
 const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
 
 /** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
@@ -271,12 +288,15 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     const pyMedia = pyMediaFor(runId, tabId);
     const verifyHere = async (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
         workerVerify(runId, tabId, doc, req, verb, await visionFacts(), tabUrlNow);
-    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string, pageRouted = false): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         const tabUrl = tabUrlNow;
         // Nothing goes to the tab while a navigation's hand-over is undecided (nav-handover.ts): the send is routed by it.
         await handOverSettled(tabId);
+        // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
+        const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
+        handedSince();
         // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
         // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
@@ -300,7 +320,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         const toPage = async (pin?: string): Promise<unknown> => {
             const vis = workerVision();
             const call = vis && !payload.renderOnly && !payload.precheck && !payload.readonlyTry;
-            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin);
+            // Asked again at the send itself, after any navigation's wait: a revoke decided meanwhile keeps the call here.
+            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin, handedSince);
             // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
             return vis || workerVision() ? withoutPageVision(env) : env;
         };
@@ -541,12 +562,16 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const r = await fetchLLM({ messages, tools: toolDefs, model: modelNow(), think: p.think, raw: true, hint }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
             },
-            delegateTool: async (name, args, onStream) => {
+            // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
+            // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
+            delegateTool: (name, args, onStream) => againIfHandedOver(async () => {
                 // This call's own key for the grants it mints on the tab (sw-consent.ts): another run on the same tab
                 // ending its call drops only its own.
                 const callKey = {};
                 // Every routing decision below reads `byWorker()`: a navigation's hand-over must be decided first.
                 await handOverSettled(tabId);
+                // Routed for the page that built the run: sent only while the run is still the page's (`sendTool`).
+                const pageRouted = !byWorker();
                 // Where an approved exec of a run the worker built runs (exec-routing.ts): the page's world, an isolated
                 // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
                 const js = name === "exec" && byWorker() && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
@@ -640,9 +665,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         // A worker-built run's answer set is the worker's: the script is sent its shape, and what it changed
                         // comes back to be replayed (worker-answer.ts).
                         const answerShape = js !== undefined && workerAnswer() ? await answerShapeFor(runId) : undefined;
-                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc) as Partial<import("../contract").PageToolEnvelope>;
+                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc, pageRouted) as Partial<import("../contract").PageToolEnvelope>;
                         if (answerShape && env?.answerOps !== undefined) await replayOps(env.answerOps);
                     } catch (e) {
+                        if (e instanceof HandedOverMidCall) throw e;
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
                             env = { result: `Error: could not reach the page to run "${name}" (${emsg}).` }; workerMade = true;
@@ -881,7 +907,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     if (reads) execReads.delete(runId);
                     if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                 }
-            },
+            }),
             // Pre-run In render for a PENDING step (streaming runs): ask the page to compute the tool's
             // In descriptor without running it, so a step you watch stream shows exec's beautified JS /
             // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.

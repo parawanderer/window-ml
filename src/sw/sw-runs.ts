@@ -71,10 +71,39 @@ export const workerRunsStarting = new Set<string>();
  * @param runId the run
  */
 export function makeWorkerRun(runId: string): void {
+    markWorkerRun(runId);
+    // Stored at once, under its own key: the run's snapshot is rewritten only at its next checkpoint, and a worker
+    // evicted before it would restore the run as its page's (`hydratePersistedRuns` reads this back).
+    if (!handedToWorker.has(runId)) { handedToWorker.add(runId); saveHandedToWorker(); }
+}
+
+/** Set a run's in-memory record to the worker's (its settled snapshot and its rebuild). */
+function markWorkerRun(runId: string): void {
     const stored = bgRuns.get(runId);
     if (stored) stored.p = { ...stored.p, builtBy: "worker", ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
     const rb = runRebuilds.get(runId);
     if (rb) runRebuilds.set(runId, { ...rb, builtBy: "worker" });
+}
+
+/** The runs handed to the worker whose storage snapshot may still say otherwise: kept until the run's snapshot is
+ *  dropped (`deleteRun`), and applied over the snapshots when a restarted worker restores them. One way: nothing removes
+ *  a run from it but the end of its snapshot. */
+const handedToWorker = new Set<string>();
+const HANDED_KEY = "ml_handed_to_worker";
+/** More would be runs whose snapshots are long gone; the oldest go first. */
+const HANDED_MAX = 200;
+defineState({
+    id: "run.handed-to-worker", scope: "run", realm: "worker", audience: "human", lostOn: ["turn-end"],
+    describe: "Whether the run was handed to the worker (its page's site was revoked, or it navigated onto a site that may not use window.ml), kept so a worker restart cannot give it back to the page.",
+    read: ({ runId }) => (runId && handedToWorker.has(runId) ? true : undefined),
+});
+
+function saveHandedToWorker(): void {
+    while (handedToWorker.size > HANDED_MAX) handedToWorker.delete(handedToWorker.values().next().value!);
+    // After the restore, which reads the stored list first: a write before it would drop the runs it holds.
+    void hydrationDone.then(() => {
+        try { void chrome.storage?.local?.set({ [HANDED_KEY]: [...handedToWorker] })?.catch?.(() => {}); } catch { /* storage unavailable */ }
+    });
 }
 
 /**
@@ -174,6 +203,7 @@ export function forgetRunModel(runId: string): void {
 /** Drop a settled run's storage snapshot — it is only there to survive an eviction, and the run no longer can. */
 export const deleteRun = (runId: string): void => {
     try { void chrome.storage?.local?.remove(BGRUN_KEY(runId)); } catch { /* storage unavailable */ }
+    if (handedToWorker.delete(runId)) saveHandedToWorker();
 };
 
 // Purge EVERY persisted background run (storage + any already-hydrated in-memory state). Called on an
@@ -185,6 +215,7 @@ export async function purgeAllBgRuns(): Promise<void> {
         const keys = Object.keys(all || {}).filter(k => k.startsWith("ml_bgrun_"));
         if (keys.length) await chrome.storage.local.remove(keys);
     } catch { /* storage unavailable */ }
+    if (handedToWorker.size) { handedToWorker.clear(); saveHandedToWorker(); }
     // Drop anything hydrate already loaded this spawn so a page load can't re-adopt + resume it.
     for (const runId of [...hydratedRuns]) {
         const snap = bgRuns.get(runId);
@@ -231,6 +262,14 @@ export async function hydratePersistedRuns(): Promise<void> {
             bgRuns.set(runId, snap);
             hydratedRuns.add(runId);
             if (snap.p.crossPage !== false) trackRun(snap.tabId, runId, snap.p.rebuild);
+        }
+        // A run handed to the worker after its last checkpoint: its snapshot still says the page built it.
+        const handed = all[HANDED_KEY];
+        if (Array.isArray(handed)) for (const runId of handed) {
+            // Only a run restored here: one whose snapshot is gone has nothing left to hand back.
+            if (typeof runId !== "string" || !bgRuns.has(runId)) continue;
+            handedToWorker.add(runId);
+            markWorkerRun(runId);
         }
     } catch { /* storage unavailable / empty */ }
 }

@@ -4,8 +4,8 @@
 // shared contract types.
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
-import { onIsolatedMessage } from "./sw/sw-isolated-exec";
-import { forgetHandOverTab, handOverOnCommit } from "./sw/nav-handover";
+import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
+import { changesSiteAccess, forgetHandOverTab, handOverOnCommit, handOverOnRevoke } from "./sw/nav-handover";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
@@ -150,6 +150,15 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
     });
     chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
+}
+// A site taken off the approved set while a run its own page built is going (owner's decision 2026-10-12): the run is the
+// worker's from here, as when it navigates onto a site that may not use window.ml (nav-handover.ts). Every path that
+// changes the lists or the whitelist writes storage, so this one listener hears the popup, DevTools Settings, a denial,
+// another surface and a sync alike; `SITE_ACCESS` also decides before it answers.
+if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) void handOverOnRevoke(); });
+    // And once at startup, for a change this worker never heard: made while it was evicted, its runs then restored.
+    void handOverOnRevoke().catch(() => []);
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
     chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
@@ -509,6 +518,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string };
         (async () => {
             const lists = p.edit ? await editSiteAccess(p.edit) : await readSiteLists();
+            // A revoke is decided before the editor hears it is done: a page-built run on a site it took away is the
+            // worker's by then (nav-handover.ts).
+            if (p.edit) await handOverOnRevoke().catch(() => []);
             const origin = originOf(p.origin);
             const decision = origin ? await siteDecision(origin) : undefined;
             // An approval no list holds comes from the self-approval whitelist: revoking it here would change nothing.
@@ -551,6 +563,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             const runId = String(message.runId || ""), key = String(message.key || "");
             const names = Array.isArray(message.names) ? (message.names as unknown[]).map(String) : [];
             const tabId = sender.tab?.id;
+            // A stored table's columns go only to a page whose site may use window.ml now: the run's page after a revoke
+            // (or anything else on an unapproved site) is refused, though the call that named it was sent before.
+            if (!isExtensionSender(sender) && !(await pageApproved(sender.url ?? sender.tab?.url ?? ""))) {
+                sendResponse({ error: "Refused: this page's site may not use window.ml." }); return;
+            }
             const holders = await valueHolders(key);
             // A PAGE-HOSTED run has no run id this worker can check, so its entitlement is the tab's: the value was
             // disclosed to this tab and the document it was disclosed to is still here (pageValueSession). The run id

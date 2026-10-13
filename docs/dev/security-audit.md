@@ -54,6 +54,12 @@ the worker, and the page answers geometry only):
       current `@pt`/`@box` token request, so the page neither hears the selector being approved nor moves the approve
       highlight or the card's note; positive control in the light DOM and the page's open and closed shadow roots
       (site-access.spec.mjs, attack 18): #617.
+- [x] A page-built run whose site is revoked while it runs, with no navigation, is handed to the worker (owner's
+      decision 2026-10-12): every path that changes the approved set (popup, DevTools Settings, a denial, another
+      surface or a sync, the whitelist) decides at the storage event; every send decides again, and a call built for the
+      page is built again if the hand-over lands first; the decision is stored at once and survives an eviction;
+      `VALUE_COLUMNS` is refused to an unapproved page; red-team: a revoked page flooding sends cannot stop or delay
+      it: #PR.
 
 ## In progress
 
@@ -92,8 +98,6 @@ the worker, and the page answers geometry only):
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
       extension surface. Proposed: clamp, and drop `origin` for page runs. Owner decision pending.
-- [ ] A page-built run whose approved site is revoked while it runs, with no navigation, is not handed to the worker:
-      its page's sends are refused from the revoke on (fails closed), so its tools stop working there.
 - [ ] Site access slice 3 (`requestAccess`, wording needs owner approval), slice 4.
 
 ## The plan to get to "thoroughly investigated"
