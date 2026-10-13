@@ -136,11 +136,23 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   argv, so the sugar can never widen what the plain form allows.
 - **Explicit instead of implicit:** a glob is expanded by the host (`ml.sh.glob("*.c")`), a pipe between processes is
   `ml.sh.pipe(a, b)` (real OS pipes, still argv), and redirecting is a typed `stdoutTo:` argument whose effect is seen.
+- **argv-safe is not option-safe.** A value that starts with `-` is read as an option by the program: a `ref` of
+  `--output=f` makes `git diff` write a file, a search text of `-v` inverts `grep`. No shell is involved, so argv does not
+  help. The manifest marks where a program's operands start, the host puts `--` (or git's `--end-of-options`) there
+  when a value came from a variable, and the card marks such a value. In the 2026-10-13 panel, two of six models never
+  guarded a typed search text, and none guarded a git ref correctly.
+- **A pipe's result is every stage's.** `ok` holds only when every stage exited as expected (pipefail), each stage's
+  code and stderr are kept (`r.stages[i]`), and `okCodes` says that `grep`'s 1 is an answer. Otherwise a failed `find`
+  before `sort` reads as an empty success. A pipe is ONE approval showing every argv.
+- **No shell is not no further process.** `npm test` runs its script through `sh -c`; `find -exec`, `xargs`, `env`,
+  `timeout` and git aliases start other programs. The manifest marks such runners, the card says the call runs
+  something else, and none of them is ever in the free tier on its own word.
 - **No terminal, stdin closed:** a program that prompts fails at once instead of hanging; a time limit applies; a long
   one detaches with a cancel handle.
 - **Session state is data.** `cwd` and `env` are kept by the host per session and passed to each spawn; `env` writes
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
-  running code. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
+  running code. A call's `env` ADDS to the session's; in the Python shim, `env={**os.environ, …}` would carry the
+  sandbox's environment to the host, so it is refused with a steer. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
 
 ## The API's shape: borrowed, not invented
 
@@ -173,6 +185,29 @@ What the borrowing gives and where it stops:
   host. A compatible object materialises output up to a cap and says plainly when it stopped, pointing at the pointer.
 - **Which shapes to offer is measured, not chosen**: the panel and bench step above runs each candidate against a mock
   host that records calls, and keeps the ones models write correctly.
+
+### What the first measurement found (2026-10-13)
+
+A paper panel ([`shell-shapes.md`](../../tests/e2e/panel/shell-shapes.md)): six cloud models wrote six everyday tasks
+in each shape, scored mechanically. Nothing ran.
+
+- **Syntax-level safety is learnable from one sentence of doc.** 34 to 36 of 36 tasks were argv-clean in every shape.
+  No model put a quote, `|`, `*` or `$` in a template's static text; each routed the literal through an interpolation
+  (`` `cut -d ${" "}` ``, `` `awk ${"{print $1}"}` ``). The two faults were plumbum syntax (`local["sort"][]`). The shapes
+  do not separate on this measure among large models.
+- **Small local models separate them.** Eight Ollama models (3b to 31b): the 27-31b ones write like the cloud ones;
+  below that the template carried shell syntax in 11 of 37 parsed tasks (`` $`grep -F ${needle} f | wc -l` ``), an argv
+  array in 1 of 41 (execa) or none (`run`, `sh`, plumbum), and the `subprocess` shim fell back to `["sh", "-c", …]` on
+  the pipe tasks. The template's refusal would fire on about a third of a small model's answers, an argv shape's almost
+  never: teach an argv shape, and keep the template, if at all, as sugar whose refusal names the argv form.
+- **A borrowed name promises the borrowed behaviour.** execa throws on a non-zero exit, Python `sh` globs `*` by
+  default, real `subprocess` and execa REPLACE the environment where ours adds to it. A shape that keeps the name and
+  changes the behaviour is a trap for exactly the models that know the library best. Ship a borrowed name only with its
+  semantics, or ship our own name.
+- **The template's refusal list is for shell syntax only.** `{}`, `+`, `:` and `=` are words; models wrapped them in
+  `${"{}"}` because they were unsure. Refuse what a shell would act on, and say so in the refusal.
+- **The models' own vote** (four of six named `run`, three paired it with the `subprocess` shim): one plain argv shape
+  per language, which also shows in an approval card as exactly what runs.
 
 ## Approval
 
