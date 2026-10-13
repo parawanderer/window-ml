@@ -2,7 +2,8 @@
 //
 //   node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/pointer-ids.bench.ts
 //   … --jobs 4            run 4 browsers at once (a hosted API; NOT a local GPU — see below)
-//   … --no-sync / --only-db   when a bench store is configured (sync.mjs), do not push this sweep / push only the rows
+//   … --no-sync / --only-db   when a bench store is configured (sync.mjs), push nothing at the end / push only rows; either
+//                         way this sweep's traces stay on this machine for good (no later push sends them)
 //   … --lanes             one lane per model: each model's runs in turn, different models at once when the box says
 //                         the next fits beside what is loaded (/api/fits); a cloud model always goes. `--jobs N` caps
 //                         the lanes running at once. An interview runs this way unless --jobs is given
@@ -78,7 +79,7 @@ import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
 import { shownFingerprint } from "./shown.mjs";
-import { storeFromEnv, openStore, push as pushToStore } from "./sync.mjs";
+import { storeFromEnv, openStore, pushAndRecord, lastPushLine } from "./sync.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
@@ -962,9 +963,11 @@ const main = async () => {
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
         resources: resPoll?.resources() ?? null, ...spendState({ final: true }), memory: memoryView(),
         // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
-        // run of a task that says so.
-        ...(spec.sync === false || spec.tasks.some((t) => t.sync === false)
-            ? { sync: { off: spec.sync === false, tasksOff: spec.tasks.filter((t) => t.sync === false).map((t) => t.id) } } : {}),
+        // run of a task that says so. `--no-sync` and `--only-db` keep this sweep's traces here for good, not only at its
+        // end: every later push (by hand, by the next sweep, by the scheduled job) reads this and sends none of them.
+        ...(spec.sync === false || spec.tasks.some((t) => t.sync === false) || args.sync === false || args.onlyDb
+            ? { sync: { off: spec.sync === false || args.sync === false || !!args.onlyDb, tasksOff: spec.tasks.filter((t) => t.sync === false).map((t) => t.id),
+                ...(args.sync === false ? { by: "--no-sync" } : args.onlyDb ? { by: "--only-db" } : spec.sync === false ? { by: "spec" } : {}) } } : {}),
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
@@ -1029,12 +1032,12 @@ const main = async () => {
     if (ctx.wouldHold.length) done.wouldHold = ctx.wouldHold;
     if (ctx.released.length) done.released = ctx.released;
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
-    // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not
-    // go now goes on the next push.
+    // Into the bench store, when one is configured (sync.mjs; off by default): EVERYTHING pending, not only this sweep,
+    // so a push that failed before is made good now. Never the sweep's failure, and recorded either way (status shows it).
     const storeCfg = args.sync === false ? null : storeFromEnv();
     if (storeCfg) {
-        try { await pushToStore(openStore(storeCfg), { sweeps: [sweepDir], onlyDb: !!args.onlyDb, log: console.log }); }
-        catch (e) { console.log(`  (store push failed: ${String(e?.message || e).slice(0, 160)}; \`node --import tsx tests/e2e/bench/sync.mjs push\` retries)`); }
+        const r = await pushAndRecord(openStore(storeCfg), { log: console.log }, { by: "sweep" });
+        if (!r.ok) console.log(`  ${lastPushLine(r)}`);
     }
     if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
     if (ctx.kept.length) console.log(`  ${ctx.kept.length} earlier run${ctx.kept.length === 1 ? "" : "s"} of re-run cells kept in ${path.relative(ROOT, path.join(sweepDir, "history"))}/ (the run each replaced, with its cell.json)`);
