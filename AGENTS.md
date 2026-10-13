@@ -242,6 +242,10 @@ the registry, so an undeclared store is invisible to both; `scripts/check-state.
 `docs/dev/state.md` first so it is not a fourth copy of something. This rule stays in AGENTS.md: it is for everyone
 adding code, not only someone reading the state docs.
 
+**RULE — a builtin agent tool is declared in the TOOL REGISTRY** (`defineBuiltinTool`, `src/tools/tool-registry.ts`):
+the gate, `@tool:` pointers, the worker's routing and the start card read it, and an undeclared name is the SITE's own
+tool. `node scripts/check-tools.mjs` (pre-commit, CI) holds factories and declarations together. The `tool-registry` skill.
+
 **RULE — a test goes under a SECTION (`// --- what this group is about ---`), and `node scripts/test-index.mjs
 '<regex>'` is how you find one.** Ratcheted on new tests; a new test file opens with a header comment.
 `.claude/skills/test-index/SKILL.md`.

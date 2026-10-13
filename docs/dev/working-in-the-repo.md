@@ -162,6 +162,17 @@ in the comment above it, or `state: <id>` naming a declaration in another file. 
 plain run lists the stores that predate it, and a store whose name was already at module scope at the base is a move,
 not an addition. Why it exists, and the scopes to choose from: `docs/dev/state.md`.
 
+## Builtin tools that say they are builtin
+
+**`node scripts/check-tools.mjs`** holds the tool registry (`src/tools/tool-registry.ts`) and the tool factories
+together. A factory is an object literal whose own keys hold a `name` (a string, or a SCREAMING_CASE constant such as
+`DEREF_TOOL`) and a `description`, in any order and wherever it opens (an argument, a `return`, a variable); comments
+and strings are stripped first. It fails on a factory whose tool has no `defineBuiltinTool` declaration, on a declaration with no factory, and on
+a declaration whose `factories` do not list exactly the files the factories are in. It is complete, not a ratchet: it
+held from the commit that added it. `--list` prints every builtin with its factories as found and as declared;
+`--staged` reads the index (the pre-commit hook). It runs in the pre-commit hook and CI's `tools` job. Why the registry
+exists and why its declarations are in one file: `docs/dev/agent-tools.md`.
+
 ## File size, and what a refactor is worth
 
 **A HUGE TEST FILE COSTS MORE THAN ITS TESTS.** Splitting `sidebar.test.js` (407 jsdom tests) into twelve files

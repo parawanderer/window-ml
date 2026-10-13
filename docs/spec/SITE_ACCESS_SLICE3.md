@@ -101,8 +101,14 @@ tools.
 | `python_exec` | Run Python |
 | `look`, `locate`, `verify` (one line) | Take screenshots of this page and show them to the model |
 | read-only DOM tools (`find`, `describeElement`, …) (one line) | Read this page |
+| `scroll` | Scroll this page |
+| `answer`, `dereference`, `agent_api_docs`, `chat_metadata` | none |
 | server tools | Use server tools: {name}, {name}. Their arguments leave this machine |
 | the site's own tools | Use {n} tools the site defined. They run as the site's own code |
+
+`scroll` has its own line because a scroll acts on the page: it can mark a chat's messages read or load more of a
+feed. The tools with no line reach nothing outside the run, the extension and the person; `answer` hands the person
+elements of the page. The lines live in the tool registry (`cardLine`, `src/tools/tool-registry.ts`).
 
 The info dialog (`startMechanics()`, built like `approvalMechanics()`):
 

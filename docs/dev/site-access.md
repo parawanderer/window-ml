@@ -66,7 +66,7 @@ origin seeds the run's consented origins and the URL is "the page you are on", s
 navigations and reads there without a gate. `maxSteps` goes through `stepBudget`, as on RESUME_RUN (a whole number up to 200, otherwise the loop's default), so a page cannot ask for an unbounded run, and a dropped `origin` means a page cannot stamp its prompt as typed on an extension surface such as the HUD. A page's payload may ask for more gating, never less: the auto-approve
 flags (`autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`, `autoApproveSelfSource`) and
 `selfIntrospection` hold only when the worker's config allows them too, and a builtin tool that asks for approval
-(`GATED_TOOL_NAMES`) or a server tool (`remote`) always does, whatever `requiresApproval` the page sent. A run id
+(`GATED_TOOL_NAMES`, the tool registry's `gated`) or a server tool (`remote`) always does, whatever `requiresApproval` the page sent. A run id
 another tab holds, running or settled, is refused. `approvalRouting` stays the page's: it changes only where its own
 run's gates are shown (`"external"` hides the buttons and waits on the worker-realm `__mlApprovals` channel), never
 whether they block.
@@ -226,7 +226,7 @@ only the buffered events of sessions it is not shut out of.
 ## Tools of a worker-built run that run in the worker
 
 A builtin tool that never reads the page runs in the worker for a run the worker built (`WORKER_TOOL_NAMES` in
-`src/sw/worker-tools.ts`), so what it reads never enters the page's world: the same tool from the same factory, given
+`src/sw/worker-tools.ts`, the tool registry's `realm: "worker"`), so what it reads never enters the page's world: the same tool from the same factory, given
 an `ml` the worker answers. Today: `fetch_url`, through `fetchUrlFor` (`sw-fetch-url.ts`) with the run's tab as an
 untrusted caller. Its approvals are the RUN's (`grantRunFetch`: the consent and the one-time as-you grant live in the
 run's worker state, never on the tab), so no script on the tab can spend them through its own `FETCH_URL` (which only an

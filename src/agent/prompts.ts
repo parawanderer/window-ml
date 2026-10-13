@@ -162,6 +162,10 @@ export const DEREF_CLAUSE =
 /** The DOM tools that pierce shadow roots, in the order the shadow clause names them. */
 export const SHADOW_TOOLS = ["findByText", "interactives", "describeElement", "ancestors", "countMatches", "sampleText", "click", "type", "wait", "answer"] as const;
 
+/** The DOM tools whose presence in a run adds the shadow clause: the representative ones, so a run holding only `wait`
+ *  or `answer` is not told about `>>>` selectors it has no tool to use. Each is in {@link SHADOW_TOOLS}. */
+export const SHADOW_TRIGGER_TOOLS: readonly string[] = ["findByText", "describeElement", "interactives", "click", "type"];
+
 /**
  * The shadow-DOM clause, naming only the piercing tools this run HAS: a console run has no `click`/`type`, and a
  * model told they pierce went looking for them (a DeepSeek review, 2026-10-08).

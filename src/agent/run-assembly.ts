@@ -15,7 +15,7 @@ import type { PromptDisplay, PromptOrigin } from "../contract/contract-run";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
 import { withToolDetails } from "../tools/tool-details";
 
@@ -298,7 +298,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         if (toolTokens) systemPrompt += tooltokensClause(!!byName.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
         // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
         // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
-        if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
+        if (toolset.some(t => SHADOW_TRIGGER_TOOLS.includes(t.name))) {
             // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
             // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
             systemPrompt += shadowClause(toolset.map(t => t.name), pierceClosed) + IFRAME_CLAUSE;
