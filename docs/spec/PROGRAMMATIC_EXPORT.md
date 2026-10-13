@@ -1,6 +1,7 @@
 # Programmatic export (JSON)
 
-Status: **spec, not built.** Branch off `main` after `md-negotiation` merges.
+Status: **built** (2026-09-03, `c8ef6843`): `src/sidebar/export/export-json.ts` writes it and `src/export-schema.ts`
+is its schema; how to use it is `docs/dev/export.md`.
 
 A third export format, beside PDF (flat, rendered) and Markdown (LLM-readable, a `.zip`
 once images exist). This one is for **programs**: something another tool can load without
