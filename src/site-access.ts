@@ -74,12 +74,48 @@ export function selfApprovalOrigin(entry: unknown): string | null {
 }
 
 /**
- * Whether an origin is on the self-approval whitelist: exactly one entry's origin (`selfApprovalOrigin`).
+ * Whether a host name is loopback: `localhost` (and a `*.localhost` name, which browsers resolve to it), an address in
+ * `127.0.0.0/8`, or `[::1]`. A browser treats these as secure contexts even over http, and no one on the network can
+ * answer for them.
+ * @param host a URL's `hostname` (IPv6 in brackets)
+ * @returns true for a loopback name
+ */
+export function isLoopbackHost(host: string): boolean {
+    const h = host.toLowerCase();
+    return h === "localhost" || h.endsWith(".localhost") || h === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/**
+ * Whether an origin is on the self-approval whitelist, for the whitelist's own readers (`selfApproves`). An entry
+ * covers the one origin `selfApprovalOrigin` names, and a bare LOOPBACK host (`localhost`, `127.0.0.1`, `[::1]`) also
+ * covers that host over http and on any port, which is what it meant before the whitelist was read by origin: no
+ * network attacker can answer for loopback, so http there opens nothing to one, and narrowing it would silently stop
+ * every local dev server and self-hosted UI working. Every port of it is still only as trusted as the site gate makes
+ * it: `selfApproves` also needs the gate's approval, which the whitelist implies only for `selfApprovalOrigin`'s origin.
  * @param origin the origin
  * @param selfGateHosts the `pageApprovalDomains` setting
- * @returns true when an entry trusts this origin
+ * @returns true when an entry trusts this origin to self-approve
  */
 export function onSelfApprovalList(origin: string, selfGateHosts: readonly unknown[]): boolean {
+    let host = "";
+    try { host = new URL(origin).hostname; } catch { /* not an origin */ }
+    return selfGateHosts.some((e) => {
+        const o = selfApprovalOrigin(e);
+        if (o === origin) return true;
+        // A bare loopback entry: any http(s) port of that exact host. An entry written as an origin stays that origin.
+        return o != null && typeof e === "string" && !/:\/\//.test(e) && isLoopbackHost(host) && new URL(o).hostname === host;
+    });
+}
+
+/**
+ * Whether the gate's implied approval covers an origin: exactly one entry's origin (`selfApprovalOrigin`), never the
+ * wider loopback reading `onSelfApprovalList` gives a bare loopback host, so the whitelist never lets a page on
+ * another port use window.ml that the person did not allow.
+ * @param origin the origin
+ * @param selfGateHosts the `pageApprovalDomains` setting
+ * @returns true when an entry names this origin
+ */
+function impliesApproval(origin: string, selfGateHosts: readonly unknown[]): boolean {
     return selfGateHosts.some((e) => selfApprovalOrigin(e) === origin);
 }
 
@@ -96,7 +132,7 @@ export function decide(lists: SiteLists, origin: string, selfGateHosts: readonly
     if (lists.denied.includes(origin)) return "denied";
     if (lists.always.includes(origin)) return "always";
     if (lists.session.includes(origin)) return "session";
-    if (onSelfApprovalList(origin, selfGateHosts)) return "always";
+    if (impliesApproval(origin, selfGateHosts)) return "always";
     return "unknown";
 }
 
@@ -104,7 +140,8 @@ export function decide(lists: SiteLists, origin: string, selfGateHosts: readonly
  * Whether a sender may act as a site on the self-approval whitelist: answer its own approval prompts, and use the
  * privileged handlers without a per-call grant. The ONE rule every reader of `pageApprovalDomains` applies, so none can
  * disagree with the site gate: the sender's origin is the one the gate reads (`grantableOrigin`: top frame, http(s),
- * not opaque), it is on the whitelist by origin, and the gate approves it (a denial wins).
+ * not opaque), it is on the whitelist (`onSelfApprovalList`), and the gate approves it, always or for this session (a
+ * denial wins).
  * @param lists the three lists
  * @param sender the browser's facts about the sender
  * @param selfGateHosts the `pageApprovalDomains` setting
@@ -113,7 +150,45 @@ export function decide(lists: SiteLists, origin: string, selfGateHosts: readonly
 export function selfApproves(lists: SiteLists, sender: SenderFacts, selfGateHosts: readonly unknown[]): boolean {
     const g = grantableOrigin(sender);
     if ("refused" in g) return false;
-    return onSelfApprovalList(g.origin, selfGateHosts) && decide(lists, g.origin, selfGateHosts) === "always";
+    if (!onSelfApprovalList(g.origin, selfGateHosts)) return false;
+    const d = decide(lists, g.origin, selfGateHosts);
+    return d === "always" || d === "session";
+}
+
+/**
+ * The origins a person allowed to use window.ml whose host is a bare entry on the self-approval whitelist, but which
+ * that entry no longer makes self-approving: plain http or another port of a non-loopback host. Before the whitelist
+ * was read by origin, those self-approved by host; now each needs its own entry. Settings and the popup list them with
+ * a button that adds the exact origin, so an install that relied on one is told, and nothing is trusted silently.
+ * @param lists the three lists
+ * @param selfGateHosts the `pageApprovalDomains` setting
+ * @returns the origins, sorted, each once
+ */
+export function uncoveredApprovals(lists: SiteLists, selfGateHosts: readonly unknown[]): string[] {
+    const bare = new Set(selfGateHosts.filter((e): e is string => typeof e === "string" && !/:\/\//.test(e) && selfApprovalOrigin(e) != null).map((e) => e.trim().toLowerCase()));
+    const out = new Set<string>();
+    for (const o of [...lists.always, ...lists.session]) {
+        if (lists.denied.includes(o) || onSelfApprovalList(o, selfGateHosts)) continue;
+        let host = "";
+        try { host = new URL(o).hostname; } catch { continue; }
+        if (bare.has(host)) out.add(o);
+    }
+    return [...out].sort();
+}
+
+/**
+ * Read what a person typed into the self-approval whitelist as the entry to store. A site on https's default port is
+ * stored as its bare host, as every earlier build stored it; anything else (plain http, another port) is stored as its
+ * origin, which trusts exactly that origin (`selfApprovalOrigin`). Typed as `originFromInput` reads it: a bare host
+ * means https, so `http://` must be written out.
+ * @param input what was typed
+ * @returns the entry, or null for anything that is not an http(s) site
+ */
+export function whitelistEntryFromInput(input: string): string | null {
+    const o = originFromInput(input);
+    if (!o) return null;
+    const u = new URL(o);
+    return u.protocol === "https:" && !u.port ? u.hostname : o;
 }
 
 /** A change to the lists, as the settings and the popup ask for one. */

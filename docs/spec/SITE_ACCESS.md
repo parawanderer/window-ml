@@ -386,7 +386,9 @@ Recorded as each slice lands, with the reason.
   `http://` too would extend a trust that lets a site approve its own tool calls to whoever can tamper with a plain-http
   connection to that host. The same hole in the whitelist's own readers (`senderTrust`, `pageApprovalAllowed`), which
   matched by host over any scheme and port, was closed ahead of slice 3: every reader now applies one origin rule
-  (`selfApproves`: a bare host is its `https://` origin on the default port, and the gate must approve the sender).
+  (`selfApproves`: a bare host is its `https://` origin on the default port, a bare loopback host also its http and
+  other ports, and the gate must approve the sender; an install whose bare LAN host stopped covering an approved http
+  origin is shown it in Settings and the popup, with an Add for the exact origin).
   Slice 3 still moves the stored whitelist to origins (below, "The self-approval whitelist").
 - **Slice 1: a page's cancel has its own message type (`PAGE_CANCEL_RUN`).** The shell's Stop and the page's cancel
   both arrived as `CANCEL_RUN` from the same content-script world, so the gate could not refuse one without the other.

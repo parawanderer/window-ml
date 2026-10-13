@@ -7,7 +7,7 @@ import { formatBytes } from "./resource/resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract/contract-config";
 import { generatesText } from "./contract/contract-server";
 import { browserInfo, extensionDetailsUrl } from "./util";
-import { originOf, type SiteDecision, type SiteEdit } from "./site-access";   // browser-correct internal scheme + details-page URL
+import { originOf, uncoveredApprovals, whitelistEntryFromInput, type SiteDecision, type SiteEdit, type SiteLists } from "./site-access";   // browser-correct internal scheme + details-page URL
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -341,22 +341,52 @@ function renderPermList(domains: string[]) {
         chip.append(host, x); list.append(chip);
     }
 }
+/**
+ * List the origins allowed to use window.ml that a bare whitelist entry no longer makes self-approving
+ * (`uncoveredApprovals`: plain http or another port of a non-loopback host), each with a button adding that exact
+ * origin. Mirrors Settings → Permissions, so a person who relied on one is told where they look first.
+ * @param domains the whitelist as stored
+ */
+function renderUncovered(domains: string[]) {
+    const box = document.getElementById("permUncovered");
+    if (!box) return;
+    box.replaceChildren();
+    chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload: {} }, (res: { data?: { lists?: SiteLists } } | undefined) => {
+        void chrome.runtime.lastError;
+        const lists = res?.data?.lists;
+        const missing = lists ? uncoveredApprovals(lists, domains) : [];
+        if (!missing.length) return;
+        const note = document.createElement("div"); note.className = "hint warn";
+        note.textContent = "A bare host here now trusts only its https:// site on the default port. These sites, allowed to use window.ml, no longer answer their own approval prompts; add one to trust that exact origin:";
+        const list = document.createElement("div"); list.className = "perm-list";
+        for (const o of missing) {
+            const chip = document.createElement("span"); chip.className = "perm-chip";
+            const host = document.createElement("span"); host.className = "perm-host"; host.textContent = o;
+            const add = document.createElement("button"); add.textContent = "Add"; add.setAttribute("aria-label", `Trust ${o} to self-approve`);
+            add.addEventListener("click", () => setDomains((cur) => cur.includes(o) ? cur : [...cur, o].sort()));
+            chip.append(host, add); list.append(chip);
+        }
+        box.append(note, list);
+    });
+}
 async function setDomains(fn: (cur: string[]) => string[]) {
     const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });
     const next = fn(pageApprovalDomains as string[]);
     await chrome.storage.sync.set({ pageApprovalDomains: next });
     renderPermList(next);
+    renderUncovered(next);
 }
 function addDomain() {
     const input = $("permDomain");
-    const d = normDomain(input.value);
-    if (!d) { setStatus("Enter a valid hostname, e.g. docs.google.com", "err"); return; }
+    const d = whitelistEntryFromInput(input.value);
+    if (!d) { setStatus("Enter a valid hostname, e.g. docs.google.com, or an origin, e.g. http://mlbox.lan:8080", "err"); return; }
     setDomains((cur) => cur.includes(d) ? cur : [...cur, d].sort());
     input.value = "";
 }
 async function loadPerms() {
     const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });
     renderPermList(pageApprovalDomains as string[]);
+    renderUncovered(pageApprovalDomains as string[]);
 }
 
 // Renders per-model VRAM usage from Ollama's /api/ps (used only — Ollama's API

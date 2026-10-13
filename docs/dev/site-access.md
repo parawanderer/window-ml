@@ -168,8 +168,20 @@ hosts (slice 3 moves it to origins), but it is READ by origin, through one rule 
 `selfApprovalOrigin` turns an entry into the one origin it trusts (a bare host is `https://host` on the default port;
 an entry written as an origin, as the e2e specs write `http://127.0.0.1:<port>`, is that origin; a bare host with a
 port or a path trusts nothing), and `selfApproves(lists, sender, hosts)` holds only when the sender's origin, read as
-the gate reads it (`grantableOrigin`), is on the whitelist and the gate approves it (a denial wins). Plain http, another
-port, a subdomain, a sub-frame or an opaque origin of a whitelisted host is never trusted as the https site.
+the gate reads it (`grantableOrigin`), is on the whitelist (`onSelfApprovalList`) and the gate approves it, always or
+for the session (a denial wins). Plain http, another port, a subdomain, a sub-frame or an opaque origin of a
+whitelisted host is never trusted as the https site.
+
+A bare LOOPBACK entry (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`: `isLoopbackHost`) also self-approves that
+exact host over http and on any port, which is what it meant when the whitelist was matched by host. No one on the
+network can answer for loopback, so http there opens nothing to a network attacker, and reading it as https only
+silently broke every local dev server and self-hosted UI an install already relied on. Any port is bounded by the gate:
+the whitelist implies window.ml approval only for `selfApprovalOrigin`'s origin (`decide`), so another local service
+self-approves only once the person has allowed that origin itself. A bare non-loopback host gets no such reading: its
+http and port origins are what a network attacker or another service on the box would use. Settings and the popup list
+each origin allowed to use window.ml that a bare entry stopped covering (`uncoveredApprovals`), with an Add that stores
+the exact origin, and both accept an origin typed into the whitelist (`whitelistEntryFromInput`: https on the default
+port is stored as its bare host, anything else as its origin).
 
 Every reader goes through it, so none can disagree with the gate:
 
@@ -182,7 +194,9 @@ Every reader goes through it, so none can disagree with the gate:
 One of the extension's own frames inside a tab (the overlay sidebar's bench) is judged by its tab's top-frame URL
 (`selfApprovalFacts`), as before. `nav-handover.ts` `changesSiteAccess` only watches the key. The table over sender
 shapes x readers, and the upgrade from a stored list of hosts: `tests/self-approval-origin.test.js`, with the pure
-rule in `tests/site-access.test.mjs`.
+rule in `tests/site-access.test.mjs`; the Settings and popup editors and their notice in `tests/sidebar-settings.test.js`
+and `tests/popup-whitelist.test.js`. That test also pins every line of `src/` that names the setting, so a new reader
+fails there until it goes through `selfApproves`.
 
 ## The page's cancel
 

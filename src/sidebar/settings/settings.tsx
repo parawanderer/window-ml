@@ -3,7 +3,7 @@
 // this runs in the extension-origin iframe, not the page DOM — so edits sync live
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
-import { SITE_ACCESS_KEYS, originFromInput, type SiteEdit, type SiteLists } from "../../site-access";
+import { SITE_ACCESS_KEYS, originFromInput, selfApprovalOrigin, uncoveredApprovals, whitelistEntryFromInput, type SiteEdit, type SiteLists } from "../../site-access";
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
 import { signal } from "@preact/signals";
@@ -765,10 +765,13 @@ function hostLabelOf(origin: string): string {
  * and the denied ones, each revocable here. The full list; the toolbar popup edits only the current tab's site. Edits
  * go through the worker (`SITE_ACCESS`), which is what the router's gate reads on every message.
  */
-function SiteApprovals() {
-    const [lists, setLists] = useState<SiteLists | null>(null);
-    const [query, setQuery] = useState("");   // one box, as in HostAccess: filters the lists, and adds a full origin
-    const ask = (payload: { edit?: SiteEdit }): Promise<SiteLists | null> => new Promise((resolve) => {
+/**
+ * Ask the worker for the site gate's lists (`SITE_ACCESS`), applying an edit first when one is given.
+ * @param payload `{}` to read, or `{ edit }` to change and read
+ * @returns the lists after, or null when the worker could not be asked
+ */
+function askSiteAccess(payload: { edit?: SiteEdit }): Promise<SiteLists | null> {
+    return new Promise((resolve) => {
         try {
             chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { lists?: SiteLists } } | undefined) => {
                 void chrome.runtime.lastError;
@@ -776,15 +779,29 @@ function SiteApprovals() {
             });
         } catch { resolve(null); }
     });
+}
+
+/**
+ * The site gate's lists, kept current: an approval made from the popup shows up here without reopening Settings.
+ * @returns the lists (null until read) and their setter, for an edit's answer
+ */
+function useSiteLists(): [SiteLists | null, (l: SiteLists) => void] {
+    const [lists, setLists] = useState<SiteLists | null>(null);
     useEffect(() => {
-        void ask({}).then(setLists);
-        // An approval made from the popup should show up here without reopening Settings.
+        void askSiteAccess({}).then(setLists);
         const onChange = (changes: Record<string, unknown>) => {
-            if (Object.values(SITE_ACCESS_KEYS).some((k) => k in changes)) void ask({}).then(setLists);
+            if (Object.values(SITE_ACCESS_KEYS).some((k) => k in changes)) void askSiteAccess({}).then(setLists);
         };
         try { chrome.storage.onChanged.addListener(onChange); } catch { /* not an extension page */ }
         return () => { try { chrome.storage.onChanged.removeListener(onChange); } catch { /* ignore */ } };
     }, []);
+    return [lists, setLists];
+}
+
+function SiteApprovals() {
+    const [lists, setLists] = useSiteLists();
+    const [query, setQuery] = useState("");   // one box, as in HostAccess: filters the lists, and adds a full origin
+    const ask = askSiteAccess;
     if (!lists) return null;
     const edit = (e: SiteEdit): void => { void ask({ edit: e }).then((l) => { if (l) setLists(l); }); };
     const origin = originFromInput(query);
@@ -942,10 +959,35 @@ function UserScriptsStatus() {
         : <div class="set-hint"><span class="perm-warn">User scripts are not allowed.</span> Turn on <b>Allow User Scripts</b> on window.ml's details page so an approved exec that reads <code>ml.current</code> or a pointer runs in its own world without the debugger. <button class="test-btn" onClick={open}>Open details page</button></div>;
 }
 
+/**
+ * The origins allowed to use window.ml whose host is a bare entry on the self-approval whitelist, but which that entry
+ * no longer makes self-approving (plain http or another port of a non-loopback host, `uncoveredApprovals`). Before the
+ * whitelist was read by origin they self-approved by host; this tells the person, and adds the exact origin on a click.
+ */
+function UncoveredWhitelist({ lists, domains, onAdd }: { lists: SiteLists | null; domains: string[]; onAdd: (origin: string) => void }) {
+    const missing = lists ? uncoveredApprovals(lists, domains) : [];
+    if (!missing.length) return null;
+    return (
+        <div class="set-warn">
+            A bare host here now trusts only its <code>https://</code> site on the default port. These sites, allowed to use
+            window.ml, no longer answer their own approval prompts; add one to trust that exact origin:
+            <div class="perm-list">
+                {missing.map((o) => (
+                    <span class="perm-chip" key={o}>
+                        <span class="perm-host">{o}</span>
+                        <button class="test-btn" aria-label={`Trust ${o} to self-approve`} onClick={() => onAdd(o)}>Add</button>
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function PermissionsView() {
     const c = config.value;
     const domains = c.pageApprovalDomains || [];
-    const parsed = normDomain(domainInput.value);
+    const [siteLists] = useSiteLists();
+    const parsed = whitelistEntryFromInput(domainInput.value);
     const invalid = !!domainInput.value.trim() && !parsed;
     const add = () => {
         if (!parsed) return;
@@ -961,12 +1003,13 @@ function PermissionsView() {
             <Section id="whitelist" title="Self-approval whitelist">
                 <div class="set-note">Sites here are trusted to supply their <b>own</b> <code>ml.agent</code> approval gate (the page's <code>approve()</code> / <code>confirm</code>). <b>Every other site</b> routes a privileged tool call (click, type, exec, python_exec) through the extension's own approval — the corner card — so a page can never silently approve itself. Add a domain only if you fully trust the code on it.</div>
                 <div class="perm-add">
-                    <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="example.com" value={domainInput.value}
+                    <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="example.com, or http://host:port" value={domainInput.value}
                         onInput={(e: any) => (domainInput.value = e.target.value)}
                         onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
                     <button class="test-btn" disabled={!parsed} onClick={add}>Add</button>
                 </div>
-                {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>docs.google.com</code>.</div> : null}
+                {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>docs.google.com</code>, or an origin, e.g. <code>http://mlbox.lan:8080</code>.</div> : null}
+                <UncoveredWhitelist lists={siteLists} domains={domains} onAdd={(o) => { if (!domains.includes(o)) setDomains([...domains, o].sort()); }} />
                 {domains.length > 6
                     ? <input class="perm-search" type="search" placeholder="Filter domains…" value={domainSearch.value} onInput={(e: any) => (domainSearch.value = e.target.value)} />
                     : null}
@@ -975,6 +1018,7 @@ function PermissionsView() {
                         {shown.map(d => (
                             <span class="perm-chip" key={d}>
                                 <span class="perm-host">{d}</span>
+                                {selfApprovalOrigin(d) ? null : <span class="set-warn">(trusts nothing: not a host or an origin)</span>}
                                 <button class="perm-x" aria-label={`Remove ${d}`} title={`Remove ${d}`} onClick={() => remove(d)}>✕</button>
                             </span>
                         ))}
