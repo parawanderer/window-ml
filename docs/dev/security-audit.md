@@ -69,7 +69,7 @@ the worker, and the page answers geometry only):
       the worker reads. A page's START_RUN or RESUME_RUN waits for the run restore before it is judged, so a message
       that wakes the worker cannot start a turn in a worker run. `ml_handed_to_worker` never drops an entry for a run
       the worker still holds (the cap used to drop the oldest, live ones included). The eviction test seam forgets the
-      in-memory hand-overs, as an eviction does: #PR.
+      in-memory hand-overs, as an eviction does: #625.
 
 ## In progress
 

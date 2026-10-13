@@ -125,7 +125,7 @@ is still waiting on that answer after a revoke, since no navigation took its doc
 
 A run the worker holds when its turn ends (built by it, or handed it) sends its tab a finish (`RUN_TOOL_IN_PAGE` with
 `finish`) that carries the run id and nothing else: the page ends the run's registration and answers nothing the worker
-reads, since the turn's answer is the worker's set (`worker-answer.ts`). Until #PR it carried the turn's `summary`,
+reads, since the turn's answer is the worker's set (`worker-answer.ts`). Until #625 it carried the turn's `summary`,
 which content.ts posted on the page's window, so a page the run was handed away from read its answer. content.ts and
 the page no longer relay a `summary` with a finish at all. The other messages at the end of a turn carry no run
 content to the page's world: the run's events (`ML_DEBUG_TO_PAGE`) go to the shell only, and a re-adopt names the
