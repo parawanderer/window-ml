@@ -8,7 +8,7 @@
 // own arguments, and a malformed one skips the verify with a fixed note. The CDP ring-backs (a click or a type the
 // worker did through the debugger, a navigate's destination) build their request here, with no page involved.
 
-import type { PageToolEnvelope, SubcallUsage, ToolContext, ToolFeedback, ToolResult, VerifyRequest } from "../contract";
+import type { PageToolEnvelope, RenderDescriptor, SubcallUsage, ToolContext, ToolFeedback, ToolResult, VerifyRequest } from "../contract";
 import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
 import { GEO_MAX, TEXT_CAPS } from "./geometry-check";
 import { onWorkerHost, workerVisionHost, type WorkerVisionHostOpts } from "./worker-vision-host";
@@ -147,7 +147,21 @@ export function withoutPageVision<T>(env: T): T {
     if (!env || typeof env !== "object") return env;
     const { image: _image, imageLabel: _label, images: _images, feedback: _feedback, subUsage: _sub, ...rest } = env as Partial<PageToolEnvelope>;
     if (typeof rest.result === "string") rest.result = foldVerifyMarks(rest.result);
+    // The render slots too: the loop keeps a step's picture from its Out (an image, a look's capture, a figure) as the
+    // pointer's image, which `look` at that pointer shows a reader as a capture taken earlier in this run.
+    if ("renderIn" in rest) rest.renderIn = withoutRenderImage(rest.renderIn);
+    if ("renderOut" in rest) rest.renderOut = withoutRenderImage(rest.renderOut);
     return rest as T;
+}
+
+/** A page's render descriptor without a picture in it: the kinds that are one (`image`, `look`, `locate`) are dropped,
+ *  and Python's In and Out lose their `image`. Anything else is returned as it came. */
+function withoutRenderImage(d: unknown): RenderDescriptor | undefined {
+    if (!d || typeof d !== "object") return undefined;
+    const r = d as RenderDescriptor;
+    if (r.type === "image" || r.type === "look" || r.type === "locate") return undefined;
+    if ((r.type === "python-out" || r.type === "python-in") && "image" in r) { const { image: _i, ...rest } = r; return rest as RenderDescriptor; }
+    return r;
 }
 
 /** The mark that opens a reader's description in a verify (captureVerify, captureVerifyElement), which only the worker

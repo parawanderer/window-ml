@@ -115,6 +115,33 @@ test("store: ending a session releases exactly the values nobody else holds", as
     assert.deepEqual((await store.releaseSession("other")).map((e) => e.key).sort(), [other.key, shared.key].sort(), "…until its last holder ends");
 });
 
+test("store: a claim with a `may` is taken only when it allows the holders as they are, or the session holds it already", async () => {
+    const { store } = makeStore({ budget: 10_000 });
+    const loose = await store.put(blob(10), { format: "csv" });
+    const theirs = await store.put(blob(10), { format: "csv", session: "other" });
+    const mine = await store.put(blob(10), { format: "csv", session: "run1" });
+    const seen = [];
+    const may = (holders) => { seen.push([...holders]); return !holders.length; };
+    assert.equal(await store.claim(theirs.key, "run1", may), false, "refused: another session holds it");
+    assert.deepEqual((await store.get(theirs.key)).row.sessions, ["other"], "and nothing was written");
+    assert.equal(await store.claim(loose.key, "run1", may), true, "allowed: nobody holds it");
+    assert.deepEqual((await store.get(loose.key)).row.sessions, ["run1"]);
+    assert.equal(await store.claim(mine.key, "run1", () => false), true, "a session's own value is never refused to it");
+    assert.equal(await store.claim("v0000000000000000", "run1", () => true), false, "a key that is not stored cannot be claimed");
+    assert.deepEqual(seen, [["other"], []]);
+});
+
+test("store: two sessions racing to claim one unheld value under `may` = 'nobody holds it': exactly one gets it", async () => {
+    const { store } = makeStore({ budget: 10_000 });
+    for (let i = 0; i < 20; i++) {
+        const { key } = await store.put(blob(10), { format: "csv" });
+        const may = (holders) => !holders.length;
+        const won = await Promise.all(["a", "b", "c"].map((s) => store.claim(key, s, may)));
+        assert.equal(won.filter(Boolean).length, 1, `round ${i}: ${won}`);
+        assert.equal((await store.get(key)).row.sessions.length, 1, "the predicate saw the holders the write was made over");
+    }
+});
+
 test("store: the sweep takes idle orphans and forgets tombstones after a week", async () => {
     const { store, evicted, tick } = makeStore({ budget: 10_000 });
     const orphan = await store.put(blob(10), { format: "text" });

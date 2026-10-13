@@ -71,6 +71,16 @@ the worker, and the page answers geometry only):
       the worker still holds (the cap used to drop the oldest, live ones included). The eviction test seam forgets the
       in-memory hand-overs, as an eviction does: #625.
 
+- [x] What a page can do with the render descriptors it answers a worker-built or page-built run's call with
+      (`renderOut`/`renderIn`, `answerMedia`, `image`/`images`, table columns), once the loop makes them a pointer
+      (redteam-render-values.test.mjs): a `value` key naming another run's stored table, or (for a worker-built run) one
+      disclosed to the page, is no longer claimed by the run (`runMayClaim`); a page's `PYTHON_EXEC` no longer reads a
+      worker-built run's value by naming its key; a picture in a page's render no longer becomes an image pointer that
+      `look` shows a reader as an earlier capture (`withoutPageVision`). Held already, now tested: a page cannot
+      overwrite, re-point or relabel an existing pointer, its `:in` slot is the model's call, answer media and inline
+      images do not reach a worker-built run, odd tables leave the worker's prototypes alone, and the sidebar draws every
+      descriptor field as text: #626.
+
 ## In progress
 
 (none)
@@ -104,7 +114,11 @@ the worker, and the page answers geometry only):
             raise. It paints over our UI with
             `pointer-events: none` and the clicks reach ours (clickjacking the card). Proposed: an occlusion check on
             the approval controls (IntersectionObserver v2 `trackVisibility`), refusing a click while they are covered.
-- [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only).
+- [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only, drawn as text;
+      pictures are dropped since #626).
+- [ ] A page's answer to a delegated call is kept whole: its render in the step's pointer (a 300,000-row table, a 20 MB
+      capture) and its text result, which also reaches the model unclipped. Bounded only by Chrome's 64 MiB message cap
+      and the pointer store's 200 entries. Owner decision on the bound (redteam-render-values.test.mjs, the `todo`).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
       extension surface. Proposed: clamp, and drop `origin` for page runs. Owner decision pending.

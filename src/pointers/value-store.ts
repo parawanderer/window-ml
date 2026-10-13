@@ -212,14 +212,16 @@ export class ValueStore {
         return { row: touched, blob };
     }
 
-    /** Add a session to the value's holders, so the value lives until every holder has ended. False when the key is not stored. */
-    async claim(key: string, session: string): Promise<boolean> {
+    /** Add a session to the value's holders, so the value lives until every holder has ended. False when the key is not
+     *  stored, or `may` (asked with the holders as they are, in the same transaction) refuses the claim. */
+    async claim(key: string, session: string, may?: (holders: readonly string[]) => boolean): Promise<boolean> {
         const db = await this.open();
         const tx = db.transaction(ROWS, "readwrite");
         const row = await done(tx.objectStore(ROWS).get(key)) as ValueRow | undefined;
-        if (row && !row.sessions.includes(session)) tx.objectStore(ROWS).put({ ...row, sessions: [...row.sessions, session] });
+        const ok = !!row && (!may || row.sessions.includes(session) || may(row.sessions));
+        if (row && ok && !row.sessions.includes(session)) tx.objectStore(ROWS).put({ ...row, sessions: [...row.sessions, session] });
         await committed(tx);
-        return !!row;
+        return ok;
     }
 
     /** A session ended: drop it from every value it held, and evict the values nobody else holds. */

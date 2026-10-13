@@ -72,7 +72,9 @@ whether they block.
 **A page's answer cannot carry a picture, a reply or a spend into a worker-built run.** For a run the worker built or
 was handed (`makeWorkerRun`, mid-turn included), the run host drops `image`, `imageLabel`, `images`, `feedback` and
 `subUsage` from every page envelope (`withoutPageVision`, `sw/worker-verify.ts`), so a page can neither show the model
-a picture as the page's screenshot nor inflate the run's spend; no tool is exempt. The verify after a click, type, wait
+a picture as the page's screenshot nor inflate the run's spend; no tool is exempt. The render slots lose their pictures
+too (an `image`, `look` or `locate` descriptor is dropped, Python's In and Out lose `image`): the loop keeps a step's
+picture as its pointer's image, and `look` at that pointer would show a reader the page's picture as an earlier capture. The verify after a click, type, wait
 or navigate is the worker's, and so are `look` and `locate`: the page is never sent the call, only the target for a
 preview, and the run's adopt names it no model (`docs/dev/agent-tools.md`, "The worker's vision host").
 
