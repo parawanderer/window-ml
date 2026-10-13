@@ -16,7 +16,7 @@ import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGH
 import { cleanImages } from "../contract/contract-run";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
-import { resolveContextContainer, domToContext } from "../dom/dom";   // right-click "ask about this" (content script sees the page DOM)
+import { resolveContextContainer, domToContext, queryAll, viewportRect, setClosedRootReader } from "../dom/dom";   // the content script sees the page DOM
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
@@ -738,35 +738,72 @@ function ensureHlListeners(): void {
     window.addEventListener("scroll", repositionHighlight, true);
     window.addEventListener("resize", repositionHighlight);
 }
-// Highlight a page target on hover. ELEMENT mode (`selector`): the shell shares the page DOM, so it
-// resolves a NATIVE-CSS selector itself. But ml's custom selectors (:contains/:has-text/:eq) throw in
-// document.querySelectorAll — so when native resolution fails, fall back to asking injected (main
-// world) to resolve it via ml's queryAll, exactly like the @pt/@box token path. POINT/BOX mode
-// (`token`): only the main world knows the coords, so it's always resolved by injected.
+// Highlight a page target on hover. ELEMENT mode (`selector`): resolved HERE, in the content script's isolated world,
+// with the DOM tools' own `queryAll` (ml's dialect, open shadow roots, same-origin frames) and, for the page's closed
+// roots, `chrome.dom.openOrClosedShadowRoot` (`readClosedRoot`). Nothing crosses the page's window: it used to post
+// ML_HL_RESOLVE with the selector and draw any ML_HL_AT that came back, so the page heard which selector the person
+// was asked to approve and could move the approve highlight (docs/spec/SITE_ACCESS.md, attack 18). POINT/BOX mode
+// (`token`): the coordinates exist only in the main world's registry (util.ts `resolvePoint`), which is also where the
+// click itself reads them, so injected is asked and its answer is taken only for that token request.
 function showHighlight(ref: { selector?: string; index?: number; token?: string; kind?: string } | null): void {
     if (!ref) return hideHighlight();
     lastHlRef = ref;            // remembered so scroll/resize can recompute (below)
     ensureHlListeners();
     hlKind = ref.kind === "approve" ? "approve" : "";
     const seq = ++hlSeq;
+    hlTokenSeq = 0;
     if (ref.selector) {
-        // An ml-DIALECT selector (`>>>` boundary-crossing, or a :contains/:has-text/:eq/text= pseudo)
-        // must be resolved by INJECTED (queryAll + viewportRect, which crosses shadow/iframe boundaries and
-        // composes the frame offset into a TOP-viewport box). document.querySelectorAll can't parse it — and
-        // must not try, so a partial native match can't draw a wrong box for it. Route it straight to injected.
-        const mlDialect = /(^|\s)>>>(\s|$)|:contains\(|:has-text\(|:eq\(|(^|[\s>~+])text=/.test(ref.selector);
-        let el: Element | null = null;
-        if (!mlDialect) try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }
-        if (el) {
-            const r = el.getBoundingClientRect();
-            if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
-            return drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
-        }
-        // A custom ml selector (or no native match) → let injected resolve it and reply ML_HL_AT.
-        window.postMessage({ type: "ML_HL_RESOLVE", selector: ref.selector, index: ref.index || 0, seq }, "*");
+        let el: Element | undefined;
+        try { el = highlightTarget(ref.selector, ref.index || 0); } catch { el = undefined; }   // an invalid selector: nothing to show
+        if (!el) return hideHighlight();
+        // viewportRect, so an element inside a same-origin iframe is placed in the TOP viewport, where the box is drawn.
+        const r = viewportRect(el);
+        if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
+        return drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
     } else if (ref.token) {
+        hlTokenSeq = seq;
         window.postMessage({ type: "ML_HL_RESOLVE", token: ref.token, seq }, "*");   // injected replies with the coords
     } else hideHighlight();
+}
+/** The sequence number of the token highlight waiting on injected's ML_HL_AT, or 0: no other highlight takes one. */
+let hlTokenSeq = 0;   // state: ui — the hover in flight
+/** Whether the page's closed shadow roots are read for a highlight: the DOM tools' `pierceClosedShadow` setting. */
+let pierceClosed = true;   // state: ui — mirrors the stored setting
+/** Whether the reader opens closed roots at all: off only while `highlightTarget` resolves without them. */
+let readClosed = true;   // state: ui — set and restored within one resolve
+// The page's CLOSED roots in the top document, for the highlight's `queryAll`, never one of ours: our hosts are skipped by
+// identity, since the page can rename the ids `queryAll`'s own skip reads (attack 17c). Only the top document's, as the
+// DOM tools': the main world's capture (shadow-patch.js) runs in the top frame alone.
+setClosedRootReader((el) => {
+    if (!readClosed || el === shellHost || el === cardHost || el === hlHost || el.ownerDocument !== document) return null;
+    try { return (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom?.openOrClosedShadowRoot?.(el) ?? null; } catch { return null; }
+});
+/** The closed shadow roots `el` sits inside, innermost first. */
+function closedRootsOf(el: Element): ShadowRoot[] {
+    const out: ShadowRoot[] = [];
+    for (let r = el.getRootNode(); r instanceof ShadowRoot; r = r.host.getRootNode()) if (r.host.shadowRoot !== r) out.push(r);
+    return out;
+}
+/**
+ * The element a highlight of `selector` may outline: the one the DOM tools act on in the page's main world, or none
+ * when this world cannot tell which that is. The main world reaches a closed root only if its load-time capture saw it
+ * created and the run has piercing on, neither of which this world can read (a declarative root is never captured, and
+ * the run's setting is the one it started with). So the selector is resolved with every closed root open and with none:
+ * where both agree, so does the main world, whichever roots it reaches. Where they differ, the element is outlined only
+ * when nothing outside a closed root matches and every match shares its closed roots, so that dropping any of them
+ * leaves the tools no other element; never for an index into the matches. The setting off outlines no element that only
+ * a closed root holds.
+ */
+function highlightTarget(selector: string, index: number): Element | undefined {
+    const all = queryAll(selector);
+    let none: Element[];
+    readClosed = false;
+    try { none = queryAll(selector); } finally { readClosed = true; }
+    const el = all[index];
+    if (el === none[index]) return el;
+    if (!pierceClosed || !el || index !== 0 || none.length || /:eq\(|:nth-/i.test(selector)) return undefined;
+    const roots = closedRootsOf(el);
+    return all.every((e) => { const own = closedRootsOf(e); return roots.every((r) => own.includes(r)); }) ? el : undefined;
 }
 
 // While the overlay is hidden for a shot it stops being a hit-test target, so a wheel
@@ -837,7 +874,8 @@ function onWindowMessage(e: MessageEvent): void {
     // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
     // a newer hover superseded it, or the token was stale and didn't resolve).
     if (d.type === "ML_HL_AT" && e.source === window) {
-        if (d.seq !== hlSeq) return;
+        if (d.seq !== hlSeq || hlTokenSeq !== hlSeq) return;   // only the answer to a token request still current
+        hlTokenSeq = 0;
         if (d.point) drawHighlight(d.point.x - 10, d.point.y - 10, 20, 20, `point · ${Math.round(d.point.x)}, ${Math.round(d.point.y)}`);
         else if (d.box) drawHighlight(d.box.left, d.box.top, d.box.right - d.box.left, d.box.bottom - d.box.top, `box · ${Math.round(d.box.right - d.box.left)}×${Math.round(d.box.bottom - d.box.top)}`);
         else hideHighlight();
@@ -1487,7 +1525,8 @@ const captureStartup = (e: MessageEvent): void => { if (startupQueue) startupQue
 /** The worker's events that arrived over chrome.runtime before the mode was known, replayed after the window's. */
 const workerStartup: unknown[] = [];
 window.addEventListener("message", captureStartup);
-chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false, persistUiRuns: true }, (cfg) => {
+chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false, persistUiRuns: true, pierceClosedShadow: true }, (cfg) => {
+    pierceClosed = cfg.pierceClosedShadow !== false;
     listPageSessions = !!cfg.listPageSessions;
     persistUiRuns = cfg.persistUiRuns !== false;
     rawTheme = (cfg.theme as string) || "auto";
@@ -1505,6 +1544,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (changes.theme) { rawTheme = (changes.theme.newValue as string) || "auto"; applyCardTheme(); }
     if (changes.cardCorner) { cardCorner = (changes.cardCorner.newValue as string) || "bottom-right"; applyCardCorner(); }
     if (changes.agentHud) agentHud = (changes.agentHud.newValue as string) || "progress";
+    if (changes.pierceClosedShadow) pierceClosed = changes.pierceClosedShadow.newValue !== false;
     if (changes.persistUiRuns) persistUiRuns = changes.persistUiRuns.newValue !== false;
     if (changes.agentHudInDevtools) {
         agentHudInDevtools = !!changes.agentHudInDevtools.newValue;
