@@ -163,6 +163,18 @@ service worker's side is `sw-values.ts`:
   whether or not the step mints a pointer): the render goes to the sidebar, the answer's embeds and the exports, and the
   sidebar's table view reads a value by its key alone. So the pointer keeps the page's preview, which `python_exec`
   refuses as a preview.
+- **A page's answer is held to pageRead's caps before it becomes a pointer** (`capPageAnswer`,
+  `src/sw/page-answer-caps.ts`, in `toPage` after `withHeldValuesOnly`, for a worker-built, handed-over or page-built
+  run whose loop is in the worker). The caps are `PAGE_TABLE_CAPS` (worker-page-read.ts), the one constant the worker
+  already applies to a page table or document it reads itself: a table in either render slot (a `table`, a python
+  `df`, a `python-in`'s loaded frames) is cut to 2,000 columns, 1,000,000 rows and 4,000,000 cells, rows kept from the
+  top, and keeps its SOURCE's row count in `rowCount` (the page's own when it is a whole number no smaller than the rows
+  it sent), so the pointer's `shape` and its description (`describeToken`: "the first N of M rows") stay honest. A
+  cell over 100,000 characters is cut; a cell that is not a scalar becomes null. A text or picture field over
+  16,000,000 characters (a `capture`, a `stdout`, an `image`) is dropped whole and the model told after its copy
+  (`droppedNote`). The page's text `result` is clipped by `clipOut` at the panel's cap (`UI_OUT_CAP`), or for exec and
+  python_exec at three times the call's `OUTPUT_CAP`, room for both slots their producers write. Each cut is a
+  `page`/`answer-capped` record in the execution log.
   The same rule on the read side: a page's own `PYTHON_EXEC` naming a key reads a worker-built run's value only when that
   run's in-flight approved exec named the key, as `VALUE_COLUMNS` does (sw-python.ts).
 - **Release.** A tab claim goes when the document it was disclosed to does: a main-frame `onCommitted` and `tabs.onRemoved`

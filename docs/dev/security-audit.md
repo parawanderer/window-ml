@@ -88,6 +88,12 @@ the worker, and the page answers geometry only):
       (`selfApproves`), so plain http, another port, a subdomain or a sub-frame of a whitelisted host no longer gets the
       https site's self-approval, and the gate no longer implies approval for another port. Tested as a table over sender
       shapes x readers, with the upgrade from a stored list of hosts (self-approval-origin.test.js): #628.
+- [x] A page's answer to a delegated call is held to the caps the worker applies to page data it reads itself (owner
+      decision 2026-10-13: `PAGE_TABLE_CAPS`, one constant with `pageRead`), for every run whose loop is in the worker
+      (`capPageAnswer` in `toPage`): a table is cut to fit with its source's row count kept, a text or picture over 16M
+      characters is dropped with a note to the model, the text result is clipped by `clipOut`, and every cut is a
+      `page`/`answer-capped` record in the execution log (page-answer-caps.test.mjs, redteam-render-values.test.mjs
+      "bounds"): #629.
 
 ## In progress
 
@@ -124,9 +130,6 @@ the worker, and the page answers geometry only):
             the approval controls (IntersectionObserver v2 `trackVisibility`), refusing a click while they are covered.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only, drawn as text;
       pictures are dropped since #626).
-- [ ] A page's answer to a delegated call is kept whole: its render in the step's pointer (a 300,000-row table, a 20 MB
-      capture) and its text result, which also reaches the model unclipped. Bounded only by Chrome's 64 MiB message cap
-      and the pointer store's 200 entries. Owner decision on the bound (redteam-render-values.test.mjs, the `todo`).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] Error text that reaches the page outside `forPage`: `VALUE_COLUMNS` errors and the `PYTHON_STREAM` and
       `SERVER_TOOL_STREAM` frames (content.ts). None is built from the config today.

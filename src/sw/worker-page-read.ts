@@ -15,11 +15,13 @@ import { isCurrentPage } from "../dom/dom";
 
 /** How long the page has to answer: a large table is read from the DOM in well under a second. */
 export const PAGE_READ_MS = 15_000;
-/** The most columns, cells and characters a page table may have; a larger answer is refused whole. */
-/** `rows` bounds the row count on its own: an empty row holds no cell, so the cell cap alone let a page send millions. */
+/** The most columns, rows, cells and characters a page table may have, and the longest text: a larger pageRead answer is
+ *  refused whole. A page's answer to a delegated call is held to the SAME caps, cut to fit rather than refused
+ *  (page-answer-caps.ts): one constant, so the two cannot drift. `rows` bounds the row count on its own: an empty row
+ *  holds no cell, so the cell cap alone let a page send millions. */
 export const PAGE_TABLE_CAPS = { columns: 2_000, rows: 1_000_000, cells: 4_000_000, cell: 100_000, html: 16_000_000 } as const;
-/** The longest document a session render reads (characters of HTML). */
-export const PAGE_HTML_MAX = 16_000_000;
+/** The longest document a session render reads (characters of HTML): {@link PAGE_TABLE_CAPS}' `html`. */
+export const PAGE_HTML_MAX = PAGE_TABLE_CAPS.html;
 
 /** The sentence for an answer that was malformed or too large. */
 export const PAGE_READ_REFUSED = "the page's answer was malformed or too large, so it was not used.";

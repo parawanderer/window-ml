@@ -30,6 +30,7 @@ export interface RunLogEvent extends HousekeepingEvent {
 //
 // The subsystems and kinds in use today. Both are open by intent, so this is a map rather than a contract:
 //   page  held (reason: navigating) · discarded · reloaded (reason: gone) · recovered · unreachable (reason: asleep|gone|silent)
+//         answer-capped (reason: rows|columns|cell|cell-type|text|image|result): a page's answer cut to pageRead's caps
 //   cdp   attached (reason: already) · refused (reason: permission|busy) · detached
 //   tab   pinned (reason: hosting) · released · replaced
 //

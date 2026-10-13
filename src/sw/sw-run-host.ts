@@ -53,6 +53,7 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
+import { capPageAnswer } from "./page-answer-caps";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -363,7 +364,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
             const seen = vis || workerVision() ? withoutPageVision(env) : env;
             // Nor a stored-value key this run may not claim: the render it rides is read by key in the sidebar.
-            return withHeldValuesOnly(seen, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId)));
+            const held = await withHeldValuesOnly(seen, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId)));
+            // Nor more than the worker takes from a page it reads itself (pageRead's caps), for every kind of run: the
+            // render becomes the step's pointer, and the text is what the model reads (page-answer-caps.ts).
+            return capPageAnswer(held, payload.name, payload.args, (c) => recordRunLog(runId, { level: "warn", subsystem: "page", kind: "answer-capped", reason: c.what,
+                detail: { tool: payload.name, slot: c.slot, field: c.field, from: c.from, to: c.to } }));
         };
         if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
