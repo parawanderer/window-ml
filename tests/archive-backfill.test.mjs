@@ -169,3 +169,14 @@ test("the job says what waits once a pass has looked, and nothing before", async
     await c.pass();
     assert.deepEqual([c.status().pending, c.status().pendingLabel], [0, "archived screenshots in PNG"], "kept, so nothing waits");
 });
+
+test("an archive that cannot answer ends the pass quietly: nothing logged, nothing thrown, asked again next time", async () => {
+    // A pass started by a kick runs off a timer, so a rejection here would be one nothing catches.
+    for (const call of [async () => { throw new Error("the archive did not answer"); }, async () => null, async () => ({})]) {
+        const records = [];
+        const c = archiveImageCompactor({ call, encode: webpEncode, record: (r) => records.push(r) });
+        await c.pass();
+        assert.deepEqual(records, []);
+        assert.equal(c.status().pending, undefined);
+    }
+});

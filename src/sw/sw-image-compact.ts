@@ -132,19 +132,24 @@ export function archiveImageCompactor(o: {
     let running: Promise<void> | null = null;
     let pending: number | undefined;
     const run = async (): Promise<void> => {
-        let first = await o.call<{ batch: { sha: string; url: string }[]; pending: number }>("pngs", { limit: ARCHIVE_COMPACT_BATCH });
+        type Batch = { batch: { sha: string; url: string }[]; pending: number };
+        let first: Batch | null | undefined;
+        // An archive that cannot answer (no OPFS, switched off as the timer fired) has nothing to do now: the next
+        // trigger asks again. A throw here was a rejection nothing caught, since a kick's pass runs off a timer.
+        try { first = await o.call<Batch | null>("pngs", { limit: ARCHIVE_COMPACT_BATCH }); } catch { return; }
+        if (!first || !Array.isArray(first.batch)) return;
         pending = first.pending;
         if (!first.batch.length) return;
         const t0 = now();
         let replaced = 0, kept = 0, saved = 0;
         o.record?.({ subsystem: "archive", kind: "image-compact", detail: { pending: first.pending } });
         try {
-            for (let b: typeof first | null = first; b && b.batch.length; ) {
+            for (let b: Batch | null = first; b && b.batch.length; ) {
                 const items: { sha: string; url: string | null }[] = [];
                 for (const { sha, url } of b.batch) items.push({ sha, url: await encode(url) });
                 const r = await o.call<{ replaced: number; kept: number; bytesBefore: number; bytesAfter: number; pending: number }>("replacePngs", { items });
                 replaced += r.replaced; kept += r.kept; saved += r.bytesBefore - r.bytesAfter; pending = r.pending;
-                b = r.pending ? await o.call<typeof first>("pngs", { limit: ARCHIVE_COMPACT_BATCH }) : null;
+                b = r.pending ? await o.call<Batch>("pngs", { limit: ARCHIVE_COMPACT_BATCH }) : null;
             }
         } catch (err) {
             if (replaced) o.onReplaced?.();
