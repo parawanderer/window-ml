@@ -276,3 +276,5 @@ dialect may not own.
   which every manifest-driven extension inherits.
 - [`docs/spec/SECRET_HANDLES.md`](SECRET_HANDLES.md): the same move ("what the dialect cannot say, the model cannot
   do") applied to credentials.
+- [`docs/spec/SHELL.md`](SHELL.md): the same manifest with PROGRAMS in place of libraries (effect per program,
+  subcommand and flag), which decides the free tier of `ml.sh`.
