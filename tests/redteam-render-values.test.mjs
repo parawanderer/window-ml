@@ -357,9 +357,11 @@ test("a page's odd table (prototype-named columns, deep cells, non-string column
 /** The run's execution log, as the person's extension pages read it. */
 const runLogOf = async (bg, hash) => (await bg.send({ type: "DUMP_RUN_LOG", payload: { run: hash } }, { url: "chrome-extension://test/popup.html" }))?.data?.events ?? [];
 const wcOf = (t) => Number(/\n\n(\d+)\n/.exec(t)?.[1]);
+/** A page text longer than the panel's cap and far below any structural one: 30,000 chars. */
+const LONG = "L".repeat(30_000);
 
 for (const builtBy of ["worker", "page"])
-test(`a ${builtBy}-built run: a page's render is held to pageRead's caps in the pointer and in what the model reads: a 300,000-row table, a 20 MB capture, a 20 MB text`, async () => {
+test(`a ${builtBy}-built run: a page's render is held to pageRead's caps in the pointer, and its text clipped for the model only in a run the worker holds: a 300,000-row table, a 20 MB capture, a long text`, async () => {
     const C = PAGE_TABLE_CAPS;
     const capture = ("x".repeat(99) + "\n").repeat(200_000);   // 20 MB, past C.html
     const WIDTH = 14;                                          // 300,000 x 14 = 4.2 million cells, past C.cells
@@ -375,7 +377,7 @@ test(`a ${builtBy}-built run: a page's render is held to pageRead's caps in the 
     ], { builtBy, deref: true, page: (pl) => [
         { result: "ran", renderOut: { type: "exec-out", stdout: capture, capture } },
         { result: "ran", renderOut: { type: "table", columns: Array.from({ length: WIDTH }, (_, j) => `c${j}`), rows, rowCount: rows.length } },
-        { result: capture },
+        { result: builtBy === "worker" ? capture : LONG },
     ][which(pl) - 1] });
     assert.equal(r.results.length, 6, JSON.stringify(r.end));
     // The capture: dropped whole, and the model told so after its copy.
@@ -387,15 +389,18 @@ test(`a ${builtBy}-built run: a page's render is held to pageRead's caps in the 
     assert.equal(wcOf(r.results[4]), (WIDTH + 2) * kept + WIDTH + 6, `the pointer holds ${wcOf(r.results[4])} lines of the page's table, not ${kept} rows`);
     assert.match(r.results[5], new RegExp(`a ${kept}x${WIDTH} table \\(.*; the first ${kept} of 300000 rows\\)`), `the pointer reports the source's 300,000 rows: ${r.results[5].slice(0, 400)}`);
     // The text result: clipped like a tool's output, never 20 MB in the model's context.
-    assert.ok(r.results[2].length <= UI_OUT_CAP + 400, `the model read ${r.results[2].length} chars of the page's text`);
-    assert.match(r.results[2], new RegExp(`\\[first ${UI_OUT_CAP} of 20000000 chars\\]`));
+    // The text result: clipped like a tool's output in a run the worker holds; a page-built run's own tool text is whole.
+    if (builtBy === "worker") {
+        assert.ok(r.results[2].length <= UI_OUT_CAP + 400, `the model read ${r.results[2].length} chars of the page's text`);
+        assert.match(r.results[2], new RegExp(`\\[first ${UI_OUT_CAP} of 20000000 chars\\]`));
+    } else assert.ok(r.results[2].startsWith(LONG), `the model read ${r.results[2].length} chars of the page's ${LONG.length}`);
     // What reached the model on any call stays small.
     const biggest = Math.max(...r.bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => JSON.stringify(c.body).length));
     assert.ok(biggest < 200_000, `a model call carried ${biggest} chars`);
     // Every cut is in the execution log.
     const cuts = (await runLogOf(r.bg, r.hash)).filter((e) => e.subsystem === "page" && e.kind === "answer-capped");
     const reasons = new Set(cuts.map((e) => e.reason));
-    for (const want of ["text", "rows", "result"]) assert.ok(reasons.has(want), `a ${want} cut was logged: ${JSON.stringify(cuts)}`);
+    for (const want of builtBy === "worker" ? ["text", "rows", "result"] : ["text", "rows"]) assert.ok(reasons.has(want), `a ${want} cut was logged: ${JSON.stringify(cuts)}`);
     assert.ok(cuts.every((e) => e.detail?.tool === tool), JSON.stringify(cuts));
     assert.ok(cuts.some((e) => e.reason === "rows" && e.detail.from === 300_000 && e.detail.to === kept), JSON.stringify(cuts));
 });
@@ -429,14 +434,30 @@ test("a worker-built run: the page context the page answers when the run is push
     assert.ok(Math.max(...sys.map((t) => t.length)) < 100_000, `a system prompt carried ${Math.max(...sys.map((t) => t.length))} chars`);
 });
 
-for (const builtBy of ["worker", "page"])
-test(`a ${builtBy}-built run: a page's result that is not a string is clipped as the text the model reads, not passed by its type`, async () => {
+test("a worker-built run: a page's result that is not a string is clipped as the text the model reads, not passed by its type", async () => {
     const big = "z".repeat(20_000_000);
-    const call = builtBy === "worker" ? { name: "exec", args: { js: PAGE_JS } } : { name: "probe", args: {} };
-    const r = await run([call], { builtBy, page: () => ({ result: [big] }) });
+    const r = await run([{ name: "exec", args: { js: PAGE_JS } }], { page: () => ({ result: [big] }) });
     assert.equal(r.results.length, 1, JSON.stringify(r.end));
     assert.ok(r.results[0].length <= UI_OUT_CAP + 400, `the model read ${r.results[0].length} chars of the page's result`);
 });
+
+// --- the model's copy: clipped in a run the worker holds, a page-built run's own as it was (owner decision 2026-10-13) ---
+
+test("a page-built run's custom tool returning 30,000 chars reaches the model whole, with no result cut logged", async () => {
+    const r = await run([{ name: "probe", args: {} }], { builtBy: "page", page: () => ({ result: LONG }) });
+    assert.equal(r.results.length, 1, JSON.stringify(r.end));
+    assert.ok(r.results[0].startsWith(LONG), `the model read ${r.results[0].length} chars of the page's ${LONG.length}`);
+    assert.doesNotMatch(r.results[0], /\[first \d+ of/);
+    assert.deepEqual((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "answer-capped"), []);
+});
+
+test("a worker-built run: the same 30,000 chars from the page are clipped at the panel's cap, and the cut logged", async () => {
+    const r = await run([{ name: "exec", args: { js: PAGE_JS } }], { page: () => ({ result: LONG }) });
+    assert.equal(r.results.length, 1, JSON.stringify(r.end));
+    assert.match(r.results[0], new RegExp(`^L{${UI_OUT_CAP}}… \\[first ${UI_OUT_CAP} of ${LONG.length} chars\\]`));
+    assert.ok((await runLogOf(r.bg, r.hash)).some((e) => e.kind === "answer-capped" && e.reason === "result"));
+});
+
 
 test("a worker-built run: an exec whose output cap was raised gets the page's honest result at that cap, whole", async () => {
     const { OUTPUT_CAP } = await import("../src/contract/contract-pointers.ts");

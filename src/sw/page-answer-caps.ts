@@ -82,12 +82,14 @@ export const droppedNote = (field: string, chars: number): string =>
 /**
  * The page context a page answers when a run is pushed into it (ADOPT_RUN_NOW, joined to a worker-built run's system
  * prompt) or re-adopted after a navigation (RUN_READOPTED, folded into the `navigate` result): text the model reads, held
- * to the cap of a tool's text result (`clipOut` at `UI_OUT_CAP`). Anything but a string is no context.
+ * to the cap of a tool's text result (`clipOut` at `UI_OUT_CAP`) when `clip` is set, as {@link capPageAnswer}'s `result`
+ * is (a run the worker holds). Anything but a string is no context, on every run.
  * @param info what the page answered
+ * @param clip whether to clip it (a run the worker holds); default true
  * @returns the context to use, or undefined for none
  */
-export function capPageContext(info: unknown): string | undefined {
-    return typeof info === "string" && info ? clipOut(info, UI_OUT_CAP) : undefined;
+export function capPageContext(info: unknown, clip = true): string | undefined {
+    return typeof info === "string" && info ? (clip ? clipOut(info, UI_OUT_CAP) : info) : undefined;
 }
 
 type Cell = string | number | boolean | null;
@@ -197,15 +199,21 @@ function capRender(d: unknown, note: (field: string, what: PageAnswerCut["what"]
 /**
  * A page's answer to a delegated call, held to the caps the worker applies to page data it reads itself: each render
  * slot through {@link capRender}, an inline `image`/`images` entry over the size dropped, and the text `result` clipped
- * to {@link pageResultCap} with `clipOut`, followed by a {@link droppedNote} for each part dropped. Anything that is not
- * an object is returned as it came.
+ * to {@link pageResultCap} with `clipOut` when `clip` is set, followed by a {@link droppedNote} for each part dropped.
+ * Anything that is not an object is returned as it came.
+ *
+ * The split (owner decision 2026-10-13): the render, picture and list caps bound what the worker keeps (the pointer, the
+ * session store, the exports) and apply to every run. The `result` clip bounds only what the model reads, and applies
+ * only to a run the worker holds (`clip`): a page-built run's tools are its page's, and their text reaches its model as
+ * it did before #629.
  * @param env what the page answered
  * @param name the tool called
  * @param args the call's arguments
  * @param onCut called once per kind of cut, for the execution log
+ * @param clip whether to clip the text `result` (a run the worker holds); default true
  * @returns `env` itself when nothing was over, else a copy within the caps
  */
-export function capPageAnswer<T>(env: T, name: string, args: Record<string, unknown> | undefined, onCut?: (cut: PageAnswerCut) => void): T {
+export function capPageAnswer<T>(env: T, name: string, args: Record<string, unknown> | undefined, onCut?: (cut: PageAnswerCut) => void, clip = true): T {
     if (!env || typeof env !== "object") return env;
     const e = env as Record<string, unknown>;
     const cuts: PageAnswerCut[] = [];
@@ -236,7 +244,7 @@ export function capPageAnswer<T>(env: T, name: string, args: Record<string, unkn
     if (raw !== undefined) {
         const cap = pageResultCap(name, args);
         const dropped = cuts.filter((c) => c.what === "text" || c.what === "image").map((c) => droppedNote(c.slot === "envelope" ? c.field : `${c.slot}.${c.field}`, c.from));
-        const clipped = clipOut(raw, cap);
+        const clipped = clip ? clipOut(raw, cap) : raw;
         if (clipped !== raw) cuts.push({ slot: "envelope", field: "result", what: "result", from: raw.length, to: cap });
         const text = dropped.length ? `${clipped}\n\n${dropped.join("\n")}` : clipped;
         if (text !== e.result) { out.result = text; changed = true; }

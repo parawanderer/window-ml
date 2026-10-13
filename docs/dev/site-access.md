@@ -378,7 +378,8 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 - **What the page can forge.** Its result (`PAGE_TOOL_RESULT`) and its live lines: a forged one may misreport only the
   page's own content, never another site's or the run's. Nor can it be larger than the worker takes from a page it reads
   itself: every answer goes through `capPageAnswer` (`src/sw/page-answer-caps.ts`) in `toPage`, held to
-  `PAGE_TABLE_CAPS`, the constant `pageRead` uses, with the text the model reads clipped by `clipOut`. So does every
+  `PAGE_TABLE_CAPS`, the constant `pageRead` uses, with the text the model reads clipped by `clipOut` while the worker
+  holds the run (a page-built run's own tool text is its page's, and stays whole). So does every
   page text the worker folds into a result after it (`fromPage`, `capPageContext`): a new path that adds page text to a
   result or a prompt goes through one of them.
 - **An `ml.*` member.** Refused from an unapproved origin is automatic (the red-team suite enumerates `HANDLE_MAP`).

@@ -178,7 +178,11 @@ service worker's side is `sw-values.ts`:
   are held to the same caps, an entry as a row and a string in one as a cell. The page texts the worker folds into a
   call's result after it are held the same way (`fromPage`, sw-run-host.ts): a navigate's text verify, a page-hosted
   verify ring-back, and the page context a page answers on a re-adopt or when a worker-built run is pushed into it
-  (`capPageContext`). Each cut is a `page`/`answer-capped` record in the execution log. A table held as a prefix says
+  (`capPageContext`). Each cut is a `page`/`answer-capped` record in the execution log. The split (owner decision
+  2026-10-13): the render, list and picture caps bound what the worker KEEPS and hold on every run; the text clips
+  (`result`, the folded-in texts, the page context) bound only what the model READS and hold only while the worker holds
+  the run (`byWorker()` when the answer is in: worker-built, or handed over, from the call answered after the hand-over).
+  A page-built run's tools are its page's, and their text reaches its model whole, as before #629. A table held as a prefix says
   so wherever it is shown: the pointer's description, the sidebar's table view and both exports ("the first N of M rows"),
   and `python_exec` over its pointer is refused as a preview rather than run over the rows held.
   The same rule on the read side: a page's own `PYTHON_EXEC` naming a key reads a worker-built run's value only when that

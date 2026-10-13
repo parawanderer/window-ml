@@ -298,10 +298,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
      *  over during its first turn is not in `bgRuns` yet, so `isWorkerRun` misses it; its rebuild record says so. */
     const workerVision = (): boolean => p.builtBy === "worker" || isWorkerRun(runId) || runRebuilds.get(runId)?.builtBy === "worker";
     /** A page's answer, or a page text the worker folds into a call's answer, held to what the worker takes from a page it
-     *  reads itself (pageRead's caps, page-answer-caps.ts), for every kind of run: a render becomes the step's pointer, and
-     *  the text is what the model reads. Each cut is a `page`/`answer-capped` record in the run's execution log. */
+     *  reads itself (pageRead's caps, page-answer-caps.ts): its renders on every kind of run (a render becomes the step's
+     *  pointer), its text clipped for the model only while the worker holds the run (`byWorker()` when the answer is in).
+     *  Each cut is a `page`/`answer-capped` record in the run's execution log. Declared before `byWorker`, read after. */
     const fromPage = <T>(env: T, tool: string, args: Record<string, unknown> | undefined): T => capPageAnswer(env, tool, args, (c) => recordRunLog(runId, { level: "warn", subsystem: "page", kind: "answer-capped", reason: c.what,
-        detail: { tool, slot: c.slot, field: c.field, from: c.from, to: c.to } }));
+        detail: { tool, slot: c.slot, field: c.field, from: c.from, to: c.to } }), byWorker());
     /** Whether the worker drives this run NOW: it built it, or was handed it, during this turn included (a navigation onto
      *  a site that may not use window.ml, nav-handover.ts; a person's message from such a site, `userRunAction`). Read at
      *  each decision, never from `p`, which is the turn's start payload: everything the worker does for a run it built
@@ -720,7 +721,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         const r = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
                         // The destination's own text, folded into this call's result: held as the call's answer is.
                         if (!r || (sentTo !== undefined && r.doc === sentTo)) return undefined;
-                        const info = capPageContext(r.info);
+                        const info = capPageContext(r.info, byWorker());
                         if (info !== undefined && info !== r.info) recordRunLog(runId, { level: "warn", subsystem: "page", kind: "answer-capped", reason: "result",
                             detail: { tool: "pageInfo", slot: "envelope", field: "pageInfo", from: r.info.length, to: UI_OUT_CAP } });
                         return info;

@@ -91,7 +91,8 @@ the worker, and the page answers geometry only):
 - [x] A page's answer to a delegated call is held to the caps the worker applies to page data it reads itself (owner
       decision 2026-10-13: `PAGE_TABLE_CAPS`, one constant with `pageRead`), for every run whose loop is in the worker
       (`capPageAnswer` in `toPage`): a table is cut to fit with its source's row count kept, a text or picture over 16M
-      characters is dropped with a note to the model, the text result is clipped by `clipOut`, and every cut is a
+      characters is dropped with a note to the model, the text result is clipped by `clipOut` in a run the worker holds
+      (worker-built or handed over; a page-built run's own tool text stays whole), and every cut is a
       `page`/`answer-capped` record in the execution log (page-answer-caps.test.mjs, redteam-render-values.test.mjs
       "bounds"): #629. The same holds for a result that is not a string, a keyval's/elements' lists and an exec-out's
       notes, and the page texts folded in after the answer: a navigate's text verify and pageInfo, a page-hosted verify

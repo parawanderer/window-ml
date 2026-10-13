@@ -377,12 +377,28 @@ test("a destination's pageInfo that is not a string adds nothing to a navigate's
     assert.ok(read.length < 40_000, `the model read ${read.length} chars of one navigate`);
 });
 
-test("a page-built run's verify ring-back after a debugger click is clipped for the model like the call's own answer", T, async () => {
+test("a page-built run's verify ring-back after a debugger click reaches its model as the page wrote it: its text is the page's own", T, async () => {
+    const LONG = "L".repeat(30_000);
     const w = await run({ builtBy: "page", builderUrl: SITE0.url, model: "text-driver", cfg: { cdp: true }, calls: [{ name: "click", args: { selector: "#c", verify: true } }],
-        page: (p) => (p.verifyAt ? { result: `The area changed.\n${BIG}` } : p.name === "click" ? { result: "The target is a canvas.", cdpClick: { x: 100, y: 25, verify: true } } : undefined) });
+        page: (p) => (p.verifyAt ? { result: LONG } : p.name === "click" ? { result: "The target is a canvas.", cdpClick: { x: 100, y: 25, verify: true } } : undefined) });
     assert.ok(w.runCalls().some((p) => p.verifyAt), "control: the ring-back was sent to the page");
     const read = w.toolMessages()[0];
     assert.match(read, /^Clicked the reserved target at \(100, 25\) via the debugger\./);
-    assert.ok(read.length < 40_000, `the model read ${read.length} chars of one click`);
-    assert.ok((await capLog(w)).some((e) => e.detail.tool === "click" && e.reason === "result"));
+    assert.ok(read.includes(LONG), `the model read ${read.length} chars, not the page's ${LONG.length}`);
+    assert.deepEqual(await capLog(w), []);
 });
+
+test("a page-built run handed to the worker mid-call: the answer that arrives after the hand-over is clipped for the model", T, async () => {
+    const LONG = "L".repeat(30_000);
+    const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", calls: [{ name: "scroll", args: {} }, { name: "scroll", args: {} }],
+        page: async (p, n, bg, tab) => {
+            if (n === 0) { tab.url = SITE0.url; await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "take over" }); }
+            return { result: LONG };
+        } });
+    const sent = w.runCalls().filter((p) => p.name === "scroll" && !p.renderOnly && !p.precheck);
+    assert.equal(sent[0].verifyInWorker, undefined, "control: the first call was sent while the run was the page's");
+    assert.equal(sent[1]?.verifyInWorker, true, "control: the run was the worker's by the second call");
+    for (const [i, m] of w.toolMessages().entries()) assert.match(m, /^L{12000}… \[first 12000 of 30000 chars\]/, `call ${i + 1}`);
+    assert.ok((await capLog(w)).filter((e) => e.reason === "result").length >= 2);
+});
+
