@@ -133,7 +133,8 @@ test("a worker-built run: a page's render naming ANOTHER run's stored value does
     assert.ok(tokenOf(r.results[0]), "the page's step minted the pointer the model asked for");
     assert.deepEqual(await holders(idb, theirs), ["other-run"], "the run took no hold on another run's value");
     assert.ok(!JSON.stringify(pyTables(r.bg)).includes(theirs), `the sandbox was handed the other run's value: ${JSON.stringify(pyTables(r.bg))}`);
-    assert.match(r.results[1], /stored table|Refused|not held/i, "the read through the pointer says why it was refused");
+    // The key never reached the pointer (withHeldValuesOnly), so the pointer is the page's preview, which is not loaded.
+    assert.match(r.results[1], /a preview rather than the whole table/, `the read through the pointer says why it was refused: ${r.results[1]}`);
     // Positive control: a value the worker stored for this run's own python_exec is held by the run.
     const idb2 = new IDBFactory();
     const mine = (await new ValueStore({ idb: idb2, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv" })).key;
@@ -159,8 +160,51 @@ test("a page-built run: a value disclosed to its own tab is held through its poi
         { name: "probe", args: { token: true } },
     ], { idb, builtBy: "page", committed: async () => { pages = await otherRunsValue(idb, "page:7"); }, page: () => ({ result: "ran", renderOut: plantedTable(n++ ? theirs : pages) }) });
     assert.equal(r.results.length, 2, JSON.stringify(r.end));
-    assert.deepEqual(await holders(idb, pages), ["page:7", r.hash], "the legitimate flow: the run holds what its page's fetch stored, past a navigation");
+    assert.deepEqual(await holders(idb, pages), ["page:7", r.hash], "the legitimate flow: the run holds what its page's fetch stored");
     assert.deepEqual(await holders(idb, theirs), ["other-run"], "another run's value is not taken");
+    // Past a navigation: the tab's claim goes with the document it was disclosed to, and the run's own stays.
+    r.bg.commit(7, { documentId: "doc-2", url: SITE_URL });
+    await sleep(20);
+    assert.deepEqual(await holders(idb, pages), [r.hash], "the run still holds it once its page's document is gone");
+});
+
+/** Every step event the run emitted, as the sidebar, the answer's embeds and the exports receive them. */
+const stepEvents = (bg) => JSON.stringify(bg.tabMessages.map(([, m]) => m).filter((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-step"));
+
+test("a refused key never reaches the step's render, where the sidebar's table view reads the whole value with no holder check; the run's own keys do", async () => {
+    const idb = new IDBFactory();
+    const theirs = await otherRunsValue(idb);
+    let pages;
+    // A render names the key in either slot, as a table or as a frame, with or without a pointer minted for the step.
+    const forged = [
+        { result: "ran", renderOut: plantedTable(theirs) },
+        { result: "ran", renderOut: { type: "python-out", stdout: "", df: { columns: ["secret"], rows: [["x"]], rowCount: 2, value: theirs } } },
+        { result: "ran", renderIn: plantedTable(theirs) },
+    ];
+    let n = 0;
+    const r = await run([
+        { name: "exec", args: { js: PAGE_JS, token: true } },
+        { name: "exec", args: { js: PAGE_JS + ";2" } },
+        { name: "click", args: { selector: "#a" } },
+        { name: "exec", args: { js: PAGE_JS + ";3", token: true } },
+    ], { idb, committed: async () => { pages = await otherRunsValue(idb, "page:7"); },
+        page: () => (n < forged.length ? forged[n++] : { result: "ran", renderOut: plantedTable(pages) }) });
+    assert.equal(r.results.length, 4, JSON.stringify(r.end));
+    const events = stepEvents(r.bg);
+    assert.ok(events.includes('"secret"'), "positive control: the page's preview is still drawn");
+    assert.ok(!events.includes(theirs), "another run's key reached the run's step render");
+    assert.ok(!events.includes(pages), "for a worker-built run, the page's own key reached the step render");
+    // Positive controls: the frame the run's own python_exec returned keeps its key; so does a page-built run's value
+    // disclosed to its own tab.
+    const idb2 = new IDBFactory();
+    const mine = (await new ValueStore({ idb: idb2, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv" })).key;
+    const own = await run([{ name: "python_exec", args: { code: "df", token: true } }], { idb: idb2, onPyRun: pyAnswer(mine) });
+    assert.ok(stepEvents(own.bg).includes(mine), "the run's own frame keeps its key on the render");
+    const idb3 = new IDBFactory();
+    let disclosed;
+    const pr = await run([{ name: "probe", args: { token: true } }], { idb: idb3, builtBy: "page",
+        committed: async () => { disclosed = await otherRunsValue(idb3, "page:7"); }, page: () => ({ result: "ran", renderOut: plantedTable(disclosed) }) });
+    assert.ok(stepEvents(pr.bg).includes(disclosed), "a page-built run's value from its own tab keeps its key");
 });
 
 // --- the read side: a key the page names in its own PYTHON_EXEC ---
@@ -183,6 +227,28 @@ test("a page cannot have a worker-built run's stored value read for it by naming
     // Positive control: a value disclosed to this tab is still the page's to read.
     assert.equal(answers.pages?.error, undefined, JSON.stringify(answers.pages));
     assert.ok(answers.pages?.data?.ok, JSON.stringify(answers.pages));
+});
+
+test("control: a worker-built run's approved main-world exec that names its stored table has PYTHON_EXEC read it for that call only; the run's own python_exec reads it through the pointer", async () => {
+    const idb = new IDBFactory();
+    const mine = (await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv" })).key;
+    const page7 = { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0, documentId: "doc-1" };
+    const asked = { type: "PYTHON_EXEC", requestId: "p-own", payload: { code: "df", tables: [{ name: "df", data: { kind: "value", key: mine, columns: ["a"] } }] } };
+    const during = [];
+    let bgRef;
+    const r = await run([
+        { name: "python_exec", args: { code: "df", token: "orders" } },
+        // No user-scripts world and no CDP: a pointer script on an approved page runs in the main world (exec-routing.ts).
+        { name: "exec", args: { js: 'document.body.remove(); const v = await ml.dereference(\'@tool:"orders"\'); return v.text' } },
+        { name: "python_exec", args: { code: "df", tables: { df: '@tool:"orders"' } } },
+    ], { idb, config: { cdp: false }, onPyRun: (m) => (m.type === "PY_RUN" && !m.tables?.length ? pyAnswer(mine)(m) : pyAnswer()(m)),
+        page: async (pl, bg) => { bgRef = bg; if (pl.name === "exec") during.push(plain(await bg.send(asked, page7))); return { result: "ran" }; } });
+    assert.equal(r.results.length, 3, JSON.stringify(r.end));
+    assert.equal(during.length, 1, `the exec reached the page main world: ${JSON.stringify(r.results)}`);
+    assert.equal(during[0]?.error, undefined, `the call that named it could not read the run's table: ${JSON.stringify(during[0])}`);
+    const after = plain(await bgRef.send(asked, page7));
+    assert.match(String(after.error), /^Refused/, "once the call is over, naming the key is not enough");
+    assert.ok(pyTables(r.bg).some((t) => JSON.stringify(t).includes(mine)), `the run's own python_exec was handed its stored value: ${r.results[2]}`);
 });
 
 // --- overwrite: a pointer the run already keeps ---
@@ -237,6 +303,20 @@ test(`a worker-built run: ${kind} in a page's render does not become an image po
     // Positive control: the worker's own capture of the tab, and the look at it, reach the reader.
     const ok = await run([{ name: "look", args: { selector: "#q", question: "what is it?" } }], { vision: "text" });
     assert.ok(JSON.stringify(ok.subs).includes("data:image"), "the reader was shown the worker's own capture");
+});
+
+test("control: a page-built run keeps the pictures its own page renders (a look, an image, a figure) in its steps", async () => {
+    const IMG = png("THE-PAGES-OWN-LOOK");
+    const renders = [
+        { type: "look", image: IMG, output: "a page", label: "the screen" },
+        { type: "image", src: IMG, label: "a capture" },
+        { type: "python-out", image: IMG, stdout: "" },
+    ];
+    let n = 0;
+    const r = await run(renders.map(() => ({ name: "probe", args: { token: true } })), { builtBy: "page", page: () => ({ result: "looked", renderOut: renders[n++] }) });
+    assert.equal(r.results.length, renders.length, JSON.stringify(r.end));
+    const steps = r.bg.tabMessages.map(([, m]) => m).filter((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-step" && m.event.renderOut);
+    for (const d of renders) assert.ok(steps.some((m) => m.event.renderOut.type === d.type && JSON.stringify(m.event.renderOut).includes(IMG.slice(-24))), `the page-built run's own ${d.type} kept its picture`);
 });
 
 test("a worker-built run: answerMedia, image and images in a page's answer reach neither the model nor the run's result", async () => {

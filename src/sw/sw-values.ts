@@ -83,6 +83,40 @@ export function runMayClaim(tabSession: string | null): (holders: readonly strin
     return (holders) => !holders.length || (tabSession != null && holders.includes(tabSession));
 }
 
+/**
+ * A page's tool envelope without a stored-value key the run may not hold: a `table` render's `value`, a Python Out's
+ * `df.value`, in either slot. The render goes into the step event, and from there to the sidebar's table view, the
+ * answer's embeds and the exports, where "copy all rows" reads the value by that key alone; so a key the claim would
+ * refuse (`runMayClaim`) must not ride the render either, whether or not the step mints a pointer. A key that is not
+ * stored stays, so a read through it fails with the store's reason.
+ * @param env what the page answered
+ * @param session the run, whose own values always stay
+ * @param may the run's claim rule
+ * @returns the envelope, copied where a key was dropped
+ */
+export async function withHeldValuesOnly<T>(env: T, session: string, may: (holders: readonly string[]) => boolean): Promise<T> {
+    if (!env || typeof env !== "object") return env;
+    const keep = async (key: unknown): Promise<boolean> => {
+        if (typeof key !== "string") return false;
+        const holders = await valueHolders(key);
+        return holders === null || holders.includes(session) || may(holders);
+    };
+    const strip = async (d: unknown): Promise<unknown> => {
+        if (!d || typeof d !== "object") return d;
+        const r = d as { type?: unknown; value?: unknown; df?: { value?: unknown } };
+        if (r.type === "table" && "value" in r && !(await keep(r.value))) { const { value: _v, ...rest } = r; return rest; }
+        if (r.type === "python-out" && r.df && typeof r.df === "object" && "value" in r.df && !(await keep(r.df.value))) {
+            const { value: _v, ...df } = r.df;
+            return { ...r, df };
+        }
+        return d;
+    };
+    const e = env as { renderIn?: unknown; renderOut?: unknown };
+    const renderIn = await strip(e.renderIn), renderOut = await strip(e.renderOut);
+    return renderIn === e.renderIn && renderOut === e.renderOut ? env
+        : { ...env, ...("renderIn" in e ? { renderIn } : {}), ...("renderOut" in e ? { renderOut } : {}) };
+}
+
 /** The sessions holding a stored value, or null when the key is not stored (or there is no store). */
 export async function valueHolders(key: string): Promise<string[] | null> {
     const row = (await values()?.rows().catch(() => []))?.find((r) => r.key === key);

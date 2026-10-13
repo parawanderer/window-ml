@@ -46,7 +46,7 @@ import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue, runMayClaim, valueHolders, readStoredColumns } from "./sw-values";
+import { claimValue, runMayClaim, valueHolders, readStoredColumns, withHeldValuesOnly } from "./sw-values";
 import { isoServer } from "./iso-channel";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
@@ -360,7 +360,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Asked again at the send itself, after any navigation's wait: a revoke decided meanwhile keeps the call here.
             const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin, decidedAtSend);
             // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
-            return vis || workerVision() ? withoutPageVision(env) : env;
+            const seen = vis || workerVision() ? withoutPageVision(env) : env;
+            // Nor a stored-value key this run may not claim: the render it rides is read by key in the sidebar.
+            return withHeldValuesOnly(seen, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId)));
         };
         if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
