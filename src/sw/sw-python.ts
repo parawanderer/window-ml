@@ -5,7 +5,7 @@
 import { senderTrust, tabGrants, isExtensionSender } from "./sw-consent";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
-import { activeRuns, pageValueSession } from "./sw-runs";
+import { activeRuns, execReads, isWorkerRun, pageValueSession } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -57,7 +57,7 @@ export interface PythonCaller {
     pyCodeOk?: (code: string) => boolean;
     /** Whether this caller may read a stored table held by `holders`. Absent: a run hosted on its tab, or the tab the
      *  key was disclosed to. */
-    valueOk?: (holders: string[]) => boolean;
+    valueOk?: (holders: string[], key: string) => boolean;
     /** Where live stdout goes: a tab, one of our surfaces (null), or a function (a run's own output, in the worker). */
     stream?: number | null | ((chunk: string, ts?: number) => void);
     /** Record a returned frame's key as disclosed to the tab (`pageValueSession`). False for a run in the worker, whose
@@ -109,10 +109,14 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     if (stored.length && !ownSurface) {
         const tid = caller.tabId;
         const running = tid != null ? activeRuns.get(tid) : undefined;
-        const ok = caller.valueOk ?? ((holders: string[]) => holders.some((h) => running?.has(h) || (tid != null && h === pageValueSession(tid))));
+        // A run the WORKER built lends the page nothing: its value is read for the page only when its in-flight approved
+        // exec named that key (the VALUE_COLUMNS rule), so a key the page learned, or guessed, is not enough.
+        const named = (run: string, key: string) => (execReads.get(run) ?? []).some((r) => r.meta?.table && r.meta.value === key);
+        const ok = caller.valueOk ?? ((holders: string[], key: string) => holders.some((h) => (running?.has(h) && (!isWorkerRun(h) || named(h, key))) || (tid != null && h === pageValueSession(tid))));
         for (const t of stored) {
-            const holders = await valueHolders(String(t.data?.key));
-            if (holders && !ok(holders)) return { error: "Refused: that stored table belongs to a run that is not running on this page." };
+            const key = String(t.data?.key);
+            const holders = await valueHolders(key);
+            if (holders && !ok(holders, key)) return { error: "Refused: that stored table belongs to a run that is not running on this page." };
         }
     }
     const persist = !!payload?.persist && ownSurface;

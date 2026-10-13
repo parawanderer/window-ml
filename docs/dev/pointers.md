@@ -154,6 +154,14 @@ service worker's side is `sw-values.ts`:
   the worker could vouch for, and a claim message would be forgeable. On top of that, `fetch_url` copies the key onto its
   table render as `value` when the table is truncated, the loop notes it on the pointer (`TokenValue.value`), and a
   BACKGROUND-hosted run's `claimValue` claims it again under its runId, which is what survives a navigation.
+- **A claim through a pointer is checked, not taken on the key's word.** The key the loop claims is read off the step's
+  render descriptor, and a page writes that descriptor whenever it answers a call delegated to it. So the run host
+  claims only a value nobody holds yet (stored a moment ago for this run's own call, the key sent nowhere else) or, for a
+  run the PAGE built, one disclosed to the run's own tab (`runMayClaim`, sw-values.ts; checked inside the claim's own
+  transaction). A worker-built run never takes a value through its page's answer, and no run takes another run's. A
+  refused claim leaves the pointer with its preview; a read of the whole value then fails as "not held by this run".
+  The same rule on the read side: a page's own `PYTHON_EXEC` naming a key reads a worker-built run's value only when that
+  run's in-flight approved exec named the key, as `VALUE_COLUMNS` does (sw-python.ts).
 - **Release.** A tab claim goes when the document it was disclosed to does: a main-frame `onCommitted` and `tabs.onRemoved`
   both call `releaseSessionValues("page:<tabId>")`. A page-hosted loop dies with its document, so nothing outlives its
   entitlement; a background run keeps its own claim across the navigation it was built to survive.

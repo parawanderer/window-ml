@@ -66,9 +66,21 @@ export async function storeFetchedBody(body: FetchedBody, source: string): Promi
     }
 }
 
-/** A run's pointer names a stored value: hold it for that session. */
-export function claimValue(key: string, session: string): void {
-    void values()?.claim(key, session).catch(() => {});
+/** A run's pointer names a stored value: hold it for that session, when `may` (given the value's holders) allows it. */
+export function claimValue(key: string, session: string, may?: (holders: readonly string[]) => boolean): void {
+    void values()?.claim(key, session, may).catch(() => {});
+}
+
+/**
+ * Which values a run hosted here may hold through a pointer it keeps. The key comes from the step's render descriptor,
+ * which a page's envelope writes when the page answers the call, so naming a key is not enough: the value must be one
+ * nobody holds yet (the worker stored it for this run's own call a moment ago, and the key went nowhere else), or, for
+ * a run the page built, one the worker disclosed to the run's own tab (`pageValueSession`). Another run's value, and
+ * for a run the worker built anything the page was given, is refused (docs/dev/pointers.md, the value store's "Claim").
+ * @param tabSession the run's tab's session when the PAGE built the run; null for a run the worker drives
+ */
+export function runMayClaim(tabSession: string | null): (holders: readonly string[]) => boolean {
+    return (holders) => !holders.length || (tabSession != null && holders.includes(tabSession));
 }
 
 /** The sessions holding a stored value, or null when the key is not stored (or there is no store). */

@@ -44,9 +44,9 @@ import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated
 import { handOverSettled } from "./nav-handover";
 import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue, valueHolders, readStoredColumns } from "./sw-values";
+import { claimValue, runMayClaim, valueHolders, readStoredColumns } from "./sw-values";
 import { isoServer } from "./iso-channel";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
@@ -976,8 +976,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             tokenSink: (fn) => { derefByRun.set(runId, fn); },
             // The live context, for `ml.current` and the state inspector (contextByRun). Per turn, like the resolver.
             contextSink: (fn) => { contextByRun.set(runId, fn); },
-            // A pointer to a stored table: this session holds it until the session is released.
-            claimValue: (key) => claimValue(key, runId),
+            // A pointer to a stored table: this session holds it until the session is released. The key is read off the
+            // step's render, which a page's answer writes, so only a value this run may hold is claimed (runMayClaim).
+            claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
             tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
                 if (name !== "exec") return null;
                 // The WORKER first (docs/spec/SITE_ACCESS.md slice 2): a survey that reads only the run and the box is
