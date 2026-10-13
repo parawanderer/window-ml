@@ -271,6 +271,10 @@ export async function hydratePersistedRuns(): Promise<void> {
             handedToWorker.add(runId);
             markWorkerRun(runId);
         }
+        // Stored again without the ids whose snapshot is gone (dropped above as stale, or deleted before the hand-over
+        // was stored, as a settled run's is): a page may start a new run under such an id, and an entry left behind
+        // would hand that run to the worker at the next restart.
+        if (handed !== undefined && (!Array.isArray(handed) || handed.length !== handedToWorker.size)) saveHandedToWorker();
     } catch { /* storage unavailable / empty */ }
 }
 

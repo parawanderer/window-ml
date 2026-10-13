@@ -56,6 +56,9 @@ import { topDocument } from "./worker-vision";
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
 
+/** What the page that started a turn is answered when its run was handed to the worker during it: no result, no history. */
+const HANDED_ANSWER = "This run was handed to the extension: this site may no longer use window.ml, so its result is not sent here.";
+
 /** A tool call built for a page-built run whose run was handed to the worker before the call was sent. */
 class HandedOverMidCall extends Error {
     constructor() { super("The run was handed to the worker before this call reached the page."); }
@@ -269,6 +272,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
      *  each decision, never from `p`, which is the turn's start payload: everything the worker does for a run it built
      *  (its tools in the worker, the run's grants, its answer set, an isolated exec) applies from the hand-over on. */
     const byWorker = workerVision;
+    /** Whether a turn its page started (`p` says the page built the run) is the worker's now: whoever waits on this turn's
+     *  answer is that page, which lost the run at the hand-over. */
+    const handedThisTurn = (): boolean => p.builtBy !== "worker" && byWorker();
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. */
@@ -297,6 +303,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
         handedSince();
+        // At the send itself, decided again from the lists as they are then: a send held meanwhile (a navigation's wait, a
+        // tab rebuilt) must not go out on a decision made before a revoke whose storage event this worker has not acted on.
+        const decidedAtSend = async (): Promise<void> => { if (pageRouted) await handOverSettled(tabId); handedSince(); };
         // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
         // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
@@ -321,7 +330,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const vis = workerVision();
             const call = vis && !payload.renderOnly && !payload.precheck && !payload.readonlyTry;
             // Asked again at the send itself, after any navigation's wait: a revoke decided meanwhile keeps the call here.
-            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin, handedSince);
+            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin, decidedAtSend);
             // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
             return vis || workerVision() ? withoutPageVision(env) : env;
         };
@@ -1179,6 +1188,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Sync the run's final history back so a createAgent handle's control.messages stays live,
             // + this run's step/seq extents so the page advances its bases for the NEXT turn's offset. The
             // answer element visuals ride on `res` too, so the page-side caller's own agent-result carries them.
+            // A turn the page started whose run was handed to the worker meanwhile (a revoke, nav-handover.ts): the page
+            // waiting on this answer is the one that lost the run, so it is told so and given nothing the worker did.
+            if (handedThisTurn()) { sendResponse({ error: HANDED_ANSWER }); return; }
             sendResponse({ data: { ...res, answerMedia }, messages, stepCount: runMaxStep, seqCount: runMaxSeq });
         })
         .catch((err) => {
@@ -1188,7 +1200,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
                 summary: "", steps: 0, hitCap: false, error: err?.message || String(err),
             });
-            sendResponse({ error: err?.message || String(err) });
+            sendResponse({ error: handedThisTurn() ? HANDED_ANSWER : err?.message || String(err) });
         })
         .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); });   // detach the run's CDP debugger (attached once, reused across execs/clicks)
 }

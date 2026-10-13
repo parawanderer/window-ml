@@ -476,3 +476,220 @@ test("a revoke the worker never heard (made while it was evicted) is decided whe
     assert.match(String(r?.error), /Refused/, `refused: ${JSON.stringify(r)}`);
     assert.ok(!calls.some((u) => u.includes("/chat/completions")));
 });
+
+// --- what the revoked page still gets back: the answer to its own START_RUN ---
+
+test("a revoke mid-run: the page's own START_RUN answer carries nothing the worker did after it (no history, no summary)", T, async () => {
+    let bgRef = null;
+    const w = await run({ calls: [{ name: "scroll", args: {} }, { name: "look", args: { question: QUESTION } }],
+        onStart: (bg) => { bgRef = bg; },
+        page: async (p) => { if (p.name === "scroll") await edit(bgRef, POPUP, { op: "revoke", origin: BUILDER_ORIGIN }); return undefined; } });
+    assert.equal(w.driverBodies.length, 3);
+    assert.equal(w.subs.filter((b) => JSON.stringify(b).includes("Q-SECRET-4242")).length, 1, "positive control: the worker's look asked its reader after the revoke");
+    const answer = JSON.stringify(plain(await w.started));
+    assert.ok(!answer.includes("the reader's words"), `the worker's look answer did not reach the page: ${answer.slice(0, 400)}`);
+    assert.ok(!answer.includes("Q-SECRET-4242"), "the question asked after the revoke did not reach the page");
+    assert.match(answer, /handed to the extension/, "the page is told why it gets no result");
+});
+
+test("control: with no revoke, the page's START_RUN answer is the run's result", T, async () => {
+    const w = await run({ calls: [{ name: "scroll", args: {} }] });
+    const r = plain(await w.started);
+    assert.equal(r?.data?.summary, "done", JSON.stringify(r).slice(0, 300));
+    assert.ok(Array.isArray(r?.messages) && r.messages.length > 0);
+});
+
+// --- `ml_handed_to_worker`: what it holds, and what a stale entry may never do ---
+
+test("a stale ml_handed_to_worker entry does not take a later page-built run under the same id from its approved page after an eviction", T, async () => {
+    // 1. A page-built run settles on its approved page; the site is then revoked. The settled run is handed over, but its
+    // snapshot is already gone, so the id the store keeps outlives anything it protects.
+    const first = await run({ calls: [{ name: "scroll", args: {} }] });
+    await edit(first.bg, POPUP, { op: "revoke", origin: BUILDER_ORIGIN });
+    assert.ok(!first.bg.localStore["ml_bgrun_page-run"], "the settled run has no snapshot");
+    // 2. The worker is evicted; the person approves the site again; the page starts a fresh run under the same id (an
+    // ml.agent handle keeps its hash). Storage is captured mid-run, as an eviction would find it.
+    const left = plain(first.bg.localStore);
+    left.ml_site_always = [BUILDER_ORIGIN, "https://friend.example"];
+    let mid = null, bgRef = null;
+    const second = await run({ local: left, calls: [{ name: "scroll", args: {} }, { name: "scroll", args: {} }],
+        onStart: (bg) => { bgRef = bg; },
+        page: async (p) => { if (p.name === "scroll" && !mid) { await sleep(10); mid = plain(bgRef.localStore); } return undefined; } });
+    assert.ok(second.driverBodies.length >= 2);
+    assert.ok(mid?.["ml_bgrun_page-run"], "the new run's in-flight snapshot was written");
+    assert.deepEqual((await second.log()).filter((r) => r.kind === "handed-to-worker"), [], "the new run was never handed over");
+    // 3. A worker evicted in the middle of the new run restores it as the page's: its approved page may resume it.
+    const bg3 = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+        siteGate: true, local: { ...mid, "ml_bgrun_page-run": { ...mid["ml_bgrun_page-run"], ts: Date.now() } },
+        openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+        onFetch: async () => jsonResponse({ choices: [{ message: { content: "resumed" } }] }),
+    });
+    await sleep(30);
+    const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-back" };
+    const r = plain(await Promise.race([bg3.send({ type: "RESUME_RUN", payload: { runId: "page-run", task: "go on" } }, sender), sleep(3000).then(() => "no answer")]));
+    assert.doesNotMatch(JSON.stringify(r), /started from the extension/, `the approved page's own run is still its own: ${JSON.stringify(r).slice(0, 300)}`);
+    assert.deepEqual((await bg3.context.__mlRunLog.all()).filter((x) => x.run === "page-run" && x.kind === "handed-to-worker").map(plain), [], "nothing handed it over");
+});
+
+test("a page's START_RUN under the id of a run handed to the worker, sent as it wakes the worker (before the runs are restored), is refused", T, async () => {
+    const p = { runId: "handed-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 5, surface: "off", crossOrigin: true, pageUrl: BUILDER, pageOrigin: BUILDER_ORIGIN,
+        rebuild: { toolNames: ["scroll"], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } };
+    for (const [label, extra] of [["handed over after its last checkpoint", { ml_handed_to_worker: ["handed-run"] }], ["built by the worker", null]]) {
+        const tasks = [];
+        const snap = { p: extra ? p : { ...p, builtBy: "worker", rebuild: { ...p.rebuild, builtBy: "worker" } }, tabId: 7, messages: [{ role: "user", content: "the person's task" }], version: "9.9.9", ts: Date.now() };
+        const bg = loadBackground({
+            config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+            siteGate: true, local: { ml_site_always: [BUILDER_ORIGIN], "ml_bgrun_handed-run": snap, ...(extra ?? {}) },
+            openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+            onFetch: async (call) => { if (call.url.includes("/chat/completions")) tasks.push(JSON.stringify(call.body)); return jsonResponse({ choices: [{ message: { content: "the page took it" } }] }); },
+        });
+        // No wait: the page's message is what wakes the worker.
+        const sender = { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" };
+        const r = plain(await Promise.race([bg.send({ type: "START_RUN", payload: { ...p, task: "the page's own task", rebuild: p.rebuild } }, sender), sleep(3000).then(() => "no answer")]));
+        assert.match(String(r?.error), /Refused/, `${label}: refused: ${JSON.stringify(r).slice(0, 300)}`);
+        assert.ok(!tasks.some((b) => b.includes("the page's own task")), `${label}: no model call ran the page's task`);
+    }
+});
+
+test("upgrade: storage written before ml_handed_to_worker existed (no key, or a malformed one) restores a page-built run as its page's", T, async () => {
+    const p = { runId: "old-run", task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 5, surface: "off", crossOrigin: true, pageUrl: BUILDER, pageOrigin: BUILDER_ORIGIN,
+        rebuild: { toolNames: ["scroll"], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } };
+    for (const extra of [{}, { ml_handed_to_worker: "old-run" }, { ml_handed_to_worker: [42, null, { runId: "old-run" }] }]) {
+        const bg = loadBackground({
+            config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off" },
+            siteGate: true, local: { ml_site_always: [BUILDER_ORIGIN], "ml_bgrun_old-run": { p, tabId: 7, messages: [], version: "9.9.9", ts: Date.now() }, ...extra },
+            openTabs: [{ id: 7, windowId: 3, active: true, url: BUILDER, title: "Builder" }],
+            onFetch: async () => jsonResponse({ choices: [{ message: { content: "resumed" } }] }),
+        });
+        await sleep(30);
+        const r = plain(await Promise.race([bg.send({ type: "RESUME_RUN", payload: { runId: "old-run", task: "go on" } }, { tab: { id: 7, url: BUILDER }, url: BUILDER, origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-b" }), sleep(3000).then(() => "no answer")]));
+        assert.equal(r?.data?.summary, "resumed", `${JSON.stringify(extra)}: the approved page resumed its run: ${JSON.stringify(r).slice(0, 300)}`);
+        assert.deepEqual((await bg.context.__mlRunLog.all()).filter((x) => x.kind === "handed-to-worker").map(plain), [], "nothing was handed over");
+    }
+});
+
+// --- a revoke that lands while a send is held, with its storage event not yet heard ---
+
+test("a revoke written while the pointer exec's send is held by a navigation on the same approved site: the send decides again, and the pointer's value never reaches the page", T, async () => {
+    let leaks = 0, reached = 0;
+    for (let nth = 1; nth <= 4; nth++) {
+        let armed = false, seen = 0, mark = null;
+        const w = await run({
+            payload: { toolTokens: true }, tools: ["exec", "look", "scroll"],
+            calls: [{ name: "exec", args: { js: FIRST_EXEC } }, { name: "exec", args: { js: POINTER_EXEC } }],
+            onStart: (bg) => {
+                const getFrame = bg.context.chrome.webNavigation.getFrame;
+                bg.context.chrome.webNavigation.getFrame = async (q) => {
+                    const r = await getFrame(q);
+                    if (!armed || ++seen !== nth) return r;
+                    // The page navigates within its own approved site, which holds the run's next send at the barrier
+                    // until the new document re-adopts. Meanwhile the site is revoked; its storage event is still on its way.
+                    bg.commit(7, { documentId: "doc-next", url: "https://builder.example/next" });
+                    setTimeout(async () => {
+                        bg.localStore.ml_site_always = ["https://friend.example"];
+                        mark = bg.tabMessages.length;
+                        const s = { tab: { id: 7, url: "https://builder.example/next" }, url: "https://builder.example/next", origin: BUILDER_ORIGIN, frameId: 0, documentId: "doc-next" };
+                        await bg.send({ type: "RUN_READOPTED", payload: { runId: "page-run", pageInfo: "next" } }, s);
+                    }, 40);
+                    return r;
+                };
+            },
+            page: async (p) => {
+                if (p.name === "exec" && p.args.js === FIRST_EXEC) { armed = true; return { result: POINTER_VALUE }; }
+                return undefined;
+            },
+        });
+        assert.equal(w.driverBodies.length, 3, `nth=${nth}: the run answered`);
+        if (mark == null) continue;
+        reached++;
+        const got = pageGotAfter(w.bg.tabMessages.slice(mark).map(([, m]) => plain(m)));
+        if (got.leaked.length || got.calls.length) leaks++;
+    }
+    assert.ok(reached > 0, "the revoke landed during a held send in at least one placement");
+    assert.equal(leaks, 0, `in ${leaks} of ${reached} placements the call built for the page was sent after the revoke`);
+});
+
+// --- which runs a revoke hands over: several tabs, ports, and approvals that still cover the site ---
+
+/** A worker with page-built runs settled on `tabs` (each `{ id, url }`), started by their own pages. */
+async function settledRuns({ tabs, local, config = {} }) {
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "text-driver", apiFormat: "openai", debugMode: "off", ...config },
+        siteGate: true, local,
+        openTabs: tabs.map((t) => ({ id: t.id, windowId: 3, active: false, url: t.url, title: "t" })),
+        onFetch: async (call) => (call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "done" } }] }) : jsonResponse({})),
+    });
+    for (const t of tabs) {
+        const origin = new URL(t.url).origin;
+        const r = plain(await bg.send({ type: "START_RUN", payload: { runId: `run-${t.id}`, task: "t", systemPrompt: "s", tools: [], model: "text-driver", think: null, maxSteps: 3, surface: "off", crossOrigin: true,
+            rebuild: { toolNames: [], model: "text-driver", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true } } },
+            { tab: { id: t.id, url: t.url }, url: t.url, origin, frameId: 0, documentId: `doc-${t.id}` }));
+        assert.equal(r?.data?.summary, "done", `run on tab ${t.id} (${t.url}) ran: ${JSON.stringify(r).slice(0, 200)}`);
+    }
+    const handed = async () => (await bg.context.__mlRunLog.all()).filter((r) => r.kind === "handed-to-worker").map((r) => r.run).sort();
+    return { bg, handed };
+}
+
+test("a revoke hands over the page-built runs on every tab of the revoked origin and on no other", T, async () => {
+    const w = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN, "https://friend.example"] }, tabs: [
+        { id: 7, url: BUILDER }, { id: 8, url: "https://builder.example/other" }, { id: 9, url: ALSO_APPROVED }] });
+    await edit(w.bg, POPUP, { op: "revoke", origin: BUILDER_ORIGIN });
+    assert.deepEqual(await w.handed(), ["run-7", "run-8"]);
+});
+
+test("removing a host from the self-approval whitelist hands over its runs on every port; an entry that still covers the origin hands over nothing", T, async () => {
+    // The whitelist names a host: it approves https on any port.
+    const w = await settledRuns({ local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example"] }, tabs: [
+        { id: 7, url: BUILDER }, { id: 8, url: "https://builder.example:8443/x" }, { id: 9, url: ALSO_APPROVED }] });
+    w.bg.setSync({ pageApprovalDomains: [] });
+    await sleep(50);
+    assert.deepEqual(await w.handed(), ["run-7", "run-8"]);
+
+    // Still covered: the list entry goes, the whitelist keeps the host.
+    const a = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, config: { pageApprovalDomains: ["builder.example"] }, tabs: [{ id: 7, url: BUILDER }] });
+    await edit(a.bg, POPUP, { op: "revoke", origin: BUILDER_ORIGIN });
+    assert.deepEqual(await a.handed(), [], "the whitelist still approves the site");
+    // Still covered: one whitelist entry goes, another list keeps the origin.
+    const b = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, config: { pageApprovalDomains: ["builder.example", "x.example"] }, tabs: [{ id: 7, url: BUILDER }] });
+    b.bg.setSync({ pageApprovalDomains: ["x.example"] });
+    await sleep(50);
+    assert.deepEqual(await b.handed(), [], "the approved list still holds the site");
+    // Still covered: the session approval stays while another surface rewrites the approved list without it.
+    const c = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, tabs: [{ id: 7, url: BUILDER }] });
+    await c.bg.context.chrome.storage.session.set({ ml_site_session: [BUILDER_ORIGIN] });
+    c.bg.setLocal({ ml_site_always: [] });
+    await sleep(50);
+    assert.deepEqual(await c.handed(), [], "the session approval still holds the site");
+});
+
+test("a denial whose session-list write fails after the denied list was written still hands the run over", T, async () => {
+    const w = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, tabs: [{ id: 7, url: BUILDER }] });
+    const session = w.bg.context.chrome.storage.session;
+    // Only the list's write fails: the execution log lives in the same area.
+    const set = session.set;
+    session.set = async (obj) => { if ("ml_site_session" in obj) throw new Error("QUOTA_BYTES quota exceeded"); return set(obj); };
+    const r = plain(await edit(w.bg, POPUP, { op: "deny", origin: BUILDER_ORIGIN }));
+    assert.match(String(r?.error), /quota/, "the editor hears the write failed");
+    await sleep(50);
+    assert.deepEqual(plain(w.bg.localStore.ml_site_denied), [BUILDER_ORIGIN], "the denied list was written");
+    assert.deepEqual(await w.handed(), ["run-7"]);
+});
+
+// --- VALUE_COLUMNS under the origin gate: an approved page's own reads still work ---
+
+test("VALUE_COLUMNS: a value disclosed to an APPROVED page reads back under the real origin gate, and the same page is refused once its site is revoked", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
+    const idb = new IDBFactory();
+    const mine = await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "page:9" });
+    const bg = loadBackground({ config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" }, indexedDB: idb, siteGate: true, local: { ml_site_always: ["https://shop.example"] } });
+    const page = { tab: { id: 9, url: "https://shop.example/report" }, url: "https://shop.example/report", origin: "https://shop.example", frameId: 0 };
+    const ok = plain(await bg.send({ type: "VALUE_COLUMNS", runId: "x", key: mine.key, names: ["a"] }, page));
+    assert.equal(ok.error, undefined, JSON.stringify(ok));
+    assert.deepEqual(ok.columns.a, [1, 2]);
+    await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "revoke", origin: "https://shop.example" } } }, POPUP);
+    const no = plain(await bg.send({ type: "VALUE_COLUMNS", runId: "x", key: mine.key, names: ["a"] }, page));
+    assert.match(String(no.error), /^Refused/);
+    assert.equal(no.columns, undefined);
+});

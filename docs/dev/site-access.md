@@ -96,13 +96,19 @@ send, so a revoke whose storage event has not arrived yet, or arrived at a worke
 anything reaches the tab. A call built for the page (`pageRouted`, its exec routed to the main world with its pointer
 reads) whose run is handed over before it is sent is not sent: `sendTool` and `delegateSend`'s `beforeSend` throw
 `HandedOverMidCall`, and `againIfHandedOver` builds the call again as the worker's (an exec naming a pointer goes to
-an isolated world or is refused on the now unapproved page). A call already on the page at the revoke finishes there,
-and its answer is held to the worker's rules (`withoutPageVision`); a `VALUE_COLUMNS` read the page makes during it is
-refused, since a stored table's columns go only to a page on an approved site.
+an isolated world or is refused on the now unapproved page). `beforeSend` decides again from the lists after every wait
+`delegateSend` makes (a navigation's barrier, which the page can hold, or a tab rebuilt), and the send follows it in the
+same turn, so a revoke whose storage event has not been acted on yet is still seen. A call already on the page at the
+revoke finishes there, and its answer is held to the worker's rules (`withoutPageVision`); a `VALUE_COLUMNS` read the
+page makes during it is refused, since a stored table's columns go only to a page on an approved site. The page's own
+`START_RUN` (or `RESUME_RUN`) for the turn is answered with an error and no result or history (`handedThisTurn`): it
+is still waiting on that answer after a revoke, since no navigation took its document away.
 
 The decision outlives the worker: `makeWorkerRun` stores the run id under `ml_handed_to_worker` at once (the run's own
 snapshot is rewritten only at its next checkpoint), `hydratePersistedRuns` applies the list over the restored
-snapshots, and `deleteRun` drops a run from it when its snapshot goes. One way: re-approving the site leaves the run the
+snapshots, and `deleteRun` drops a run from it when its snapshot goes. A restore stores the list again without the ids
+whose snapshot is gone (a settled run handed over has none, and a stale one is dropped), so a later page-built run
+under the same id is never handed over by an old entry. One way: re-approving the site leaves the run the
 worker's, and the page's `RESUME_RUN` for it is refused.
 
 ## The lists

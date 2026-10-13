@@ -31,8 +31,8 @@ const sendDetail = (tabId: number, msg: unknown): Record<string, string | number
 /** Send a message into a run's tab and wait for the page's answer, the way every delegated tool call is sent: held
  *  while the tab navigates, and watched while it waits, so a discarded tab is rebuilt and a frozen one is bounded
  *  (see above). Also how the worker pushes a run's toolset into a tab (sw-run-start.ts `adoptOnTab`). `beforeSend`, if
- *  given, runs just before each send and refuses it by throwing. */
-export const delegateSend = async (tabId: number, msg: unknown, documentId?: string, beforeSend?: () => void): Promise<any> => {
+ *  given, runs just before each send, after every wait, and refuses it by throwing or rejecting. */
+export const delegateSend = async (tabId: number, msg: unknown, documentId?: string, beforeSend?: () => void | Promise<void>): Promise<any> => {
     // THE RUN'S LOG, not the transcript: a step already shows how long a tool took. What it cannot show is that
     // the wait was the browser rather than the tool — a navigation being committed, a discarded tab rebuilt, a
     // page that stopped answering. Those are the lines someone asking "where did the time go" comes for.
@@ -47,7 +47,8 @@ export const delegateSend = async (tabId: number, msg: unknown, documentId?: str
     // to whatever document the tab holds now (an approved exec routed for one page, sw-isolated-exec.ts).
     // `beforeSend` may refuse the send by throwing, checked at each send after the waits (a run handed to the worker
     // meanwhile, sw-run-host.ts).
-    const send = () => { beforeSend?.(); return documentId ? chrome.tabs.sendMessage(tabId, msg, { documentId }) : chrome.tabs.sendMessage(tabId, msg); };
+    // Awaited, then sent in the same turn: nothing else of this worker runs between the check and the send.
+    const send = async () => { await beforeSend?.(); return documentId ? chrome.tabs.sendMessage(tabId, msg, { documentId }) : chrome.tabs.sendMessage(tabId, msg); };
     try { return await watchWhileWaiting(send(), () => tabState(tabId)); }
     catch (e) {
         if (!(e instanceof PageUnreachable) || e.state !== "asleep") {
