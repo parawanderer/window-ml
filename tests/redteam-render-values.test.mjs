@@ -28,9 +28,10 @@ const PAGE_JS = "document.body.remove()";
  * One run on tab 7 (an approved page), the page played by `page`. Each step is a tool call, or a function of the tool
  * results so far returning one, so a later step can name the pointer an earlier one minted. Every gate is approved.
  * @param o.builtBy "worker" for a run the person started (the default), "page" for a run the page built (START_RUN)
+ * @param o.pageInfo what the page answers when a worker-built run is pushed into it (ADOPT_RUN_NOW)
  * @returns the tool results the model read on its last call, the terminal event, the worker and the run id
  */
-async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", onPyRun, config = {}, tabUrl = SITE_URL, vision = false, committed, deref = false } = {}) {
+async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", onPyRun, config = {}, tabUrl = SITE_URL, vision = false, committed, deref = false, pageInfo = "" } = {}) {
     let n = 0, bg, hash;
     const subs = [];
     const toolResults = () => (bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1)?.body.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -52,7 +53,7 @@ async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", on
             return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
         },
         onTabMessage: async (_t, msg) => {
-            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo };
             if (msg.type === "SHOT_RECTS") return { vw: 1024, vh: 768, rects: [] };
             if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.geometry) return { result: "", geometry: { seq: msg.payload.geometry.seq, reply: honestGeometry(msg.payload.geometry) } };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
@@ -417,6 +418,49 @@ test("control: a normal-sized page render and result reach the pointer and the m
     assert.doesNotMatch(r.results[0], /over the .*-char limit|\[first \d+ of/);
     assert.ok(stepEvents(r.bg).includes('"r499"'), "the sidebar's table has every row");
     assert.deepEqual((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "answer-capped"), []);
+});
+
+test("a worker-built run: the page context the page answers when the run is pushed into it is clipped before it joins the system prompt", async () => {
+    const big = "z".repeat(20_000_000);
+    const r = await run([], { pageInfo: `URL: ${SITE_URL}\n${big}` });
+    const sys = r.bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => String(c.body.messages?.[0]?.content ?? ""));
+    assert.ok(sys.length, "control: the model was called");
+    assert.match(sys[0], /Current page context:\nURL: https:\/\/site\.example\/page/);
+    assert.ok(Math.max(...sys.map((t) => t.length)) < 100_000, `a system prompt carried ${Math.max(...sys.map((t) => t.length))} chars`);
+});
+
+for (const builtBy of ["worker", "page"])
+test(`a ${builtBy}-built run: a page's result that is not a string is clipped as the text the model reads, not passed by its type`, async () => {
+    const big = "z".repeat(20_000_000);
+    const call = builtBy === "worker" ? { name: "exec", args: { js: PAGE_JS } } : { name: "probe", args: {} };
+    const r = await run([call], { builtBy, page: () => ({ result: [big] }) });
+    assert.equal(r.results.length, 1, JSON.stringify(r.end));
+    assert.ok(r.results[0].length <= UI_OUT_CAP + 400, `the model read ${r.results[0].length} chars of the page's result`);
+});
+
+test("a worker-built run: an exec whose output cap was raised gets the page's honest result at that cap, whole", async () => {
+    const { OUTPUT_CAP } = await import("../src/contract/contract-pointers.ts");
+    const cap = OUTPUT_CAP.exec.ceiling;
+    // What exec's own producer writes at its raised cap (tools.ts): a clipped console, a clipped value, the clamp note.
+    const slot = (ch) => `${ch.repeat(cap)}… [first ${cap} of ${cap * 3} chars]`;
+    const honest = `console:\n${slot("c")}\n\nvalue: ${slot("v")}\n\n(output limit clamped to ${cap} chars — the hard ceiling.)`;
+    assert.ok(honest.length > UI_OUT_CAP, "the honest result is past the panel's cap, so a clip at it would show");
+    const r = await run([{ name: "exec", args: { js: PAGE_JS, maxChars: 1e9, maxCharsReason: "the whole table" } }], { page: () => ({ result: honest }) });
+    assert.equal(r.results.length, 1, JSON.stringify(r.end));
+    assert.ok(r.results[0].startsWith(honest), `the model read ${r.results[0].length} chars, not the page's ${honest.length}`);
+    assert.deepEqual((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "answer-capped"), []);
+});
+
+test("a worker-built run: python_exec over a pointer to a page's cut table is refused as a preview, never run over the rows held", async () => {
+    let ran = 0;
+    const rows = Array.from({ length: PAGE_TABLE_CAPS.rows + 10 }, () => [1]);
+    const r = await run([
+        { name: "exec", args: { js: PAGE_JS, token: true } },
+        (res) => ({ name: "python_exec", args: { code: "len(df)", tables: { df: `@tool:${tokenOf(res[0])}` } } }),
+    ], { onPyRun: (m) => { if (m.type === "PY_RUN") ran++; return m.type === "PY_RUN" ? { ok: true, value: null, stdout: "" } : { ok: true, prewarm: "started" }; }, page: () => ({ result: "ran", renderOut: { type: "table", columns: ["a"], rows, rowCount: rows.length } }) });
+    assert.equal(r.results.length, 2, JSON.stringify(r.end));
+    assert.match(r.results[1], new RegExp(`holds ${PAGE_TABLE_CAPS.rows.toLocaleString("en-US")} of ${(PAGE_TABLE_CAPS.rows + 10).toLocaleString("en-US")} rows, a preview`), r.results[1].slice(0, 300));
+    assert.equal(ran, 0, "the sandbox never ran over the prefix");
 });
 
 // --- the sidebar: a page's render drawn in an extension page ---

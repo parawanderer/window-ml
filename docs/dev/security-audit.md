@@ -93,7 +93,9 @@ the worker, and the page answers geometry only):
       (`capPageAnswer` in `toPage`): a table is cut to fit with its source's row count kept, a text or picture over 16M
       characters is dropped with a note to the model, the text result is clipped by `clipOut`, and every cut is a
       `page`/`answer-capped` record in the execution log (page-answer-caps.test.mjs, redteam-render-values.test.mjs
-      "bounds"): #629.
+      "bounds"): #629. The same holds for a result that is not a string, a keyval's/elements' lists and an exec-out's
+      notes, and the page texts folded in after the answer: a navigate's text verify and pageInfo, a page-hosted verify
+      ring-back, and the page context joined to a worker-built run's system prompt (review-verify.test.mjs "size"): #629.
 
 ## In progress
 

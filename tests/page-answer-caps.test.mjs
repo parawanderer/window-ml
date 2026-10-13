@@ -4,6 +4,9 @@
 // the bundle, both run kinds) are in redteam-render-values.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 const { capPageAnswer, capPageTable, pageResultCap, droppedNote } = await import("../src/sw/page-answer-caps.ts");
 const { checkPageTable, PAGE_TABLE_CAPS, PAGE_HTML_MAX } = await import("../src/sw/worker-page-read.ts");
@@ -98,6 +101,37 @@ test("capPageTable leaves a table with no rows array, and anything that is not a
     for (const env of [null, undefined, "text", 7]) assert.equal(capPageAnswer(env, "exec", {}), env);
 });
 
+// --- the model's copy: what an honest producer writes passes whole ---
+
+// pageResultCap's room for exec and python_exec is read off what their producers write: two slots clipped at the call's
+// cap (console and value; error and stdout), each with its "[first N of M chars]" note, and the fixed notes around them.
+// The producers run here for real (tools.ts, python-tool.ts) at their raised ceiling with every note they can add, and
+// what they wrote must pass unclipped. Two slots and their notes are more than twice the cap, so a room of 2x cuts them.
+test("an honest exec result at its raised ceiling, every note included, passes unclipped", async () => {
+    const { loadDomWorld } = require("./helpers");
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find((t) => t.name === "exec");
+    // Past the output ceiling (overNote), a value past the cap, and a raise past the ceiling (clampNote).
+    const out = await exec.run({ js: "const s = 'x'.repeat(9000000); for (let i = 0; i < 4; i++) console.log(s); 'v'.repeat(9000)", maxChars: 1e9, maxCharsReason: "need it" });
+    assert.match(out.content, /output stopped at the 32000000-char limit/);
+    assert.match(out.content, /clamped to 8000 chars/);
+    assert.ok(out.content.length > 2 * OUTPUT_CAP.exec.ceiling, `${out.content.length}`);
+    const env = { result: out.content };
+    assert.equal(capPageAnswer(env, "exec", { maxChars: 1e9, maxCharsReason: "need it" }), env);
+});
+
+test("an honest python_exec error with its stdout, at the raised ceiling, passes unclipped", async () => {
+    const { loadDomWorld } = require("./helpers");
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: false, error: "e".repeat(30000), stdout: "s".repeat(30000), stdoutDropped: 99 });
+    const args = { code: "x", maxChars: 1e9, maxCharsReason: "need it" };
+    const out = await ml.pythonTool().run(args);
+    assert.match(out.content, /^Python error: e{20000}… \[first 20000 of 30000 chars\]/);
+    assert.ok(out.content.length > 2 * OUTPUT_CAP.python_exec.ceiling, `${out.content.length}`);
+    const env = { result: out.content };
+    assert.equal(capPageAnswer(env, "python_exec", args), env);
+});
+
 // --- pictures and text over the size: dropped, and the model told ---
 
 test("a picture or text over the size is dropped from the render, the inline images and a locate's substeps, each with a note after the model's copy", () => {
@@ -143,4 +177,71 @@ test("control: an answer within every cap is returned as the same object, and an
     const execResult = `console:\n${slot(OUTPUT_CAP.exec.ceiling)}\n\nvalue: ${slot(OUTPUT_CAP.exec.ceiling)}\n\n(output limit clamped to ${OUTPUT_CAP.exec.ceiling} chars — the hard ceiling.)`;
     const e2 = { result: execResult };
     assert.equal(capPageAnswer(e2, "exec", { maxChars: 1e9, maxCharsReason: "need it" }), e2);
+});
+
+// --- lists that are not tables: a keyval's pairs, an elements' items, an exec-out's notes ---
+
+// They reach the sidebar step, the session store and the exports, never the pointer or the model, and were the open item
+// #629 left: held whole, bounded only by Chrome's message cap. Held to the table caps now: entries as rows, strings as cells.
+const LISTS = [
+    ["keyval", "pairs", (s) => [s, s]],
+    ["elements", "items", (s) => ({ path: s, text: s, index: 0 })],
+    ["exec-out", "stdoutNotes", (s) => s],
+    ["exec-out", "valueNotes", (s) => s],
+];
+for (const [type, field, entry] of LISTS)
+test(`the ${type} descriptor's ${field} is held to the table caps: entries past the row cap dropped, a string past the cell cap cut`, () => {
+    const at = { result: "ok", renderOut: { type, [field]: [entry("x".repeat(C.cell)), ...new Array(C.rows - 1).fill(entry("y"))] } };
+    assert.equal(capPageAnswer(at, "probe", {}), at, `a ${field} at both caps is untouched`);
+    const cuts = [];
+    const over = capPageAnswer({ result: "ok", renderOut: { type, [field]: [entry("x".repeat(C.cell + 1)), ...new Array(C.rows).fill(entry("y"))] } }, "probe", {}, (c) => cuts.push(c));
+    const list = over.renderOut[field];
+    assert.equal(list.length, C.rows);
+    const first = list[0], long = typeof first === "string" ? first : Array.isArray(first) ? first[0] : first.path;
+    assert.equal(long.length, C.cell);
+    assert.deepEqual(cuts.map((c) => [c.slot, c.field, c.what, c.from]), [["renderOut", field, "rows", C.rows + 1], ["renderOut", field, "cell", typeof first === "string" ? 1 : 2]]);
+});
+
+test("a descriptor type named after an Object.prototype member is no list type: its answer passes as it came", () => {
+    for (const type of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+        const env = { result: "ok", renderOut: { type, pairs: [["a", "b"]], items: [{ path: "p" }] } };
+        assert.equal(capPageAnswer(env, "probe", {}), env, type);
+    }
+});
+
+// --- controls: an answer within every cap, and a cut answer cut again ---
+
+// One descriptor of every kind (contract-render.ts), each field at an ordinary size: what an honest page sends.
+const ORDINARY = {
+    action: { type: "action", verb: "Click", target: "Save", selector: "#save" },
+    code: { type: "code", text: "document.title", lang: "javascript", marks: [{ start: 0, end: 8, from: "x" }] },
+    elements: { type: "elements", items: [{ path: "div > a", text: "Home", index: 0 }] },
+    "exec-out": { type: "exec-out", stdout: "a\nb", seen: 3, value: "1", stdoutNotes: ["note"], valueNotes: ["note"] },
+    image: { type: "image", src: "data:image/png;base64,AA", label: "shot" },
+    keyval: { type: "keyval", pairs: [["url", "https://site.example/"], ["title", "Site"]] },
+    locate: { type: "locate", mode: "grid", model: "m", substeps: [{ label: "pick", image: "data:image/png;base64,AA", prompt: "p" }] },
+    look: { type: "look", image: "data:image/png;base64,AA", output: "a page", label: "look" },
+    "python-in": { type: "python-in", mode: "script", code: "df", tables: [{ name: "df", source: { kind: "dom", label: "#t" }, columns: ["a"], rows: [[1], [null]], rowCount: 2 }] },
+    "python-out": { type: "python-out", stdout: "x", value: "1", df: { columns: ["a"], rows: [[1]], rowCount: 1 } },
+    table: { type: "table", columns: ["a", "b"], rows: [[1, "x"], [true, null]], rowCount: 2 },
+};
+test("control: an answer of every descriptor kind within every cap is returned as the same object, and nothing is logged", () => {
+    for (const [kind, d] of Object.entries(ORDINARY)) {
+        const env = { result: "ok", renderIn: d, renderOut: d, image: "data:image/png;base64,AA", images: [{ image: "data:image/png;base64,AA" }] };
+        const cuts = [];
+        assert.equal(capPageAnswer(env, "probe", {}, (c) => cuts.push(c)), env, kind);
+        assert.deepEqual(cuts, [], kind);
+    }
+});
+
+test("a cut render cut again is the same object: the caps are a fixed point", () => {
+    const big = "x".repeat(C.html + 1);
+    const once = capPageAnswer({ result: "ok",
+        renderIn: { type: "python-in", mode: "script", code: "df", tables: [{ name: "df", columns: ["a"], rows: new Array(C.rows + 3).fill([1]), rowCount: C.rows + 3 }] },
+        renderOut: { type: "table", columns: Array.from({ length: C.columns + 1 }, (_, i) => `c${i}`), rows: [["y".repeat(C.cell + 1), { o: 1 }], ...new Array(C.rows).fill([])], stdout: big } }, "probe", {});
+    const cuts = [];
+    const again = capPageAnswer({ ...once, result: "ok" }, "probe", {}, (c) => cuts.push(c));
+    assert.equal(again.renderIn, once.renderIn);
+    assert.equal(again.renderOut, once.renderOut);
+    assert.deepEqual(cuts, []);
 });

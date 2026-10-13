@@ -53,7 +53,7 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
-import { capPageAnswer } from "./page-answer-caps";
+import { capPageAnswer, capPageContext } from "./page-answer-caps";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -297,6 +297,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
      *  Its verifies are taken here, and a page's envelope cannot carry a picture, a reply or a spend into it. A run handed
      *  over during its first turn is not in `bgRuns` yet, so `isWorkerRun` misses it; its rebuild record says so. */
     const workerVision = (): boolean => p.builtBy === "worker" || isWorkerRun(runId) || runRebuilds.get(runId)?.builtBy === "worker";
+    /** A page's answer, or a page text the worker folds into a call's answer, held to what the worker takes from a page it
+     *  reads itself (pageRead's caps, page-answer-caps.ts), for every kind of run: a render becomes the step's pointer, and
+     *  the text is what the model reads. Each cut is a `page`/`answer-capped` record in the run's execution log. */
+    const fromPage = <T>(env: T, tool: string, args: Record<string, unknown> | undefined): T => capPageAnswer(env, tool, args, (c) => recordRunLog(runId, { level: "warn", subsystem: "page", kind: "answer-capped", reason: c.what,
+        detail: { tool, slot: c.slot, field: c.field, from: c.from, to: c.to } }));
     /** Whether the worker drives this run NOW: it built it, or was handed it, during this turn included (a navigation onto
      *  a site that may not use window.ml, nav-handover.ts; a person's message from such a site, `userRunAction`). Read at
      *  each decision, never from `p`, which is the turn's start payload: everything the worker does for a run it built
@@ -365,10 +370,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const seen = vis || workerVision() ? withoutPageVision(env) : env;
             // Nor a stored-value key this run may not claim: the render it rides is read by key in the sidebar.
             const held = await withHeldValuesOnly(seen, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId)));
-            // Nor more than the worker takes from a page it reads itself (pageRead's caps), for every kind of run: the
-            // render becomes the step's pointer, and the text is what the model reads (page-answer-caps.ts).
-            return capPageAnswer(held, payload.name, payload.args, (c) => recordRunLog(runId, { level: "warn", subsystem: "page", kind: "answer-capped", reason: c.what,
-                detail: { tool: payload.name, slot: c.slot, field: c.field, from: c.from, to: c.to } }));
+            // Nor more than the worker takes from a page it reads itself (`fromPage`).
+            return fromPage(held, payload.name, payload.args);
         };
         if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
@@ -715,7 +718,12 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     /** The destination's pageInfo, unless it came from the document this call left. */
                     const takeInfo = (): string | undefined => {
                         const r = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
-                        return r && (sentTo === undefined || r.doc !== sentTo) ? r.info : undefined;
+                        // The destination's own text, folded into this call's result: held as the call's answer is.
+                        if (!r || (sentTo !== undefined && r.doc === sentTo)) return undefined;
+                        const info = capPageContext(r.info);
+                        if (info !== undefined && info !== r.info) recordRunLog(runId, { level: "warn", subsystem: "page", kind: "answer-capped", reason: "result",
+                            detail: { tool: "pageInfo", slot: "envelope", field: "pageInfo", from: r.info.length, to: UI_OUT_CAP } });
+                        return info;
                     };
                     try {
                         // A worker-built run's answer set is the worker's: the script is sent its shape, and what it changed
@@ -753,7 +761,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             addSub(v.subUsage);
                             return { vres: v.content, vimg: v.image, vimgLabel: v.imageLabel, vfeedback: v.feedback };
                         }
-                        const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, ...payload } }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                        const venv = fromPage(await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, ...payload } }).catch(() => null), name, args) as Partial<import("../contract").PageToolEnvelope> | null;
                         if (!venv) return { vres: "" };
                         addSub(venv.subUsage);
                         return { vres: venv.result || "", vimg: venv.image, vimgLabel: venv.imageLabel, vfeedback: venv.feedback };
@@ -793,7 +801,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                                 // The Markdown is still the page's, and is all a page answer may carry into this run.
                                 const v = !text && workerVision()
                                     ? await verifyHere(await topDocument(tabId), { kind: "viewport" }, "navigated").then((o) => ({ result: o.content, image: o.image, imageLabel: o.imageLabel, feedback: o.feedback, subUsage: o.subUsage }), () => null)
-                                    : await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).then((e) => (workerVision() ? withoutPageVision(e) : e), () => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                                    : await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).then((e) => fromPage(workerVision() ? withoutPageVision(e) : e, name, args), () => null) as Partial<import("../contract").PageToolEnvelope> | null;
                                 if (v && (v.image || v.feedback || v.result)) {
                                     if (v.result) env.result = `${env.result || ""}\n\n${v.result}`;
                                     env.image = v.image; env.imageLabel = v.imageLabel; env.feedback = v.feedback;

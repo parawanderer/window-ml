@@ -173,8 +173,14 @@ service worker's side is `sw-values.ts`:
   cell over 100,000 characters is cut; a cell that is not a scalar becomes null. A text or picture field over
   16,000,000 characters (a `capture`, a `stdout`, an `image`) is dropped whole and the model told after its copy
   (`droppedNote`). The page's text `result` is clipped by `clipOut` at the panel's cap (`UI_OUT_CAP`), or for exec and
-  python_exec at three times the call's `OUTPUT_CAP`, room for both slots their producers write. Each cut is a
-  `page`/`answer-capped` record in the execution log.
+  python_exec at three times the call's `OUTPUT_CAP`, room for both slots their producers write; a result that is not a
+  string is clipped as the text the loop makes of it. A keyval's `pairs`, an elements' `items` and an exec-out's notes
+  are held to the same caps, an entry as a row and a string in one as a cell. The page texts the worker folds into a
+  call's result after it are held the same way (`fromPage`, sw-run-host.ts): a navigate's text verify, a page-hosted
+  verify ring-back, and the page context a page answers on a re-adopt or when a worker-built run is pushed into it
+  (`capPageContext`). Each cut is a `page`/`answer-capped` record in the execution log. A table held as a prefix says
+  so wherever it is shown: the pointer's description, the sidebar's table view and both exports ("the first N of M rows"),
+  and `python_exec` over its pointer is refused as a preview rather than run over the rows held.
   The same rule on the read side: a page's own `PYTHON_EXEC` naming a key reads a worker-built run's value only when that
   run's in-flight approved exec named the key, as `VALUE_COLUMNS` does (sw-python.ts).
 - **Release.** A tab claim goes when the document it was disclosed to does: a main-frame `onCommitted` and `tabs.onRemoved`

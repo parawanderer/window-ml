@@ -29,6 +29,38 @@ export interface PageAnswerCut {
 /** The fields of a render descriptor that hold a picture: dropped whole when over the size, never cut. */
 const PICTURE_FIELDS = new Set(["image", "src", "rawImage"]);
 
+/** The list fields of a descriptor that are not tables, by descriptor type: held to a table's caps, an entry as a row. */
+const LIST_FIELDS: Record<string, readonly string[]> = { keyval: ["pairs"], elements: ["items"], "exec-out": ["stdoutNotes", "valueNotes"] };
+
+/**
+ * A descriptor's list (a keyval's pairs, an elements' items, an exec-out's notes) within the table caps: entries past
+ * `PAGE_TABLE_CAPS.rows` dropped, and a string longer than `PAGE_TABLE_CAPS.cell` cut, whether it is the entry itself or
+ * one of the entry's own fields (a pair's halves, an item's `path`/`text`).
+ * @param list the list as the page sent it
+ * @param note records a cut
+ * @returns `list` itself when nothing was over, else a copy within the caps
+ */
+function capPageList(list: unknown[], note: (what: PageAnswerCut["what"], from: number, to: number) => void): unknown[] {
+    const C = PAGE_TABLE_CAPS;
+    let long = 0;
+    const cut = (s: unknown): unknown => { if (typeof s === "string" && s.length > C.cell) { long++; return s.slice(0, C.cell); } return s; };
+    const entry = (e: unknown): unknown => {
+        if (Array.isArray(e)) { const c = e.map(cut); return c.some((x, i) => x !== e[i]) ? c : e; }
+        if (e && typeof e === "object") {
+            const o = e as Record<string, unknown>;
+            let c: Record<string, unknown> | null = null;
+            for (const [k, v] of Object.entries(o)) { const w = cut(v); if (w !== v) (c ??= { ...o })[k] = w; }
+            return c ?? e;
+        }
+        return cut(e);
+    };
+    const kept = list.length > C.rows ? list.slice(0, C.rows) : list;
+    const out = kept.map(entry);
+    if (kept !== list) note("rows", list.length, C.rows);
+    if (long) note("cell", long, C.cell);
+    return kept === list && !long ? list : out;
+}
+
 /**
  * The most characters of a page's text result the model reads for one call: the panel's cap (`UI_OUT_CAP`), or, for a
  * tool with a model cap of its own (`OUTPUT_CAP`), room for what its producer legitimately writes: two slots (console
@@ -46,6 +78,17 @@ export function pageResultCap(name: string, args: Record<string, unknown> | unde
 /** The sentence the model reads, after its copy of the result, for a part of the page's answer that was dropped. */
 export const droppedNote = (field: string, chars: number): string =>
     `[the page's answer carried ${field} of ${chars} chars, over the ${PAGE_TABLE_CAPS.html}-char limit for a page's answer, so it was dropped.]`;
+
+/**
+ * The page context a page answers when a run is pushed into it (ADOPT_RUN_NOW, joined to a worker-built run's system
+ * prompt) or re-adopted after a navigation (RUN_READOPTED, folded into the `navigate` result): text the model reads, held
+ * to the cap of a tool's text result (`clipOut` at `UI_OUT_CAP`). Anything but a string is no context.
+ * @param info what the page answered
+ * @returns the context to use, or undefined for none
+ */
+export function capPageContext(info: unknown): string | undefined {
+    return typeof info === "string" && info ? clipOut(info, UI_OUT_CAP) : undefined;
+}
 
 type Cell = string | number | boolean | null;
 
@@ -132,6 +175,13 @@ function capRender(d: unknown, note: (field: string, what: PageAnswerCut["what"]
         const tables = r.tables.map((t, i) => (t && typeof t === "object" ? capPageTable(t as { rows?: unknown }, sub(`tables.${i}`)) : t));
         if (tables.some((t, i) => t !== (r.tables as unknown[])[i])) set("tables", tables);
     }
+    // Own keys only: a page's `type` can be any string, `constructor` included.
+    for (const k of Object.prototype.hasOwnProperty.call(LIST_FIELDS, String(r.type)) ? LIST_FIELDS[String(r.type)] : []) {
+        const list = r[k];
+        if (!Array.isArray(list)) continue;
+        const capped = capPageList(list, (w, a, b) => note(k, w, a, b));
+        if (capped !== list) set(k, capped);
+    }
     if (r.type === "locate" && Array.isArray(r.substeps)) {
         const steps = r.substeps.map((s, i) => {
             if (!s || typeof s !== "object") return s;
@@ -178,11 +228,16 @@ export function capPageAnswer<T>(env: T, name: string, args: Record<string, unkn
         });
         if (kept.length !== e.images.length) { out.images = kept; changed = true; }
     }
-    if (typeof e.result === "string") {
+    // A result that is not a string is read as the loop reads it (`String`, agent-loop.ts `withText`): an array of strings
+    // joins into one text, so it is clipped as that text. One that cannot be made a string is left to the loop, whose
+    // `withText` throw becomes the step's error result.
+    let raw: string | undefined;
+    try { raw = typeof e.result === "string" ? e.result : e.result === undefined ? undefined : String(e.result); } catch { raw = undefined; }
+    if (raw !== undefined) {
         const cap = pageResultCap(name, args);
         const dropped = cuts.filter((c) => c.what === "text" || c.what === "image").map((c) => droppedNote(c.slot === "envelope" ? c.field : `${c.slot}.${c.field}`, c.from));
-        const clipped = clipOut(e.result, cap);
-        if (clipped !== e.result) cuts.push({ slot: "envelope", field: "result", what: "result", from: e.result.length, to: cap });
+        const clipped = clipOut(raw, cap);
+        if (clipped !== raw) cuts.push({ slot: "envelope", field: "result", what: "result", from: raw.length, to: cap });
         const text = dropped.length ? `${clipped}\n\n${dropped.join("\n")}` : clipped;
         if (text !== e.result) { out.result = text; changed = true; }
     }
