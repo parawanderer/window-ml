@@ -163,6 +163,30 @@ service worker's side is `sw-values.ts`:
   whether or not the step mints a pointer): the render goes to the sidebar, the answer's embeds and the exports, and the
   sidebar's table view reads a value by its key alone. So the pointer keeps the page's preview, which `python_exec`
   refuses as a preview.
+- **A page's answer is held to pageRead's caps before it becomes a pointer** (`capPageAnswer`,
+  `src/sw/page-answer-caps.ts`, in `toPage` after `withHeldValuesOnly`, for a worker-built, handed-over or page-built
+  run whose loop is in the worker). The caps are `PAGE_TABLE_CAPS` (worker-page-read.ts), the one constant the worker
+  already applies to a page table or document it reads itself: a table in either render slot (a `table`, a python
+  `df`, a `python-in`'s loaded frames) is cut to 2,000 columns, 1,000,000 rows and 4,000,000 cells, rows kept from the
+  top, and keeps its SOURCE's row count in `rowCount` (the page's own when it is a whole number no smaller than the rows
+  it sent), so the pointer's `shape` and its description (`describeToken`: "the first N of M rows") stay honest. A
+  cell over 100,000 characters is cut, and never made null (`capPageCell`): an object or list cell (a python frame's
+  dict) is kept while its JSON fits, else becomes that JSON cut to the cap; one with no JSON becomes the table view's
+  "unrenderable <type>" marker. A text or picture field over
+  16,000,000 characters (a `capture`, a `stdout`, an `image`) is dropped whole and the model told after its copy
+  (`droppedNote`). The page's text `result` is clipped by `clipOut` at the panel's cap (`UI_OUT_CAP`), or for exec and
+  python_exec at three times the call's `OUTPUT_CAP`, room for both slots their producers write; a result that is not a
+  string is clipped as the text the loop makes of it. A keyval's `pairs`, an elements' `items` and an exec-out's notes
+  are held to the same caps, an entry as a row and a string in one as a cell. The page texts the worker folds into a
+  call's result after it are held the same way (`fromPage`, sw-run-host.ts): a navigate's text verify, a page-hosted
+  verify ring-back, and the page context a page answers on a re-adopt or when a worker-built run is pushed into it
+  (`capPageContext`). Each cut is a `page`/`answer-capped` record in the execution log. The split (owner decision
+  2026-10-13): the render, list and picture caps bound what the worker KEEPS and hold on every run; the text clips
+  (`result`, the folded-in texts, the page context) bound only what the model READS and hold only while the worker holds
+  the run (`byWorker()` when the answer is in: worker-built, or handed over, from the call answered after the hand-over).
+  A page-built run's tools are its page's, and their text reaches its model whole, as before #629. A table held as a prefix says
+  so wherever it is shown: the pointer's description, the sidebar's table view and both exports ("the first N of M rows"),
+  and `python_exec` over its pointer is refused as a preview rather than run over the rows held.
   The same rule on the read side: a page's own `PYTHON_EXEC` naming a key reads a worker-built run's value only when that
   run's in-flight approved exec named the key, as `VALUE_COLUMNS` does (sw-python.ts).
 - **Release.** A tab claim goes when the document it was disclosed to does: a main-frame `onCommitted` and `tabs.onRemoved`

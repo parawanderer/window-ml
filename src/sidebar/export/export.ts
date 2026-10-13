@@ -118,16 +118,25 @@ function timedOut(st: AgentStep): string | null {
     return timedText(text, st.streamMarks);
 }
 
+/** A table that may be the first part of its source: the rows held, then, when `rowCount` (the SOURCE's count) is larger,
+ *  a note saying they are the first part, so neither sink passes a prefix off as the whole table (render-panel.tsx's
+ *  `PyDfTable` says the same in the sidebar). */
+function prefixTable(d: Sink, columns: string[], rows: (string | number | boolean | null)[][], rowCount?: number): void {
+    d.table(columns, rows);
+    if (typeof rowCount === "number" && rowCount > rows.length) d.note(`the first ${fmtRows(rows.length)} of ${fmtRows(rowCount)} rows`);
+}
+const fmtRows = (n: number): string => n.toLocaleString("en-US");
+
 // A BLOCK citation: the cited step's In/Out as a real table / image / code.
 function emitTokenBlock(step: AgentStep, slot: "in" | "out", d: Sink): void {
     const desc = slot === "in" ? step.renderIn : step.renderOut;
     const base = `tok-${step.step}`;
     if (desc?.type === "image") { d.image(desc.src, base, desc.label || `step ${step.step}`); return; }
     if (desc?.type === "look") { d.image(desc.image, base, desc.label || "look"); return; }
-    if (desc?.type === "table") { d.table(desc.columns, desc.rows); return; }
+    if (desc?.type === "table") { prefixTable(d, desc.columns, desc.rows, desc.rowCount); return; }
     if (desc?.type === "code") { d.code(desc.format ? beautifyJs(desc.text) : desc.text, desc.lang || "javascript"); return; }
     if (desc?.type === "python-in") { d.code(desc.code, "python"); return; }   // just the code, not the input table
-    if (desc?.type === "python-out" && desc.df) { d.table(desc.df.columns, desc.df.rows); return; }
+    if (desc?.type === "python-out" && desc.df) { prefixTable(d, desc.df.columns, desc.df.rows, desc.df.rowCount); return; }
     if (desc?.type === "python-out" && desc.image) { d.image(desc.image, base, "returned image"); return; }
     // A python-out SCALAR: render the CLEAN structured field (value/stdout), NOT `step.result` — the model-facing
     // result string carries a prelude ("[loaded, reference directly] a … DataFrame → `df`.") meant for the model,
@@ -399,7 +408,7 @@ function writeAgent(s: Session, d: Sink): void {
                     // Collapse the (potentially huge) df into a disclosure so it doesn't flood the
                     // .md — the summary carries the shape + source. `details` is collapsed in markdown
                     // but `<details open>` in the print HTML, so the PDF still shows the table.
-                    d.details(`input table → ${t.name} (${t.rows.length} × ${cols}) · ${srcLabel}`, () => d.table(t.columns || [], t.rows!));
+                    d.details(`input table → ${t.name} (${fmtRows(Math.max(t.rowCount ?? 0, t.rows.length))} × ${cols}) · ${srcLabel}`, () => prefixTable(d, t.columns || [], t.rows!, t.rowCount));
                 } else {
                     d.note(`input table → ${t.name} · ${srcLabel} (loaded via pd.read_html)`, true);
                 }
@@ -482,7 +491,7 @@ function writeAgent(s: Session, d: Sink): void {
         } else if (st.renderOut && st.renderOut.type === "python-out" && st.renderOut.df) {
             // A returned DataFrame → a real table (GFM / <table>), like the input-table render.
             const df = st.renderOut.df;   // local: TS drops the narrowing inside the closure otherwise
-            d.details("value (DataFrame)", () => d.table(df.columns, df.rows));
+            d.details("value (DataFrame)", () => prefixTable(d, df.columns, df.rows, df.rowCount));
         } else if (st.renderOut && st.renderOut.type === "look") {
             // A delegated look: the image the reader saw + which model + its output.
             const lk = st.renderOut;   // local: TS widens st.renderOut back to the union inside the closure

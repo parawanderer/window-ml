@@ -376,7 +376,12 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
   that the page sends nothing for it (the ratchet, `tests/e2e/media-in-worker.spec.mjs`), and what the page answers
   forged, oversized and malformed.
 - **What the page can forge.** Its result (`PAGE_TOOL_RESULT`) and its live lines: a forged one may misreport only the
-  page's own content, never another site's or the run's.
+  page's own content, never another site's or the run's. Nor can it be larger than the worker takes from a page it reads
+  itself: every answer goes through `capPageAnswer` (`src/sw/page-answer-caps.ts`) in `toPage`, held to
+  `PAGE_TABLE_CAPS`, the constant `pageRead` uses, with the text the model reads clipped by `clipOut` while the worker
+  holds the run (a page-built run's own tool text is its page's, and stays whole). So does every
+  page text the worker folds into a result after it (`fromPage`, `capPageContext`): a new path that adds page text to a
+  result or a prompt goes through one of them.
 - **An `ml.*` member.** Refused from an unapproved origin is automatic (the red-team suite enumerates `HANDLE_MAP`).
   On an approved page: does it spend tokens, change config, or read across origins, tabs or runs? If it is read-only,
   it goes in the dialect too, with the dialect rule's tests (`docs/dev/readonly-exec.md`), and is placed in or out of
@@ -410,6 +415,10 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
   window.
 - `tests/worker-page-read.test.mjs`: python_exec over a page table, a `fetch_url` session render with an `ask`, and a
   sealed `describeElement`, each in the worker; `checkPageTable`; the page's half over a real DOM.
+- `tests/page-answer-caps.test.mjs`: a page's answer held to `PAGE_TABLE_CAPS`, at and past each cap beside
+  `checkPageTable` (so the two cannot drift), the source's row count, dropped text and pictures, the model's clip.
+  `tests/redteam-render-values.test.mjs`, "bounds": a 300,000-row table, a 20 MB capture and a 20 MB text through a
+  worker-built and a page-built run, in the pointer, the model's context and the execution log, with a positive control.
 - `tests/redteam-page-run-builtby.test.mjs`: a page START_RUN claiming `builtBy`/`rebuild.builtBy` stays page-built,
   its `pageOrigin`/`pageUrl` are the sender's, its auto-approve flags and `requiresApproval` never undercut the worker's,
   its run id is its own tab's, and its `approvalRouting` never resolves or skips a gate.

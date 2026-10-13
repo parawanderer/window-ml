@@ -28,6 +28,7 @@ import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
 import { workerMl } from "./worker-ml";
 import { noteWorkerVision } from "./run-vision";
+import { capPageContext } from "./page-answer-caps";
 
 /**
  * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
@@ -106,7 +107,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const surface: StartRunPayload["surface"] = cfg.debugMode === "overlay" || cfg.debugMode === "devtools" ? cfg.debugMode : "off";
     const payload: StartRunPayload = {
         ...startPayload(asm, {
-            runId, systemPrompt: withPageContext(asm.systemPrompt, adopted.pageInfo), think: null,
+            runId, systemPrompt: withPageContext(asm.systemPrompt, capPageContext(adopted.pageInfo)), think: null,
             maxSteps: recipe.maxSteps ?? DEFAULT_MAX_STEPS, surface, stream: recipe.stream, toolTokens: true, origin: recipe.origin,
             navigate: true, crossOrigin: true, approvalRouting: opts.approvalRouting ?? "ui",
             page: { origin: new URL(url).origin, url, title: tab.title || undefined },

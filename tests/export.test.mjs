@@ -254,3 +254,39 @@ test("every approval decision has its own note, and only a denial reads as one",
     for (const a of all) assert.equal(/denied/.test(approvalNote(a)), a === "denied", `${a}: ${approvalNote(a)}`);
     assert.equal(approvalNote("from-the-future"), "decided: from-the-future", "an unknown value is named, never called a denial");
 });
+
+// --- a table held as a prefix of its source ---
+
+// A page's table cut to pageRead's caps (#629), a stored table's preview, a python frame past its preview: `rows` is the
+// first part, `rowCount` the source's. Both sinks print the rows they have, so each has to say they are the first part,
+// or a reader takes a prefix for the table, as the sidebar's view already refuses to (render-panel.tsx `PyDfTable`).
+test("a cited table, a returned frame and a loaded frame held as a prefix say the source's row count in both sinks", async () => {
+    const { toolToken } = await import("../src/util.ts");
+    const hash = "prefix01";
+    const [t1, t2] = [toolToken(hash, 1), toolToken(hash, 2)];
+    const s = {
+        hash, kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
+        summary: `Here: ![t](@tool:${t1}:out) and ![d](@tool:${t2}:out).`,
+        steps: [
+            { step: 1, seq: 1, tool: "probe", token: t1, arguments: {}, result: "a table",
+                renderOut: { type: "table", columns: ["a"], rows: [[1], [2]], rowCount: 300000, truncated: true } },
+            { step: 2, seq: 2, tool: "python_exec", token: t2, arguments: { code: "df" }, result: "a frame",
+                renderIn: { type: "python-in", mode: "script", code: "df", tables: [{ name: "df", source: { kind: "dom", label: "#t" }, columns: ["a"], rows: [[1], [2], [3]], rowCount: 50000 }] },
+                renderOut: { type: "python-out", df: { columns: ["a"], rows: [[1]], rowCount: 7000 } } },
+        ],
+    };
+    const { md } = serializeSession(s);
+    const html = sessionToHtml(s, "run").replace(/<[^>]+>/g, "");
+    for (const [fmt, out] of [["markdown", md], ["pdf/html", html]]) {
+        assert.match(out, /the first 2 of 300,000 rows/, `${fmt}: the cited table`);
+        assert.match(out, /the first 1 of 7,000 rows/, `${fmt}: the returned frame`);
+        assert.match(out, /input table → df \(50,000 × 1\)/, `${fmt}: the loaded frame's label counts the source`);
+        assert.match(out, /the first 3 of 50,000 rows/, `${fmt}: the loaded frame`);
+    }
+});
+
+test("control: a whole table says nothing about a prefix", () => {
+    const s = { hash: "whole01", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [], summary: "done",
+        steps: [{ step: 1, seq: 1, tool: "python_exec", arguments: { code: "df" }, result: "a frame", renderOut: { type: "python-out", df: { columns: ["a"], rows: [[1], [2]], rowCount: 2 } } }] };
+    assert.doesNotMatch(serializeSession(s).md, /the first \d+ of/);
+});

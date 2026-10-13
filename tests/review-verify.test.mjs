@@ -334,3 +334,71 @@ test("the session check survives what wireHint normalises: a padded run session 
     assert.equal(calls.length, 2, "control: both calls reached the backend");
     assert.deepEqual(calls.map((c) => c.hint?.session ?? null), [null, null]);
 });
+
+// --- 8. size: what the worker adds to a call's answer from the page is held to pageRead's caps too (#629) ---
+
+// `capPageAnswer` holds the page's answer to the call itself (`toPage`). Three more page texts are folded into the same
+// tool result after it: a navigate's text verify (a second RUN_TOOL_IN_PAGE), the destination's pageInfo (RUN_READOPTED),
+// and a page-hosted verify ring-back after a debugger click. Each reached the model whole.
+const BIG = "z".repeat(20_000_000);
+const capLog = async (w) => ((await w.bg.send({ type: "DUMP_RUN_LOG", payload: { run: w.hash } }, { url: "chrome-extension://test/popup.html" }))?.data?.events ?? [])
+    .filter((e) => e.subsystem === "page" && e.kind === "answer-capped");
+
+test("a navigate's text verify and the destination's pageInfo are clipped for the model like the call's own answer", T, async () => {
+    const w = await run({ calls: [{ name: "navigate", args: { url: "/x", verify: "text" } }],
+        page: (p, _n, bg) => {
+            if (p.verifyText) return { result: `# The new page\n${BIG}` };
+            setTimeout(() => {
+                bg.commit(SITE0.id, { documentId: "doc-B", url: "https://site.example/x" });
+                setTimeout(() => void bg.send({ type: "RUN_READOPTED", payload: { runId: p.runId, pageInfo: `URL: https://site.example/x\n${BIG}` } }, { tab: { id: SITE0.id, url: "https://site.example/x" }, url: "https://site.example/x", frameId: 0, documentId: "doc-B" }), 10);
+            }, 10);
+            return { result: "Navigating to /x." };
+        } });
+    assert.ok(w.runCalls().some((p) => p.verifyText), "control: the text ring-back was sent");
+    const read = w.toolMessages()[0];
+    assert.match(read, /You are now on the new page:\nURL: https:\/\/site\.example\/x/);
+    assert.match(read, /# The new page/);
+    assert.ok(read.length < 40_000, `the model read ${read.length} chars of one navigate`);
+    const tools = (await capLog(w)).map((e) => e.detail.tool);
+    assert.ok(tools.includes("navigate") && tools.includes("pageInfo"), JSON.stringify(tools));
+});
+
+test("a destination's pageInfo that is not a string adds nothing to a navigate's result", T, async () => {
+    const w = await run({ calls: [{ name: "navigate", args: { url: "/x" } }],
+        page: (p, _n, bg) => {
+            setTimeout(() => {
+                bg.commit(SITE0.id, { documentId: "doc-B", url: "https://site.example/x" });
+                setTimeout(() => void bg.send({ type: "RUN_READOPTED", payload: { runId: p.runId, pageInfo: [BIG] } }, { tab: { id: SITE0.id, url: "https://site.example/x" }, url: "https://site.example/x", frameId: 0, documentId: "doc-B" }), 10);
+            }, 10);
+            return { result: "Navigating to /x." };
+        } });
+    const read = w.toolMessages()[0];
+    assert.match(read, /^Navigating to \/x\./);
+    assert.ok(read.length < 40_000, `the model read ${read.length} chars of one navigate`);
+});
+
+test("a page-built run's verify ring-back after a debugger click reaches its model as the page wrote it: its text is the page's own", T, async () => {
+    const LONG = "L".repeat(30_000);
+    const w = await run({ builtBy: "page", builderUrl: SITE0.url, model: "text-driver", cfg: { cdp: true }, calls: [{ name: "click", args: { selector: "#c", verify: true } }],
+        page: (p) => (p.verifyAt ? { result: LONG } : p.name === "click" ? { result: "The target is a canvas.", cdpClick: { x: 100, y: 25, verify: true } } : undefined) });
+    assert.ok(w.runCalls().some((p) => p.verifyAt), "control: the ring-back was sent to the page");
+    const read = w.toolMessages()[0];
+    assert.match(read, /^Clicked the reserved target at \(100, 25\) via the debugger\./);
+    assert.ok(read.includes(LONG), `the model read ${read.length} chars, not the page's ${LONG.length}`);
+    assert.deepEqual(await capLog(w), []);
+});
+
+test("a page-built run handed to the worker mid-call: the answer that arrives after the hand-over is clipped for the model", T, async () => {
+    const LONG = "L".repeat(30_000);
+    const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", calls: [{ name: "scroll", args: {} }, { name: "scroll", args: {} }],
+        page: async (p, n, bg, tab) => {
+            if (n === 0) { tab.url = SITE0.url; await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "take over" }); }
+            return { result: LONG };
+        } });
+    const sent = w.runCalls().filter((p) => p.name === "scroll" && !p.renderOnly && !p.precheck);
+    assert.equal(sent[0].verifyInWorker, undefined, "control: the first call was sent while the run was the page's");
+    assert.equal(sent[1]?.verifyInWorker, true, "control: the run was the worker's by the second call");
+    for (const [i, m] of w.toolMessages().entries()) assert.match(m, /^L{12000}… \[first 12000 of 30000 chars\]/, `call ${i + 1}`);
+    assert.ok((await capLog(w)).filter((e) => e.reason === "result").length >= 2);
+});
+

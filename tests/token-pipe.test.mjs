@@ -41,6 +41,9 @@ test("describeToken names what is at the pointer, for every kind", () => {
     // Many columns are elided — the description is a label, not the data.
     const wide = tok({ kind: "table", table: { columns: ["a", "b", "c", "d", "e", "f", "g"], rows: [] } });
     assert.match(P.describeToken(wide), /0x7 table \(a, b, c, d, e, f, …\)/);
+    // A prefix of a larger source says the source's row count, not only what is held.
+    const prefix = { ...TABLE, table: { ...TABLE.table, shape: [50_000, TABLE.table.columns.length] } };
+    assert.match(P.describeToken(prefix), /2x3 table \(name, qty, price; the first 2 of 50000 rows\)/);
 });
 
 // `img` must never dump the payload: tens of thousands of tokens with nothing in them the model can perceive.

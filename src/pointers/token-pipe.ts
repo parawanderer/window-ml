@@ -84,7 +84,11 @@ export function describeToken(v: TokenValue): string {
     const text = v.full ?? v.out;
     if (v.kind === "table" && v.table) {
         const cols = v.table.columns.slice(0, 6).join(", ");
-        return `a ${v.table.rows.length}x${v.table.columns.length} table (${cols}${v.table.columns.length > 6 ? ", …" : ""})`;
+        // A table held as a prefix of its source says the source's row count (`shape`): the held count alone is a
+        // plausible wrong number, and the one a model would answer with.
+        const total = v.table.shape?.[0], held = v.table.rows.length;
+        const of = typeof total === "number" && total > held ? `; the first ${held} of ${total} rows` : "";
+        return `a ${held}x${v.table.columns.length} table (${cols}${v.table.columns.length > 6 ? ", …" : ""}${of})`;
     }
     if (v.kind === "image") return "an image";
     if (v.kind === "json") return `JSON, ${text.length} chars`;
