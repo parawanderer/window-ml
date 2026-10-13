@@ -224,3 +224,136 @@ test("loop: whatever a step produced (a result, a throw, a read-only try, a prec
         assert.match(pushed[0], /\[server\]/, `${name}: the model read the scrubbed text`);
     }
 });
+
+// --- the forms a secret takes in text the worker did not write itself (a backend's body, a resolver's message) ---
+
+/** The needles still present in `text` once scrubbed under `cfg`. */
+const leftIn = (text, cfg, needles) => { const out = scrubSecrets(text, secretsOf(cfg)); return needles.filter((n) => (n instanceof RegExp ? n.test(out) : out.includes(n))); };
+
+test("form: a configured port does not shield the bare host name", () => {
+    assert.deepEqual(leftIn("getaddrinfo ENOTFOUND secret-box.example; Host: secret-box.example", { chatUrl: URL_ }, ["secret-box.example"]), []);
+});
+
+test("form: a dotless docker host or a loopback name is not stripped from ordinary text", () => {
+    assert.equal(scrubSecrets("ollama ps lists qwen3 on the ollama box", secretsOf({ chatUrl: "http://ollama:11434" })), "ollama ps lists qwen3 on the ollama box");
+    assert.equal(scrubSecrets("serve it on localhost", secretsOf({ chatUrl: "http://localhost:3000/api/chat/completions" })), "serve it on localhost");
+});
+
+test("form: an IPv6 host is scrubbed with and without its brackets", () => {
+    const cfg = { chatUrl: "http://[fd00:1234::7]:8080/api/chat/completions" };
+    assert.deepEqual(leftIn("connect ECONNREFUSED fd00:1234::7:8080 ([fd00:1234::7])", cfg, ["fd00:1234::7"]), []);
+});
+
+test("form: the URL in another letter case is scrubbed", () => {
+    assert.deepEqual(leftIn("upstream HTTP://SECRET-BOX.EXAMPLE:4123/x said no", { chatUrl: URL_ }, [/secret-box\.example/i]), []);
+});
+
+test("form: the URL percent-encoded (a redirect's query) is scrubbed", () => {
+    const text = `302 to /login?next=${encodeURIComponent(URL_)}`;
+    assert.deepEqual(leftIn(text, { chatUrl: URL_ }, ["secret-box.example", encodeURIComponent(ORIGIN)]), []);
+});
+
+test("form: the URL and a key with a slash, JSON-escaped (`\\/`) or percent-encoded, are scrubbed", () => {
+    const key = "sk-ab/cd+ef/0123456789xyz";
+    const body = `{"url":"${URL_.replace(/\//g, "\\/")}","auth":"${key.replace(/\//g, "\\/")}","q":"key=${encodeURIComponent(key)}"}`;
+    assert.deepEqual(leftIn(body, { chatUrl: URL_, apiKey: key }, ["secret-box.example", "ab\\/cd+ef", "ab%2Fcd%2Bef"]), []);
+});
+
+test("form: an internationalized host is scrubbed as configured and as punycode", () => {
+    const cfg = { chatUrl: "http://bücher.example:8080/v1/chat/completions" };
+    assert.deepEqual(leftIn("Host bücher.example refused; resolved xn--bcher-kva.example", cfg, ["bücher.example", "xn--bcher-kva.example"]), []);
+});
+
+test("form: a placeholder key (`ollama`, `EMPTY`, `sk-1234`) does not strip that word from ordinary text", () => {
+    for (const apiKey of ["ollama", "EMPTY", "sk-1234", "changeme"]) {
+        const text = `ollama run qwen3; EMPTY string; LiteLLM's sk-1234 example; changeme later`;
+        assert.equal(scrubSecrets(text, secretsOf({ apiKey })), text, apiKey);
+    }
+});
+
+test("form: a filter that reads as a model name does not corrupt that model's name, and its error form is still scrubbed", () => {
+    const cfg = { modelFilter: "qwen3.5" };
+    assert.equal(scrubSecrets("Model \"qwen3.5:9b\" is ready", secretsOf(cfg)), "Model \"qwen3.5:9b\" is ready");
+    assert.doesNotMatch(scrubSecrets("blocked by the model filter (/qwen3.5/).", secretsOf(cfg)), /qwen3\.5/);
+});
+
+test("form: a one-letter filter does not strip `/a/` out of every path", () => {
+    const cfg = { modelFilter: "a" };
+    assert.equal(scrubSecrets("see https://x.example/a/b and /a/", secretsOf(cfg)), "see https://x.example/a/b and /a/");
+    assert.doesNotMatch(scrubSecrets("blocked by the model filter (/a/).", secretsOf(cfg)), /\(\/a\/\)/);
+});
+
+test("form: blank settings scrub nothing (never every empty string)", () => {
+    assert.deepEqual(secretsOf({ chatUrl: "  ", apiKey: " ", modelFilter: "", priceSnapshotUrl: "" }), []);
+    assert.equal(scrubSecrets("abc", secretsOf({ chatUrl: "  ", apiKey: " " })), "abc");
+});
+
+test("form: an 8 MB tool result of near misses scrubs in linear time, under a filter with nested quantifiers", () => {
+    const cfg = { ...config, modelFilter: "^(a+)+$" };
+    const chunk = "http://secret-box.example:412 sk-DISTINCTIVE-KEY-4b1 (/^(a+)+/) aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa! ";
+    const big = chunk.repeat(Math.ceil(8e6 / chunk.length));
+    const s = secretsOf(cfg);
+    const t0 = performance.now();
+    const out = scrubSecrets(big + URL_, s);
+    const ms = performance.now() - t0;
+    assert.ok(out.endsWith("[server]"));
+    assert.ok(ms < 3000, `${Math.round(ms)} ms`);
+});
+
+// --- page: the paths and timings around forPage ---
+
+test("page: a secret the 300-character body cut lands inside leaves no prefix of itself", T, async () => {
+    for (const [what, secret] of [["key", KEY], ["url", URL_]]) {
+        // The worker writes `HTTP 500 from <url>: <body.slice(0, 300)>`; the body places the secret across the cut.
+        const body = "x".repeat(300 - 10) + secret + " trailing";
+        const bg = loadBackground({ config, onFetch: (call) => (call.url.endsWith("/api/models") ? modelList() : { ok: false, status: 500, headers: { get: () => "text/plain" }, json: async () => ({}), text: async () => body }) });
+        const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "default-model" } }, structuredClone(PAGE));
+        assert.ok(res.error, what);
+        assert.ok(!res.error.includes(secret.slice(0, 10)), `${what}: ${res.error.slice(-80)}`);
+    }
+});
+
+test("page: a server tool's transport error (the endpoint's echoed body) names no secret", T, async () => {
+    const s = secretsOf(config);
+    assert.deepEqual(leaksIn(scrubErrors({ data: { ok: false, transportError: `the tool endpoint returned 500: ${URL_} ${KEY}` } }, s)), []);
+    const bg = loadBackground({ config: { ...config, pageApprovalDomains: ["site.example"] }, onFetch: BACKENDS.echo500 });
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", requestId: "st1", payload: { toolId: "t", name: "f", args: {} } }, structuredClone(PAGE));
+    assert.match(JSON.stringify(res), /tool endpoint returned 500/, "the call reached the endpoint");
+    assert.deepEqual(leaksIn(res), [], JSON.stringify(res).slice(0, 400));
+});
+
+test("page: an error written under the old URL is scrubbed after the URL changes mid-request", T, async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const bg = loadBackground({ config, onFetch: async (call) => (call.url.endsWith("/api/models") ? modelList() : (await gate, { ok: false, status: 500, headers: { get: () => "text/plain" }, json: async () => ({}), text: async () => "nope" })) });
+    const pending = bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "default-model" } }, structuredClone(PAGE));
+    await flush(20);
+    bg.setSync({ chatUrl: "http://new-box.example:9000/api/chat/completions", apiKey: "sk-ANOTHER-KEY-77aa" });
+    release();
+    const res = await pending;
+    assert.ok(res.error, "the request failed");
+    assert.deepEqual(leaksIn(res), [], res.error);
+});
+
+// --- the model: what a resumed history carries ---
+
+test("model: a resumed history written before the scrub (a raw URL in a tool result) reaches the model scrubbed", T, async () => {
+    const sent = [];
+    const bg = loadBackground({ config, onFetch: (call) => {
+        if (call.url.endsWith("/api/models")) return modelList();
+        sent.push(JSON.stringify(call.body.messages));
+        return jsonResponse({ choices: [{ message: { content: "done" } }] });
+    } });
+    // The shape a session saved by the pre-#620 worker holds: the tool's error text as it was written.
+    const old = [
+        { role: "system", content: "SYS" },
+        { role: "user", content: "read the doc" },
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "fetch_url", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "c1", content: `Error: Couldn't reach the server at ${URL_} (key ${KEY})` },
+        { role: "assistant", content: `The server at ${ORIGIN} is down.` },
+    ];
+    const res = await bg.send({ type: "START_RUN", payload: { runId: "resume-old", task: "again", systemPrompt: "SYS", tools: [], model: "default-model", think: null, maxSteps: 3, surface: "off", resumeMessages: old } }, structuredClone(PAGE));
+    assert.ok(res.data, JSON.stringify(res).slice(0, 300));
+    assert.ok(sent.length, "the model was called");
+    assert.deepEqual(leaksIn(sent), [], sent[0].slice(0, 600));
+});
