@@ -5,7 +5,7 @@ import * as acorn from "acorn";
 
 /** The API shapes the interview asks for, by key. `lang` decides the parser. */
 export const SHAPES = {
-    run: { lang: "js", name: "plain ml.sh.run", uses: /\bml\.sh\.run\s*\(|\bsh\.run\s*\(/ },
+    run: { lang: "js", name: "plain ml.sh.run", uses: /\bml\.sh\.(?:run|pipe)\s*\(/ },
     execa: { lang: "js", name: "execa", uses: /\bexeca(?:Sync)?\s*\(/ },
     template: { lang: "js", name: "$ template", uses: /(?:^|[^\w$.])\$(?:\s*\([^)]*\))?\s*`/m },
     pysh: { lang: "py", name: "Python sh", uses: /\bsh\.[a-z_]\w*\s*[.(]|from\s+sh\s+import/ },
