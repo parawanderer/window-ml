@@ -60,6 +60,10 @@ the worker, and the page answers geometry only):
       page is built again if the hand-over lands first; the decision is stored at once and survives an eviction;
       `VALUE_COLUMNS` is refused to an unapproved page; red-team: a revoked page flooding sends cannot stop or delay
       it: #621.
+- [x] An error's text no longer carries the server URL, the API key or the model filter to a page (every page-started
+      answer and the stream port, `forPage`) or to a worker-hosted run's model (every tool result, `forModel`); the
+      person's extension pages and the execution log's `key` keep it; `SET_MODEL` no longer lists the models the filter
+      hides. Every page-started type is walked under three backend failures (`tests/error-scrub.test.mjs`): #620.
 
 ## In progress
 
@@ -98,6 +102,10 @@ the worker, and the page answers geometry only):
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
       extension surface. Proposed: clamp, and drop `origin` for page runs. Owner decision pending.
+- [ ] A page-built run whose approved site is revoked while it runs, with no navigation, is not handed to the worker:
+      its page's sends are refused from the revoke on (fails closed), so its tools stop working there.
+- [ ] Error text that reaches the page outside `forPage`: `VALUE_COLUMNS` errors and the `PYTHON_STREAM` and
+      `SERVER_TOOL_STREAM` frames (content.ts). None is built from the config today.
 - [ ] Site access slice 3 (`requestAccess`, wording needs owner approval), slice 4.
 
 ## The plan to get to "thoroughly investigated"
