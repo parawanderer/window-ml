@@ -130,10 +130,11 @@ test("every sweep's budget counts a tool's browsers, and a tool about to start m
     assert.match(roomWarning(4, opts), /^4 browsers \(about 4\.0 GB\) do not fit the bench's memory budget: the memory limit: the bench holds 5\.0 GB of 8\.0 GB, and these take about 4\.0 GB\. .*hold\.mjs --ledger/);
 });
 
-test("panel.mjs, converse.mjs and observe.mjs each join the ledger (converse not in --attach, which starts no browser)", async () => {
+test("converse.mjs and observe.mjs each join the ledger (converse not in --attach, which starts no browser); panel.mjs is run.mjs, a runner", async () => {
     const { readFileSync } = await import("node:fs");
     const src = (f) => readFileSync(new URL(`../tests/e2e/${f}`, import.meta.url), "utf8");
-    for (const [f, tool] of [["panel.mjs", "panel"], ["observe.mjs", "observe"], ["converse.mjs", "converse"]]) assert.match(src(f), new RegExp(`joinLedger\\(\\{ tool: "${tool}"`), f);
+    for (const [f, tool] of [["observe.mjs", "observe"], ["converse.mjs", "converse"]]) assert.match(src(f), new RegExp(`joinLedger\\(\\{ tool: "${tool}"`), f);
+    assert.match(src("panel.mjs"), /path\.join\(HERE, "bench", "run\.mjs"\)/, "panel runs the bench, which registers itself");
     const c = src("converse.mjs");
     assert.ok(c.indexOf("joinLedger({") > c.indexOf('process.argv[2] === "--attach"'), "after the --attach branch has exited");
 });

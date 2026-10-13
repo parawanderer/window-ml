@@ -9,7 +9,7 @@
 //   node scripts/merge-when-green.mjs 501 --wait --merge   # …and squash-merge when it says OK
 //   … --session <id>  # your harness's session id: comments YOU posted (their agent-post marker) do not count as unread
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
-//   … --discard       # merge even though a worktree holds work that is in no commit
+//   … --discard       # merge even though a worktree holds work in no commit: it stays there, and goes with the worktree
 //
 // WHAT A MERGE WOULD LEAVE BEHIND. Before the verdict it looks at each local checkout of the PR's branch and names what
 // lives only on that disk: bench sweeps and the scoreboard database under tests/e2e/artifacts/bench/ (git ignores them),
@@ -17,8 +17,11 @@
 // its merge, and an interview file sat untracked on a throwaway branch. A LINKED WORKTREE holding any of it REFUSES the
 // merge and prints how to keep it: `--keep-bench` moves its sweeps into the main clone's bench directory and merges its
 // scoreboard rows into the main clone's (rows are keyed by run, so nothing is counted twice); uncommitted files are
-// committed or stashed by hand; `--discard` merges anyway. The main clone is only reminded: nothing removes it. A
-// checkout on the branch also keeps its LOCAL branch, and only the remote one is deleted.
+// committed or stashed by hand; `--discard` merges anyway, moving nothing (what is there goes when the worktree is
+// removed). On EVERY merge, with or without either flag, a page server or a held run a linked worktree left running is
+// stopped, since the worktree is about to go; each stopped server prints the `serve.mjs` line that serves its sweep
+// again. The main clone is only reminded: nothing removes it. A checkout on the branch also keeps its LOCAL branch, and
+// only the remote one is deleted.
 
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -264,7 +267,7 @@ export async function leftovers(branch, { keep, discard }) {
         console.log("  A worktree is removed once its work is done, and this would go with it. To keep it:");
         if (sweeps.length || scoreDbs.length) console.log(`    bench results: run again with --keep-bench, which moves the sweeps into ${path.join(main, BENCH)} and merges the scoreboard's rows into the main clone's`);
         if (files.length) console.log(`    files: commit them (here, or on a new branch from main) or stash them (git -C ${dir} stash -u)`);
-        console.log("  To merge without keeping them, run again with --discard.");
+        console.log("  To merge without keeping them (they stay in the worktree, and go with it), run again with --discard.");
     }
     const linked = checkouts.filter((c) => c.linked).map((c) => diskOnly(c.dir));
     return { blocked, held: checkouts.length > 0, servers: linked.map((d) => d.server).filter(Boolean), heldRuns: linked.flatMap((d) => d.held) };

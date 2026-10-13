@@ -41,7 +41,7 @@ merge takes them with it. Both have happened: a whole sweep's runs, and an inter
   rows into the main clone's (rows are keyed by run, so none is counted twice). A sweep whose name the main clone already
   has is left in place: rename one and run again.
 - Uncommitted files are yours to commit (a new branch from main, if this PR is done) or stash. They are never moved.
-- `--discard` merges anyway, when the results are not wanted.
+- `--discard` merges anyway, when the results are not wanted: nothing is moved, and they go when the worktree is removed.
 - A page server a finished sweep left running from a linked worktree (`server.json`, from `serve.mjs`) is named, and
   stopped once the merge goes ahead: a worktree removed under it leaves it serving a directory that is gone. The script
   prints the `serve.mjs <sweep dir>` that serves the sweep again from wherever it now lives.

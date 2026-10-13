@@ -31,6 +31,15 @@ test("a turn report parses back to its answer, its tools in order, and whether i
     assert.equal(parseTurnReport(capped).capped, true);
 });
 
+test("an answer's own bolded bullets and headings are not tool calls; only the Steps section counts (shell-shapes turn 8)", () => {
+    const said = "### execa\n\n- **execa**: argv only\n- **run**: a plain run\n- **template**: the $ form\n\n## Steps\n\nquoted, not a heading of the report";
+    const md = turnReport(8, [step(1, "exec", { js: "1" })], 0, { summary: said });
+    const r = parseTurnReport(md);
+    assert.deepEqual(r.tools, ["exec"], "one real call, none of the answer's bullets");
+    assert.equal(r.answer, said, "the whole answer, its own \"## Steps\" included");
+    assert.deepEqual(parseTurnReport(turnReport(8, [], 0, { summary: said })).tools, [], "no steps: no calls");
+});
+
 test("a turn report holds only the steps after the previous turn", () => {
     const events = [step(1, "exec"), answer(2, "a"), step(3, "look"), answer(4, "b")];
     assert.deepEqual(parseTurnReport(turnReport(2, events, 2, { summary: "b" })).tools, ["look"]);
