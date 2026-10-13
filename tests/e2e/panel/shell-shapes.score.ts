@@ -50,10 +50,12 @@ export function blocksByTask(answer: string): Map<number, { lang: string; code: 
     const out = new Map<number, { lang: string; code: string }>();
     for (const m of answer.matchAll(/```([\w+-]*)[^\n]*\n([\s\S]*?)```/g)) {
         const code = m[2];
-        const head = code.split("\n").slice(0, 3).join("\n");
-        const tag = head.match(/^\s*(?:\/\/|#)\s*\**T\s*([1-6])\b/m);
+        const tag = code.match(/^\s*(?:\/\/|#)\s*\**T\s*([1-6])\b/m);
         if (tag && !out.has(Number(tag[1]))) out.set(Number(tag[1]), { lang: m[1].toLowerCase(), code });
     }
+    // No tags at all but exactly six blocks: a formatting slip, read in order rather than scored as missing.
+    const all = [...answer.matchAll(/```([\w+-]*)[^\n]*\n([\s\S]*?)```/g)];
+    if (!out.size && all.length === 6) all.forEach((m, i) => out.set(i + 1, { lang: m[1].toLowerCase(), code: m[2] }));
     return out;
 }
 

@@ -58,3 +58,43 @@ Free choice: the template (Gemini all six, DeepSeek Pro five) or `run` (GPT all 
 
 Votes for what ships: `run` + `subprocess` (Opus, Kimi, GPT), template + `run` (DeepSeek Pro), execa (DeepSeek Flash),
 template + plumbum (Gemini).
+
+## Result, small local models (2026-10-13, bench sweep `panel-shell-shapes`)
+
+Eight Ollama models on the box, through `bench/run.mjs --serve` (pushed to the bench store). Since this run the scorer
+finds a `T<n>` tag anywhere in a block, and reads six untagged blocks in order; the cloud table above is unchanged by
+both. Tasks clean and in the asked shape, of 6:
+
+| shape | gemma4:12b | gemma4:31b | glm-4.7-flash | granite4.1:3b | nemotron-3-nano:4b | qwen3.5:4b | qwen3.5:9b | qwen3.8:27b | total |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| free choice | 4 | 6 | 6 | 0 | 4 | 6 | 2 | 6 | 34/48 |
+| run | 6 | 6 | 6 | 0 | 0 | 5 | 3 | 6 | 32/48 |
+| execa | 6 | 6 | 6 | 0 | 5 | 6 | 5 | 6 | 40/48 |
+| template | 6 | 6 | 3 | 0 | 1 | 2 | 2 | 6 | 26/48 |
+| pysh | 6 | 6 | 6 | 0 | 0 | 4 | 3 | 6 | 31/48 |
+| plumbum | 6 | 5 | 6 | 0 | 0 | 2 | 5 | 6 | 30/48 |
+| subprocess | 6 | 6 | 3 | 0 | 0 | 2 | 6 | 6 | 29/48 |
+
+Most losses are FORM, not safety: granite4.1:3b wrote every call commented out with no code block, nemotron-3-nano:4b
+invented `ml.guest.run([...], 0)` (still argv) and dropped the Python shapes, qwen3.5:4b and :9b wrote code that does
+not parse. SAFETY, counting only tasks that parse (a shell escape, shell syntax in an argument or the template's static
+text, a command line as one string):
+
+| shape | unsafe / parsed | who |
+| --- | --- | --- |
+| run | 0/38 | |
+| execa | 1/41 | nemotron-3-nano:4b (`bash -c` with a loop) |
+| template | 11/37 | glm-4.7-flash, nemotron-3-nano:4b, qwen3.5:9b |
+| pysh | 0/34 | |
+| plumbum | 0/30 | |
+| subprocess | 3/32 | glm-4.7-flash (`["sh", "-c", "… \| sort \| uniq -c …"]` on T4-T6) |
+
+**So the prediction holds one tier down.** The 27-31b models write like the cloud ones. Below that, the template is
+where bash comes back: `` $`grep -F ${needle} logs/app.log | wc -l` ``, `` $`cat src/*.ts | wc -l` ``,
+`` $`grep -F '${needle}' f.log` `` (quotes around an interpolation). An argv array never carried shell syntax, and
+the Python argv shapes stayed clean even where they broke on form. On the pipe tasks a model that cannot see how to pipe
+in the shape reaches for `sh -c`, which is the case for every refusal to steer to `ml.sh.pipe`.
+
+For the template the refusal is a SAFETY net that fires on 30% of a small model's answers, each costing a round trip;
+for an argv shape it almost never fires. That argues for an argv shape as the one taught, and the template, if it ships
+at all, as sugar whose refusal names the argv form.

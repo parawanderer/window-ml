@@ -194,7 +194,12 @@ in each shape, scored mechanically. Nothing ran.
 - **Syntax-level safety is learnable from one sentence of doc.** 34 to 36 of 36 tasks were argv-clean in every shape.
   No model put a quote, `|`, `*` or `$` in a template's static text; each routed the literal through an interpolation
   (`` `cut -d ${" "}` ``, `` `awk ${"{print $1}"}` ``). The two faults were plumbum syntax (`local["sort"][]`). The shapes
-  do not separate on this measure, so the choice falls to the points below. Small local models are measured next.
+  do not separate on this measure among large models.
+- **Small local models separate them.** Eight Ollama models (3b to 31b): the 27-31b ones write like the cloud ones;
+  below that the template carried shell syntax in 11 of 37 parsed tasks (`` $`grep -F ${needle} f | wc -l` ``), an argv
+  array in 1 of 41 (execa) or none (`run`, `sh`, plumbum), and the `subprocess` shim fell back to `["sh", "-c", …]` on
+  the pipe tasks. The template's refusal would fire on about a third of a small model's answers, an argv shape's almost
+  never: teach an argv shape, and keep the template, if at all, as sugar whose refusal names the argv form.
 - **A borrowed name promises the borrowed behaviour.** execa throws on a non-zero exit, Python `sh` globs `*` by
   default, real `subprocess` and execa REPLACE the environment where ours adds to it. A shape that keeps the name and
   changes the behaviour is a trap for exactly the models that know the library best. Ship a borrowed name only with its
