@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { originOf, grantableOrigin, decide, applyEdit, originFromInput } = await import("../src/site-access.ts");
+const { originOf, grantableOrigin, decide, applyEdit, originFromInput, selfApprovalOrigin, selfApproves } = await import("../src/site-access.ts");
 
 const empty = { always: [], session: [], denied: [] };
 
@@ -51,10 +51,74 @@ test("a denial beats an approval, and an unknown origin is neither", () => {
 
 test("a site trusted to self-gate (pageApprovalDomains) is approved over https only; a denial still wins", () => {
     assert.equal(decide(empty, "https://docs.example", ["docs.example"]), "always");
-    assert.equal(decide(empty, "https://docs.example:8443", ["docs.example"]), "always", "any port: the list is keyed by host");
+    assert.equal(decide(empty, "https://docs.example:8443", ["docs.example"]), "unknown", "a bare host is its https origin on the default port");
     assert.equal(decide(empty, "http://docs.example", ["docs.example"]), "unknown", "never plain http: anyone on the wire could be it");
     assert.equal(decide(empty, "https://sub.docs.example", ["docs.example"]), "unknown", "a host, not a domain suffix");
     assert.equal(decide({ ...empty, denied: ["https://docs.example"] }, "https://docs.example", ["docs.example"]), "denied");
+});
+
+// --- the self-approval whitelist: one origin per entry ---
+
+test("a whitelist entry trusts exactly one origin: a bare host is https on the default port, an origin is itself", () => {
+    assert.equal(selfApprovalOrigin("docs.example"), "https://docs.example");
+    assert.equal(selfApprovalOrigin("Docs.Example"), "https://docs.example", "a host is case-insensitive");
+    assert.equal(selfApprovalOrigin("127.0.0.1"), "https://127.0.0.1");
+    assert.equal(selfApprovalOrigin("intranet"), "https://intranet", "a dotless host a person stored before still counts");
+    assert.equal(selfApprovalOrigin("http://127.0.0.1:5123"), "http://127.0.0.1:5123", "an entry written as an origin keeps its scheme and port");
+    assert.equal(selfApprovalOrigin("https://docs.example/"), "https://docs.example");
+    // Never widened: an entry the host match never honoured (a port or a path on a bare host, another scheme) trusts nothing.
+    for (const bad of ["docs.example:8443", "docs.example/path", "ftp://docs.example", "file:///etc", "", "  ", null, 42, {}, "https://docs.example/a/b"])
+        assert.equal(selfApprovalOrigin(bad), null, JSON.stringify(bad));
+});
+
+/** Sender shapes against a whitelist of `["trusted.example"]`, each with whether it may self-approve. Every shape a
+ *  host match would have confused with the trusted origin is here, beside the one positive control. */
+const SELF_APPROVAL_SENDERS = [
+    ["https top frame (positive control)", { origin: "https://trusted.example", url: "https://trusted.example/p", frameId: 0 }, true],
+    ["https, URL only (a worker-built run's tab)", { url: "https://trusted.example/p" }, true],
+    ["https, explicit default port", { url: "https://trusted.example:443/p" }, true],
+    ["plain http, same host", { origin: "http://trusted.example", url: "http://trusted.example/p", frameId: 0 }, false],
+    ["https, another port", { origin: "https://trusted.example:8443", url: "https://trusted.example:8443/p", frameId: 0 }, false],
+    ["http, another port", { url: "http://trusted.example:8080/p" }, false],
+    ["a subdomain", { origin: "https://sub.trusted.example", url: "https://sub.trusted.example/p", frameId: 0 }, false],
+    ["a suffix lookalike", { url: "https://trusted.example.evil.test/p" }, false],
+    ["a prefix lookalike", { url: "https://eviltrusted.example/p" }, false],
+    ["a sub-frame of the trusted origin", { origin: "https://trusted.example", url: "https://trusted.example/f", frameId: 3 }, false],
+    ["an opaque origin on the trusted URL", { origin: "null", url: "https://trusted.example/p", frameId: 0 }, false],
+    ["a URL claiming the trusted origin from another origin", { origin: "https://evil.example", url: "https://trusted.example/p", frameId: 0 }, false],
+    ["no URL at all", {}, false],
+];
+
+test("self-approval: only the whitelisted https origin itself, never http, another port, a subdomain or a sub-frame", () => {
+    for (const [label, sender, want] of SELF_APPROVAL_SENDERS)
+        assert.equal(selfApproves(empty, sender, ["trusted.example"]), want, label);
+});
+
+test("self-approval follows the site gate: a denied origin never self-approves, and what self-approves the gate allows", () => {
+    for (const [label, sender] of SELF_APPROVAL_SENDERS) {
+        const lists = { ...empty, always: ["http://trusted.example", "https://trusted.example:8443", "https://sub.trusted.example"] };
+        const yes = selfApproves(lists, sender, ["trusted.example"]);
+        const g = grantableOrigin(sender);
+        if (yes) assert.equal(decide(lists, g.origin, ["trusted.example"]), "always", `${label}: self-approves but the gate would refuse it`);
+    }
+    const denied = { ...empty, denied: ["https://trusted.example"] };
+    assert.equal(selfApproves(denied, { url: "https://trusted.example/" }, ["trusted.example"]), false, "a denial wins over the whitelist");
+    // Being approved for window.ml over http does not make the http origin self-approving.
+    assert.equal(selfApproves({ ...empty, always: ["http://trusted.example"] }, { url: "http://trusted.example/" }, ["trusted.example"]), false);
+    // An entry written as an http origin is the person's explicit choice for that one origin, and the gate agrees.
+    assert.equal(selfApproves(empty, { url: "http://127.0.0.1:5123/" }, ["http://127.0.0.1:5123"]), true);
+    assert.equal(decide(empty, "http://127.0.0.1:5123", ["http://127.0.0.1:5123"]), "always");
+    assert.equal(selfApproves(empty, { url: "http://127.0.0.1:5124/" }, ["http://127.0.0.1:5123"]), false, "another port");
+});
+
+test("UPGRADE: a stored whitelist of bare hosts, as the settings wrote it, keeps working for https senders", () => {
+    // What every earlier build stored: normalised bare hostnames (settings.tsx / popup.ts `normDomain`), in sync.
+    const stored = ["docs.google.com", "example.org", "127.0.0.1"];
+    for (const host of stored) {
+        assert.equal(selfApproves(empty, { url: `https://${host}/any/page` }, stored), true, host);
+        assert.equal(decide(empty, `https://${host}`, stored), "always", host);
+        assert.equal(selfApproves(empty, { url: `http://${host}/any/page` }, stored), false, `${host} over http`);
+    }
 });
 
 // --- how an edit changes them ---

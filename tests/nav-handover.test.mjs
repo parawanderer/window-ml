@@ -638,9 +638,9 @@ test("a revoke hands over the page-built runs on every tab of the revoked origin
     assert.deepEqual(await w.handed(), ["run-7", "run-8"]);
 });
 
-test("removing a host from the self-approval whitelist hands over its runs on every port; an entry that still covers the origin hands over nothing", T, async () => {
-    // The whitelist names a host: it approves https on any port.
-    const w = await settledRuns({ local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example"] }, tabs: [
+test("emptying the self-approval whitelist hands over the runs of every origin it approved; an entry that still covers the origin hands over nothing", T, async () => {
+    // A bare host approves its https origin on the default port only; another port is approved by an entry naming it.
+    const w = await settledRuns({ local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example", "https://builder.example:8443"] }, tabs: [
         { id: 7, url: BUILDER }, { id: 8, url: "https://builder.example:8443/x" }, { id: 9, url: ALSO_APPROVED }] });
     w.bg.setSync({ pageApprovalDomains: [] });
     await sleep(50);
