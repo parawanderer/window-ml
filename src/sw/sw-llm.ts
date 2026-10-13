@@ -6,6 +6,7 @@
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import { spendForCall } from "./sw-prices";
 import type { JsonSchema } from "../contract";
+import { clipClear, secretsOf } from "../secret-scrub";   // a quoted body is cut clear of the config's secrets
 import type { MlConfig, ApiFormat, ProtoMode } from "../contract/contract-config";
 import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "../contract/contract-chat";
 import type { LoadedModel, ServerTool } from "../contract/contract-server";
@@ -762,7 +763,8 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
                     hintDropped = true;
                     continue;
                 }
-                let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
+                // Cut before a secret the body echoes rather than through it: a half key matches no form the scrub knows.
+                let msg = `HTTP ${res.status} from ${config.chatUrl}: ${clipClear(text, 300, secretsOf(config))}`;
                 // Capability probe was inconclusive for this backend, so the images
                 // themselves are a plausible culprit — say so.
                 if (hasImages && !visionConfirmed) {
@@ -1342,7 +1344,7 @@ export async function unloadModels(modelName?: string): Promise<string[]> {
         });
         if (!res.ok) {
             const text = await res.text().catch(() => "");
-            throw new Error(`Failed to unload ${model}: HTTP ${res.status} ${text.slice(0, 200)}`);
+            throw new Error(`Failed to unload ${model}: HTTP ${res.status} ${clipClear(text, 200, secretsOf(config))}`);
         }
     }
 

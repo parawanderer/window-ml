@@ -7,7 +7,7 @@ import { runBackgroundAgent } from "../agent/agent-host";
 import { evalReadonlyInWorker } from "./sw-readonly";
 import { workerReadonlyMl } from "./worker-readonly-ml";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel } from "./sw-scrub";
+import { forModel, forModelHistory } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -527,6 +527,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             return { ...got, documentId: doc };
         }, (doc, selector, index, media) => workerAnswerMedia(runId, tabId, doc, selector, index, media));
     }
+    let historyScrubbed = false;   // the resumed history has crossed `forModel` (callModel's first call)
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
@@ -534,6 +535,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
           ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },
         {
             callModel: async (messages, opts) => {
+                // A resumed history was written before this run, perhaps before the scrub or under another config: its
+                // tool results reach the model again here, so they cross `forModel` too, once, in place (and are stored so).
+                if (!historyScrubbed) { historyScrubbed = true; if (resumeMessages?.length) await forModelHistory(messages); }
                 // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                 const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
                 // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not

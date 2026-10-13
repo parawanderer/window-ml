@@ -33,6 +33,13 @@ handler's answer and is left alone), and `forModel` on every step result a worke
 once in the shared loop after the step settles (`forModel` in `agent-loop.ts`: a tool's answer, a read-only try, a
 precheck, a dispatch that threw, a denial), which records the raw text in the execution log's `key` (`tool`/`scrubbed`). Extension pages (the popup, the DevTools panel, Settings) are answered unscrubbed: they are where
 a person diagnoses a wrong URL. `SET_MODEL`'s unknown-model error lists only the models the filter allows.
+The forms (`secretsOf`): the URL, its origin, host and host name (as typed and as parsed, any letter case; not a dotless
+or loopback name such as `ollama` or `localhost`, which are ordinary words), each also JSON-escaped and percent-encoded;
+the key only from 12 characters (a shorter one is a placeholder like `ollama`); the filter in its error form `(/re/)`,
+and bare only when it holds a regex character other than `.` (else it is a model's name). A quoted backend body is cut
+clear of a secret (`clipClear`), never through it. Every key ending in `error` is scrubbed (`transportError` too). The
+settings a change replaced stay scrubbed while the worker lives, for a request in flight across the change, and a
+resumed history crosses `forModel` once before its first model call (a session saved before the scrub).
 `tests/error-scrub.test.mjs` walks every page-started type under each backend failure.
 
 **A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
