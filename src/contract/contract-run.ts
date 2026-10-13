@@ -187,5 +187,11 @@ export type PromptSurface =
     | "console";
 
 /** Where a prompt came from, and whether that place is on another device. `remote` only means anything for
- *  `"chat"`; every other surface is, by construction, the browser the run is in. */
-export interface PromptOrigin { surface: PromptSurface; remote?: boolean }
+ *  `"chat"`; every other surface is, by construction, the browser the run is in. `scopes` and `ui` describe the SENDER
+ *  of a command that carried it (session-commands.ts `commandOrigin`): what its channel lets it do, and what it says it
+ *  can show. `ml.current.client` is read from them (current-client.ts). */
+export interface PromptOrigin {
+    surface: PromptSurface; remote?: boolean;
+    scopes?: readonly import("../session/session-host").Scope[];
+    ui?: readonly string[];
+}

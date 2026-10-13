@@ -143,6 +143,8 @@ test("the loop records the task's surface, each step, each tool, a counted reply
     const m = s.meta;
     assert.equal(m[1].surface, "hud", "the task carries the run's own surface");
     assert.equal(m[4].surface, "chat", "a steering message carries where IT was typed");
+    assert.deepEqual([m[1].client.via, m[4].client.via, m[4].client.seesPage], ["this browser", "hub", false], "and who sent it: the conversation changed hands");
+    assert.deepEqual(s.client, m[4].client, "client is the latest user message's");
     assert.deepEqual([m[2].tokens, m[2].estimatedTokens], [12, undefined], "a reply with no reasoning is measured by its count");
     assert.deepEqual([m[5].tokens, typeof m[5].estimatedTokens], [undefined, "number"], "a reply that also reasoned is NOT: its count includes reasoning not re-sent");
     assert.deepEqual([m[3].tool, m[3].seq, m[3].step, m[3].truncated], ["exec", 1, 1, true], "the model saw 500 of 800");

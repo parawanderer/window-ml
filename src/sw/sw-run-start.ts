@@ -71,13 +71,13 @@ const DEFAULT_MAX_STEPS = 10;
  * @returns the run's session hash
  * @throws when the tab is not an ordinary web page, there is nothing to do, or the page cannot host the run
  */
-export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; remote?: true } = {}): Promise<{ hash: string }> {
+export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> } = {}): Promise<{ hash: string }> {
     // The URL and title are the BROWSER's, never something the page said about itself.
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
     if (!/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
     const ml = workerMl(url);
-    const recipe = userRunOptions(ml, req, !!opts.remote);
+    const recipe = userRunOptions(ml, req, opts.sender);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, ...(opts.answer ? { answer: true } : {}) });
     const runId = shortHash();

@@ -103,7 +103,8 @@ test("a phone lists the runtime, sees its sessions under its principal, and is n
         assert.deepEqual(pinned.data.session, { runtime: w.id, hash: "aaaa0001" });
         // Every command the seal let through reaches the handler as the hub's, which is what marks a person's message
         // as typed on another device.
-        assert.deepEqual(w.s.froms, w.s.commands.map(() => ({ via: "hub" })));
+        assert.deepEqual(w.s.froms.map((f) => f.via), w.s.commands.map(() => "hub"));
+        assert.ok(w.s.froms.every((f) => Array.isArray(f.scopes) && f.scopes.length > 0), "with the scopes it was checked against");
     } finally { await w.close(); }
 });
 
@@ -178,8 +179,9 @@ async function revocationWorld({ runtimeMs = 3_600_000, runtimeSigns = true } = 
     const devices = await DeviceRegistry.open(async () => saved, async (st) => { saved = st; });
     const membership = { hubUrl: hub.url, hubName: HUB, accountRoot: root.publicKey, chain: runtime.chain, channelKey, pairedAtMs: Date.now() };
     const statuses = [];
+    const s = side();
     const rt = new HubRuntime({
-        membership, side: side(), devices, signer: runtime.identity,
+        membership, side: s, devices, signer: runtime.identity,
         connect: () => HubClient.connect({ ...common, ...runtime, role: Role.ROLE_RUNTIME }),
         onStatus: (st) => statuses.push(st),
     });
@@ -196,7 +198,7 @@ async function revocationWorld({ runtimeMs = 3_600_000, runtimeSigns = true } = 
         }
     };
     const close = async () => { rt.stop(); await running; hub.stop(); };
-    return { root, runtime, admin, tablet, devices, rt, statuses, connect, ask, common, channelKey, id: hex(runtime.principal), close, getSaved: () => saved };
+    return { root, runtime, admin, tablet, devices, rt, s, statuses, connect, ask, common, channelKey, id: hex(runtime.principal), close, getSaved: () => saved };
 }
 
 test("the allowlist: devices seen are listed, a revoked one is refused at once, and the runtime reconnects to rotate", LIVE, async () => {
@@ -417,6 +419,9 @@ test("device.scopes NARROWS at once, from the allowlist, and the certificate is 
         assert.deepEqual([after.ok, after.error.code], [false, "forbidden"]);
         assert.match(after.error.message, /no longer allowed `drive`/);
         assert.equal((await w.ask(tablet, SCOPE.view, { type: "runtime.info", runtime: w.id })).ok, true, "what is left still works");
+        // The scopes handed on with a command are the NARROWED set, so `ml.current.client.may` says what the gate
+        // decided and not what the certificate still claims.
+        assert.deepEqual(w.s.froms.at(-1), { via: "hub", scopes: [SCOPE.view] });
 
         // The list says what it may ACTUALLY do, which is the question a person reading it is asking.
         assert.deepEqual(w.devices.list().find((d) => d.label === "tablet").scopes, [SCOPE.view]);

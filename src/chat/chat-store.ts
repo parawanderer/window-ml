@@ -95,6 +95,9 @@ export class ChatStore {
     private readonly cache: EventCache | null;
     private readonly seen = new Map<SessionKey, { events: { pos?: number; event: MlDebugEvent }[]; earlier: { from: number } | null; truncated: boolean }>();
     private readonly saving = new Map<SessionKey, ReturnType<typeof setTimeout>>();
+    /** What this client can show (`clientUi`, platform.ts), stamped on every message it sends; set by whoever knows the
+     *  platform (`ChatApp`, the phone app's embed). Null sends none, as an older client would. */
+    ui: readonly string[] | null = null;
 
     constructor(readonly host: SessionHost, opts: { cache?: EventCache } = {}) {
         this.cache = opts.cache ?? null;
@@ -387,6 +390,9 @@ export class ChatStore {
     /** Send a command. A failure becomes a notice as well as the result, so a button needs no error handling of its
      *  own to be honest about what happened. */
     async send<C extends Command>(command: C, opts?: { signal?: AbortSignal; quiet?: boolean }): Promise<CommandResult<C["type"]>> {
+        // A message a person sends says what this client can show (`ml.current.client.ui`): stamped here, the one
+        // place every sender passes through, so no view has to remember it.
+        if (this.ui && (command.type === "session.send" || command.type === "agent.start") && !("ui" in command)) command = { ...command, ui: [...this.ui] };
         const r = await this.host.send(command, opts);
         if (!r.ok && !opts?.quiet && r.error.code !== "aborted") {
             this.notify(`${FAILURE[r.error.code] ?? "Failed"}${r.error.message ? `: ${r.error.message}` : ""}`, "error");

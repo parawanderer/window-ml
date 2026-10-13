@@ -61,7 +61,7 @@ test("an unrecognised surface reads as the HUD, and a bad budget is dropped rath
 });
 
 test("a run started over the hub is marked remote by the channel, never by a field of the request", () => {
-    const r = userRunOptions(kit, { task: "x", surface: "chat" }, true);
+    const r = userRunOptions(kit, { task: "x", surface: "chat" }, { remote: true });
     assert.deepEqual(r.origin, { surface: "chat", remote: true });
     assert.match(r.options.systemAppend, /another device/);
     assert.deepEqual(userRunOptions(kit, { task: "x", surface: "chat", remote: true }).origin, { surface: "chat" }, "a request (which a page can send) cannot say it");

@@ -44,8 +44,18 @@ const CHAT_REMOTE = "the chat app on another device — they are not at this bro
  */
 export function promptSurfaceNote(origin?: PromptOrigin | null): string | null {
     if (!origin?.surface || !(origin.surface in MEANS)) return null;
-    const means = origin.surface === "chat" && origin.remote ? CHAT_REMOTE : MEANS[origin.surface];
+    const means = !seesPage(origin) ? CHAT_REMOTE : MEANS[origin.surface];
     return `This instruction was typed in ${means}.`;
+}
+
+/**
+ * Whether the person who typed at `origin` can see the page the run is on: every surface but the chat app on another
+ * device. The one rule behind both the note above and `ml.current.client.seesPage`, so the two cannot disagree.
+ * @param origin where the message was typed
+ * @returns false only for a remote chat client
+ */
+export function seesPage(origin: PromptOrigin): boolean {
+    return !(origin.surface === "chat" && origin.remote);
 }
 
 /**

@@ -68,6 +68,10 @@ export interface Principal {
  *  scope and is never implied by `drive`. */
 export type Scope = "view" | "drive" | "approve" | "screen" | "desktop" | "admin";
 
+/** Every {@link Scope}, for a reader that must name each one (`ml.current.client.may`). Built from a record the
+ *  compiler holds complete, so a scope added to the union fails the build here until it is listed. */
+export const SCOPE_NAMES = Object.keys({ view: 1, drive: 1, approve: 1, screen: 1, desktop: 1, admin: 1 } satisfies Record<Scope, 1>) as Scope[];
+
 /** One scope held by THIS client on a runtime, possibly narrowed. Grants are attenuated when passed on, never
  *  widened. The runtime checks every command against its own copy; a client reads these only to decide what to
  *  offer, so a wrong grant here costs a greyed-out button or a `forbidden` result, never access. */
@@ -379,7 +383,11 @@ export type ImageDataUrl = string;
 export type Command =
     /** A message to a session: steers a running agent (seen at its next step boundary), or starts the next turn of
      *  an idle agent or chat. Text, images, or both. */
-    | { type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey }
+    | {
+        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
+        ui?: ClientUi;
+    }
     | { type: "session.cancel"; session: SessionId }
     /**
      * Continue an agent that stopped at its step cap, with a fresh step budget. `maxSteps` is the budget the person
@@ -439,6 +447,8 @@ export type Command =
     | {
         type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; target: AgentTarget;
         model?: string; maxSteps?: number;
+        /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
+        ui?: ClientUi;
         /** `true` forces native vision on the agent's own model (ml.agent's `vision: true`) */
         vision?: true;
         /** stream the model's thinking and reply live */
@@ -555,8 +565,14 @@ export type Command =
 export type CommandType = Command["type"];
 
 /** Who sent a command, as the TRANSPORT knows it, never as the command says: this browser's own pages over the local
- *  port, or a device over the hub whose seal the hub runtime verified (hub-runtime.ts). */
-export interface CommandFrom { via: "this browser" | "hub" }
+ *  port, or a device over the hub whose seal the hub runtime verified (hub-runtime.ts). `scopes`, for a hub sender:
+ *  its verified certificate's scopes narrowed by this runtime's allowlist, the set every one of its commands is
+ *  checked against. Absent for this browser, which holds every scope, and from a caller that did not say. */
+export interface CommandFrom { via: "this browser" | "hub"; scopes?: readonly Scope[] }
+
+/** The names of the optional things a chat client can show (`ClientPlatform`'s optional members, platform.ts), as the
+ *  client itself reports them on a message it sends. A CLAIM: it decides how an answer is presented, never a gate. */
+export type ClientUi = string[];
 
 /** The scope each command needs. The runtime enforces this; a client uses it to decide what to offer. */
 export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
