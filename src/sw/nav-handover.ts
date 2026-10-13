@@ -120,9 +120,10 @@ export async function handOverOnRevoke(): Promise<string[]> {
     return handed.flat();
 }
 
-/** Whether a `chrome.storage.onChanged` event changes which sites may use window.ml: the lists, or the whitelist. */
+/** Whether a `chrome.storage.onChanged` event changes what a site may do: the lists, its agent level or the
+ *  self-approval list, all kept in the local and session areas (slice 3). The old sync whitelist is no longer read. */
 export function changesSiteAccess(changes: Record<string, unknown>, area: string): boolean {
-    if (area === "sync") return "pageApprovalDomains" in changes;
+    if (area !== "local" && area !== "session") return false;
     return Object.values(SITE_ACCESS_KEYS).some((k) => k in changes);
 }
 

@@ -2,8 +2,8 @@
 
 **Status: building.** Hostile-site suite first (#373, every attack shown working against the old build); slice 0 (#374)
 and slice 1 (#378, origin gate, lists, settings) merged; slice 2 merged in parts (attacks 15 and 16 #392, parts 1b to 4b
-#410 to #583, part 5 #606 and #611; see "Where the build differs from this spec"); slices 3 and 4 not started (slice 3's
-two levels decided in #578; its implementation reference, decided 2026-10-13, is
+#410 to #583, part 5 #606 and #611; see "Where the build differs from this spec"); slice 3 in progress (its PR 1, the levels in storage and the self-approval list by origin, is
+built), slice 4 not started (slice 3's two levels decided in #578; its implementation reference, decided 2026-10-13, is
 [SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md)). Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only when
 the extension holds "on all sites"): this gates every site, whatever the browser's site-access setting is.
 
@@ -574,6 +574,21 @@ Recorded as each slice lands, with the reason.
   landed between its routing and its send; it is now built again as the worker's. And `VALUE_COLUMNS`, which the
   content script sends outside the gate, now refuses a page whose site is not approved, so a page whose call was in
   flight at the revoke cannot read the stored table that call named.
+- **Slice 3, PR 1 (levels in storage, the whitelist as origins, the upgrade).** Built as [SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md)
+  section 4 says, with these choices where it was open:
+  - Q14 taken: the self-approval list is `ml_site_selfapprove` (local, origins), and the popup's editor is gone;
+    DevTools Settings edits it through `SITE_ACCESS`, so a page cannot. The old sync `pageApprovalDomains` is read once
+    by the migration and left in place.
+  - A whitelist entry with a port typed on a bare host (`host:8443`) or a path trusted nothing before (#628) and is
+    dropped by the migration rather than read as an origin; only entries already stored as origins keep their scheme
+    and port.
+  - `deny` and `revoke` drop the origin's agent level and leave its self-approval entry, which a denial overrides, as
+    the whitelist always was; adding a self-approval does not lift a denial. A revoke of an origin that also
+    self-approves leaves it allowed by self-approval, and Settings marks such a row as implied (no revoke).
+  - The upgrade notice is a local flag (`ml_site_upgrade_notice`) the migration sets only when it moved a non-empty
+    whitelist; Settings' Dismiss clears it. The notice's last sentence in 1.4 ("#628 already lists ...") is read as a
+    note to the builder: the list of allowed origins a bare entry stopped covering stays under it, each with an Add.
+  - The popup shows the agents line only; its buttons are PR 3's (the popup's agents buttons).
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

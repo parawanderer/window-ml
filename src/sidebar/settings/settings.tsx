@@ -3,7 +3,8 @@
 // this runs in the extension-origin iframe, not the page DOM — so edits sync live
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
-import { SITE_ACCESS_KEYS, originFromInput, selfApprovalOrigin, uncoveredApprovals, whitelistEntryFromInput, type SiteEdit, type SiteLists } from "../../site-access";
+import { SITE_ACCESS_KEYS, levelsFor, originFromInput, uncoveredApprovals, type AgentLevel, type SiteEdit, type SiteLists } from "../../site-access";
+import { cursorTipOn } from "../ui-kit";
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
 import { signal } from "@preact/signals";
@@ -665,10 +666,9 @@ export function openSettingsAt(tab: SettingsTab, section: string): void {
 }
 
 // ── Permissions tab ──────────────────────────────────────────────────────────
-// Two grants the USER manages here (the page never touches either): the per-domain
-// approval whitelist (pageApprovalDomains — a site trusted to supply its OWN ml.agent
-// approval gate; every other origin routes privileged tool calls through the extension's
-// unforgeable approval card) and the Google Sheets host permission for python_exec.
+// Grants the USER manages here (the page never touches any): which sites may use window.ml and start agents, the
+// sites that approve their own actions (a site trusted to supply its OWN ml.agent approval gate; every other origin
+// routes privileged tool calls through the extension's unforgeable approval card), and the host permissions.
 const SHEETS_ORIGINS = ["https://docs.google.com/*", "https://accounts.google.com/*", "https://*.googleusercontent.com/*"];
 const domainInput = signal("");
 const domainSearch = signal("");
@@ -681,10 +681,6 @@ function normDomain(input: string): string | null {
     try { if (/^[a-z]+:\/\//.test(s)) s = new URL(s).hostname; } catch { /* not a URL — treat as a bare host */ }
     s = s.replace(/^\/+/, "").split("/")[0].split(/[?#:]/)[0];
     return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(s) ? s : null;
-}
-function setDomains(list: string[]): void {
-    config.value = { ...config.value, pageApprovalDomains: list };
-    chrome.storage.sync.set({ pageApprovalDomains: list });
 }
 
 // The Google Sheets host-permission grant (moved from the popup) — chrome.permissions, extension-origin.
@@ -760,72 +756,101 @@ function hostPatternFrom(input: string): string | null {
 function hostLabelOf(origin: string): string {
     return origin.replace(/^https?:\/\//, "").replace(/\/\*?$/, "");
 }
+/** What the worker's `SITE_ACCESS` answers Settings: the lists, and whether the one-time upgrade notice is still up. */
+interface SiteAccessView { lists: SiteLists; upgradeNotice: boolean }
+
 /**
- * Which sites may use `window.ml` at all (docs/spec/SITE_ACCESS.md): the approved origins, for this session or always,
- * and the denied ones, each revocable here. The full list; the toolbar popup edits only the current tab's site. Edits
- * go through the worker (`SITE_ACCESS`), which is what the router's gate reads on every message.
- */
-/**
- * Ask the worker for the site gate's lists (`SITE_ACCESS`), applying an edit first when one is given.
- * @param payload `{}` to read, or `{ edit }` to change and read
+ * Ask the worker for the site lists (`SITE_ACCESS`), applying an edit first when one is given.
+ * @param payload `{}` to read, `{ edit }` to change and read, `{ dismissUpgradeNotice }` to drop the notice
  * @returns the lists after, or null when the worker could not be asked
  */
-function askSiteAccess(payload: { edit?: SiteEdit }): Promise<SiteLists | null> {
+function askSiteAccess(payload: { edit?: SiteEdit; dismissUpgradeNotice?: boolean }): Promise<SiteAccessView | null> {
     return new Promise((resolve) => {
         try {
-            chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { lists?: SiteLists } } | undefined) => {
+            chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { lists?: SiteLists; upgradeNotice?: boolean } } | undefined) => {
                 void chrome.runtime.lastError;
-                resolve(res?.data?.lists ?? null);
+                const lists = res?.data?.lists;
+                resolve(lists ? { lists: { ...lists, agents: lists.agents ?? {}, selfApprove: lists.selfApprove ?? [] }, upgradeNotice: res?.data?.upgradeNotice === true } : null);
             });
         } catch { resolve(null); }
     });
 }
 
 /**
- * The site gate's lists, kept current: an approval made from the popup shows up here without reopening Settings.
+ * The site lists, kept current: an approval made from the popup shows up here without reopening Settings.
  * @returns the lists (null until read) and their setter, for an edit's answer
  */
-function useSiteLists(): [SiteLists | null, (l: SiteLists) => void] {
-    const [lists, setLists] = useState<SiteLists | null>(null);
+function useSiteLists(): [SiteAccessView | null, (l: SiteAccessView) => void] {
+    const [view, setView] = useState<SiteAccessView | null>(null);
     useEffect(() => {
-        void askSiteAccess({}).then(setLists);
+        void askSiteAccess({}).then(setView);
         const onChange = (changes: Record<string, unknown>) => {
-            if (Object.values(SITE_ACCESS_KEYS).some((k) => k in changes)) void askSiteAccess({}).then(setLists);
+            if (Object.values(SITE_ACCESS_KEYS).some((k) => k in changes)) void askSiteAccess({}).then(setView);
         };
         try { chrome.storage.onChanged.addListener(onChange); } catch { /* not an extension page */ }
         return () => { try { chrome.storage.onChanged.removeListener(onChange); } catch { /* ignore */ } };
     }, []);
-    return [lists, setLists];
+    return [view, setView];
 }
 
+/** The agent levels a row offers, in the order the select lists them. */
+const AGENT_CHOICES: [AgentLevel | "off", string][] = [["off", "Off"], ["ask", "Ask each time"], ["always", "Always"], ["denied", "Denied"]];
+
+/**
+ * Which sites may use `window.ml` at all (docs/spec/SITE_ACCESS.md), and whether each may start agents: one row per
+ * allowed origin with its scope, its agent level and a revoke, then the denied ones. The full list; the toolbar popup
+ * shows only the current tab's site. Edits go through the worker (`SITE_ACCESS`), which is what the router's gate reads
+ * on every message. A site that approves its own actions is listed with the levels that implies, edited in its section.
+ */
 function SiteApprovals() {
-    const [lists, setLists] = useSiteLists();
+    const [view, setView] = useSiteLists();
     const [query, setQuery] = useState("");   // one box, as in HostAccess: filters the lists, and adds a full origin
-    const ask = askSiteAccess;
-    if (!lists) return null;
-    const edit = (e: SiteEdit): void => { void ask({ edit: e }).then((l) => { if (l) setLists(l); }); };
+    if (!view) return null;
+    const { lists } = view;
+    const edit = (e: SiteEdit): void => { void askSiteAccess({ edit: e }).then((v) => { if (v) setView(v); }); };
     const origin = originFromInput(query);
     const q = query.trim().toLowerCase();
     const match = (o: string): boolean => !q || o.includes(q);
-    const approved = [...lists.always.map((o) => ({ o, session: false })), ...lists.session.map((o) => ({ o, session: true }))].filter((x) => match(x.o));
+    const rows = [...new Set([...lists.always, ...lists.session, ...lists.selfApprove])]
+        .filter((o) => !lists.denied.includes(o) && match(o)).sort();
     const denied = lists.denied.filter(match);
     return (
         <Section id="siteapprovals" title="Sites that may use window.ml">
-            <div class="set-note">A page can use <code>window.ml</code> (and so your models) only once its site is allowed here or from the toolbar button. Every other site is refused, whatever the browser's site-access setting. A run you start yourself still works on any page: it is built by the extension, not by the page. Each scheme and port is its own site: <code>http://</code> and <code>https://</code> are separate decisions. A site on the self-approval whitelist below is allowed too.</div>
+            <div class="set-note">A page can use <code>window.ml</code> (and so your models) only once its site is allowed here or from the toolbar button. Every other site is refused, whatever the browser's site-access setting. A run you start yourself still works on any page: it is built by the extension, not by the page. Each scheme and port is its own site: <code>http://</code> and <code>https://</code> are separate decisions. A site that approves its own actions (below) is allowed too. Starting an agent is a separate permission. A site can use window.ml without it. With "Ask each time", every agent the site starts shows a card with its task, tools, model and budget before anything runs.</div>
             <div class="perm-add">
                 <input class="perm-input" type="text" placeholder="Filter sites, or type one to allow (example.com)…" value={query}
                     onInput={(e: any) => setQuery(e.target.value)}
                     onKeyDown={(e: any) => { if (e.key === "Enter" && origin) { e.preventDefault(); edit({ op: "allow", origin, scope: "always" }); setQuery(""); } }} />
                 <button class="test-btn" disabled={!origin} onClick={() => { if (origin) { edit({ op: "allow", origin, scope: "always" }); setQuery(""); } }}>Allow</button>
             </div>
-            {approved.length
-                ? <div class="perm-list">
-                    {approved.map(({ o, session }) => (
-                        <span class="perm-chip" key={o}>
-                            <span class="perm-host">{o}{session ? " (this session)" : ""}</span>
-                            <button class="perm-x" aria-label={`Revoke ${o}`} title={`Revoke ${o}`} onClick={() => edit({ op: "revoke", origin: o })}>✕</button>
-                        </span>
-                    ))}
+            {rows.length
+                ? <div class="perm-rows">
+                    {rows.map((o) => {
+                        const lv = levelsFor(lists, o);
+                        const implied = lv.selfApprove && !lists.always.includes(o) && !lists.session.includes(o);
+                        return (
+                            <div class="perm-row" key={o} data-origin={o}>
+                                <span class="perm-host">{o}</span>
+                                <select class="perm-scope" aria-label={`How long ${o} may use window.ml`} value={lv.use} disabled={implied}
+                                    onChange={(e: any) => edit({ op: "allow", origin: o, scope: e.target.value === "session" ? "session" : "always" })}>
+                                    <option value="always">Always</option>
+                                    <option value="session">This session</option>
+                                </select>
+                                <label class="perm-agents" {...cursorTipOn(lv.selfApprove
+                                    ? "It approves its own actions, so it starts agents without asking. Change that in \"Sites that approve their own actions\"."
+                                    : "Whether this site's own `ml.agent` calls may start the extension's agent. Agents you start yourself are not affected.")}>
+                                    Agents:{" "}
+                                    <select class="perm-agents-select" aria-label={`Whether ${o} may start agents`} value={lv.agents} disabled={lv.selfApprove}
+                                        onChange={(e: any) => edit({ op: "agents", origin: o, level: e.target.value as AgentLevel | "off" })}>
+                                        {AGENT_CHOICES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                                    </select>
+                                </label>
+                                {implied
+                                    ? <span class="perm-x" aria-hidden="true" />
+                                    : <button class="perm-x" aria-label={`Revoke ${o}`} {...cursorTipOn(`Revoke ${o}`)} onClick={() => edit({ op: "revoke", origin: o })}>✕</button>}
+                            </div>
+                        );
+                    })}
                   </div>
                 : <div class="set-hint">{q ? `No allowed site matches “${query}”.` : "No site is allowed: every page's calls to window.ml are refused."}</div>}
             {denied.length
@@ -835,7 +860,7 @@ function SiteApprovals() {
                         {denied.map((o) => (
                             <span class="perm-chip" key={o}>
                                 <span class="perm-host">{o}</span>
-                                <button class="perm-x" aria-label={`Stop denying ${o}`} title={`Stop denying ${o}`} onClick={() => edit({ op: "undeny", origin: o })}>✕</button>
+                                <button class="perm-x" aria-label={`Stop denying ${o}`} {...cursorTipOn(`Stop denying ${o}`)} onClick={() => edit({ op: "undeny", origin: o })}>✕</button>
                             </span>
                         ))}
                     </div>
@@ -960,22 +985,22 @@ function UserScriptsStatus() {
 }
 
 /**
- * The origins allowed to use window.ml whose host is a bare entry on the self-approval whitelist, but which that entry
- * no longer makes self-approving (plain http or another port of that host, loopback included, `uncoveredApprovals`). Before the
- * whitelist was read by origin they self-approved by host; this tells the person, and adds the exact origin on a click.
+ * The origins allowed to use window.ml whose host self-approves over https, but which are not on the self-approval list
+ * themselves (plain http or another port of that host, loopback included, `uncoveredApprovals`). Before the whitelist
+ * was read by origin they self-approved by host; this tells the person, and adds the exact origin on a click.
  */
-function UncoveredWhitelist({ lists, domains, onAdd }: { lists: SiteLists | null; domains: string[]; onAdd: (origin: string) => void }) {
-    const missing = lists ? uncoveredApprovals(lists, domains) : [];
+function UncoveredWhitelist({ lists, onAdd }: { lists: SiteLists; onAdd: (origin: string) => void }) {
+    const missing = uncoveredApprovals(lists);
     if (!missing.length) return null;
     return (
         <div class="set-warn">
-            A bare host here now trusts only its <code>https://</code> site on the default port. These sites, allowed to use
-            window.ml, no longer answer their own approval prompts; add one to trust that exact origin:
+            A host here trusts only its <code>https://</code> site on the default port. These sites, allowed to use
+            window.ml, do not answer their own approval prompts; add one to trust that exact origin:
             <div class="perm-list">
                 {missing.map((o) => (
                     <span class="perm-chip" key={o}>
                         <span class="perm-host">{o}</span>
-                        <button class="test-btn" aria-label={`Trust ${o} to self-approve`} onClick={() => onAdd(o)}>Add</button>
+                        <button class="test-btn" aria-label={`Trust ${o} to approve its own actions`} onClick={() => onAdd(o)}>Add</button>
                     </span>
                 ))}
             </div>
@@ -983,49 +1008,62 @@ function UncoveredWhitelist({ lists, domains, onAdd }: { lists: SiteLists | null
     );
 }
 
-function PermissionsView() {
-    const c = config.value;
-    const domains = c.pageApprovalDomains || [];
-    const [siteLists] = useSiteLists();
-    const parsed = whitelistEntryFromInput(domainInput.value);
+/**
+ * The sites that approve their own actions (`ml_site_selfapprove`, by origin): add, remove, and the one-time notice
+ * about the move from hosts to origins. Edits go through the worker (`SITE_ACCESS`), as the site lists' do.
+ */
+function SelfApprovalList() {
+    const [view, setView] = useSiteLists();
+    if (!view) return null;
+    const { lists } = view;
+    const set = (origin: string, on: boolean): void => { void askSiteAccess({ edit: { op: "selfApprove", origin, on } }).then((v) => { if (v) setView(v); }); };
+    const parsed = originFromInput(domainInput.value);
     const invalid = !!domainInput.value.trim() && !parsed;
-    const add = () => {
-        if (!parsed) return;
-        if (!domains.includes(parsed)) setDomains([...domains, parsed].sort());
-        domainInput.value = "";
-    };
-    const remove = (d: string) => setDomains(domains.filter(x => x !== d));
+    const add = () => { if (!parsed) return; set(parsed, true); domainInput.value = ""; };
+    const entries = lists.selfApprove;
     const q = domainSearch.value.trim().toLowerCase();
-    const shown = q ? domains.filter(d => d.includes(q)) : domains;
+    const shown = q ? entries.filter((d) => d.includes(q)) : entries;
+    return (
+        <Section id="whitelist" title="Sites that approve their own actions">
+            <div class="set-note">A site here may answer its own approval prompts: its page's <code>approve()</code> stands in for the extension's card. It can run code, click and type for you, run Python with network access, and fetch pages with your logins, without asking you each time. Only add a site you control or fully trust. Each scheme and port is its own site. A bare host means <code>https://</code> on the default port, including <code>localhost</code> and other loopback hosts; type the full origin for <code>http://</code> or another port. Being here also allows the site to use window.ml and to start agents.</div>
+            {view.upgradeNotice
+                ? <div class="set-warn perm-upgrade">
+                    Sites on this list now match one origin each. Each host you had became its <code>https://</code> origin. Add an <code>http://</code> origin or another port yourself if you need one.
+                    {" "}<button class="test-btn" onClick={() => { void askSiteAccess({ dismissUpgradeNotice: true }).then((v) => { if (v) setView(v); }); }}>Dismiss</button>
+                  </div>
+                : null}
+            <div class="perm-add">
+                <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="https://example.com" value={domainInput.value}
+                    onInput={(e: any) => (domainInput.value = e.target.value)}
+                    onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+                <button class="test-btn" disabled={!parsed} onClick={add}>Add</button>
+            </div>
+            {invalid ? <div class="set-err">Enter a site, e.g. <code>https://docs.google.com</code>.</div> : null}
+            <UncoveredWhitelist lists={lists} onAdd={(o) => set(o, true)} />
+            {entries.length > 6
+                ? <input class="perm-search" type="search" placeholder="Filter sites…" value={domainSearch.value} onInput={(e: any) => (domainSearch.value = e.target.value)} />
+                : null}
+            {entries.length
+                ? <div class="perm-list">
+                    {shown.map((d) => (
+                        <span class="perm-chip" key={d}>
+                            <span class="perm-host">{d}</span>
+                            {lists.denied.includes(d) ? <span class="set-warn">(denied: the denial wins)</span> : null}
+                            <button class="perm-x" aria-label={`Remove ${d}`} {...cursorTipOn(`Remove ${d}`)} onClick={() => set(d, false)}>✕</button>
+                        </span>
+                    ))}
+                    {q && !shown.length ? <div class="set-hint">No sites match “{domainSearch.value}”.</div> : null}
+                  </div>
+                : <div class="set-hint">No site approves its own actions. Every site's privileged agent calls go through the extension's approval card.</div>}
+        </Section>
+    );
+}
+
+function PermissionsView() {
     return (
         <>
             <SiteApprovals />
-            <Section id="whitelist" title="Self-approval whitelist">
-                <div class="set-note">Sites here are trusted to supply their <b>own</b> <code>ml.agent</code> approval gate (the page's <code>approve()</code> / <code>confirm</code>). <b>Every other site</b> routes a privileged tool call (click, type, exec, python_exec) through the extension's own approval — the corner card — so a page can never silently approve itself. Add a domain only if you fully trust the code on it.</div>
-                <div class="perm-add">
-                    <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="example.com, or http://host:port" value={domainInput.value}
-                        onInput={(e: any) => (domainInput.value = e.target.value)}
-                        onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
-                    <button class="test-btn" disabled={!parsed} onClick={add}>Add</button>
-                </div>
-                {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>docs.google.com</code>, or an origin, e.g. <code>http://mlbox.lan:8080</code>.</div> : null}
-                <UncoveredWhitelist lists={siteLists} domains={domains} onAdd={(o) => { if (!domains.includes(o)) setDomains([...domains, o].sort()); }} />
-                {domains.length > 6
-                    ? <input class="perm-search" type="search" placeholder="Filter domains…" value={domainSearch.value} onInput={(e: any) => (domainSearch.value = e.target.value)} />
-                    : null}
-                {domains.length
-                    ? <div class="perm-list">
-                        {shown.map(d => (
-                            <span class="perm-chip" key={d}>
-                                <span class="perm-host">{d}</span>
-                                {selfApprovalOrigin(d) ? null : <span class="set-warn">(trusts nothing: not a host or an origin)</span>}
-                                <button class="perm-x" aria-label={`Remove ${d}`} title={`Remove ${d}`} onClick={() => remove(d)}>✕</button>
-                            </span>
-                        ))}
-                        {q && !shown.length ? <div class="set-hint">No domains match “{domainSearch.value}”.</div> : null}
-                      </div>
-                    : <div class="set-hint">No trusted domains — every site's privileged agent calls go through the extension's approval card.</div>}
-            </Section>
+            <SelfApprovalList />
             <HostAccess />
             <SheetsGrant />
             <IncognitoGrant />

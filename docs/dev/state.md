@@ -70,8 +70,9 @@ page-hosted one. Several stores exist once per host.
 | Repeat `ml.fetch` of an approved URL | `fetchConsent` | the tab, until it closes (memory) |
 | One credentialed fetch | `credFetchGrants` | one use |
 | Remembered `confirm()` decisions | `approveOnce.remembered` (`ml-agent-handle.ts`, page) | the gate |
-| `window.ml` on an origin | `ml_site_always` / `ml_site_denied` (local), `ml_site_session` (session storage) | persistent / browser session |
-| Implicit: `pageApprovalDomains` (config) | `site-access.ts`, `senderTrust` | persistent |
+| `window.ml` on an origin | `ml_site_always` / `ml_site_denied` (local), `ml_site_session` (session storage); declared `site.levels` (`sw-site-access.ts`) | persistent / browser session |
+| Starting agents, per origin (`ask`, `always`, `denied`; stored, not enforced until the start card) | `ml_site_agents`: local, or session storage for an origin allowed only this session | persistent / browser session |
+| Approving its own actions (implies window.ml and agents `always`) | `ml_site_selfapprove` (local, origins), read by `selfApproves` (`levelsFor`): `senderTrust`, `pageApprovalAllowed`, the gate. Migrated once from the old sync `pageApprovalDomains` (`ml_site_schema: 2`) | persistent |
 | Auto-approve settings | `MlConfig` (sync) | persistent |
 
 ## Session state
@@ -132,7 +133,7 @@ saved); `tabPageUrl`; unsaved sessions' index rows; ephemeral worker chats; the 
 
 ## Never shown
 
-`apiKey`, `chatUrl` (it can carry a token), `modelFilter`, `pageApprovalDomains` (show `publicConfig()` only); the hub
+`apiKey`, `chatUrl` (it can carry a token), `modelFilter`, the self-approval list and the old `pageApprovalDomains` (show `publicConfig()` only); the hub
 keyring (`ml-hub-keyring`: private keys, the channel key, the account root) beyond what `membershipOf` returns; a
 pairing offer's code; the archive folder handle (its name and state only); values in Python's `full` namespace (it can
 hold live network handles: neither shown nor evaluated).
@@ -142,7 +143,7 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `run.meta` and `run.current` (`sw-runs.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.meta` and `run.current` (`sw-runs.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
 not overall: both hosts declare the same member of a run. Each realm

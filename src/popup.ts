@@ -7,7 +7,7 @@ import { formatBytes } from "./resource/resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract/contract-config";
 import { generatesText } from "./contract/contract-server";
 import { browserInfo, extensionDetailsUrl } from "./util";
-import { originOf, uncoveredApprovals, whitelistEntryFromInput, type SiteDecision, type SiteEdit, type SiteLists } from "./site-access";   // browser-correct internal scheme + details-page URL
+import { originOf, type SiteDecision, type SiteEdit, type SiteLevels } from "./site-access";   // browser-correct internal scheme + details-page URL
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -316,77 +316,13 @@ async function addHost() {
     } catch (e: any) { setStatus(`Couldn't request access: ${e?.message || e}.`, "err"); }
 }
 
-// --- self-approval whitelist (mirrors Settings → Permissions) --------------------
-// Sites the user trusts to supply their OWN ml.agent approval gate; every other origin routes a
-// privileged tool call through the extension's approval card. Normalise to a bare hostname.
+// A typed host for the host-access grant: normalised to a bare hostname (strip scheme, path and port), or null.
 function normDomain(input: string): string | null {
     let s = input.trim().toLowerCase();
     if (!s) return null;
     try { if (/^[a-z]+:\/\//.test(s)) s = new URL(s).hostname; } catch { /* bare host */ }
     s = s.replace(/^\/+/, "").split("/")[0].split(/[?#:]/)[0];
     return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(s) ? s : null;
-}
-function renderPermList(domains: string[]) {
-    const list = document.getElementById("permList")!;
-    list.replaceChildren();
-    if (!domains.length) {
-        const e = document.createElement("div"); e.className = "hint"; e.textContent = "No trusted domains — every site's privileged agent calls go through the approval card.";
-        list.append(e); return;
-    }
-    for (const d of domains) {
-        const chip = document.createElement("span"); chip.className = "perm-chip";
-        const host = document.createElement("span"); host.className = "perm-host"; host.textContent = d;
-        const x = document.createElement("button"); x.className = "perm-x"; x.textContent = "✕"; x.title = `Remove ${d}`;
-        x.addEventListener("click", () => setDomains((cur) => cur.filter(v => v !== d)));
-        chip.append(host, x); list.append(chip);
-    }
-}
-/**
- * List the origins allowed to use window.ml that a bare whitelist entry no longer makes self-approving
- * (`uncoveredApprovals`: plain http or another port of that host, loopback included), each with a button adding that exact
- * origin. Mirrors Settings → Permissions, so a person who relied on one is told where they look first.
- * @param domains the whitelist as stored
- */
-function renderUncovered(domains: string[]) {
-    const box = document.getElementById("permUncovered");
-    if (!box) return;
-    box.replaceChildren();
-    chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload: {} }, (res: { data?: { lists?: SiteLists } } | undefined) => {
-        void chrome.runtime.lastError;
-        const lists = res?.data?.lists;
-        const missing = lists ? uncoveredApprovals(lists, domains) : [];
-        if (!missing.length) return;
-        const note = document.createElement("div"); note.className = "hint warn";
-        note.textContent = "A bare host here now trusts only its https:// site on the default port. These sites, allowed to use window.ml, no longer answer their own approval prompts; add one to trust that exact origin:";
-        const list = document.createElement("div"); list.className = "perm-list";
-        for (const o of missing) {
-            const chip = document.createElement("span"); chip.className = "perm-chip";
-            const host = document.createElement("span"); host.className = "perm-host"; host.textContent = o;
-            const add = document.createElement("button"); add.textContent = "Add"; add.setAttribute("aria-label", `Trust ${o} to self-approve`);
-            add.addEventListener("click", () => setDomains((cur) => cur.includes(o) ? cur : [...cur, o].sort()));
-            chip.append(host, add); list.append(chip);
-        }
-        box.append(note, list);
-    });
-}
-async function setDomains(fn: (cur: string[]) => string[]) {
-    const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });
-    const next = fn(pageApprovalDomains as string[]);
-    await chrome.storage.sync.set({ pageApprovalDomains: next });
-    renderPermList(next);
-    renderUncovered(next);
-}
-function addDomain() {
-    const input = $("permDomain");
-    const d = whitelistEntryFromInput(input.value);
-    if (!d) { setStatus("Enter a valid hostname, e.g. docs.google.com, or an origin, e.g. http://mlbox.lan:8080", "err"); return; }
-    setDomains((cur) => cur.includes(d) ? cur : [...cur, d].sort());
-    input.value = "";
-}
-async function loadPerms() {
-    const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });
-    renderPermList(pageApprovalDomains as string[]);
-    renderUncovered(pageApprovalDomains as string[]);
 }
 
 // Renders per-model VRAM usage from Ollama's /api/ps (used only — Ollama's API
@@ -459,8 +395,6 @@ $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);
 $("incognitoAccess").addEventListener("click", openIncognitoSettings);
-$("permAdd").addEventListener("click", addDomain);
-$("permDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addDomain(); } });
 $("hostAdd").addEventListener("click", addHost);
 $("hostDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addHost(); } });
 
@@ -473,14 +407,24 @@ const SITE_STATE: Record<SiteDecision, string> = {
     denied: "is denied: its calls are refused.",
     unknown: "is not allowed to use window.ml. Its calls are refused.",
 };
+/** The agents line under the site's state, by its agent level (DevTools Settings sets it; the buttons come with the
+ *  start card). */
+const AGENTS_LINE: Record<SiteLevels["agents"], string> = {
+    off: "Agents: it may not start agents.",
+    ask: "Agents: it may start agents, and each start asks you.",
+    always: "Agents: it starts agents without asking.",
+    denied: "Agents: denied. It cannot ask again.",
+};
 let siteOrigin: string | null = null;
 let siteNow: SiteDecision | null = null;   // what the lists said last, which decides what "Revoke" undoes
-let siteImplied = false;   // allowed by the self-approval whitelist, not by a list this block edits
+let siteImplied = false;   // allowed by the self-approval list, not by a list this block edits
+let siteLevelsNow: SiteLevels | null = null;   // state: ui (what the worker said last about this tab's site)
 function siteAccess(payload: { origin?: string; edit?: SiteEdit }): Promise<SiteDecision | null> {
     return new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean } } | undefined) => {
+        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean; levels?: SiteLevels } } | undefined) => {
             void chrome.runtime.lastError;
             siteImplied = !!res?.data?.implied;
+            siteLevelsNow = res?.data?.levels ?? null;
             resolve(res?.data?.decision ?? null);
         });
     });
@@ -490,14 +434,21 @@ function renderSite(decision: SiteDecision | null) {
     if (!siteOrigin || !decision) { $("siteAccess").hidden = true; return; }
     $("siteAccess").hidden = false;
     $("siteOrigin").textContent = siteOrigin;   // the origin as the browser reports it, never a title the page set
-    $("siteState").textContent = siteImplied
-        ? "is allowed: it is on the self-approval whitelist (DevTools Settings → Permissions)."
+    const self = siteLevelsNow?.selfApprove === true;
+    $("siteState").textContent = self
+        ? "is allowed, and approves its own actions (DevTools Settings → Permissions)."
         : SITE_STATE[decision];
     const allowed = decision === "always" || decision === "session";
+    // The agent level, only while the site may use window.ml at all.
+    const agents = $("siteAgents");
+    agents.hidden = !allowed || !siteLevelsNow;
+    agents.textContent = !siteLevelsNow ? "" : self
+        ? "Agents: it approves its own actions (DevTools Settings → Permissions)."
+        : AGENTS_LINE[siteLevelsNow.agents];
     $("siteAllowSession").hidden = decision === "session";
     $("siteAllowAlways").hidden = decision === "always";
     $("siteDeny").hidden = decision === "denied";
-    // Revoking a whitelist approval here would remove nothing and change nothing: the whitelist is edited in Settings.
+    // Revoking an approval the self-approval list implies would remove nothing: that list is edited in Settings.
     $("siteRevoke").hidden = siteImplied || (!allowed && decision !== "denied");
     $("siteRevoke").textContent = decision === "denied" ? "Stop denying" : "Revoke";
 }
@@ -524,5 +475,4 @@ refreshVram();
 refreshSheetsAccess();
 refreshIncognitoAccess();
 refreshHostAccess();
-loadPerms();
 loadSite();

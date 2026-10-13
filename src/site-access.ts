@@ -5,16 +5,45 @@
 // browser API, so the rules can be tested exhaustively: what an origin is, which senders can ever be granted, how the
 // lists answer for an origin, and how an edit changes them.
 
-/** Where each list is kept. `always` and `denied` persist in `chrome.storage.local`; `session` lives in
- *  `chrome.storage.session` and is gone when the browser restarts. Never `sync`: a decision about this browser's
- *  backend has no business following someone to a machine with a different one. */
-export const SITE_ACCESS_KEYS = { always: "ml_site_always", session: "ml_site_session", denied: "ml_site_denied" } as const;
+/** Where each list is kept. `always`, `denied` and `selfApprove` persist in `chrome.storage.local`; `session` lives in
+ *  `chrome.storage.session` and is gone when the browser restarts. `agents` is kept in both: the level of an origin
+ *  allowed only for this session is in the session area, so it goes with that approval; every other origin's is local.
+ *  Never `sync`: a decision about this browser's backend has no business following someone to a machine with a
+ *  different one. */
+export const SITE_ACCESS_KEYS = {
+    always: "ml_site_always", session: "ml_site_session", denied: "ml_site_denied",
+    agents: "ml_site_agents", selfApprove: "ml_site_selfapprove",
+} as const;
 
-/** The three lists, each a set of origins (`scheme://host[:port]`). */
-export interface SiteLists { always: string[]; session: string[]; denied: string[] }
+/** The local key holding which layout of the lists is stored (`SITE_SCHEMA`); absent before slice 3. */
+export const SITE_SCHEMA_KEY = "ml_site_schema";   // state: fixed
+/** The layout this build writes: 2 moved the self-approval whitelist to local origins and added the agent level. */
+export const SITE_SCHEMA = 2;
+
+/** Whether a site may start the extension's agent: each start asks the person, starts without asking, or is refused
+ *  without asking. No entry means "off": it may not start agents and is not denied. */
+export type AgentLevel = "ask" | "always" | "denied";
+
+/** The lists. `always`, `session` and `denied` are sets of origins (`scheme://host[:port]`); `agents` maps an origin to
+ *  its agent level; `selfApprove` is the origins trusted to answer their own approval prompts. */
+export interface SiteLists { always: string[]; session: string[]; denied: string[]; agents: Record<string, AgentLevel>; selfApprove: string[] }
 
 /** What the lists say about one origin. A denial wins over an approval, so an origin on both is refused. */
 export type SiteDecision = "always" | "session" | "denied" | "unknown";
+
+/** What an origin may do, as the person sees it: use window.ml, start agents, approve its own actions. */
+export interface SiteLevels { use: SiteDecision; agents: AgentLevel | "off"; selfApprove: boolean }
+
+const AGENT_LEVELS: readonly AgentLevel[] = ["ask", "always", "denied"];
+
+/** The lists with every field present: a store written by an older build, or a caller passing the three old lists,
+ *  has no `agents` or `selfApprove`. */
+function full(lists: Partial<SiteLists>): SiteLists {
+    return {
+        always: lists.always ?? [], session: lists.session ?? [], denied: lists.denied ?? [],
+        agents: lists.agents ?? {}, selfApprove: lists.selfApprove ?? [],
+    };
+}
 
 /**
  * The origin of an http(s) URL, as the browser writes it (`https://example.com`, default port dropped), or null for
@@ -74,86 +103,76 @@ export function selfApprovalOrigin(entry: unknown): string | null {
 }
 
 /**
- * Whether an origin is on the self-approval whitelist: exactly one entry's origin (`selfApprovalOrigin`). A bare host,
- * loopback included, is its https origin on the default port; http or another port must be stored as that origin.
+ * What an origin may do. Self-approval implies the rest: an origin on `selfApprove` may use window.ml and starts agents
+ * without asking (slice 3, Q6), because a site trusted to answer its own approval prompts already runs its own loop.
+ * A denial wins over everything, self-approval included. An origin that may not use window.ml starts no agents.
+ * @param lists the lists
  * @param origin the origin
- * @param selfGateHosts the `pageApprovalDomains` setting
- * @returns true when an entry trusts this origin
+ * @returns its three levels
  */
-export function onSelfApprovalList(origin: string, selfGateHosts: readonly unknown[]): boolean {
-    return selfGateHosts.some((e) => selfApprovalOrigin(e) === origin);
+export function levelsFor(lists: Partial<SiteLists>, origin: string): SiteLevels {
+    const l = full(lists);
+    if (l.denied.includes(origin)) return { use: "denied", agents: "off", selfApprove: false };
+    const self = l.selfApprove.includes(origin);
+    const use: SiteDecision = l.always.includes(origin) ? "always" : l.session.includes(origin) ? "session" : self ? "always" : "unknown";
+    if (use === "unknown") return { use, agents: "off", selfApprove: false };
+    const stored = Object.prototype.hasOwnProperty.call(l.agents, origin) ? l.agents[origin] : undefined;
+    return { use, agents: self ? "always" : AGENT_LEVELS.includes(stored as AgentLevel) ? stored as AgentLevel : "off", selfApprove: self };
 }
 
 /**
- * What the lists say about an origin. An origin on the self-approval whitelist (`pageApprovalDomains`, sites trusted to
- * supply their own approval gate) is approved: that list is a stronger trust than this one, so being on it implies
- * approval. Which origin an entry means is `selfApprovalOrigin`'s rule.
- * @param lists the three lists
- * @param origin the origin
- * @param selfGateHosts the `pageApprovalDomains` setting
- * @returns the decision
- */
-export function decide(lists: SiteLists, origin: string, selfGateHosts: readonly unknown[] = []): SiteDecision {
-    if (lists.denied.includes(origin)) return "denied";
-    if (lists.always.includes(origin)) return "always";
-    if (lists.session.includes(origin)) return "session";
-    if (onSelfApprovalList(origin, selfGateHosts)) return "always";
-    return "unknown";
-}
-
-/**
- * Whether a sender may act as a site on the self-approval whitelist: answer its own approval prompts, and use the
- * privileged handlers without a per-call grant. The ONE rule every reader of `pageApprovalDomains` applies, so none can
- * disagree with the site gate: the sender's origin is the one the gate reads (`grantableOrigin`: top frame, http(s),
- * not opaque), it is on the whitelist (`onSelfApprovalList`), and the gate approves it, always or for this session (a
- * denial wins).
- * @param lists the three lists
+ * Whether a sender may act as a site on the self-approval list: answer its own approval prompts, and use the
+ * privileged handlers without a per-call grant. The ONE rule every reader of the list applies, so none can disagree with
+ * the site gate: the sender's origin is the one the gate reads (`grantableOrigin`: top frame, http(s), not opaque), and
+ * `levelsFor` says it self-approves (on the list, and not denied).
+ * @param lists the lists
  * @param sender the browser's facts about the sender
- * @param selfGateHosts the `pageApprovalDomains` setting
  * @returns true when the sender self-approves
  */
-export function selfApproves(lists: SiteLists, sender: SenderFacts, selfGateHosts: readonly unknown[]): boolean {
+export function selfApproves(lists: Partial<SiteLists>, sender: SenderFacts): boolean {
     const g = grantableOrigin(sender);
-    if ("refused" in g) return false;
-    if (!onSelfApprovalList(g.origin, selfGateHosts)) return false;
-    const d = decide(lists, g.origin, selfGateHosts);
-    return d === "always" || d === "session";
+    return !("refused" in g) && levelsFor(lists, g.origin).selfApprove;
 }
 
 /**
- * The origins a person allowed to use window.ml whose host is a bare entry on the self-approval whitelist, but which
- * that entry no longer makes self-approving: plain http or another port of that host, loopback included. Before the whitelist
- * was read by origin, those self-approved by host; now each needs its own entry. Settings and the popup list them with
- * a button that adds the exact origin, so an install that relied on one is told, and nothing is trusted silently.
- * @param lists the three lists
- * @param selfGateHosts the `pageApprovalDomains` setting
+ * The origins a person allowed to use window.ml whose host self-approves over https on the default port, but which
+ * are not on the self-approval list themselves: plain http or another port of that host, loopback included. Before the
+ * whitelist was read by origin (#628), those self-approved by host; now each needs its own entry. Settings lists them
+ * with a button that adds the exact origin, so an install that relied on one is told, and nothing is trusted silently.
+ * @param lists the lists
  * @returns the origins, sorted, each once
  */
-export function uncoveredApprovals(lists: SiteLists, selfGateHosts: readonly unknown[]): string[] {
-    const bare = new Set(selfGateHosts.filter((e): e is string => typeof e === "string" && !/:\/\//.test(e) && selfApprovalOrigin(e) != null).map((e) => e.trim().toLowerCase()));
+export function uncoveredApprovals(lists: Partial<SiteLists>): string[] {
+    const l = full(lists);
+    const parse = (o: string): URL | null => { try { return new URL(o); } catch { return null; } };
+    const hostOf = (o: string): string | null => parse(o)?.hostname ?? null;
+    const httpsHosts = new Set(l.selfApprove.map(parse).filter((u): u is URL => u?.protocol === "https:" && !u.port).map((u) => u.hostname));
     const out = new Set<string>();
-    for (const o of [...lists.always, ...lists.session]) {
-        if (lists.denied.includes(o) || onSelfApprovalList(o, selfGateHosts)) continue;
-        let host = "";
-        try { host = new URL(o).hostname; } catch { continue; }
-        if (bare.has(host)) out.add(o);
+    for (const o of [...l.always, ...l.session]) {
+        if (l.denied.includes(o) || l.selfApprove.includes(o)) continue;
+        const host = hostOf(o);
+        if (host && httpsHosts.has(host)) out.add(o);
     }
     return [...out].sort();
 }
 
 /**
- * Read what a person typed into the self-approval whitelist as the entry to store. A site on https's default port is
- * stored as its bare host, as every earlier build stored it; anything else (plain http, another port) is stored as its
- * origin, which trusts exactly that origin (`selfApprovalOrigin`). Typed as `originFromInput` reads it: a bare host
- * means https, so `http://` must be written out.
- * @param input what was typed
- * @returns the entry, or null for anything that is not an http(s) site
+ * The lists in the slice 3 layout, from what the build before it stored: the gate's three lists, and the sync
+ * whitelist of hosts (`pageApprovalDomains`). Each whitelist entry becomes the one origin it trusted
+ * (`selfApprovalOrigin`: a bare host is `https://host` on the default port, loopback included; an entry stored as an
+ * origin is that origin; anything else trusted nothing and is dropped). Every origin allowed before keeps agents with
+ * start approval ("ask"); one allowed later gets "off". Nothing lands on the approved list, and no http origin is
+ * inferred. Applying it twice gives what applying it once gave, and a level already stored is kept.
+ * @param v1 the lists as stored (the slice 3 fields may be absent)
+ * @param syncHosts the `pageApprovalDomains` setting, whatever shape it has
+ * @returns the lists to store
  */
-export function whitelistEntryFromInput(input: string): string | null {
-    const o = originFromInput(input);
-    if (!o) return null;
-    const u = new URL(o);
-    return u.protocol === "https:" && !u.port ? u.hostname : o;
+export function migrateSiteLists(v1: Partial<SiteLists>, syncHosts: unknown): SiteLists {
+    const l = full(v1);
+    const agents: Record<string, AgentLevel> = { ...l.agents };
+    for (const o of [...l.always, ...l.session]) if (!l.denied.includes(o) && !Object.prototype.hasOwnProperty.call(agents, o)) agents[o] = "ask";
+    const fromSync = (Array.isArray(syncHosts) ? syncHosts : []).map(selfApprovalOrigin).filter((o): o is string => o != null);
+    return { ...l, agents, selfApprove: [...new Set([...l.selfApprove, ...fromSync])].sort() };
 }
 
 /** A change to the lists, as the settings and the popup ask for one. */
@@ -161,27 +180,52 @@ export type SiteEdit =
     | { op: "allow"; origin: string; scope: "session" | "always" }
     | { op: "deny"; origin: string }
     | { op: "revoke"; origin: string }
-    | { op: "undeny"; origin: string };
+    | { op: "undeny"; origin: string }
+    | { op: "agents"; origin: string; level: AgentLevel | "off" }
+    | { op: "selfApprove"; origin: string; on: boolean };
 
 /**
- * Apply one edit. Allowing lifts a denial and moves the origin to the chosen scope only; denying removes any approval;
- * revoking removes an approval and leaves the origin unknown (it may ask again); un-denying the same for a denial.
+ * Apply one edit. Allowing lifts a denial and moves the origin to the chosen scope only, keeping its agent level when
+ * it was already allowed (a site allowed fresh starts at "off"); denying removes every approval and the agent level;
+ * revoking removes the approvals and the agent level and leaves the origin unknown (it may ask again); un-denying lifts
+ * a denial. `agents` sets the level of an origin that may use window.ml ("off" removes it; for any other origin it does
+ * nothing); `selfApprove` adds or removes the origin from the self-approval list, which a denial still overrides. An
+ * edit the rules do not know changes nothing.
  * @param lists the lists before
  * @param edit the change
  * @returns the lists after (new arrays; the input is not changed)
  */
-export function applyEdit(lists: SiteLists, edit: SiteEdit): SiteLists {
-    const without = (xs: string[]): string[] => xs.filter((x) => x !== edit.origin);
-    const add = (xs: string[]): string[] => [...without(xs), edit.origin].sort();
+export function applyEdit(lists: Partial<SiteLists>, edit: SiteEdit): SiteLists {
+    const l = full(lists);
+    const o = edit.origin;
+    const without = (xs: string[]): string[] => xs.filter((x) => x !== o);
+    const add = (xs: string[]): string[] => [...without(xs), o].sort();
+    const agentsWithout = (): Record<string, AgentLevel> => Object.fromEntries(Object.entries(l.agents).filter(([k]) => k !== o));
+    const copy = (): SiteLists => ({ always: [...l.always], session: [...l.session], denied: [...l.denied], agents: { ...l.agents }, selfApprove: [...l.selfApprove] });
     switch (edit.op) {
-        case "allow": return {
-            always: edit.scope === "always" ? add(lists.always) : without(lists.always),
-            session: edit.scope === "session" ? add(lists.session) : without(lists.session),
-            denied: without(lists.denied),
-        };
-        case "deny": return { always: without(lists.always), session: without(lists.session), denied: add(lists.denied) };
-        case "revoke": return { ...lists, always: without(lists.always), session: without(lists.session) };
-        case "undeny": return { ...lists, denied: without(lists.denied) };
+        case "allow": {
+            if (edit.scope !== "always" && edit.scope !== "session") return copy();
+            const wasAllowed = !l.denied.includes(o) && (l.always.includes(o) || l.session.includes(o));
+            return {
+                always: edit.scope === "always" ? add(l.always) : without(l.always),
+                session: edit.scope === "session" ? add(l.session) : without(l.session),
+                denied: without(l.denied),
+                agents: wasAllowed ? { ...l.agents } : agentsWithout(),
+                selfApprove: [...l.selfApprove],
+            };
+        }
+        case "deny": return { always: without(l.always), session: without(l.session), denied: add(l.denied), agents: agentsWithout(), selfApprove: [...l.selfApprove] };
+        case "revoke": return { ...copy(), always: without(l.always), session: without(l.session), agents: agentsWithout() };
+        case "undeny": return { ...copy(), denied: without(l.denied) };
+        case "agents": {
+            const lv = levelsFor(l, o).use;
+            if (lv !== "always" && lv !== "session") return copy();
+            if (edit.level === "off") return { ...copy(), agents: agentsWithout() };
+            if (!AGENT_LEVELS.includes(edit.level)) return copy();
+            return { ...copy(), agents: { ...agentsWithout(), [o]: edit.level } };
+        }
+        case "selfApprove": return { ...copy(), selfApprove: edit.on === true ? add(l.selfApprove) : without(l.selfApprove) };
+        default: return copy();
     }
 }
 

@@ -471,9 +471,13 @@ whatever the browser's own site-access setting says. A site is one origin: `http
 port, are separate decisions. A site can be allowed for the browser session or always, and a denial is final until
 you lift it in Settings. Runs you start yourself (from the HUD, the chat page or the sidebar) work on any page,
 because the extension builds them, not the page; the page they are on is lent nothing. A site you list under
-"self-approval" may answer its own approval prompts, which is the strongest grant there is: add only a site you
-control. Not built yet: a site asking for access with `ml.requestAccess()`, and a separate permission for starting
-agents. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference for the
+"Sites that approve their own actions" (DevTools Settings → Permissions, not the popup) may answer its own approval
+prompts, which is the strongest grant there is: add only a site you control. That list is by origin like the rest: a
+bare host means `https://` on the default port, loopback included, and `http://` or another port is written out as its
+own origin; an install's older list of hosts became their `https://` origins. Starting an agent is a separate
+permission per site (Off, Ask each time, Always, Denied), set in the same Settings section; it is stored and shown, and
+not enforced yet. Not built yet: a site asking for access with `ml.requestAccess()`, and the card that asks you
+before a site's agent starts. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference for the
 remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
 
 **What an allowed page still owns.** `window.ml` lives in the page's *main world* (that's the point: you call it

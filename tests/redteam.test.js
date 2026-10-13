@@ -199,6 +199,52 @@ test("GAIN blocked — a site trusted to self-gate (pageApprovalDomains) is appr
     assert.match(http.error, /not approved/, "the whitelist is keyed by host; over http it would trust whoever is on the wire");
 });
 
+// --- (f) slice 3: the agent level and the self-approval list, by origin, written only by the extension ---
+
+test("GAIN blocked — http://host, with the host on the old whitelist, is not 'whitelisted' for CDP_CLICK, even once allowed to use window.ml", async () => {
+    // Regression for #628, kept through the slice 3 move of the whitelist to local origins: the old sync list of hosts
+    // is migrated to `https://host`, never to the http origin.
+    const bg = loadBackground({ config: baseConfig({ cdp: true, pageApprovalDomains: ["trusted.example"] }), siteGate: true, local: { ml_site_always: ["http://trusted.example"] } });
+    const http = { tab: { id: 2, url: "http://trusted.example/" }, url: "http://trusted.example/", origin: "http://trusted.example", frameId: 0 };
+    const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2 } }, http);
+    assert.match(String(res?.error), /Refused/);
+    assert.equal(bg.debuggerCalls.filter((c) => c[0] === "attach").length, 0, "the debugger was attached for the http origin");
+});
+
+test("GAIN blocked — GET_CONFIG answers pageApprovalAllowed: false to http://host when the old whitelist named the host", async () => {
+    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true, local: { ml_site_always: ["http://trusted.example"] } });
+    const http = await bg.send({ type: "GET_CONFIG", payload: {} }, { tab: { id: 2, url: "http://trusted.example/" }, url: "http://trusted.example/", origin: "http://trusted.example", frameId: 0 });
+    assert.equal(http.data.pageApprovalAllowed, false);
+    const https = await bg.send({ type: "GET_CONFIG", payload: {} }, { tab: { id: 2, url: "https://trusted.example/" }, url: "https://trusted.example/", origin: "https://trusted.example", frameId: 0 });
+    assert.equal(https.data.pageApprovalAllowed, true, "positive control: the https origin");
+});
+
+test("GAIN blocked — a page cannot write ml_site_agents or ml_site_selfapprove through any page-started type, SITE_ACCESS included", async () => {
+    // The page is approved and even self-approving, the strongest a page gets: it still edits no level.
+    const edits = [
+        { op: "agents", origin: "https://evil.example", level: "always" },
+        { op: "agents", origin: "https://victim.example", level: "denied" },
+        { op: "selfApprove", origin: "https://evil.example", on: true },
+        { op: "selfApprove", origin: "https://friend.example", on: false },
+    ];
+    const local = { ml_site_always: ["https://evil.example", "https://victim.example"], ml_site_agents: { "https://victim.example": "ask" }, ml_site_selfapprove: ["https://friend.example"], ml_site_schema: 2 };
+    const sender = () => ({ tab: { id: 9, url: "https://evil.example/attack" }, url: "https://evil.example/attack", origin: "https://evil.example", frameId: 0 });
+    for (const type of ["SITE_ACCESS", ...PAGE_STARTED_TYPES]) for (const edit of edits) {
+        const bg = loadBackground({ config: baseConfig(), siteGate: true, local: structuredClone(local), onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+        await Promise.race([bg.send({ type, payload: { edit, origin: edit.origin, tools: [], messages: [{ role: "user", content: "hi" }] } }, sender()), tick()]);
+        await tick();
+        assert.deepEqual([bg.localStore.ml_site_agents, bg.localStore.ml_site_selfapprove], [local.ml_site_agents, local.ml_site_selfapprove], `${type} ${JSON.stringify(edit)}`);
+        assert.equal(bg.sessionStore.ml_site_agents, undefined, `${type} ${JSON.stringify(edit)}: the session half`);
+    }
+    // Positive control: the extension's own Settings page writes both.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, local: structuredClone(local) });
+    const settings = { url: "chrome-extension://test/sidebar.html" };
+    await bg.send({ type: "SITE_ACCESS", payload: { edit: edits[1] } }, settings);
+    await bg.send({ type: "SITE_ACCESS", payload: { edit: edits[2] } }, settings);
+    assert.deepEqual(bg.localStore.ml_site_agents, { "https://victim.example": "denied" });
+    assert.deepEqual(bg.localStore.ml_site_selfapprove, ["https://evil.example", "https://friend.example"]);
+});
+
 test("GAIN blocked — the streaming port is the same model call: refused from an unapproved origin", async () => {
     const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
     const port = bg.connect("LLM_STREAM", hostilePage());

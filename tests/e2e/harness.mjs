@@ -155,6 +155,14 @@ export async function screencast(/** @type {any} */ context, onFrame, { maxWidth
 /** Write the extension's non-secret config (chatUrl / apiFormat / model / debugMode …) via the SW. */
 export async function configureExtension(/** @type {any} */ sw, /** @type {Record<string, unknown>} */ config) {
     await sw.evaluate((/** @type {any} */ cfg) => new Promise((r) => chrome.storage.sync.set(cfg, () => r(undefined))), config);
+    // The self-approval list is kept by origin in local storage since slice 3, and the worker read the old sync setting
+    // once, at its start: a spec that names `pageApprovalDomains` means that list, so it is written there as origins.
+    if (Array.isArray(config.pageApprovalDomains)) {
+        await sw.evaluate(async (/** @type {string[]} */ entries) => {
+            const origins = entries.map((e) => { try { return new URL(/:\/\//.test(e) ? e : `https://${e}`).origin; } catch { return null; } }).filter(Boolean);
+            await chrome.storage.local.set({ ml_site_selfapprove: [...new Set(origins)].sort() });
+        }, config.pageApprovalDomains);
+    }
 }
 
 /**

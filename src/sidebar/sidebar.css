@@ -3003,6 +3003,17 @@ html[data-focus] .action-verb { font-weight: 500; }
     border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; }
 .perm-x:hover { background: var(--panel-2-hover); color: var(--err); }
 .perm-ok { color: var(--ok); font-weight: 600; }
+/* The list of sites that may use window.ml, one row each: stacked, so a long origin never pushes its controls away. */
+.perm-rows { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+/* One allowed site: its origin, how long it is allowed, its agent level and a revoke, wrapping on a narrow panel. */
+.perm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 8px; }
+.perm-row .perm-host { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.perm-row select { font-size: 0.9em; padding: 2px 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
+/* A site row's "Agents:" label with its select, which carries the tooltip explaining the level. */
+.perm-agents { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 0.9em; }
+/* The one-time notice that the self-approval list moved from hosts to origins, with its Dismiss. */
+.perm-upgrade { display: block; margin: 6px 0; }
 
 /* ---- @tool token citations in an answer (AnswerBody / TokenRef) ---- */
 /* A resolved citation: the actual tool output, subtly marked as deterministic + clickable. Block for a

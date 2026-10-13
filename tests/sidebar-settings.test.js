@@ -3,7 +3,7 @@
 
 const { test, after } = require("node:test");
 const assert = require("node:assert");
-const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
+const { closeSidebarWorlds, loadBackground, loadSidebarWorld } = require("./helpers");
 const { agentStart, agentStep, agentResult, openSettings } = require("./sidebar-helpers");
 
 // Close every jsdom window after the file — the VRAM panel's setInterval keeps a
@@ -740,62 +740,117 @@ test("settings search: Escape in the box clears it", async () => {
     assert.equal(w.shadow.querySelector(".settings .set-search").value, "");
 });
 
-// --- the self-approval whitelist: what Settings stores, shows and removes ---------------------------------
+// --- the site lists: one row per allowed origin, its agent level, and the sites that approve their own actions ---
 
-/** The whitelist section's parts: its add box, its chips' text, and a chip's remove button by entry. */
+/** A worker over `storage` (the old layout or the new), and a Settings world whose SITE_ACCESS it answers. */
+async function settingsOverWorker({ config = {}, local = {} } = {}) {
+    const bg = loadBackground({ config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", ...config }, local, siteGate: true });
+    const w = await loadSidebarWorld({ siteAccess: (payload) => bg.send({ type: "SITE_ACCESS", payload }, { url: "chrome-extension://test/sidebar.html" }) });
+    await openSettings(w, "Permissions");
+    await w.flush(); await w.flush();
+    return { bg, w };
+}
+
+/** The section titled `title`. */
+const section = (w, title) => [...w.shadow.querySelectorAll("details.set-section")].find((d) => d.querySelector("summary")?.textContent.trim() === title);
+
+/** "Sites that may use window.ml" as a person reads it: each row's origin, scope, agent level, and whether it has a revoke. */
+const siteRows = (w) => [...section(w, "Sites that may use window.ml").querySelectorAll(".perm-row")].map((r) => ({
+    origin: r.querySelector(".perm-host").textContent,
+    use: r.querySelector("select.perm-scope").value,
+    agents: r.querySelector("select.perm-agents-select").value,
+    revoke: !!r.querySelector(`button.perm-x[aria-label="Revoke ${r.dataset.origin}"]`),
+}));
+
+/** The self-approval section's parts: its add box, its chips' text, and a chip's remove button by entry. */
 const whitelistParts = (w) => {
-    const sec = [...w.shadow.querySelectorAll("details.set-section")].find((d) => d.querySelector("summary")?.textContent.trim() === "Self-approval whitelist");
+    const sec = section(w, "Sites that approve their own actions");
     const input = sec.querySelector("input.perm-input");
-    const chips = [...sec.querySelectorAll(".perm-list .perm-chip .perm-host")].map((e) => e.textContent);
+    const chips = [...sec.querySelectorAll(".perm-list .perm-chip .perm-host")].filter((e) => !e.closest(".set-warn")).map((e) => e.textContent);
     const add = [...sec.querySelectorAll("button.test-btn")].find((b) => b.textContent.trim() === "Add" && !b.closest(".perm-chip"));
     const remove = (entry) => sec.querySelector(`.perm-x[aria-label="Remove ${entry}"]`);
     return { input, sec, chips, add, remove };
 };
 
-test("self-approval whitelist: an origin entry is added, shown and removed as typed, and a bare host is stored bare", async () => {
-    const stored = ["127.0.0.1", "http://127.0.0.1:5123", "docs.example"];
-    const w = await loadSidebarWorld({ sync: { pageApprovalDomains: stored } });
-    await openSettings(w, "Permissions");
-    await w.flush();
-    let p = whitelistParts(w);
-    assert.deepEqual(p.chips, stored, "every stored entry is shown exactly as stored, an origin with its scheme and port");
-    // Add an http origin: stored as that origin, never cut down to its host (which would mean https://127.0.0.1).
-    p.input.value = "http://127.0.0.1:5124/some/page";
-    p.input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
-    await w.flush();
-    whitelistParts(w).add.click();
-    await w.flush();
-    assert.deepEqual(w.syncStore.pageApprovalDomains, ["127.0.0.1", "docs.example", "http://127.0.0.1:5123", "http://127.0.0.1:5124"].sort());
-    // A bare host typed as an https URL is stored as the bare host, as every earlier build stored it.
-    p = whitelistParts(w);
-    p.input.value = "https://Other.Example/x";
-    p.input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
-    await w.flush();
-    whitelistParts(w).add.click();
-    await w.flush();
-    assert.ok(w.syncStore.pageApprovalDomains.includes("other.example"));
-    // Removing the origin entry removes exactly it, leaving the bare host of the same address alone.
-    whitelistParts(w).remove("http://127.0.0.1:5123").click();
-    await w.flush();
-    assert.deepEqual(w.syncStore.pageApprovalDomains, ["127.0.0.1", "docs.example", "http://127.0.0.1:5124", "other.example"]);
-    assert.deepEqual(whitelistParts(w).chips, w.syncStore.pageApprovalDomains);
+test("UPGRADE (Settings): the old lists render as rows: a and b allowed with agents 'Ask each time', c denied, x.test self-approving with agents Always", async () => {
+    // Storage as the build before slice 3 wrote it, migrated by the real worker; Settings draws what it answers.
+    const { w } = await settingsOverWorker({ config: { pageApprovalDomains: ["x.test"] }, local: { ml_site_always: ["https://a.test", "http://b.test"], ml_site_denied: ["https://c.test"] } });
+    assert.deepEqual(siteRows(w), [
+        { origin: "http://b.test", use: "always", agents: "ask", revoke: true },
+        { origin: "https://a.test", use: "always", agents: "ask", revoke: true },
+        { origin: "https://x.test", use: "always", agents: "always", revoke: false },
+    ]);
+    const sites = section(w, "Sites that may use window.ml");
+    assert.deepEqual([...sites.querySelectorAll(".perm-list .perm-host")].map((e) => e.textContent), ["https://c.test"], "c is listed as denied");
+    assert.equal(sites.querySelector('.perm-row[data-origin="https://x.test"] select.perm-agents-select').disabled, true, "self-approval sets agents; it is changed in its own section");
+    const self = whitelistParts(w);
+    assert.deepEqual([...self.sec.querySelectorAll(".perm-chip .perm-host")].map((e) => e.textContent), ["https://x.test"]);
+    // The one-time notice, dismissable.
+    const notice = self.sec.querySelector(".perm-upgrade");
+    assert.match(notice.textContent, /Sites on this list now match one origin each\. Each host you had became its https:\/\/ origin\./);
+    [...notice.querySelectorAll("button")].find((b) => b.textContent === "Dismiss").click();
+    await w.flush(); await w.flush();
+    assert.equal(whitelistParts(w).sec.querySelector(".perm-upgrade"), null, "dismissed");
 });
 
-test("UPGRADE (Settings): a bare entry's http origins that stopped self-approving are listed, loopback too, and Add trusts that exact origin", async () => {
-    // What an install before #628 held: bare hosts, and the http origins allowed to use window.ml.
-    const w = await loadSidebarWorld({ sync: { pageApprovalDomains: ["localhost", "mlbox.lan"] },
-        siteLists: { always: ["http://localhost:3000", "http://mlbox.lan:8080"], session: [], denied: [] } });
-    await openSettings(w, "Permissions");
+test("Settings rows: the agents select sets the level, a site allowed fresh starts Off, and a revoke drops it", async () => {
+    const { bg, w } = await settingsOverWorker({ local: { ml_site_schema: 2, ml_site_always: ["https://a.test"] } });
+    assert.deepEqual(siteRows(w), [{ origin: "https://a.test", use: "always", agents: "off", revoke: true }]);
+    const pick = async (origin, cls, value) => {
+        const sel = section(w, "Sites that may use window.ml").querySelector(`.perm-row[data-origin="${origin}"] select.${cls}`);
+        sel.value = value;
+        sel.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+        await w.flush(); await w.flush();
+    };
+    await pick("https://a.test", "perm-agents-select", "ask");
+    assert.deepEqual(bg.localStore.ml_site_agents, { "https://a.test": "ask" });
+    await pick("https://a.test", "perm-scope", "session");
+    assert.deepEqual(siteRows(w), [{ origin: "https://a.test", use: "session", agents: "ask", revoke: true }]);
+    assert.deepEqual([bg.localStore.ml_site_agents, bg.sessionStore.ml_site_agents], [{}, { "https://a.test": "ask" }], "a session approval keeps its level in the session area");
+    section(w, "Sites that may use window.ml").querySelector('button.perm-x[aria-label="Revoke https://a.test"]').click();
+    await w.flush(); await w.flush();
+    assert.deepEqual(siteRows(w), []);
+    assert.deepEqual(bg.sessionStore.ml_site_agents, {});
+    // The rows' explanatory text: the note names the separate permission; no em-dash in anything this section adds.
+    assert.match(section(w, "Sites that may use window.ml").querySelector(".set-note").textContent, /Starting an agent is a separate permission\. A site can use window\.ml without it\./);
+});
+
+test("self-approval list: an origin is added as typed, a bare host as its https origin, removed exactly, and stored in local by the worker", async () => {
+    const { bg, w } = await settingsOverWorker({ local: { ml_site_schema: 2, ml_site_selfapprove: ["http://127.0.0.1:5123", "https://127.0.0.1", "https://docs.example"] } });
+    const typeAndAdd = async (text) => {
+        const p = whitelistParts(w);
+        p.input.value = text;
+        p.input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+        await w.flush();
+        whitelistParts(w).add.click();
+        await w.flush(); await w.flush();
+    };
+    assert.deepEqual(whitelistParts(w).chips, ["http://127.0.0.1:5123", "https://127.0.0.1", "https://docs.example"]);
+    await typeAndAdd("http://127.0.0.1:5124/some/page");
+    await typeAndAdd("Other.Example");
+    assert.deepEqual(bg.localStore.ml_site_selfapprove, ["http://127.0.0.1:5123", "http://127.0.0.1:5124", "https://127.0.0.1", "https://docs.example", "https://other.example"]);
+    whitelistParts(w).remove("http://127.0.0.1:5123").click();
+    await w.flush(); await w.flush();
+    assert.deepEqual(bg.localStore.ml_site_selfapprove, ["http://127.0.0.1:5124", "https://127.0.0.1", "https://docs.example", "https://other.example"]);
+    assert.deepEqual(whitelistParts(w).chips, bg.localStore.ml_site_selfapprove);
+    // Something that is not a site is refused with the section's error, and nothing is stored.
+    const p = whitelistParts(w);
+    p.input.value = "not a host";
+    p.input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
     await w.flush();
-    const note = () => whitelistParts(w).sec.querySelector(".set-warn");
-    assert.ok(note(), "the person is told");
-    assert.match(note().textContent, /no longer answer their own approval prompts/);
+    assert.equal(whitelistParts(w).sec.querySelector(".set-err").textContent, "Enter a site, e.g. https://docs.google.com.");
+    assert.equal(whitelistParts(w).add.disabled, true);
+    assert.equal("pageApprovalDomains" in w.syncStore, false, "Settings no longer writes the old sync whitelist");
+});
+
+test("self-approval list: empty says so; an allowed http origin of a self-approving https host is listed with an Add that trusts exactly it", async () => {
+    const empty = await settingsOverWorker({ local: { ml_site_schema: 2 } });
+    assert.match(whitelistParts(empty.w).sec.textContent, /No site approves its own actions\. Every site's privileged agent calls go through the extension's approval card\./);
+    const { bg, w } = await settingsOverWorker({ config: { pageApprovalDomains: ["localhost", "mlbox.lan"] }, local: { ml_site_always: ["http://localhost:3000", "http://mlbox.lan:8080"] } });
+    const note = () => whitelistParts(w).sec.querySelector(".set-warn:not(.perm-upgrade)");
     assert.deepEqual([...note().querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://localhost:3000", "http://mlbox.lan:8080"]);
-    note().querySelector('button[aria-label="Trust http://localhost:3000 to self-approve"]').click();
-    await w.flush();
+    note().querySelector('button[aria-label="Trust http://localhost:3000 to approve its own actions"]').click();
+    await w.flush(); await w.flush();
     assert.deepEqual([...note().querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://mlbox.lan:8080"], "an added origin leaves the notice");
-    note().querySelector('button[aria-label="Trust http://mlbox.lan:8080 to self-approve"]').click();
-    await w.flush();
-    assert.deepEqual(w.syncStore.pageApprovalDomains, ["http://localhost:3000", "http://mlbox.lan:8080", "localhost", "mlbox.lan"]);
-    assert.equal(note(), null, "the notice is gone once every origin is trusted");
+    assert.deepEqual(bg.localStore.ml_site_selfapprove, ["http://localhost:3000", "https://localhost", "https://mlbox.lan"]);
 });

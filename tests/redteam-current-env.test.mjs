@@ -202,7 +202,9 @@ test("currentEnv touches only browser READS: no tab message, script, debugger, s
     const READS = new Set(["tabs.get", "storage.local.get", "storage.session.get", "storage.sync.get", "permissions.contains", "userScripts.getWorldConfigurations", "runtime.getURL", "runtime.getManifest"]);
     const answers = {
         "tabs.get": async (id) => { if (id !== 7) throw new Error("No tab"); return { id: 7, url: SITE }; },
-        "storage.local.get": async () => ({ ...APPROVED }),
+        // An install whose site lists are already in this build's layout: the one-time migration (sw-site-access.ts), which
+        // a worker runs at its start, is not currentEnv's write.
+        "storage.local.get": async () => ({ ...APPROVED, ml_site_schema: 2 }),
         "storage.session.get": async () => ({}),
         "storage.sync.get": async (d) => ({ ...(d ?? {}), cdp: true, apiKey: "sk-SECRET-KEY" }),
         "permissions.contains": async () => true,

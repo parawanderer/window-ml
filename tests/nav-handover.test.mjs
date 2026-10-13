@@ -282,8 +282,11 @@ const REVOKE_PATHS = [
         revoke: (bg) => edit(bg, SETTINGS, { op: "revoke", origin: BUILDER_ORIGIN }) },
     { path: "another surface or a sync writing the approved list (storage.onChanged)", revoke: async (bg) => bg.setLocal({ ml_site_always: ["https://friend.example"] }) },
     { path: "another surface or a sync writing the denied list (storage.onChanged)", revoke: async (bg) => bg.setLocal({ ml_site_denied: [BUILDER_ORIGIN] }) },
-    { path: "the site's host removed from the self-approval whitelist (sync)", local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example"] },
-        revoke: async (bg) => bg.setSync({ pageApprovalDomains: [] }) },
+    // The old sync whitelist seeds the local self-approval list through the worker's migration (slice 3).
+    { path: "the site's origin removed from the self-approval list by another surface (storage.onChanged, local)", local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example"] },
+        revoke: async (bg) => bg.setLocal({ ml_site_selfapprove: [] }) },
+    { path: "DevTools Settings' Remove on the self-approval list", local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example"] },
+        revoke: (bg) => edit(bg, SETTINGS, { op: "selfApprove", origin: BUILDER_ORIGIN, on: false }) },
 ];
 
 /**
@@ -638,11 +641,11 @@ test("a revoke hands over the page-built runs on every tab of the revoked origin
     assert.deepEqual(await w.handed(), ["run-7", "run-8"]);
 });
 
-test("emptying the self-approval whitelist hands over the runs of every origin it approved; an entry that still covers the origin hands over nothing", T, async () => {
+test("emptying the self-approval list hands over the runs of every origin it approved; an entry that still covers the origin hands over nothing", T, async () => {
     // A bare host approves its https origin on the default port only; another port is approved by an entry naming it.
     const w = await settledRuns({ local: { ml_site_always: ["https://friend.example"] }, config: { pageApprovalDomains: ["builder.example", "https://builder.example:8443"] }, tabs: [
         { id: 7, url: BUILDER }, { id: 8, url: "https://builder.example:8443/x" }, { id: 9, url: ALSO_APPROVED }] });
-    w.bg.setSync({ pageApprovalDomains: [] });
+    w.bg.setLocal({ ml_site_selfapprove: [] });
     await sleep(50);
     assert.deepEqual(await w.handed(), ["run-7", "run-8"]);
 
@@ -652,7 +655,7 @@ test("emptying the self-approval whitelist hands over the runs of every origin i
     assert.deepEqual(await a.handed(), [], "the whitelist still approves the site");
     // Still covered: one whitelist entry goes, another list keeps the origin.
     const b = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, config: { pageApprovalDomains: ["builder.example", "x.example"] }, tabs: [{ id: 7, url: BUILDER }] });
-    b.bg.setSync({ pageApprovalDomains: ["x.example"] });
+    b.bg.setLocal({ ml_site_selfapprove: ["https://x.example"] });
     await sleep(50);
     assert.deepEqual(await b.handed(), [], "the approved list still holds the site");
     // Still covered: the session approval stays while another surface rewrites the approved list without it.
