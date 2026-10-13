@@ -85,7 +85,7 @@ the worker, and the page answers geometry only):
       `pageApprovalAllowed` (`GET_CONFIG`, the worker's config) and the gate's implied approval go through one rule
       (`selfApproves`), so plain http, another port, a subdomain or a sub-frame of a whitelisted host no longer gets the
       https site's self-approval, and the gate no longer implies approval for another port. Tested as a table over sender
-      shapes x readers, with the upgrade from a stored list of hosts (self-approval-origin.test.js): #PRNUM.
+      shapes x readers, with the upgrade from a stored list of hosts (self-approval-origin.test.js): #628.
 
 ## In progress
 
