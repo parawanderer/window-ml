@@ -59,7 +59,7 @@ the worker, and the page answers geometry only):
       surface or a sync, the whitelist) decides at the storage event; every send decides again, and a call built for the
       page is built again if the hand-over lands first; the decision is stored at once and survives an eviction;
       `VALUE_COLUMNS` is refused to an unapproved page; red-team: a revoked page flooding sends cannot stop or delay
-      it: #PR.
+      it: #621.
 
 ## In progress
 
