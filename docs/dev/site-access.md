@@ -29,9 +29,9 @@ nothing either.
 rule is in one place, `src/secret-scrub.ts` (`secretsOf`: the chat URL as configured, its origin and its host, the price
 service's URL, the key, the filter), applied at the two crossings by `src/sw/sw-scrub.ts`: `forPage` on every answer
 to a page-started message and on the stream port's error (every `error` string at any depth; a data field is the
-handler's answer and is left alone), and `forModel` on every result a worker-hosted run's tool, read-only try or
-precheck hands its model (`forModel` in `agent-host.ts`), which records the raw text in the execution log's `key`
-(`tool`/`scrubbed`). Extension pages (the popup, the DevTools panel, Settings) are answered unscrubbed: they are where
+handler's answer and is left alone), and `forModel` on every step result a worker-hosted run's model reads, applied
+once in the shared loop after the step settles (`forModel` in `agent-loop.ts`: a tool's answer, a read-only try, a
+precheck, a dispatch that threw, a denial), which records the raw text in the execution log's `key` (`tool`/`scrubbed`). Extension pages (the popup, the DevTools panel, Settings) are answered unscrubbed: they are where
 a person diagnoses a wrong URL. `SET_MODEL`'s unknown-model error lists only the models the filter allows.
 `tests/error-scrub.test.mjs` walks every page-started type under each backend failure.
 
