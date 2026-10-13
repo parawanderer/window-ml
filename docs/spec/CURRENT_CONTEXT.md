@@ -39,8 +39,8 @@ ml.current.meta       // a PARALLEL array, same length and order: what we KNOW a
 ml.current.log        // this run's execution log: records, carrying `.text` for ml.pipe
 ml.current.debug      // { userWatches: [{ expression, note?, value | error }] }: watches the person shared (worker-hosted runs); a note is their question
 ml.current.env        // this run's environment: page approved, isolation available, where an exec would run (sw-current-env.ts)
-ml.current.runtime    // PROPOSED: what the runtime this run executes in can do (below, "The runtime and the client")
-ml.current.client     // PROPOSED: who sent the latest user message, and what they can do and see from there
+ml.current.runtime    // what the runtime this run executes in can do (below, "The runtime and the client")
+ml.current.client     // who sent the latest user message, and what they can do and see from there (meta[i].client: each one's)
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.
@@ -354,7 +354,7 @@ Note the difference from `log.text`, which IS a wrapper of a sort and is kept: t
 ordinary Array, so it stays structurally a plain value the dialect already understands. A String subclass is not
 structurally a string in the same way, which is the line between the two.
 
-## The runtime and the client (agreed 2026-10-12; `runtime` built, `client` not yet)
+## The runtime and the client (agreed 2026-10-12; both built)
 
 Two questions a model cannot answer today, and both change what a good answer looks like. **Where am I running**: can
 this runtime open tabs, take screenshots, keep the session, run Python, call a utility model? **Who is talking to me,
@@ -408,6 +408,16 @@ Scope: the runtime the run EXECUTES on, the local "kernel". A run hosted by a re
 plumbing.
 
 ### 2. `client` comes from the channel, not from the sender's say-so
+
+Built (2026-10-13): `clientOf` (`src/agent/current-client.ts`) over the `PromptOrigin` the loop records on each user
+message, which now carries the hub sender's `scopes` (passed by `HubRuntime.answer` as the allowlist-narrowed set the
+gate used) and the client's `ui` claim (`commandOrigin`, `session-commands.ts`). `seesPage` is `seesPage()` in
+`prompt-surface.ts`, which `promptSurfaceNote` calls too. The `ui` claim is cut to at most 16 short identifier names
+(`clientUiOf`), so no id or URL can ride it; it is generated from `ClientPlatform`'s optional members by a record the
+compiler keeps complete (`clientUi`, `platform.ts`) and stamped in `ChatStore.send`, which the phone's native composer
+goes through too. Not yet in it: the panel slots a client renders. A hub sender's `install` scope, which the session
+`Scope` union does not have, is left out of `may`. Tests: `tests/current-client.test.mjs`, the narrowed set in
+`tests/hub-runtime.test.mjs`, the red-team in `tests/redteam-current-client.test.mjs`.
 
 Who sent a message is a fact of the transport, which the contract already says (SESSION_CONTRACT.md: "it takes the
 principal from the authenticated command"), and which the build drops: `HubRuntime.answer` verifies the seal's sender,
