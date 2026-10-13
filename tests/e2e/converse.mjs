@@ -58,6 +58,9 @@ if (process.argv[2] === "--attach") {
 // After --attach, which needs neither (and so runs without the TypeScript loader).
 const { runOnce, resolveBackendFromEnv } = await import("./run-once.mjs");
 const { turnReport } = await import("./interview.mjs");
+// Its browser, open for the whole conversation, counts against every bench sweep's memory budget (--attach starts none).
+const { joinLedger } = await import("./bench/memory-budget.mjs");
+joinLedger({ tool: "converse", cmd: [path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2)].join(" "), repo: path.resolve(HERE, "../..") });
 
 const DIR = path.resolve(process.env.CONVERSE_DIR || path.join(HERE, "artifacts", `converse-${Date.now()}`));
 const INBOX = path.join(DIR, "inbox"), OUTBOX = path.join(DIR, "outbox");

@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, withLedger, ledger, register, update, unregister, measureLedger,
-    budgetState, admits, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT } from "../tests/e2e/bench/memory-budget.mjs";
+    budgetState, admits, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT, joinLedger, roomWarning, setLimit } from "../tests/e2e/bench/memory-budget.mjs";
 import { failureShape, groupHeld, groupCommands, freeingCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
 import { doneLine } from "../tests/e2e/bench/sinks.mjs";
 
@@ -93,6 +93,49 @@ test("measuring gives each entry its own tree and keeps its peak", () => {
     assert.equal(measureLedger({ file: f, table: big })[0].rss, 6000 * 1024);
     const [e] = measureLedger({ file: f, table: small });
     assert.deepEqual([e.rss, e.peak], [2000 * 1024, 6000 * 1024]);
+});
+
+// --- the bench's other tools (panel, converse, observe) ---
+
+test("a tool joins the ledger as `tool`, never over an entry a sweep made for its pid, and leaves when told", () => {
+    const f = tmpLedger();
+    const leave = joinLedger({ tool: "panel", cmd: "panel.mjs x.json", repo: "/r", file: f });
+    assert.deepEqual(ledger(f).map((e) => [e.kind, e.tool, e.pid, e.cmd]), [["tool", "panel", process.pid, "panel.mjs x.json"]]);
+    leave();
+    assert.deepEqual(ledger(f), []);
+    register({ kind: "runner", pid: process.pid, sweep: "s" }, f);
+    joinLedger({ tool: "observe", file: f })();
+    assert.deepEqual(ledger(f).map((e) => e.kind), ["runner"], "the sweep's own entry stays, and leaving does not drop it");
+});
+
+test("a tool leaves the ledger when its process exits", async () => {
+    const f = tmpLedger();
+    const mod = new URL("../tests/e2e/bench/memory-budget.mjs", import.meta.url).href;
+    const child = spawn(process.execPath, ["--input-type=module", "-e", `const { joinLedger, ledger } = await import(${JSON.stringify(mod)}); joinLedger({ tool: "converse", file: ${JSON.stringify(f)} }); console.log(ledger(${JSON.stringify(f)}).length);`], { stdio: ["ignore", "pipe", "inherit"] });
+    let out = "";
+    child.stdout.on("data", (d) => { out += d; });
+    await new Promise((r) => child.on("exit", r));
+    assert.equal(out.trim(), "1", "in while it ran");
+    assert.deepEqual(ledger(f), [], "out once it exited");
+});
+
+test("every sweep's budget counts a tool's browsers, and a tool about to start more is told when they do not fit", () => {
+    const st = budgetState({ limit: 8 * GB, entries: [{ kind: "runner", rss: 1 * GB }, { kind: "tool", rss: 5 * GB }], available: 20 * GB, total: 32 * GB, reserveFrac: 0 });
+    assert.deepEqual([st.byKind.tool, st.used, st.room], [5 * GB, 6 * GB, 2 * GB]);
+    const f = tmpLedger();
+    setLimit(8 * GB, "test", f);
+    const measure = () => [{ kind: "tool", pid: 1, rss: 5 * GB }];
+    const opts = { file: f, measure, avail: () => 20 * GB, total: 32 * GB };
+    assert.equal(roomWarning(2, opts), null, "two browsers fit the 3 GB left");
+    assert.match(roomWarning(4, opts), /^4 browsers \(about 4\.0 GB\) do not fit the bench's memory budget: the memory limit: the bench holds 5\.0 GB of 8\.0 GB, and these take about 4\.0 GB\. .*hold\.mjs --ledger/);
+});
+
+test("panel.mjs, converse.mjs and observe.mjs each join the ledger (converse not in --attach, which starts no browser)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = (f) => readFileSync(new URL(`../tests/e2e/${f}`, import.meta.url), "utf8");
+    for (const [f, tool] of [["panel.mjs", "panel"], ["observe.mjs", "observe"], ["converse.mjs", "converse"]]) assert.match(src(f), new RegExp(`joinLedger\\(\\{ tool: "${tool}"`), f);
+    const c = src("converse.mjs");
+    assert.ok(c.indexOf("joinLedger({") > c.indexOf('process.argv[2] === "--attach"'), "after the --attach branch has exited");
 });
 
 // --- the budget ---

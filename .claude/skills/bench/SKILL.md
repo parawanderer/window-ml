@@ -54,7 +54,9 @@ fewer at once: a lower `--jobs`, or `--lanes`, which runs a cloud model one run 
 
 **Memory: what the bench may hold, and what happens at the limit.** Every bench process on the machine (each clone,
 each session) writes one shared ledger, `~/.cache/window-ml-bench/ledger.json` (locked; a dead pid's entry goes on the next
-read): the sweep runner, each running or held cell's own process, and each page server, each measured every 5 s as the
+read): the sweep runner, each running or held cell's own process, each page server, and `panel.mjs`, `converse.mjs` and
+`observe.mjs` while they run (kind `tool`, their browsers in their tree; panel warns before starting more browsers than
+fit), each measured every 5 s as the
 summed resident memory of its process tree (`memory-budget.mjs`; shared pages count once per process, so it over-states).
 A sweep that holds runs or uses a real model checks it before each cell starts and before it keeps a failed run open:
 the bench's total plus one more browser must fit under `--memory-limit` (default half the RAM) AND leave a quarter of the

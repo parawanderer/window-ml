@@ -101,7 +101,7 @@ test("the chart: one area per kind, stacked, over the sweep's readings, with its
     const { doc } = await page({ ...base, memory: MEMORY });
     const chart = doc.querySelector("#memory .tc");
     assert.ok(chart);
-    assert.deepEqual([...chart.querySelectorAll("svg path")].map((p) => p.getAttribute("class")), ["mem-runner", "mem-page", "mem-running", "mem-held"]);
+    assert.deepEqual([...chart.querySelectorAll("svg path")].map((p) => p.getAttribute("class")), ["mem-runner", "mem-page", "mem-tool", "mem-running", "mem-held"]);
     // The held band is the top one: its upper edge at the last reading is the total, the highest point drawn.
     const held = chart.querySelector("path.mem-held").getAttribute("d");
     assert.ok(held.startsWith("M"));

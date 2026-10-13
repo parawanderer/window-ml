@@ -15,6 +15,7 @@
 // is (see docs/POINTER-IDENTIFIERS.md §6).
 
 import { runOnce, resolveBackendFromEnv, DEFAULT_TASK } from "./run-once.mjs";
+import { joinLedger } from "./bench/memory-budget.mjs";
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,8 @@ const ARTROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "arti
 const ART = path.join(ARTROOT, RUN);
 
 const main = async () => {
+    // Its browser counts against every bench sweep's memory budget while it runs (held open with WATCH=1 too).
+    joinLedger({ tool: "observe", cmd: [path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2)].join(" "), repo: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..") });
     await mkdir(ART, { recursive: true });   // never rm the root — keep prior runs to diff
 
     const backend = await resolveBackendFromEnv();

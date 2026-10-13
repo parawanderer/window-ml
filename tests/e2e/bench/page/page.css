@@ -260,6 +260,7 @@ td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
 .memory .tc { margin: 8px 0 4px }
 .mem-runner { fill: color-mix(in srgb, var(--fg-dim) 45%, transparent); background: color-mix(in srgb, var(--fg-dim) 45%, transparent) }
 .mem-page { fill: color-mix(in srgb, var(--fg-faint) 40%, transparent); background: color-mix(in srgb, var(--fg-faint) 40%, transparent) }
+.mem-tool { fill: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 45%, transparent) }
 .mem-running { fill: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 55%, transparent) }
 .mem-held { fill: color-mix(in srgb, var(--warn) 60%, transparent); background: color-mix(in srgb, var(--warn) 60%, transparent) }
 .memory .mlimit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 12px }
