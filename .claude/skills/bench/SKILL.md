@@ -120,10 +120,11 @@ store lacks, every sweep file changed since, such as a mark added on the page la
 under `tests/e2e/artifacts/` another harness left with a session's `events.json`/`run.json` in it, such as observe,
 converse or an old `panel-*`, sent as-is under `loose/<clone>/<dir>/`; a `.nosync` file in it keeps it here), so a push
 that failed is made good by the next. `--no-sync` and `--only-db` keep that sweep's run directories on this machine for good (recorded in its
-page.json, so no later push sends them), as `sync: false` on a spec or a task does: screenshots, page text, logged-in
-pages included. A run against the fake LLM never goes (`isFake`), so a throwaway check needs no flag. Each push's outcome
+`sync.json`, written as it STARTS, and its page.json, so no later push sends them), as `sync: false` on a spec or a task does: screenshots, page text, logged-in
+pages included. A sweep that never finished sends its finished cells by its `sync.json`; one from before `sync.json` with
+no page.json sends nothing, and `status` names it: `sync.mjs adopt <dir>` (or `--off`) once you know how it was started. A run against the fake LLM never goes (`isFake`), so a throwaway check needs no flag. Each push's outcome
 is kept in `~/.cache/window-ml-bench/last-push-<clone>.json`; a failed one is printed at a sweep's end and by `status`.
-`sync.mjs push | pull | status [--json] | schedule [print|install|uninstall]` by hand; `schedule install` puts in a launchd
+`sync.mjs push | pull | status [--json] | schedule [print|install|uninstall] | adopt <dir>` by hand; `schedule install` puts in a launchd
 job that pushes every 30 min (log beside the ledger), and is the person's call, not an agent's. `pull` fills
 `artifacts/bench-pool/`, deduped. The store is AT-LEAST-ONCE: read it through `pull` or the `views.sql` views, never the
 raw objects. The pool and pulled copies are the only copies: the store's nightly copy is on another disk of the same box.

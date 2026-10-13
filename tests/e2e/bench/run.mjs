@@ -79,7 +79,7 @@ import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
 import { shownFingerprint } from "./shown.mjs";
-import { storeFromEnv, openStore, pushAndRecord, lastPushLine } from "./sync.mjs";
+import { storeFromEnv, openStore, pushAndRecord, lastPushLine, syncRecordFor, SYNC_FILE } from "./sync.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
@@ -608,6 +608,11 @@ const main = async () => {
     const boxSince = Date.now() - 60_000;
     const resPoll = backend ? startBox(backend, { db: boxLog, log: (m) => console.log(m) }) : null;
     await mkdir(sweepDir, { recursive: true });
+    // What of it may leave this machine for the bench store, written before any cell runs: a sweep that never finishes
+    // writes no page.json, and every push (by hand, the next sweep's, the scheduled one) reads this to know whether its
+    // finished cells may go. `--no-sync` and `--only-db` keep them here for good.
+    const syncRule = syncRecordFor(spec, args);
+    await writeFile(path.join(sweepDir, SYNC_FILE), JSON.stringify(syncRule, null, 2) + "\n");
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
     const specRel = path.relative(ROOT, path.resolve(args.specPath));
@@ -962,12 +967,8 @@ const main = async () => {
         runs, rows, older, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
         resources: resPoll?.resources() ?? null, ...spendState({ final: true }), memory: memoryView(),
-        // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
-        // run of a task that says so. `--no-sync` and `--only-db` keep this sweep's traces here for good, not only at its
-        // end: every later push (by hand, by the next sweep, by the scheduled job) reads this and sends none of them.
-        ...(spec.sync === false || spec.tasks.some((t) => t.sync === false) || args.sync === false || args.onlyDb
-            ? { sync: { off: spec.sync === false || args.sync === false || !!args.onlyDb, tasksOff: spec.tasks.filter((t) => t.sync === false).map((t) => t.id),
-                ...(args.sync === false ? { by: "--no-sync" } : args.onlyDb ? { by: "--only-db" } : spec.sync === false ? { by: "spec" } : {}) } } : {}),
+        // What may leave this machine for the bench store, as sync.json has said since the start (sync.mjs `syncRecordFor`).
+        ...(syncRule.off || syncRule.tasksOff.length ? { sync: syncRule } : {}),
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:

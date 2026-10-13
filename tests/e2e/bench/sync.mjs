@@ -6,6 +6,7 @@
 //   node --import tsx tests/e2e/bench/sync.mjs pull [--traces <sweep>]...         fetch it into artifacts/bench-pool/
 //   node --import tsx tests/e2e/bench/sync.mjs status [--json]                    what is here and not there, and how the last push went
 //   node --import tsx tests/e2e/bench/sync.mjs schedule [print|install|uninstall] a launchd job pushing every 30 min (macOS)
+//   node --import tsx tests/e2e/bench/sync.mjs adopt <sweep dir> [--off]         give an unfinished sweep from before sync.json a record
 //
 // EVERY PUSH SENDS EVERYTHING PENDING: every log's rows past this clone's cursor, every sweep's runs the store lacks,
 // every sweep-level file that changed since (a mark added after the sweep was pushed), and every LOOSE RUN: a directory
@@ -20,6 +21,11 @@
 // identical (a fresh clone, a log restored from elsewhere, two clones holding the same box frames) both land. Readers
 // dedupe on the key: `pull` loads into SQLite under the same UNIQUE keys the logs have, and DuckDB on the box reads the
 // views in views.sql (DISTINCT ON the key), never the raw globs.
+//
+// WHAT A SWEEP MAY SEND is decided when it STARTS: run.mjs writes <sweep>/sync.json (`syncRecordFor`) before its first
+// cell, and page.json repeats it at the end. So a sweep that never finished (stopped, crashed, the laptop slept) still
+// sends its finished cells; one from before sync.json with no page.json sends nothing until `adopt` gives it a record,
+// since nothing says whether it was started with --no-sync.
 //
 // WHAT A TRACE HOLDS: screenshots, DOM snapshots and page text from whatever site the run was on, logged-in pages
 // included. A spec or task with `sync: false` keeps its runs' directories here; `--only-db` sends rows only.
@@ -42,7 +48,7 @@ import { readDotenv } from "../../../scripts/dotenv.mjs";
 import { openScores, COLS as SCORE_COLS, logRuns, SCORES_DB } from "./scores.mjs";
 import { openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { CALL_COLS, logCalls, logSnapshot } from "./spend.mjs";
-import { historyRuns } from "./sweeps.mjs";
+import { historyRuns, cellsOnDisk } from "./sweeps.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -221,20 +227,60 @@ async function filesUnder(dir, rel = "") {
     return out;
 }
 
+/** The file a sweep's start writes saying what of it may leave this machine (`syncRecordFor`). */
+export const SYNC_FILE = "sync.json";
+
+/**
+ * What a sweep started with `spec` and `args` may send: `{ off, tasksOff, by? }`. `off` for a spec that says `sync:
+ * false`, `--no-sync` or `--only-db`; `tasksOff` the tasks that say so; `by` what turned it off. `--no-sync` and
+ * `--only-db` keep the sweep's traces here for good, not only at its end: every later push reads this and sends none.
+ */
+export function syncRecordFor(spec, args) {
+    const off = spec.sync === false || args.sync === false || !!args.onlyDb;
+    const by = args.sync === false ? "--no-sync" : args.onlyDb ? "--only-db" : spec.sync === false ? "spec" : null;
+    return { off, tasksOff: spec.tasks.filter((t) => t.sync === false).map((t) => t.id), ...(by ? { by } : {}) };
+}
+
+/**
+ * A sweep's say over what may leave: page.json's (a finished sweep) and sync.json's (written at its start), off if
+ * either is, every task either names. `{ page, rule }`; `rule` null when it has neither: a sweep from before sync.json
+ * that never finished, whose flags nothing records (`adopt`).
+ */
+export async function sweepRecord(sweepDir) {
+    const json = async (name) => { try { return JSON.parse(await readFile(path.join(sweepDir, name), "utf8")); } catch { return null; } };
+    const page = await json("page.json"), sync = await json(SYNC_FILE);
+    if (!page && !sync) return { page: null, rule: null };
+    const rules = [page?.sync, sync].filter(Boolean);
+    return { page, rule: { off: rules.some((r) => r.off), tasksOff: rules.flatMap((r) => r.tasksOff ?? []) } };
+}
+
+/** Give a sweep with no record one (`sync.mjs adopt`): its runs may then be sent, or never with `off`. Refused when it has one. */
+export async function adopt(sweepDir, { off = false } = {}) {
+    if ((await sweepRecord(sweepDir)).rule) throw new Error(`${sweepDir} already says what it may send (page.json or ${SYNC_FILE})`);
+    if (!existsSync(path.join(sweepDir, "sweeps.jsonl"))) throw new Error(`${sweepDir} is not a sweep directory (no sweeps.jsonl)`);
+    await writeFile(path.join(sweepDir, SYNC_FILE), JSON.stringify({ off, tasksOff: [], by: "adopt" }, null, 2) + "\n");
+}
+
 /**
  * The runs of a sweep that may leave this machine, each with the store prefix it lives under:
  * `traces/<sweep>/<cell path>/<run id>/`, the run id being its session hash (or its cache key, for a run that errored
- * before it had one), so a re-run lands beside the old one. None when the spec said `sync: false`; a task that said so
- * keeps its runs here.
+ * before it had one), so a re-run lands beside the old one. None when the spec said `sync: false`, or when the sweep has
+ * no record (`sweepRecord`); a task that said so keeps its runs here. A finished sweep's runs are page.json's; an
+ * unfinished one's, every cell whose cell.json is written (it goes last).
  */
 export async function syncableRuns(sweepDir) {   // never a run against the fake model: see `isFake`
-    let page;
-    try { page = JSON.parse(await readFile(path.join(sweepDir, "page.json"), "utf8")); } catch { return []; }   // in flight, or before page.json
-    if (page.sync?.off) return [];
-    const tasksOff = new Set(page.sync?.tasksOff ?? []);
+    const { page, rule } = await sweepRecord(sweepDir);
+    if (!rule || rule.off) return [];
+    const tasksOff = new Set(rule.tasksOff);
     const sweep = path.basename(sweepDir);
     const out = [];
-    for (const r of page.runs ?? []) {
+    if (!page) {
+        for (const { rel, saved } of await cellsOnDisk(sweepDir)) {
+            if (tasksOff.has(saved.taskId) || isFake(saved)) continue;
+            out.push({ dir: path.join(sweepDir, rel), prefix: `traces/${sweep}/${rel}/${saved.hash ?? `key-${saved.key}`}/` });
+        }
+    }
+    for (const r of page?.runs ?? []) {
         if (r.state !== "done" || !r.path || tasksOff.has(r.taskId)) continue;
         let cell;
         try { cell = JSON.parse(await readFile(path.join(sweepDir, r.path, "cell.json"), "utf8")); } catch { continue; }
@@ -273,8 +319,6 @@ async function missingOf(store, sweepDir, clone) {
     const runs = await syncableRuns(sweepDir);
     if (!runs.length) return { runs: [], files: [] };
     const listed = new Map((await store.list(`traces/${path.basename(sweepDir)}/`)).map((o) => [o.key, o]));
-    let page = null;
-    try { page = JSON.parse(await readFile(path.join(sweepDir, "page.json"), "utf8")); } catch { /* nothing to describe it */ }
     const files = [];
     // Every clone's copy of each sweep file: `traces/<sweep>/_sweep/<clone>/<name>`.
     const copies = new Map();
@@ -284,19 +328,18 @@ async function missingOf(store, sweepDir, clone) {
         const name = o.key.slice(under.length).split("/").slice(1).join("/");
         (copies.get(name) ?? copies.set(name, []).get(name)).push(o);
     }
-    // The sweep's own files describe its runs: a sweep with none to send (every one the fake's) sends no index either.
-    if (page && !page.sync?.off) {
-        for (const d of await readdir(sweepDir, { withFileTypes: true })) {
-            if (!d.isFile()) continue;
-            const key = `${under}${clone}/${d.name}`, file = path.join(sweepDir, d.name);
-            const there = copies.get(d.name) ?? [];
-            if (there.length) {
-                const body = await readFile(file);
-                const md5 = createHash("md5").update(body).digest("hex");
-                if (there.some((o) => (o.etag ? o.etag === md5 : o.size === body.length))) continue;
-            }
-            files.push({ name: d.name, key, path: file });
+    // The sweep's own files describe its runs: a sweep with none to send (every one the fake's, or it is off) sends no index
+    // either; an unfinished one sends what it has so far (sync.json, sweeps.jsonl) and the rest once page.json is written.
+    for (const d of await readdir(sweepDir, { withFileTypes: true })) {
+        if (!d.isFile()) continue;
+        const key = `${under}${clone}/${d.name}`, file = path.join(sweepDir, d.name);
+        const there = copies.get(d.name) ?? [];
+        if (there.length) {
+            const body = await readFile(file);
+            const md5 = createHash("md5").update(body).digest("hex");
+            if (there.some((o) => (o.etag ? o.etag === md5 : o.size === body.length))) continue;
         }
+        files.push({ name: d.name, key, path: file });
     }
     return { runs: runs.filter((r) => !listed.has(`${r.prefix}cell.json`)), files };
 }
@@ -433,12 +476,14 @@ export async function status(store, { clone = cloneName(), scoresDb = SCORES_DB,
     }
     for (const dir of await sweepDirs(root)) {
         const { runs, files } = await missingOf(store, dir, clone);
-        out.sweeps.push({ dir: path.relative(ROOT, dir), runs: (await syncableRuns(dir)).length, missing: runs.map((m) => path.relative(dir, m.dir)), changed: files.map((f) => f.name) });
+        // A sweep with no record sends nothing, so its finished cells are here only until someone adopts it.
+        const unrecorded = (await sweepRecord(dir)).rule ? 0 : (await cellsOnDisk(dir)).length;
+        out.sweeps.push({ dir: path.relative(ROOT, dir), runs: (await syncableRuns(dir)).length, missing: runs.map((m) => path.relative(dir, m.dir)), changed: files.map((f) => f.name), unrecorded });
     }
     out.loose = [];
     const listed = await store.list(`loose/${clone}/`);
     for (const dir of looseRoot ? await looseDirs(looseRoot) : []) out.loose.push({ dir: path.relative(ROOT, dir), missing: (await missingLoose(store, dir, clone, listed)).length });
-    out.allPushed = Object.values(out.logs).every((l) => l.unpushed === 0) && out.sweeps.every((s) => !s.missing.length && !s.changed.length) && out.loose.every((l) => !l.missing);
+    out.allPushed = Object.values(out.logs).every((l) => l.unpushed === 0) && out.sweeps.every((s) => !s.missing.length && !s.changed.length && !s.unrecorded) && out.loose.every((l) => !l.missing);
     return out;
 }
 
@@ -489,11 +534,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         else if (!s.configured) console.log("the bench store is not configured (BENCH_STORE_URL, BENCH_STORE_KEY_ID, BENCH_STORE_SECRET in .env)");
         else {
             for (const [t, l] of Object.entries(s.logs)) console.log(`  ${t}: ${l.unpushed} row(s) not in the store`);
-            for (const sw of s.sweeps) console.log(`  ${sw.dir}: ${sw.missing.length} of ${sw.runs} run(s) not in the store${sw.changed.length ? `; changed since pushed: ${sw.changed.join(", ")}` : ""}`);
+            for (const sw of s.sweeps) {
+                if (sw.unrecorded) console.log(`  ${sw.dir}: unfinished, no sync record, so its ${sw.unrecorded} run(s) are not sent: sync.mjs adopt ${sw.dir} (or --off to keep them here)`);
+                else console.log(`  ${sw.dir}: ${sw.missing.length} of ${sw.runs} run(s) not in the store${sw.changed.length ? `; changed since pushed: ${sw.changed.join(", ")}` : ""}`);
+            }
             const loose = s.loose.filter((l) => l.missing);
             console.log(`  loose runs: ${s.loose.length} (observe, converse, old panels…), ${loose.length} with files not in the store${loose.length ? `: ${loose.map((l) => path.basename(l.dir)).join(", ")}` : ""}`);
             console.log(`  ${lastPushLine(await lastPush())}`);
         }
+    } else if (cmd === "adopt") {
+        const dir = rest.find((a) => !a.startsWith("--"));
+        if (!dir) { console.error("usage: sync.mjs adopt <sweep dir> [--off]"); process.exit(2); }
+        await adopt(path.resolve(dir), { off: flag("--off") });
+        console.log(`${dir}: ${flag("--off") ? "its runs stay here" : "its finished runs go with the next push"} (${SYNC_FILE})`);
     } else if (cmd === "push" || cmd === "pull") {
         if (!cfg) { console.error("the bench store is not configured (BENCH_STORE_URL, BENCH_STORE_KEY_ID, BENCH_STORE_SECRET in .env)"); process.exit(2); }
         const store = openStore(cfg);

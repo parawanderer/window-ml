@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { signV4 } from "../tests/e2e/bench/s3.mjs";
-import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S, isLooseRun, looseDirs } from "../tests/e2e/bench/sync.mjs";
+import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S, isLooseRun, looseDirs, syncRecordFor, sweepRecord, syncableRuns, adopt, SYNC_FILE } from "../tests/e2e/bench/sync.mjs";
 import { openScores, logRuns, readRuns } from "../tests/e2e/bench/scores.mjs";
 import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
 
@@ -323,6 +323,70 @@ test("what stays here: a sweep whose spec said sync: false, a task that did, and
     const plain = sweepDir({ runs: [{ path: "t1/x/r0", taskId: "t1", hash: "h" }] });
     assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [plain.dir], onlyDb: true })).runs, 0);
     assert.ok(![...objects.keys()].some((k) => k.startsWith("traces/")));
+});
+
+// --- a sweep that never finished: sync.json, written at its start ---
+
+/** A sweep stopped before its end: cells on disk, no page.json, and sync.json only when `sync` is given. */
+function unfinishedSweep({ sync, cells, name = "uf" }) {
+    const root = tmp(), dir = path.join(root, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "sweeps.jsonl"), "{}\n");
+    if (sync) writeFileSync(path.join(dir, SYNC_FILE), JSON.stringify(sync));
+    for (const c of cells) {
+        mkdirSync(path.join(dir, c.path), { recursive: true });
+        writeFileSync(path.join(dir, c.path, "run.md"), "# run");
+        if (!c.running) writeFileSync(path.join(dir, c.path, "cell.json"), JSON.stringify({ key: `k-${c.path}`, taskId: c.path.split("/")[0], hash: c.hash ?? null, ...(c.backend ? { backend: c.backend } : {}) }));
+    }
+    return { root, dir };
+}
+
+test("what a sweep may send is recorded at its start: off for sync: false, --no-sync, --only-db; a task's own; nothing else", () => {
+    const spec = (sync, taskSync) => ({ ...(sync === undefined ? {} : { sync }), tasks: [{ id: "a" }, { id: "b", ...(taskSync === undefined ? {} : { sync: taskSync }) }] });
+    assert.deepEqual(syncRecordFor(spec(), {}), { off: false, tasksOff: [] }, "the default sends everything");
+    assert.deepEqual(syncRecordFor(spec(false), {}), { off: true, tasksOff: [], by: "spec" });
+    assert.deepEqual(syncRecordFor(spec(), { sync: false }), { off: true, tasksOff: [], by: "--no-sync" });
+    assert.deepEqual(syncRecordFor(spec(), { onlyDb: true }), { off: true, tasksOff: [], by: "--only-db" });
+    assert.deepEqual(syncRecordFor(spec(undefined, false), {}), { off: false, tasksOff: ["b"] });
+    assert.deepEqual(syncRecordFor(spec(true, true), {}), { off: false, tasksOff: [] }, "sync: true says nothing more than the default");
+});
+
+test("an unfinished sweep sends its finished cells by its sync.json: not one still running, a task that is off, or the fake's", async () => {
+    objects.clear();
+    const { dir } = unfinishedSweep({ sync: { off: false, tasksOff: ["t2"] }, cells: [
+        { path: "t1/m-a/r0", hash: "h1" }, { path: "t1/m-b/r0", running: true }, { path: "t2/m-a/r0", hash: "h2" }, { path: "t3/m-a/r0", hash: "h3", backend: "fake-LLM" },
+    ] });
+    assert.deepEqual((await syncableRuns(dir)).map((r) => r.prefix), ["traces/uf/t1/m-a/r0/h1/"]);
+    const puts = [];
+    const watched = { ...store(), put: async (k, b, t) => { puts.push(k); return store().put(k, b, t); } };
+    assert.equal((await push(watched, { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [dir] })).runs, 1);
+    assert.ok(puts.includes(`traces/uf/_sweep/a/${SYNC_FILE}`), "its record goes with it");
+    // Then it finishes (or is re-run) with --no-sync: off, though the page.json it ends with is the one that said nothing.
+    writeFileSync(path.join(dir, SYNC_FILE), JSON.stringify({ off: true, tasksOff: [], by: "--no-sync" }));
+    writeFileSync(path.join(dir, "page.json"), JSON.stringify({ runs: [{ state: "done", path: "t1/m-a/r0", taskId: "t1" }] }));
+    assert.deepEqual(await syncableRuns(dir), [], "off when either record says so");
+});
+
+test("a sweep from before sync.json that never finished sends nothing until adopted; status names it and is not all pushed", async () => {
+    objects.clear();
+    const { root, dir } = unfinishedSweep({ cells: [{ path: "t1/m-a/r0", hash: "h1" }, { path: "t1/m-b/r0", hash: "h2" }] });
+    assert.equal((await sweepRecord(dir)).rule, null);
+    assert.deepEqual(await syncableRuns(dir), []);
+    const st = await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root });
+    assert.equal(st.sweeps[0].unrecorded, 2, "its finished cells, which no push sends");
+    assert.equal(st.allPushed, false, "merge-when-green must not take its runs for pushed");
+    await adopt(dir);
+    await assert.rejects(adopt(dir), /already says/, "adopted once");
+    assert.deepEqual(JSON.parse(readFileSync(path.join(dir, SYNC_FILE), "utf8")), { off: false, tasksOff: [], by: "adopt" });
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [dir] })).runs, 2);
+    assert.equal((await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root })).allPushed, true);
+    // Adopted as off: nothing goes, and nothing is pending.
+    objects.clear();
+    const off = unfinishedSweep({ cells: [{ path: "t1/m-a/r0", hash: "h1" }], name: "uf2" });
+    await adopt(off.dir, { off: true });
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [off.dir] })).runs, 0);
+    assert.equal((await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root: off.root })).allPushed, true);
+    await assert.rejects(adopt(tmp()), /not a sweep directory/);
 });
 
 test("a listing of the whole bucket sends no empty prefix: Garage refuses `prefix=` as an invalid signature", async () => {
