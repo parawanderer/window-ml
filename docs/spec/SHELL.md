@@ -85,9 +85,21 @@ never a page. The model learns which mode a call ran in from the call's result, 
 - **Standing rules, on argv.** "Always allow `npm test` in this repo" is a rule on a structured argv prefix plus a root,
   which is exact in a way a string pattern over shell text cannot be. Rules are the person's, kept with the workspace,
   and shown where they apply.
-- **An optional OS sandbox.** Between a container and nothing: the host spawns each process under the OS's own sandbox
-  (Seatbelt on macOS, bubblewrap or Landlock on Linux) with writes confined to the roots and the network to an
-  allowlist, keeping the person's tools and native speed. What Claude Code's own sandbox mode does.
+- **An OS sandbox, on by default (decided 2026-10-13).** Between a container and nothing: the host spawns each process
+  under the OS's own sandbox (Seatbelt on macOS, bubblewrap on Linux) with writes confined to the roots and the
+  network to an allowlist, keeping the person's tools and native speed. Both halves are needed, for the reason
+  Anthropic gives for Claude Code's: without network isolation a process can send out what it reads (an SSH key);
+  without filesystem isolation it can rewrite its way out of the network limit. Two choices differ from Claude Code's
+  defaults, where the sandbox is off until turned on and a command runs unsandboxed when the sandbox cannot start:
+  here it is **on by default**, and it **fails closed** (no sandbox available: every call asks, as a gap does
+  everywhere else in this extension). Codex CLI is the precedent for on by default (writes confined to the workspace,
+  network off). The person turns it off per workspace, knowingly; a tool that needs to write elsewhere (a package
+  cache, `~/.kube`) gets that path added rather than the sandbox removed.
+- **The sandbox widens the free tier.** Inside it, an effect is bounded the way a container bounds it, so a sandboxed
+  host-mode call is judged like a container call: a write inside the roots no longer needs the person, only an effect
+  the sandbox cannot bound does (the network beyond the allowlist, a path outside the roots). Plain host mode keeps the
+  narrow free tier above. This is what the sandbox is FOR in Claude Code too: fewer prompts, with the boundary set up
+  front instead of judged per command.
 - **The environment is scrubbed** to a whitelist in both modes; in host mode that matters more, since the host's own
   environment is the person's login session.
 
@@ -150,8 +162,11 @@ So the manifest blocks only the free tier. A first build where every call asks i
 ## What the model sees
 
 - **Nothing new in the prompt.** `ml.sh` is documented by its JSDoc through `agent_api_docs`, like every `ml` member.
-- **Whether it exists**: `ml.current.runtime.capabilities.shell`, which the projection rule passes with no edit
-  (`current-runtime.ts`). Absent means no process host is attached.
+- **Whether it exists, and in which modes** (decided 2026-10-13): three boolean capabilities in `RuntimeCapabilities`,
+  which the projection rule passes with no edit (`current-runtime.ts`): `shellContainer` (a container is available),
+  `shellHost` (the real filesystem is), `shellSandboxed` (host mode runs under the OS sandbox). Booleans rather than one
+  detailed `shell` object, because a detailed capability reaches the model as a bare `true`; and the roots themselves
+  are not a capability (they are paths, which the model meets in its own calls' results). All absent: no process host.
 - **Where things went**: the call's result says where it ran (container or host mode) the way `env.exec` says where an
   exec ran, so the model never has to try.
 
@@ -196,10 +211,11 @@ What follows from it:
 
 1. **The host, attached by native messaging, both modes, every call asking.** A container, or host mode within workspace
    roots. `ml.sh.run`, `pipe`, `glob`; outputs as host-held pointers with `ml.pipe` run at the host;
-   `capabilities.shell`; the routing rule; red-team tests. Every call asking is what makes host mode safe to ship first.
+   `shellContainer`/`shellHost`/`shellSandboxed`; the routing rule; red-team tests. Every call asking is what makes host mode safe to ship first.
 2. **The free tier**, once the library manifest exists: manifests for a handful of read-only programs (`git`, `rg`,
    `ls`, `cat`, `wc`, `find` without its effectful flags).
-3. **Standing rules and the OS sandbox** for host mode.
+3. **The OS sandbox and standing rules** for host mode (until the sandbox lands, host mode is the plain one, every call
+   asking, and `shellSandboxed` is false).
 4. **Placement**: a script naming only `ml.sh` evaluated at the host.
 5. **The host on the hub** as a desktop runtime: a shell on another machine.
 
@@ -210,10 +226,6 @@ What follows from it:
   both want. Leaning Deno (one binary, permissions, runs the TypeScript).
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
-- **Host mode's default**: plain, or under the OS sandbox unless the person turns it off.
-- **Which mode is offered**, and how the model learns it before its first call: `capabilities.shell` becomes `true`
-  under the projection rule whatever detail it carries, so the modes would need their own booleans (`shellContainer`,
-  `shellHost`) or be learned from the first result.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
   "start a process and send input" names it.
