@@ -4,7 +4,13 @@
 //
 //   node --import tsx tests/e2e/bench/sync.mjs push [--only-db] [--sweep <dir>]   send what the store does not have
 //   node --import tsx tests/e2e/bench/sync.mjs pull [--traces <sweep>]...         fetch it into artifacts/bench-pool/
-//   node --import tsx tests/e2e/bench/sync.mjs status [--json]                    what is here and not there
+//   node --import tsx tests/e2e/bench/sync.mjs status [--json]                    what is here and not there, and how the last push went
+//   node --import tsx tests/e2e/bench/sync.mjs schedule [print|install|uninstall] a launchd job pushing every 30 min (macOS)
+//
+// EVERY PUSH SENDS EVERYTHING PENDING: every log's rows past this clone's cursor, every sweep's runs the store lacks, and
+// every sweep-level file that changed since (a mark added after the sweep was pushed). A sweep's end pushes the lot, not
+// only itself, so one push that failed is made good by the next, whoever starts it. Each push's outcome is kept in
+// ~/.cache/window-ml-bench/last-push-<clone>.json, which `status` and a sweep's end show.
 //
 // THE STORE IS AT-LEAST-ONCE. A push sends the rows past the last one this clone already pushed (by the store's own
 // listing), named by their range, so an identical re-push replaces an object; but two pushes that OVERLAP without being
@@ -20,6 +26,7 @@
 // is readable by any local user on the box: private on a single-user box in practice, not by permission (an fstab fix is
 // on Shane's list). The store itself is tailnet-only, one key, and refuses anonymous reads.
 
+import { createHash } from "node:crypto";
 import { readFile, writeFile, readdir, mkdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
@@ -205,30 +212,54 @@ export async function syncableRuns(sweepDir) {   // never a run against the fake
  */
 export const isFake = (cell) => cell?.backend === "fake-LLM";
 
-/** The runs of a sweep the store has not got (a run is there once its cell.json is: it goes last). */
-async function missingRuns(store, sweepDir) {
+/**
+ * What of a sweep the store has not got: its runs (a run is there once its cell.json is: it goes last), and its
+ * sweep-level files (page.json, report, marks…) that no clone's copy holds BYTE FOR BYTE (the store's ETag is the MD5
+ * of a plain put; its size, when it gave none). A mark added on the page after the sweep was pushed changes marks.jsonl,
+ * so the next push sends it; an unchanged report is not sent again, nor a sweep `merge-when-green --keep-bench` moved
+ * into this clone from the one that ran and pushed it. `{ runs, files: [{ name, key, path }] }`.
+ */
+async function missingOf(store, sweepDir, clone) {
     const runs = await syncableRuns(sweepDir);
-    if (!runs.length) return [];
-    const have = new Set((await store.list(`traces/${path.basename(sweepDir)}/`)).map((o) => o.key));
-    return runs.filter((r) => !have.has(`${r.prefix}cell.json`));
-}
-
-/** Send a sweep's missing runs, cell.json last in each, then its sweep-level files (page.json, report, marks…) under this clone. */
-async function pushSweep(store, sweepDir, clone) {
-    const missing = await missingRuns(store, sweepDir);
-    for (const run of missing) {
-        const files = (await filesUnder(run.dir)).sort((a, b) => (a === "cell.json") - (b === "cell.json"));
-        for (const f of files) await store.put(`${run.prefix}${f}`, await readFile(path.join(run.dir, f)));
-    }
+    if (!runs.length) return { runs: [], files: [] };
+    const listed = new Map((await store.list(`traces/${path.basename(sweepDir)}/`)).map((o) => [o.key, o]));
     let page = null;
     try { page = JSON.parse(await readFile(path.join(sweepDir, "page.json"), "utf8")); } catch { /* nothing to describe it */ }
+    const files = [];
+    // Every clone's copy of each sweep file: `traces/<sweep>/_sweep/<clone>/<name>`.
+    const copies = new Map();
+    const under = `traces/${path.basename(sweepDir)}/_sweep/`;
+    for (const o of listed.values()) {
+        if (!o.key.startsWith(under)) continue;
+        const name = o.key.slice(under.length).split("/").slice(1).join("/");
+        (copies.get(name) ?? copies.set(name, []).get(name)).push(o);
+    }
     // The sweep's own files describe its runs: a sweep with none to send (every one the fake's) sends no index either.
-    if (page && !page.sync?.off && (await syncableRuns(sweepDir)).length) {
+    if (page && !page.sync?.off) {
         for (const d of await readdir(sweepDir, { withFileTypes: true })) {
-            if (d.isFile()) await store.put(`traces/${path.basename(sweepDir)}/_sweep/${clone}/${d.name}`, await readFile(path.join(sweepDir, d.name)));
+            if (!d.isFile()) continue;
+            const key = `${under}${clone}/${d.name}`, file = path.join(sweepDir, d.name);
+            const there = copies.get(d.name) ?? [];
+            if (there.length) {
+                const body = await readFile(file);
+                const md5 = createHash("md5").update(body).digest("hex");
+                if (there.some((o) => (o.etag ? o.etag === md5 : o.size === body.length))) continue;
+            }
+            files.push({ name: d.name, key, path: file });
         }
     }
-    return missing.length;
+    return { runs: runs.filter((r) => !listed.has(`${r.prefix}cell.json`)), files };
+}
+
+/** Send a sweep's missing runs, cell.json last in each, then its sweep-level files that changed, under this clone. */
+async function pushSweep(store, sweepDir, clone) {
+    const { runs, files } = await missingOf(store, sweepDir, clone);
+    for (const run of runs) {
+        const names = (await filesUnder(run.dir)).sort((a, b) => (a === "cell.json") - (b === "cell.json"));
+        for (const f of names) await store.put(`${run.prefix}${f}`, await readFile(path.join(run.dir, f)));
+    }
+    for (const f of files) await store.put(f.key, await readFile(f.path));
+    return { runs: runs.length, files: files.length };
 }
 
 // --- the commands ---
@@ -238,7 +269,7 @@ async function pushSweep(store, sweepDir, clone) {
  * sweep under artifacts/bench by default). Resolves what was sent.
  */
 export async function push(store, { clone = cloneName(), sweeps = null, onlyDb = false, scoresDb = SCORES_DB, boxDb = BOX_DB, log = () => {} } = {}) {
-    const sent = { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0 };
+    const sent = { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0, files: 0 };
     const files = { scores: scoresDb, box: boxDb };
     for (const [table, t] of Object.entries(TABLES)) {
         if (!existsSync(files[t.log])) continue;
@@ -250,10 +281,33 @@ export async function push(store, { clone = cloneName(), sweeps = null, onlyDb =
     const present = [];
     for (const table of Object.keys(TABLES)) if ((await store.list(`${table}/`)).some((o) => o.key.endsWith(".parquet"))) present.push(table);
     await store.put("views.sql", viewsSql(store.bucket ?? "wml-bench", present), "text/plain; charset=utf-8");
-    if (!onlyDb) for (const dir of sweeps ?? await sweepDirs()) sent.runs += await pushSweep(store, dir, clone);
-    log(`  store: ${sent.scores} score row(s), ${sent.calls} call(s), ${sent.snapshots} price snapshot(s), ${sent.box} box frame(s), ${sent.runs} run(s) sent`);
+    if (!onlyDb) for (const dir of sweeps ?? await sweepDirs()) { const s = await pushSweep(store, dir, clone); sent.runs += s.runs; sent.files += s.files; }
+    log(`  store: ${sent.scores} score row(s), ${sent.calls} call(s), ${sent.snapshots} price snapshot(s), ${sent.box} box frame(s), ${sent.runs} run(s), ${sent.files} changed sweep file(s) sent`);
     return sent;
 }
+
+/** Where the last push's outcome is kept for this clone, beside the bench's memory ledger: read by `status` and by a
+ *  sweep's end, so a push that failed (box or tailnet down) is seen without anyone looking for it. */
+export const lastPushFile = (clone = cloneName(), dir = process.env.BENCH_STATE_DIR || path.join(os.homedir(), ".cache", "window-ml-bench")) => path.join(dir, `last-push-${clone}.json`);
+
+/** Push, and record how it went: `{ at, ok, sent | error, by }` (`by`: "sweep", "manual" or "schedule"). Never throws. */
+export async function pushAndRecord(store, opts = {}, { by = "manual", file = lastPushFile(opts.clone) } = {}) {
+    const at = new Date().toISOString();
+    let rec;
+    try { rec = { at, ok: true, by, sent: await push(store, opts) }; } catch (e) { rec = { at, ok: false, by, error: String(e?.message ?? e).slice(0, 500) }; }
+    try { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, JSON.stringify(rec, null, 2)); } catch { /* the push is what matters */ }
+    return rec;
+}
+
+/** The last push's record for this clone, or null when none was made. */
+export async function lastPush(file = lastPushFile()) {
+    try { return JSON.parse(await readFile(file, "utf8")); } catch { return null; }
+}
+
+/** The last push as one line, for a sweep's end and `status`: what failed, and the command that tries again. */
+export const lastPushLine = (r) => (!r ? "no push recorded yet"
+    : r.ok ? `last push ${r.at.slice(0, 16).replace("T", " ")} UTC (${r.by}): ok`
+        : `last push ${r.at.slice(0, 16).replace("T", " ")} UTC (${r.by}) FAILED: ${r.error}. Nothing is lost: the next push sends everything pending (node --import tsx tests/e2e/bench/sync.mjs push).`);
 
 /**
  * Fetch the pool into `into` (artifacts/bench-pool by default): every clone's rows into scores.sqlite and box.sqlite
@@ -319,11 +373,44 @@ export async function status(store, { clone = cloneName(), scoresDb = SCORES_DB,
         out.logs[table] = { localThrough: local, pushedThrough: pushed, unpushed: Math.max(0, local - pushed) };
     }
     for (const dir of await sweepDirs(root)) {
-        const missing = await missingRuns(store, dir);
-        out.sweeps.push({ dir: path.relative(ROOT, dir), runs: (await syncableRuns(dir)).length, missing: missing.map((m) => path.relative(dir, m.dir)) });
+        const { runs, files } = await missingOf(store, dir, clone);
+        out.sweeps.push({ dir: path.relative(ROOT, dir), runs: (await syncableRuns(dir)).length, missing: runs.map((m) => path.relative(dir, m.dir)), changed: files.map((f) => f.name) });
     }
-    out.allPushed = Object.values(out.logs).every((l) => l.unpushed === 0) && out.sweeps.every((s) => !s.missing.length);
+    out.allPushed = Object.values(out.logs).every((l) => l.unpushed === 0) && out.sweeps.every((s) => !s.missing.length && !s.changed.length);
     return out;
+}
+
+// --- the scheduled push (macOS launchd) ---
+
+/** How often the scheduled push runs: often enough that a run is off the laptop within the hour, rare enough to cost nothing. */
+export const SCHEDULE_S = 30 * 60;
+
+/** The launchd job that pushes this clone every SCHEDULE_S: its label, plist path and the plist itself. */
+export function scheduleJob({ clone = cloneName(), home = os.homedir(), node = process.execPath, root = ROOT, every = SCHEDULE_S } = {}) {
+    const label = `dev.window-ml.bench-push.${clone}`;
+    const log = path.join(home, ".cache", "window-ml-bench", `push-${clone}.log`);
+    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const args = [node, "--import", "tsx", path.join(root, "tests/e2e/bench/sync.mjs"), "push", "--by", "schedule"];
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${esc(label)}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map((a) => `    <string>${esc(a)}</string>`).join("\n")}
+  </array>
+  <key>WorkingDirectory</key><string>${esc(root)}</string>
+  <key>StartInterval</key><integer>${every}</integer>
+  <key>RunAtLoad</key><false/>
+  <key>LowPriorityIO</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>${esc(log)}</string>
+  <key>StandardErrorPath</key><string>${esc(log)}</string>
+</dict>
+</plist>
+`;
+    return { label, plist, path: path.join(home, "Library", "LaunchAgents", `${label}.plist`), log };
 }
 
 /** A store client from settings (s3.mjs), carrying its bucket name for views.sql. */
@@ -340,15 +427,38 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         else if (!s.configured) console.log("the bench store is not configured (BENCH_STORE_URL, BENCH_STORE_KEY_ID, BENCH_STORE_SECRET in .env)");
         else {
             for (const [t, l] of Object.entries(s.logs)) console.log(`  ${t}: ${l.unpushed} row(s) not in the store`);
-            for (const sw of s.sweeps) console.log(`  ${sw.dir}: ${sw.missing.length} of ${sw.runs} run(s) not in the store`);
+            for (const sw of s.sweeps) console.log(`  ${sw.dir}: ${sw.missing.length} of ${sw.runs} run(s) not in the store${sw.changed.length ? `; changed since pushed: ${sw.changed.join(", ")}` : ""}`);
+            console.log(`  ${lastPushLine(await lastPush())}`);
         }
     } else if (cmd === "push" || cmd === "pull") {
         if (!cfg) { console.error("the bench store is not configured (BENCH_STORE_URL, BENCH_STORE_KEY_ID, BENCH_STORE_SECRET in .env)"); process.exit(2); }
         const store = openStore(cfg);
-        if (cmd === "push") await push(store, { onlyDb: flag("--only-db"), sweeps: values("--sweep").length ? values("--sweep").map((d) => path.resolve(d)) : null, log: console.log });
-        else await pull(store, { traces: values("--traces"), log: console.log });
+        if (cmd === "push") {
+            const by = values("--by")[0] ?? "manual";
+            const r = await pushAndRecord(store, { onlyDb: flag("--only-db"), sweeps: values("--sweep").length ? values("--sweep").map((d) => path.resolve(d)) : null, log: (m) => console.log(`${new Date().toISOString()} ${m.trim()}`) }, { by });
+            if (!r.ok) { console.error(lastPushLine(r)); process.exit(1); }
+        } else await pull(store, { traces: values("--traces"), log: console.log });
+    } else if (cmd === "schedule") {
+        const job = scheduleJob();
+        const uid = process.getuid?.() ?? 501;
+        const sub = rest[0] ?? "print";
+        if (process.platform !== "darwin") { console.log("the scheduled push is a macOS launchd job; on another system, run `sync.mjs push` from cron every 30 minutes"); process.exit(2); }
+        if (sub === "print") {
+            console.log(`${job.path}\n\n${job.plist}\ninstall: node --import tsx tests/e2e/bench/sync.mjs schedule install   (writes the file, then launchctl bootstrap gui/${uid} <it>)\nremove:  node --import tsx tests/e2e/bench/sync.mjs schedule uninstall\nlog:     ${job.log}; the outcome of each push: ${lastPushFile()}`);
+        } else if (sub === "install" || sub === "uninstall") {
+            const { execFileSync } = await import("node:child_process");
+            const { rmSync } = await import("node:fs");
+            try { execFileSync("launchctl", ["bootout", `gui/${uid}/${job.label}`], { stdio: "ignore" }); } catch { /* not loaded */ }
+            if (sub === "install") {
+                await mkdir(path.dirname(job.path), { recursive: true });
+                await mkdir(path.dirname(job.log), { recursive: true });
+                await writeFile(job.path, job.plist);
+                execFileSync("launchctl", ["bootstrap", `gui/${uid}`, job.path], { stdio: "inherit" });
+                console.log(`installed: ${job.label}, every ${SCHEDULE_S / 60} min; log ${job.log}`);
+            } else { rmSync(job.path, { force: true }); console.log(`removed: ${job.label}`); }
+        } else { console.log("usage: sync.mjs schedule [print | install | uninstall]"); process.exit(2); }
     } else {
-        console.log("usage: sync.mjs push [--only-db] [--sweep <dir>] | pull [--traces <sweep>] | status [--json]");
+        console.log("usage: sync.mjs push [--only-db] [--sweep <dir>] [--by manual|schedule] | pull [--traces <sweep>] | status [--json] | schedule [print | install | uninstall]");
         process.exit(2);
     }
 }

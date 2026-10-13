@@ -115,12 +115,16 @@ the lanes at once; an interview runs in lanes unless `--jobs` is given. Two runs
 once: the box has one generation slot per model, so they take turns.
 
 **The bench store pools results off the laptop (`sync.mjs`), opt-in.** With `BENCH_STORE_URL`, `BENCH_STORE_KEY_ID` and
-`BENCH_STORE_SECRET` in `.env`, a sweep ends by pushing its new scoreboard rows and box frames (Parquet) and its run
-directories to the bucket; `--no-sync` skips that once, `--only-db` sends rows only, and `sync: false` on a spec or a task
-keeps run directories (screenshots, page text, logged-in pages included) on this machine. A run against the fake LLM
-never goes (`isFake`), as it never reaches the scoreboard, so a throwaway check needs no flag. `sync.mjs push | pull |
-status [--json]` by hand; `pull` fills `artifacts/bench-pool/`, deduped. The store is AT-LEAST-ONCE: read it through
-`pull` or the `views.sql` views, never the raw objects. The pool and pulled copies are the only copies.
+`BENCH_STORE_SECRET` in `.env`, a sweep ends by pushing EVERYTHING pending (every log's new rows, every sweep's runs the
+store lacks, every sweep file changed since, such as a mark added on the page later), so a push that failed is made good
+by the next. `--no-sync` and `--only-db` keep that sweep's run directories on this machine for good (recorded in its
+page.json, so no later push sends them), as `sync: false` on a spec or a task does: screenshots, page text, logged-in
+pages included. A run against the fake LLM never goes (`isFake`), so a throwaway check needs no flag. Each push's outcome
+is kept in `~/.cache/window-ml-bench/last-push-<clone>.json`; a failed one is printed at a sweep's end and by `status`.
+`sync.mjs push | pull | status [--json] | schedule [print|install|uninstall]` by hand; `schedule install` puts in a launchd
+job that pushes every 30 min (log beside the ledger), and is the person's call, not an agent's. `pull` fills
+`artifacts/bench-pool/`, deduped. The store is AT-LEAST-ONCE: read it through `pull` or the `views.sql` views, never the
+raw objects. The pool and pulled copies are the only copies: the store's nightly copy is on another disk of the same box.
 
 **In VS Code, that URL docks as an editor tab.** Cmd-click it in the terminal and VS Code offers a picker
 — choose **Simple Browser** and the page opens beside the code, TensorBoard-style. Simple Browser is
@@ -288,7 +292,7 @@ something the next run is held to. For a model reading results, `panel.mjs` is t
 | `--hold-window` | A held run's browser as a minimised real window (`hold.mjs --show` brings it up) instead of headless. `--hold-headless` is the old default, still accepted. |
 | `--memory-limit 12G` | The most the bench may hold in this machine's memory, for this sweep, over any machine-wide limit (`hold.mjs --limit`). Default half the RAM, with a quarter kept free; a limit given by hand keeps none free. |
 | `--when-full pause\|stop-holding\|release-duplicates` | At the memory budget: `pause` (default) starts nothing more and exits 75 once the running cells end, held runs left alive, the same command resuming; `stop-holding` goes on, keeping no more failures, a cell waiting for room (it names what would free some); `release-duplicates` is stop-holding that, when a cell cannot start, releases this sweep's own held duplicates (same model, task and failure), one of each kept, and says which. |
-| `--no-sync` / `--only-db` | With a bench store configured (`sync.mjs`): do not push this sweep, or push its rows but not its run directories. |
+| `--no-sync` / `--only-db` | With a bench store configured (`sync.mjs`): push nothing at the end, or only rows; either way this sweep's run directories stay on this machine for good (no later push sends them). |
 | `--help` | Print every flag (the header of `run.mjs`). An unknown flag is an error that says so. |
 
 `hold.mjs` (held runs and the memory budget, any time, from any clone): no flag lists this clone's held runs; `--menu` every clone's, grouped, with commands to paste; `--stop [pid|cell|dir …]` releases them (all, or those matching); `--ledger` every bench process and its memory; `--limit [12G|auto]` shows or sets the machine-wide limit (running sweeps take it up within 5 s); `--show`/`--hide [x]` a held window; `--help` all of it.

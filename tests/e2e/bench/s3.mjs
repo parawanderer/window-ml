@@ -69,7 +69,8 @@ export function s3Client({ endpoint, bucket, keyId, secret, region = "garage", f
             if (!res.ok) await fail(`get ${key}`, res);
             return Buffer.from(await res.arrayBuffer());
         },
-        /** Every object under `prefix` (ListObjectsV2, paged): `{ key, size }`. */
+        /** Every object under `prefix` (ListObjectsV2, paged): `{ key, size, etag }`, `etag` without its quotes (for a
+         *  plain put, the MD5 of the bytes), null when the server sent none. */
         async list(prefix = "") {
             const out = [];
             let token = null;
@@ -79,7 +80,8 @@ export function s3Client({ endpoint, bucket, keyId, secret, region = "garage", f
                 const xml = await res.text();
                 for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
                     const key = /<Key>([\s\S]*?)<\/Key>/.exec(m[1])?.[1];
-                    if (key != null) out.push({ key: unescapeXml(key), size: Number(/<Size>(\d+)<\/Size>/.exec(m[1])?.[1] ?? 0) });
+                    const etag = /<ETag>([\s\S]*?)<\/ETag>/.exec(m[1])?.[1];
+                    if (key != null) out.push({ key: unescapeXml(key), size: Number(/<Size>(\d+)<\/Size>/.exec(m[1])?.[1] ?? 0), etag: etag ? unescapeXml(etag).replace(/^"|"$/g, "") : null });
                 }
                 token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? unescapeXml(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1] ?? "") || null : null;
             } while (token);

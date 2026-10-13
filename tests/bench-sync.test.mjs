@@ -4,11 +4,12 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { signV4 } from "../tests/e2e/bench/s3.mjs";
-import { push, pull, status, openStore, storeFromEnv, viewsSql } from "../tests/e2e/bench/sync.mjs";
+import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S } from "../tests/e2e/bench/sync.mjs";
 import { openScores, logRuns, readRuns } from "../tests/e2e/bench/scores.mjs";
 import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
 
@@ -37,7 +38,9 @@ before(async () => {
             const page = all.slice(start, start + 3);
             const more = start + 3 < all.length;
             res.writeHead(200, { "content-type": "application/xml" });
-            return res.end(`<ListBucketResult>${page.map((k) => `<Contents><Key>${k.replace(/&/g, "&amp;")}</Key><Size>${objects.get(k).length}</Size></Contents>`).join("")}<IsTruncated>${more}</IsTruncated>${more ? `<NextContinuationToken>${start + 3}</NextContinuationToken>` : ""}</ListBucketResult>`);
+            // Garage sends each object's ETag, the MD5 of a plain put, quoted and XML-escaped.
+            const etag = (k) => `&quot;${createHash("md5").update(objects.get(k)).digest("hex")}&quot;`;
+            return res.end(`<ListBucketResult>${page.map((k) => `<Contents><Key>${k.replace(/&/g, "&amp;")}</Key><Size>${objects.get(k).length}</Size><ETag>${etag(k)}</ETag></Contents>`).join("")}<IsTruncated>${more}</IsTruncated>${more ? `<NextContinuationToken>${start + 3}</NextContinuationToken>` : ""}</ListBucketResult>`);
         }
         if (req.method === "GET") {
             if (!objects.has(key)) { res.writeHead(404); return res.end(); }
@@ -150,8 +153,8 @@ test("views.sql creates a view only over a table the store holds: DuckDB fails a
 // --- traces ---
 
 /** A sweep directory as run.mjs leaves it: page.json, a run directory per done run with its cell.json. */
-function sweepDir({ sync, runs }) {
-    const root = tmp(), dir = path.join(root, "pb");
+function sweepDir({ sync, runs, name = "pb" }) {
+    const root = tmp(), dir = path.join(root, name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "sweeps.jsonl"), "{}\n");
     writeFileSync(path.join(dir, "page.json"), JSON.stringify({ runs: runs.map((r) => ({ state: "done", ...r })), ...(sync ? { sync } : {}) }));
@@ -187,6 +190,57 @@ test("a sweep's runs go under traces/<sweep>/<cell>/<run id>/, cell.json last; o
     const into = tmp();
     await pull(store(), { into, traces: ["pb"] });
     assert.deepEqual([...readFileSync(path.join(into, "traces/pb/t1/m-a/r0/h1/shots/1.png"))], [1, 2, 3]);
+});
+
+test("every push sends everything pending: each sweep's missing runs, and a sweep file only when it changed (a mark added after)", async () => {
+    objects.clear();
+    const a = sweepDir({ runs: [{ path: "t1/m-a/r0", taskId: "t1", hash: "h1" }] });
+    const b = sweepDir({ runs: [{ path: "t1/m-b/r0", taskId: "t1", hash: "h2" }], name: "pc" });
+    const both = [a.dir, b.dir];
+    const first = await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: both });
+    assert.equal(first.runs, 2, "both sweeps' runs, from one push");
+    const puts = [];
+    const watched = { ...store(), put: async (k, body, t) => { puts.push(k); return store().put(k, body, t); } };
+    assert.deepEqual(await push(watched, { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: both }), { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0, files: 0 });
+    assert.deepEqual(puts.filter((k) => k.startsWith("traces/")), [], "nothing unchanged is sent again: not a run, not a report");
+    writeFileSync(path.join(a.dir, "marks.jsonl"), JSON.stringify({ line: "wrong", by: "shane" }) + "\n");
+    const st = await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root: a.root });
+    assert.deepEqual(st.sweeps[0].changed, ["marks.jsonl"], "status names the changed file");
+    assert.equal(st.allPushed, false);
+    const third = await push(watched, { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: both });
+    assert.equal(third.files, 1);
+    assert.deepEqual(puts.filter((k) => k.startsWith("traces/")), ["traces/pb/_sweep/a/marks.jsonl"], "only the mark went");
+    // The same sweep, moved into another clone (merge-when-green --keep-bench): what the first clone sent is not sent again.
+    puts.length = 0;
+    assert.equal((await push(watched, { clone: "main", scoresDb: "/x", boxDb: "/x", sweeps: both })).files, 0);
+    assert.deepEqual(puts.filter((k) => k.startsWith("traces/")), []);
+});
+
+test("each push's outcome is recorded for this clone, a failure saying what to run; the next push makes it good", async () => {
+    objects.clear();
+    const file = path.join(tmp(), "last-push-a.json");
+    assert.equal(await lastPush(file), null);
+    assert.equal(lastPushLine(null), "no push recorded yet");
+    const down = { ...store(), list: async () => { throw new Error("fetch failed: connect ECONNREFUSED 100.102.255.115:3900"); } };
+    const bad = await pushAndRecord(down, { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [] }, { by: "schedule", file });
+    assert.equal(bad.ok, false);
+    assert.deepEqual(await lastPush(file), bad);
+    assert.match(lastPushLine(bad), /\(schedule\) FAILED: fetch failed: connect ECONNREFUSED .*the next push sends everything pending \(node --import tsx tests\/e2e\/bench\/sync\.mjs push\)/);
+    const good = await pushAndRecord(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [] }, { by: "sweep", file });
+    assert.equal(good.ok, true);
+    assert.match(lastPushLine(await lastPush(file)), /\(sweep\): ok$/);
+});
+
+test("the scheduled push: a launchd job running `sync.mjs push --by schedule` from the clone every 30 minutes, logging beside the ledger", () => {
+    const job = scheduleJob({ clone: "laptop-window-ml", home: "/Users/x", node: "/opt/node", root: "/Users/x/git/window-ml" });
+    assert.equal(job.label, "dev.window-ml.bench-push.laptop-window-ml");
+    assert.equal(job.path, "/Users/x/Library/LaunchAgents/dev.window-ml.bench-push.laptop-window-ml.plist");
+    assert.match(job.plist, /<string>\/opt\/node<\/string>\s*<string>--import<\/string>\s*<string>tsx<\/string>\s*<string>\/Users\/x\/git\/window-ml\/tests\/e2e\/bench\/sync\.mjs<\/string>\s*<string>push<\/string>\s*<string>--by<\/string>\s*<string>schedule<\/string>/);
+    assert.match(job.plist, new RegExp(`<key>StartInterval</key><integer>${SCHEDULE_S}</integer>`));
+    assert.equal(SCHEDULE_S, 1800);
+    assert.match(job.plist, /<key>WorkingDirectory<\/key><string>\/Users\/x\/git\/window-ml<\/string>/);
+    assert.match(job.plist, /<key>StandardErrorPath<\/key><string>\/Users\/x\/\.cache\/window-ml-bench\/push-laptop-window-ml\.log<\/string>/);
+    assert.doesNotMatch(job.plist, /SECRET|KEY_ID/, "the store's settings are read from .env at run time, never written into the job");
 });
 
 test("a run a later run of its cell replaced (history/) goes to the store too, under its cell, beside the run that replaced it", async () => {
