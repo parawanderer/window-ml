@@ -15,6 +15,8 @@ const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
 const { IDBFactory } = require("fake-indexeddb");
 const { ValueStore } = await import("../src/pointers/value-store.ts");
+const { PAGE_TABLE_CAPS } = await import("../src/sw/worker-page-read.ts");
+const { UI_OUT_CAP } = await import("../src/contract/contract-chat.ts");
 
 const SITE_URL = "https://site.example/page";
 const plain = (x) => JSON.parse(JSON.stringify(x ?? null));
@@ -28,7 +30,7 @@ const PAGE_JS = "document.body.remove()";
  * @param o.builtBy "worker" for a run the person started (the default), "page" for a run the page built (START_RUN)
  * @returns the tool results the model read on its last call, the terminal event, the worker and the run id
  */
-async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", onPyRun, config = {}, tabUrl = SITE_URL, vision = false, committed } = {}) {
+async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", onPyRun, config = {}, tabUrl = SITE_URL, vision = false, committed, deref = false } = {}) {
     let n = 0, bg, hash;
     const subs = [];
     const toolResults = () => (bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1)?.body.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -68,8 +70,10 @@ async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", on
         hash = "pagerun1";
         const sender = { tab: { id: 7, url: tabUrl }, url: tabUrl, origin: new URL(tabUrl).origin, frameId: 0, documentId: "doc-1" };
         const tool = { name: "probe", description: "probe", parameters: { type: "object", properties: { token: {} } }, requiresApproval: false, capabilities: [] };
-        void bg.send({ type: "START_RUN", payload: { runId: hash, task: "probe", systemPrompt: "sys", tools: [tool], model: "m", think: null, maxSteps: 20, surface: "off", toolTokens: true,
-            rebuild: { toolNames: ["probe"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false } } }, sender);
+        // `deref`: the page's run also offers `dereference`, which the loop answers itself from the run's pointers.
+        const tools = deref ? [tool, { name: "dereference", description: "read a pointer", parameters: { type: "object", properties: { token: {}, pipe: {} } }, requiresApproval: false, capabilities: [] }] : [tool];
+        void bg.send({ type: "START_RUN", payload: { runId: hash, task: "probe", systemPrompt: "sys", tools, model: "m", think: null, maxSteps: 20, surface: "off", toolTokens: true,
+            rebuild: { toolNames: tools.map((t) => t.name), model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false } } }, sender);
     }
     const ended = () => bg.tabMessages.map((a) => a[1]).find((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash)?.event;
     for (let i = 0; i < 4000 && !ended(); i++) await new Promise((r) => setTimeout(r, 0));
@@ -349,20 +353,70 @@ test("a page's odd table (prototype-named columns, deep cells, non-string column
     assert.equal(({}).polluted, undefined);
 });
 
-test("a page's render is held at no more than the worker's own producers keep: a table's rows, an output's capture", {
-    todo: "a page-supplied render is kept whole in the pointer (bounded only by Chrome's 64 MiB message cap); so is the page's text result, which also reaches the model unclipped. Owner decision on the bound (docs/dev/security-audit.md, Known open)",
-}, async () => {
-    const capture = ("x".repeat(99) + "\n").repeat(200_000);   // 20 MB
-    const rows = Array.from({ length: 300_000 }, (_, i) => [i, `r${i}`]);
+/** The run's execution log, as the person's extension pages read it. */
+const runLogOf = async (bg, hash) => (await bg.send({ type: "DUMP_RUN_LOG", payload: { run: hash } }, { url: "chrome-extension://test/popup.html" }))?.data?.events ?? [];
+const wcOf = (t) => Number(/\n\n(\d+)\n/.exec(t)?.[1]);
+
+for (const builtBy of ["worker", "page"])
+test(`a ${builtBy}-built run: a page's render is held to pageRead's caps in the pointer and in what the model reads: a 300,000-row table, a 20 MB capture, a 20 MB text`, async () => {
+    const C = PAGE_TABLE_CAPS;
+    const capture = ("x".repeat(99) + "\n").repeat(200_000);   // 20 MB, past C.html
+    const WIDTH = 14;                                          // 300,000 x 14 = 4.2 million cells, past C.cells
+    const rows = Array.from({ length: 300_000 }, (_, i) => Array.from({ length: WIDTH }, (_, j) => i * WIDTH + j));
+    const tool = builtBy === "worker" ? "exec" : "probe";
+    const call = (n) => (builtBy === "worker" ? { name: "exec", args: { js: `${PAGE_JS};${n}`, token: true } } : { name: "probe", args: { token: true, n } });
+    const which = (pl) => (builtBy === "worker" ? Number(pl.args.js.split(";").at(-1)) : pl.args.n);
     const r = await run([
-        { name: "exec", args: { js: PAGE_JS, token: true } },
+        call(1), call(2), call(3),
+        (res) => ({ name: "dereference", args: { token: `@tool:${tokenOf(res[0])}`, pipe: "wc -l" } }),
+        (res) => ({ name: "dereference", args: { token: `@tool:${tokenOf(res[1])}`, pipe: "wc -l" } }),
+        (res) => ({ name: "dereference", args: { token: `@tool:${tokenOf(res[1])}` } }),
+    ], { builtBy, deref: true, page: (pl) => [
+        { result: "ran", renderOut: { type: "exec-out", stdout: capture, capture } },
+        { result: "ran", renderOut: { type: "table", columns: Array.from({ length: WIDTH }, (_, j) => `c${j}`), rows, rowCount: rows.length } },
+        { result: capture },
+    ][which(pl) - 1] });
+    assert.equal(r.results.length, 6, JSON.stringify(r.end));
+    // The capture: dropped whole, and the model told so after its copy.
+    assert.ok(wcOf(r.results[3]) <= 10, `the pointer holds ${wcOf(r.results[3])} lines of the page's capture`);
+    assert.match(r.results[0], /renderOut\.(stdout|capture) of 20000000 chars, over the 16000000-char limit/, r.results[0].slice(0, 400));
+    // The table: cut to the cell cap, its source's row count kept.
+    // `wc -l` counts the pointer's pretty JSON: (w + 2) lines a row, w + 6 around them (the control below: 500x2 is 2008).
+    const kept = Math.floor(C.cells / WIDTH);
+    assert.equal(wcOf(r.results[4]), (WIDTH + 2) * kept + WIDTH + 6, `the pointer holds ${wcOf(r.results[4])} lines of the page's table, not ${kept} rows`);
+    assert.match(r.results[5], new RegExp(`a ${kept}x${WIDTH} table \\(.*; the first ${kept} of 300000 rows\\)`), `the pointer reports the source's 300,000 rows: ${r.results[5].slice(0, 400)}`);
+    // The text result: clipped like a tool's output, never 20 MB in the model's context.
+    assert.ok(r.results[2].length <= UI_OUT_CAP + 400, `the model read ${r.results[2].length} chars of the page's text`);
+    assert.match(r.results[2], new RegExp(`\\[first ${UI_OUT_CAP} of 20000000 chars\\]`));
+    // What reached the model on any call stays small.
+    const biggest = Math.max(...r.bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => JSON.stringify(c.body).length));
+    assert.ok(biggest < 200_000, `a model call carried ${biggest} chars`);
+    // Every cut is in the execution log.
+    const cuts = (await runLogOf(r.bg, r.hash)).filter((e) => e.subsystem === "page" && e.kind === "answer-capped");
+    const reasons = new Set(cuts.map((e) => e.reason));
+    for (const want of ["text", "rows", "result"]) assert.ok(reasons.has(want), `a ${want} cut was logged: ${JSON.stringify(cuts)}`);
+    assert.ok(cuts.every((e) => e.detail?.tool === tool), JSON.stringify(cuts));
+    assert.ok(cuts.some((e) => e.reason === "rows" && e.detail.from === 300_000 && e.detail.to === kept), JSON.stringify(cuts));
+});
+
+test("control: a normal-sized page render and result reach the pointer and the model untouched, with nothing logged", async () => {
+    const rows = Array.from({ length: 500 }, (_, i) => [i, `r${i}`]);
+    const stdout = Array.from({ length: 300 }, (_, i) => `line ${i}`).join("\n");
+    const r = await run([
+        { name: "exec", args: { js: PAGE_JS + ";1", token: true } },
         { name: "exec", args: { js: PAGE_JS + ";2", token: true } },
         (res) => ({ name: "dereference", args: { token: `@tool:${tokenOf(res[0])}`, pipe: "wc -l" } }),
         (res) => ({ name: "dereference", args: { token: `@tool:${tokenOf(res[1])}`, pipe: "wc -l" } }),
-    ], { page: (pl) => (pl.args.js === PAGE_JS ? { result: "ran", renderOut: { type: "exec-out", stdout: capture, capture } } : { result: "ran", renderOut: { type: "table", columns: ["i", "s"], rows, rowCount: rows.length } }) });
-    const lines = (t) => Number(/\n\n(\d+)\n/.exec(t)?.[1]);
-    assert.ok(lines(r.results[2]) <= 12_000, `the pointer holds ${lines(r.results[2])} lines of the page's capture`);
-    assert.ok(lines(r.results[3]) <= 4 * 200 + 8, `the pointer holds ${lines(r.results[3])} lines of the page's table`);
+    ], { page: (pl) => (pl.args.js.endsWith(";1") ? { result: `console:\n${stdout.slice(0, 500)}`, renderOut: { type: "exec-out", stdout, capture: stdout } }
+        : { result: "a table", renderOut: { type: "table", columns: ["i", "s"], rows, rowCount: 500 } }) });
+    assert.equal(r.results.length, 4, JSON.stringify(r.end));
+    assert.equal(wcOf(r.results[2]), 300, r.results[2]);
+    assert.equal(wcOf(r.results[3]), 4 * 500 + 8, r.results[3]);
+    assert.match(r.results[3], /a 500x2 table/);
+    assert.ok(r.results[0].startsWith(`console:\n${stdout.slice(0, 500)}`), r.results[0]);
+    assert.doesNotMatch(r.results[0], /over the .*-char limit|\[first \d+ of/);
+    assert.ok(stepEvents(r.bg).includes('"r499"'), "the sidebar's table has every row");
+    assert.deepEqual((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "answer-capped"), []);
 });
 
 // --- the sidebar: a page's render drawn in an extension page ---
