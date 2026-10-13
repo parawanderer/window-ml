@@ -5,7 +5,7 @@ moved to agent_api_docs, the private-rendering error leading with its retry) cos
     (or: node scripts/nb.mjs make notebooks/bench/prompt-cuts2.ipynb)
 
 The cells are written here; edit this file, not the notebook. Their numbers come from data/prompt-cuts2/runs.json, the
-runs extracted from the sweeps' folders (NB_REFRESH=1 extracts again from SWEEP_ROOT).
+runs extracted from the sweeps' folders (NB_REFRESH=1 extracts again, from wherever `wmlnb.find_sweep` finds them).
 """
 
 from pathlib import Path
@@ -42,7 +42,6 @@ from scipy.stats import fisher_exact
 import wmlnb
 
 HERE = wmlnb.ROOT / "notebooks" / "bench"
-SWEEP_ROOT = Path(os.environ.get("SWEEP_ROOT", Path.home() / "git/window-ml-cuts2/tests/e2e/artifacts/bench"))
 SWEEPS = ["prompt-budget-cuts2", "cuts2-recheck2", "cuts2-python-fix", "cuts2-python-fix-glm"]
 FIX_SWEEPS = ["cuts2-python-fix", "cuts2-python-fix-glm"]
 EXTRACT = HERE / "data" / "prompt-cuts2" / "runs.json"
@@ -60,7 +59,7 @@ code("""
 def read_sweeps():
     rows = []
     for sweep in SWEEPS:
-        for cell in sorted((SWEEP_ROOT / sweep).glob("*/*/r*/cell.json")):
+        for cell in sorted(wmlnb.find_sweep(sweep).glob("*/*/r*/cell.json")):
             if "history" in cell.parts:
                 continue
             c = json.loads(cell.read_text())

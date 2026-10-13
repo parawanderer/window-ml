@@ -5,4 +5,4 @@ README naming every notebook. How they are made, run and checked: [docs/dev/note
 
 - [bench/](bench/README.md): bench sweeps (prompt variants, models, regressions).
 - `pyproject.toml`, `uv.lock`: the one environment (`node scripts/nb.mjs setup`).
-- `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`).
+- `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`, `find_sweep`, `store`).
