@@ -261,7 +261,7 @@ person's choice). A policy can lean on the manifest's facts (`c.effects`) so it 
 | --- | --- | --- |
 | global | the person, in DevTools Settings | until removed |
 | workspace | the person, for one set of roots | with the workspace |
-| run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session: it **survives a resume** (decided 2026-10-13), and is listed with it until removed |
+| run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session: it **survives a resume, and a fork inherits it** (decided 2026-10-13), listed with each session until removed |
 
 The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
 a page never can. A policy reached over the hub is set by a principal holding `approve`.
@@ -368,7 +368,6 @@ and one host per machine does not have the hub's problem.
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
-- **Policies and a forked session**: whether a fork inherits its parent's run policies (a resume does).
 - **Resolve, then run**: the host resolves paths for the decision and then spawns; a symlink swapped between the two is
   a race. The OS sandbox bounds it in host mode; a container bounds it by construction.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
