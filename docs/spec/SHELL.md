@@ -12,10 +12,13 @@ script runs. That is already true today: `exec-routing.ts` puts an approved exec
 world, or refuses it, by what the script NAMES, and a read-only survey is evaluated in the worker with its DOM reads
 delegated to the page. The model learns the outcome (`ml.current.env.exec`), never picks it.
 
-A second executor the model must address (a `bash` tool beside `exec`, with its own variables, its own output and its
+A second executor with a WORLD of its own (a `bash` tool beside `exec`, with its own variables, its own output and its
 own rules) breaks that: every task then starts with "which one", and data has to be carried between them by the model,
-in its context. Processes are therefore **a capability of the one executor**, reached as `ml.sh`, the way the network
-is reached as `ml.fetch`. There is no `bash` tool. (`python_exec` is the existing exception; see "Python" below.)
+in its context. Processes are therefore **a capability of the executor**, reached as `ml.sh`, the way the network is
+reached as `ml.fetch`. There is no `bash` tool.
+
+A second LANGUAGE is not a second world. Python (`python_exec`) is a REPL beside JavaScript with the same `ml` in it
+(decided 2026-10-13, see "Python"), so the model knows one world reachable in two languages, and `ml.sh` is in both.
 
 ## The model of it: one namespace, values that stay home
 
@@ -122,16 +125,29 @@ So the manifest blocks only the free tier. A first build where every call asks i
 
 ## Python
 
-`python_exec` is a second executor today, and the constraint above says the model should not need one. Two readings,
-not decided here:
+**Decided (Shane, 2026-10-13): Python is a REPL beside JavaScript with the same `ml` objects in it, so `ml.sh` is
+there too.** Not a capability called from JS (`ml.py(...)`), and not a separate world: the same namespace, the same
+pointers, the same rules, in the other language.
 
-- **Python is a capability too**: `ml.py(code, { inputs })` from the one executor, with Pyodide in the browser or real
-  CPython at the process host, values crossing as pointers. `python_exec` stays as the person-facing tool until the
-  bench says the model does better without it.
-- **Python stays a peer executor**, and `ml.sh` is reachable from inside it (the original idea's "scriptable from
-  `python_exec`"), through the same mediated call.
+```python
+r = await ml.sh.run(["git", "log", "--oneline", "-200"])
+lines = ml.pipe(r.stdout, "grep -i fix | head -20")      # runs at the host; twenty lines cross
+```
 
-The process host makes the first one cheaper than it was: real CPython with real packages, beside the processes.
+What follows from it:
+
+- **It needs `ml` inside Pyodide first.** The Pyodide worker cannot reach the extension's objects directly, so each
+  `ml` call is a mediated callback out of the worker (the way its stdout is already teed out), then the same path to
+  the worker and the process host as a call from JavaScript. That prerequisite is the same for every `ml` member, not
+  only `ml.sh`.
+- **The same values.** A process's output reaches Python as the same host-held pointer it is in JavaScript; a pointer
+  made in one language is readable in the other.
+- **The same approval.** The tier is decided per call on the final argv, at the call, whatever language made it.
+  `python_exec`'s `readonly` mode (which cuts the network and JS bridges, `docs/dev/python-sandbox.md`) can make
+  free-tier calls and asks for the rest; it does not need a Python read-only dialect for that, since the decision is
+  on the argv, not on the Python that computed it.
+- **Placement, later, by the same rule.** Real CPython at the process host, with real packages, is a place a Python
+  cell could run; under "placement is unobservable" that is an optimisation, not a second Python the model addresses.
 
 ## Security invariants
 
@@ -161,6 +177,5 @@ The process host makes the first one cheaper than it was: real CPython with real
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
-- **Python**: the two readings above.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
   "start a process and send input" names it.
