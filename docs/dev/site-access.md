@@ -123,12 +123,23 @@ page makes during it is refused, since a stored table's columns go only to a pag
 `START_RUN` (or `RESUME_RUN`) for the turn is answered with an error and no result or history (`handedThisTurn`): it
 is still waiting on that answer after a revoke, since no navigation took its document away.
 
+A run the worker holds when its turn ends (built by it, or handed it) sends its tab a finish (`RUN_TOOL_IN_PAGE` with
+`finish`) that carries the run id and nothing else: the page ends the run's registration and answers nothing the worker
+reads, since the turn's answer is the worker's set (`worker-answer.ts`). Until #PR it carried the turn's `summary`,
+which content.ts posted on the page's window, so a page the run was handed away from read its answer. content.ts and
+the page no longer relay a `summary` with a finish at all. The other messages at the end of a turn carry no run
+content to the page's world: the run's events (`ML_DEBUG_TO_PAGE`) go to the shell only, and a re-adopt names the
+tools and flags of a worker's run with no model (`pageRebuild`).
+
 The decision outlives the worker: `makeWorkerRun` stores the run id under `ml_handed_to_worker` at once (the run's own
 snapshot is rewritten only at its next checkpoint), `hydratePersistedRuns` applies the list over the restored
 snapshots, and `deleteRun` drops a run from it when its snapshot goes. A restore stores the list again without the ids
 whose snapshot is gone (a settled run handed over has none, and a stale one is dropped), so a later page-built run
-under the same id is never handed over by an old entry. One way: re-approving the site leaves the run the
-worker's, and the page's `RESUME_RUN` for it is refused.
+under the same id is never handed over by an old entry. Past `HANDED_MAX` entries, only those of runs the worker no
+longer holds (no snapshot, loop or cross-page record) are pruned; a held run's entry is never dropped. One way:
+re-approving the site leaves the run the worker's, and the page's `RESUME_RUN` for it is refused. `startBackgroundRun`
+awaits `hydrationDone` and asks `isWorkerRun` again before it takes a page's `START_RUN` or `RESUME_RUN`, so a message
+that wakes the worker is judged against the restored runs, not the empty maps the router saw.
 
 ## The lists
 
@@ -221,8 +232,8 @@ an `AnswerLog`, which answers `.length` and indices at once and records what the
 (`replayAnswerOps`). That report is the page's, so it is checked for shape and size, refused whole if any operation
 is malformed or the set would pass its bounds, and a removal by text matches only what the same report added (as the
 script's own view did), so it cannot probe a hidden item. A selector's answer from the page is rebuilt field by field
-(`checkSelection`), and the model's note for it never leaves the worker. It can change only the person-facing answer, which a script in that world could already do. The page's
-answer at `finish` is ignored for a worker-built run.
+(`checkSelection`), and the model's note for it never leaves the worker. It can change only the person-facing answer, which a script in that world could already do. The page is
+sent no answer content at `finish`, and answers none.
 
 ## Where an approved exec of a worker-built run runs
 
@@ -349,7 +360,11 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
   snapshot resumes as the worker's, a cross-version one is dropped).
 - `tests/nav-handover.test.mjs`: the hand-over at the commit, and the rest of a turn handed over mid-way; the hand-over
   at a revoke by each path that changes the approved set, during a call in flight, while a call is being built (the
-  revoke placed at each step), across an eviction and a restart, and one way when the site is approved again.
+  revoke placed at each step), across an eviction and a restart, and one way when the site is approved again; the finish
+  of a run handed over at a navigation or a revoke carries the run id alone; a page's START_RUN/RESUME_RUN delivered
+  while the run restore is held (`holdRestore`); more than `HANDED_MAX` live hand-overs; the eviction seam.
+- `tests/delegation.test.mjs`, "the end of a turn of a run the worker holds": a finish posts no summary on the page's
+  window.
 - `tests/worker-page-read.test.mjs`: python_exec over a page table, a `fetch_url` session render with an `ask`, and a
   sealed `describeElement`, each in the worker; `checkPageTable`; the page's half over a real DOM.
 - `tests/redteam-page-run-builtby.test.mjs`: a page START_RUN claiming `builtBy`/`rebuild.builtBy` stays page-built,

@@ -9,8 +9,8 @@ thoroughly, short of a human review? Until then the answer is no, and this file 
 
 ## Threat model in one paragraph
 
-A hostile page shares the main world with `window.ml`, can post any window message, can style and reach into our
-open shadow roots, knows every run id it has seen, and may frame any web-accessible extension page. It must not get
+A hostile page shares the main world with `window.ml`, can post any window message, can reach our shadow hosts but
+not inside their closed roots (#610; the hosts sit in the top layer, #599), knows every run id it has seen, and may frame any web-accessible extension page. It must not get
 privileges the person did not grant it, must not see what a run the person started sees or says, and must not put
 words into model-facing text that the extension presents as its own. Page content reaching the model as page content
 (prompt injection) is inherent and out of scope: the defences limit what a steered run can DO, not what it reads.
@@ -64,6 +64,12 @@ the worker, and the page answers geometry only):
       answer and the stream port, `forPage`) or to a worker-hosted run's model (every tool result, `forModel`); the
       person's extension pages and the execution log's `key` keep it; `SET_MODEL` no longer lists the models the filter
       hides. Every page-started type is walked under three backend failures (`tests/error-scrub.test.mjs`): #620.
+- [x] A run the worker holds at the end of its turn, built by it or handed it (a navigation, a revoke), sends its page a
+      finish with the run id alone: the run's summary used to ride it into the page's world; the page answers nothing
+      the worker reads. A page's START_RUN or RESUME_RUN waits for the run restore before it is judged, so a message
+      that wakes the worker cannot start a turn in a worker run. `ml_handed_to_worker` never drops an entry for a run
+      the worker still holds (the cap used to drop the oldest, live ones included). The eviction test seam forgets the
+      in-memory hand-overs, as an eviction does: #PR.
 
 ## In progress
 
