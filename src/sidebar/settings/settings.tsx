@@ -961,7 +961,7 @@ function UserScriptsStatus() {
 
 /**
  * The origins allowed to use window.ml whose host is a bare entry on the self-approval whitelist, but which that entry
- * no longer makes self-approving (plain http or another port of a non-loopback host, `uncoveredApprovals`). Before the
+ * no longer makes self-approving (plain http or another port of that host, loopback included, `uncoveredApprovals`). Before the
  * whitelist was read by origin they self-approved by host; this tells the person, and adds the exact origin on a click.
  */
 function UncoveredWhitelist({ lists, domains, onAdd }: { lists: SiteLists | null; domains: string[]; onAdd: (origin: string) => void }) {

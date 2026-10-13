@@ -63,15 +63,17 @@ test("popup: an origin typed into the whitelist is stored as that origin; an htt
     assert.deepEqual([...p.doc.querySelectorAll("#permList .perm-host")].map((e) => e.textContent), p.syncStore.pageApprovalDomains, "shown as stored");
 });
 
-test("UPGRADE (popup): a bare LAN host's http origin that stopped self-approving is listed, and Add trusts that exact origin", async () => {
+test("UPGRADE (popup): a bare entry's http origins that stopped self-approving are listed, loopback too, and Add trusts that exact origin", async () => {
     const p = await loadPopup({ sync: { pageApprovalDomains: ["localhost", "mlbox.lan"] },
         siteLists: { always: ["http://localhost:3000", "http://mlbox.lan:8080"], session: [], denied: [] } });
-    const box = p.doc.getElementById("permUncovered");
-    assert.ok(box, "the popup has the notice's place");
-    assert.match(box.textContent, /no longer answer their own approval prompts/);
-    assert.deepEqual([...box.querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://mlbox.lan:8080"], "the LAN origin only: loopback still self-approves");
-    box.querySelector('button[aria-label="Trust http://mlbox.lan:8080 to self-approve"]').click();
-    await p.flush();
-    assert.deepEqual(p.syncStore.pageApprovalDomains, ["http://mlbox.lan:8080", "localhost", "mlbox.lan"]);
-    assert.equal(p.doc.getElementById("permUncovered").textContent, "", "the notice is gone once the origin is trusted");
+    const box = () => p.doc.getElementById("permUncovered");
+    assert.ok(box(), "the popup has the notice's place");
+    assert.match(box().textContent, /no longer answer their own approval prompts/);
+    assert.deepEqual([...box().querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://localhost:3000", "http://mlbox.lan:8080"]);
+    for (const o of ["http://localhost:3000", "http://mlbox.lan:8080"]) {
+        box().querySelector(`button[aria-label="Trust ${o} to self-approve"]`).click();
+        await p.flush();
+    }
+    assert.deepEqual(p.syncStore.pageApprovalDomains, ["http://localhost:3000", "http://mlbox.lan:8080", "localhost", "mlbox.lan"]);
+    assert.equal(box().textContent, "", "the notice is gone once every origin is trusted");
 });

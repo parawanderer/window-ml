@@ -781,19 +781,21 @@ test("self-approval whitelist: an origin entry is added, shown and removed as ty
     assert.deepEqual(whitelistParts(w).chips, w.syncStore.pageApprovalDomains);
 });
 
-test("UPGRADE (Settings): a bare LAN host's http origin that stopped self-approving is listed, and Add trusts that exact origin", async () => {
+test("UPGRADE (Settings): a bare entry's http origins that stopped self-approving are listed, loopback too, and Add trusts that exact origin", async () => {
     // What an install before #628 held: bare hosts, and the http origins allowed to use window.ml.
     const w = await loadSidebarWorld({ sync: { pageApprovalDomains: ["localhost", "mlbox.lan"] },
         siteLists: { always: ["http://localhost:3000", "http://mlbox.lan:8080"], session: [], denied: [] } });
     await openSettings(w, "Permissions");
     await w.flush();
-    const sec = whitelistParts(w).sec;
-    const note = sec.querySelector(".set-warn");
-    assert.ok(note, "the person is told");
-    assert.match(note.textContent, /no longer answer their own approval prompts/);
-    assert.deepEqual([...note.querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://mlbox.lan:8080"], "the LAN origin only: loopback still self-approves");
-    note.querySelector('button[aria-label="Trust http://mlbox.lan:8080 to self-approve"]').click();
+    const note = () => whitelistParts(w).sec.querySelector(".set-warn");
+    assert.ok(note(), "the person is told");
+    assert.match(note().textContent, /no longer answer their own approval prompts/);
+    assert.deepEqual([...note().querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://localhost:3000", "http://mlbox.lan:8080"]);
+    note().querySelector('button[aria-label="Trust http://localhost:3000 to self-approve"]').click();
     await w.flush();
-    assert.deepEqual(w.syncStore.pageApprovalDomains, ["http://mlbox.lan:8080", "localhost", "mlbox.lan"]);
-    assert.equal(whitelistParts(w).sec.querySelector(".set-warn"), null, "the notice is gone once the origin is trusted");
+    assert.deepEqual([...note().querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://mlbox.lan:8080"], "an added origin leaves the notice");
+    note().querySelector('button[aria-label="Trust http://mlbox.lan:8080 to self-approve"]').click();
+    await w.flush();
+    assert.deepEqual(w.syncStore.pageApprovalDomains, ["http://localhost:3000", "http://mlbox.lan:8080", "localhost", "mlbox.lan"]);
+    assert.equal(note(), null, "the notice is gone once every origin is trusted");
 });

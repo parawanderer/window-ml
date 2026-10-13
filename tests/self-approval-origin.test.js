@@ -131,18 +131,18 @@ test("UPGRADE: a stored whitelist of bare hosts keeps working for https senders,
     }
 });
 
-test("UPGRADE: a bare loopback entry self-approves the local http ports the person allowed, at every reader; a LAN host's do not", async () => {
+test("UPGRADE: a bare loopback or LAN entry no longer self-approves the http ports it covered by host, at every reader, until the origin is added", async () => {
     // What an install before #628 held: bare hosts on the whitelist, and the http origins allowed in the site gate so
-    // those pages could use window.ml at all. Each self-approved by host before.
+    // those pages could use window.ml at all. Each self-approved by host before; now each needs its exact origin.
     const stored = ["localhost", "127.0.0.1", "mlbox.lan"];
     const always = ["http://localhost:3000", "http://127.0.0.1:8080", "http://mlbox.lan:8080"];
-    const cases = [["http://localhost:3000/app", true], ["http://127.0.0.1:8080/", true], ["http://mlbox.lan:8080/", false]];
     const wrong = [];
-    for (const [reader, run] of READERS) for (const [url, want] of cases) {
-        const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: stored }), siteGate: true, local: { ml_site_always: always }, onFetch, onPyRun: async () => ({ ok: true, value: 2, stdout: "" }) });
-        const got = await run(bg, page(url));
-        if (got !== want) wrong.push(`${reader} x ${url}: ${got ? "trusted" : "refused"}, want ${want ? "trusted" : "refused"}`);
-    }
+    for (const [entries, want] of [[stored, false], [[...stored, ...always], true]])
+        for (const [reader, run] of READERS) for (const o of always) {
+            const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: entries }), siteGate: true, local: { ml_site_always: always }, onFetch, onPyRun: async () => ({ ok: true, value: 2, stdout: "" }) });
+            const got = await run(bg, page(`${o}/app`));
+            if (got !== want) wrong.push(`${reader} x ${o} (${entries.length} entries): ${got ? "trusted" : "refused"}, want ${want ? "trusted" : "refused"}`);
+        }
     assert.deepEqual(wrong, []);
 });
 

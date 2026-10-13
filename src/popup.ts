@@ -343,7 +343,7 @@ function renderPermList(domains: string[]) {
 }
 /**
  * List the origins allowed to use window.ml that a bare whitelist entry no longer makes self-approving
- * (`uncoveredApprovals`: plain http or another port of a non-loopback host), each with a button adding that exact
+ * (`uncoveredApprovals`: plain http or another port of that host, loopback included), each with a button adding that exact
  * origin. Mirrors Settings → Permissions, so a person who relied on one is told where they look first.
  * @param domains the whitelist as stored
  */

@@ -217,8 +217,8 @@ export interface MlConfig {
      *  so a hostile page can't self-approve. Managed only in the trusted Settings/popup UI; the
      *  page never sees this list — GET_CONFIG returns only a computed `pageApprovalAllowed` for
      *  the requesting tab's own origin. A bare hostname (e.g. "docs.google.com") means its https origin on the default
-     *  port only, and a bare loopback name (localhost, 127.0.0.1, [::1]) also its http and other ports; an entry written
-     *  as an origin means that origin (site-access.ts `selfApprovalOrigin`, `onSelfApprovalList`). */
+     *  port only, loopback included; an entry written as an origin means that origin (site-access.ts
+     *  `selfApprovalOrigin`). */
     pageApprovalDomains: string[];
     /** Optional visual-grounding model for ml.agent's `locate` tool (coordinate
      *  output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in. */

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { originOf, grantableOrigin, decide, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, whitelistEntryFromInput, isLoopbackHost } = await import("../src/site-access.ts");
+const { originOf, grantableOrigin, decide, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, whitelistEntryFromInput } = await import("../src/site-access.ts");
 
 const empty = { always: [], session: [], denied: [] };
 
@@ -121,9 +121,9 @@ test("UPGRADE: a stored whitelist of bare hosts, as the settings wrote it, keeps
     }
 });
 
-// --- the upgrade from a whitelist of hosts: loopback keeps http and every port, a LAN host is listed ---
+// --- the upgrade from a whitelist of hosts: an http or port origin it stopped covering is listed, with a fix ---
 
-/** What an install before #628 held: `pageApprovalDomains` as bare hosts (two loopback names, a LAN box, a public
+/** What an install before #628 held: `pageApprovalDomains` as bare hosts (loopback names, a LAN box, a public
  *  site), and, in the site gate, the http origins the person had allowed so that those pages could use window.ml at
  *  all (the gate never implied http). Each of these self-approved by HOST before. */
 const OLD_INSTALL = {
@@ -131,35 +131,26 @@ const OLD_INSTALL = {
     lists: { always: ["http://localhost:3000", "http://127.0.0.1:8080", "http://[::1]:5173", "http://mlbox.lan:8080", "https://mlbox.lan:8443"], session: [], denied: [] },
 };
 
-test("UPGRADE: a bare loopback entry still self-approves the http ports the person allowed for window.ml", () => {
+test("UPGRADE: a bare entry, loopback or LAN, no longer self-approves its http or port origins; each is listed, and Add restores it", () => {
     const { hosts, lists } = OLD_INSTALL;
-    for (const url of ["http://localhost:3000/app", "http://127.0.0.1:8080/", "http://[::1]:5173/x", "https://docs.google.com/d"])
-        assert.equal(selfApproves(lists, { url }, hosts), true, url);
-    // Every port is still only as trusted as the gate makes it: a loopback port the person never allowed is neither
-    // approved by the whitelist nor self-approving.
-    for (const url of ["http://localhost:9999/", "http://127.0.0.1:1/", "https://localhost:8443/"]) {
-        assert.equal(selfApproves(lists, { url }, hosts), false, url);
-        assert.equal(decide(lists, originOf(url), hosts), "unknown", url);
-    }
-    // Loopback is the exact host: not another loopback address, not a name that merely starts with one.
-    assert.equal(selfApproves({ ...empty, always: ["http://127.0.0.2:8080"] }, { url: "http://127.0.0.2:8080/" }, hosts), false, "127.0.0.2 is not 127.0.0.1");
-    assert.equal(selfApproves({ ...empty, always: ["http://localhost.evil.test"] }, { url: "http://localhost.evil.test/" }, ["localhost.evil.test"]), false, "not loopback");
-    // An entry written as a loopback ORIGIN stays that origin.
-    assert.equal(selfApproves({ ...empty, always: ["http://localhost:3001"] }, { url: "http://localhost:3001/" }, ["http://localhost:3000"]), false);
-});
-
-test("UPGRADE: a bare LAN host no longer self-approves its http or port origins, and Settings lists each with a fix", () => {
-    const { hosts, lists } = OLD_INSTALL;
-    // The network-attacker hole stays shut: http://mlbox.lan:8080 no longer acts as the whitelisted site.
-    assert.equal(selfApproves(lists, { url: "http://mlbox.lan:8080/" }, hosts), false);
-    assert.equal(selfApproves(lists, { url: "https://mlbox.lan:8443/" }, hosts), false);
-    // What the person is shown: exactly the approved origins the bare entry stopped covering, and nothing on loopback.
-    assert.deepEqual(uncoveredApprovals(lists, hosts), ["http://mlbox.lan:8080", "https://mlbox.lan:8443"]);
+    const lost = ["http://127.0.0.1:8080", "http://[::1]:5173", "http://localhost:3000", "http://mlbox.lan:8080", "https://mlbox.lan:8443"];
+    // A bare entry is https://host on the default port, loopback included: none of the old http or port origins acts
+    // as the whitelisted site any more, and the https site still does.
+    for (const o of lost) assert.equal(selfApproves(lists, { url: `${o}/` }, hosts), false, o);
+    assert.equal(selfApproves(lists, { url: "https://docs.google.com/d" }, hosts), true);
+    // The gate never implies those origins either: only the person's own approval lets them use window.ml.
+    for (const o of ["http://localhost:9999", "https://localhost:8443"]) assert.equal(decide(lists, o, hosts), "unknown", o);
+    // What the person is shown: exactly the approved origins a bare entry stopped covering, loopback and LAN alike.
+    assert.deepEqual(uncoveredApprovals(lists, hosts), [...lost].sort());
     // The fix the notice offers: add the exact origin. It then self-approves, and the notice no longer lists it.
-    const entry = whitelistEntryFromInput("http://mlbox.lan:8080");
-    const after = [...hosts, entry];
-    assert.equal(selfApproves(lists, { url: "http://mlbox.lan:8080/" }, after), true);
-    assert.deepEqual(uncoveredApprovals(lists, after), ["https://mlbox.lan:8443"]);
+    let after = [...hosts];
+    for (const o of ["http://localhost:3000", "http://mlbox.lan:8080"]) {
+        after = [...after, whitelistEntryFromInput(o)];
+        assert.equal(selfApproves(lists, { url: `${o}/app` }, after), true, o);
+    }
+    assert.deepEqual(uncoveredApprovals(lists, after), ["http://127.0.0.1:8080", "http://[::1]:5173", "https://mlbox.lan:8443"]);
+    // An added origin is that origin only: not another port of the same host.
+    assert.equal(selfApproves({ ...empty, always: ["http://localhost:3001"] }, { url: "http://localhost:3001/" }, after), false);
     // A denied origin, or an approval of an unrelated host, is never listed.
     assert.deepEqual(uncoveredApprovals({ always: ["http://mlbox.lan:8080", "http://other.lan"], session: [], denied: ["http://mlbox.lan:8080"] }, hosts), []);
     assert.deepEqual(uncoveredApprovals({ ...empty, session: ["http://mlbox.lan:9000"] }, hosts), ["http://mlbox.lan:9000"], "a session approval too");
@@ -169,12 +160,7 @@ test("an origin approved for this session self-approves when it is on the whitel
     // decide() answers "session" before it consults the whitelist, so a whitelisted origin also allowed for the session
     // must not lose its self-approval.
     assert.equal(selfApproves({ ...empty, session: ["https://trusted.example"] }, { url: "https://trusted.example/" }, ["trusted.example"]), true);
-    assert.equal(selfApproves({ ...empty, session: ["http://localhost:3000"] }, { url: "http://localhost:3000/" }, ["localhost"]), true);
-});
-
-test("loopback is localhost, *.localhost, 127.0.0.0/8 and [::1], nothing that only looks like them", () => {
-    for (const h of ["localhost", "LOCALHOST", "app.localhost", "127.0.0.1", "127.1.2.3", "[::1]"]) assert.equal(isLoopbackHost(h), true, h);
-    for (const h of ["localhost.evil.test", "127.0.0.1.nip.io", "128.0.0.1", "[::2]", "mlbox.lan", "evillocalhost", ""]) assert.equal(isLoopbackHost(h), false, h);
+    assert.equal(selfApproves({ ...empty, session: ["http://localhost:3000"] }, { url: "http://localhost:3000/" }, ["http://localhost:3000"]), true);
 });
 
 test("a whitelist entry typed into Settings round-trips: https on the default port is a bare host, anything else its origin", () => {

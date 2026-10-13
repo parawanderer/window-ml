@@ -172,16 +172,13 @@ the gate reads it (`grantableOrigin`), is on the whitelist (`onSelfApprovalList`
 for the session (a denial wins). Plain http, another port, a subdomain, a sub-frame or an opaque origin of a
 whitelisted host is never trusted as the https site.
 
-A bare LOOPBACK entry (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`: `isLoopbackHost`) also self-approves that
-exact host over http and on any port, which is what it meant when the whitelist was matched by host. No one on the
-network can answer for loopback, so http there opens nothing to a network attacker, and reading it as https only
-silently broke every local dev server and self-hosted UI an install already relied on. Any port is bounded by the gate:
-the whitelist implies window.ml approval only for `selfApprovalOrigin`'s origin (`decide`), so another local service
-self-approves only once the person has allowed that origin itself. A bare non-loopback host gets no such reading: its
-http and port origins are what a network attacker or another service on the box would use. Settings and the popup list
-each origin allowed to use window.ml that a bare entry stopped covering (`uncoveredApprovals`), with an Add that stores
-the exact origin, and both accept an origin typed into the whitelist (`whitelistEntryFromInput`: https on the default
-port is stored as its bare host, anything else as its origin).
+A bare entry means `https://host` on the default port for loopback too (`localhost`, `127.0.0.1`): before #628 a bare
+host self-approved by host over any scheme and port, so an install whose local dev server or LAN UI is plain http on a
+port stopped self-approving there. Nothing is migrated (the old code never recorded which origins were in use, and
+inferring them would trust http without the person choosing it). Instead Settings and the popup list each origin
+allowed to use window.ml that a bare entry stopped covering (`uncoveredApprovals`), loopback included, with an Add that
+stores the exact origin, and both editors accept an origin typed into the whitelist (`whitelistEntryFromInput`: https
+on the default port is stored as its bare host, anything else as its origin).
 
 Every reader goes through it, so none can disagree with the gate:
 
