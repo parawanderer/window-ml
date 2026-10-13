@@ -72,7 +72,6 @@ page-hosted one. Several stores exist once per host.
 | Remembered `confirm()` decisions | `approveOnce.remembered` (`ml-agent-handle.ts`, page) | the gate |
 | `window.ml` on an origin | `ml_site_always` / `ml_site_denied` (local), `ml_site_session` (session storage) | persistent / browser session |
 | Implicit: `pageApprovalDomains` (config) | `site-access.ts`, `senderTrust` | persistent |
-| Implicit: a tab hosting a run may send non-control page messages regardless of the site lists | `sw-site-access.ts` | while the run is hosted |
 | Auto-approve settings | `MlConfig` (sync) | persistent |
 
 ## Session state

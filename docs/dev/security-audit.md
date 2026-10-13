@@ -54,6 +54,8 @@ the worker, and the page answers geometry only):
       current `@pt`/`@box` token request, so the page neither hears the selector being approved nor moves the approve
       highlight or the card's note; positive control in the light DOM and the page's open and closed shadow roots
       (site-access.spec.mjs, attack 18): #617.
+- [x] A page's START_RUN `maxSteps` is clamped (`pageStartPayload` takes `stepBudget`) and its `origin` is dropped, so a
+      page cannot stamp its prompt as an extension surface: #579.
 - [x] A page-built run whose site is revoked while it runs, with no navigation, is handed to the worker (owner's
       decision 2026-10-12): every path that changes the approved set (popup, DevTools Settings, a denial, another
       surface or a sync, the whitelist) decides at the storage event; every send decides again, and a call built for the
@@ -120,13 +122,10 @@ the worker, and the page answers geometry only):
       capture) and its text result, which also reaches the model unclipped. Bounded only by Chrome's 64 MiB message cap
       and the pointer store's 200 entries. Owner decision on the bound (redteam-render-values.test.mjs, the `todo`).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
-- [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
-      extension surface. Proposed: clamp, and drop `origin` for page runs. Owner decision pending.
-- [ ] A page-built run whose approved site is revoked while it runs, with no navigation, is not handed to the worker:
-      its page's sends are refused from the revoke on (fails closed), so its tools stop working there.
 - [ ] Error text that reaches the page outside `forPage`: `VALUE_COLUMNS` errors and the `PYTHON_STREAM` and
       `SERVER_TOOL_STREAM` frames (content.ts). None is built from the config today.
-- [ ] Site access slice 3 (`requestAccess`, wording needs owner approval), slice 4.
+- [ ] Site access slice 3 (`requestAccess`, the agent level and its start card, the self-approval list by origin;
+      decided 2026-10-13, built in the PRs of [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md)), slice 4.
 
 ## The plan to get to "thoroughly investigated"
 
