@@ -61,16 +61,17 @@ import path from "node:path";
 const ROOT = path.resolve(import.meta.dirname, "..");
 /** Where the cache lives. ctags-style: one flat file at the root, gitignored, rebuilt when a file's bytes change. */
 const CACHE = path.join(ROOT, ".index-cache.tsv");
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v4";
 /** Every source tree the index covers. `src/` recursively; tests and scripts are deliberately out (a long test file
- *  is a long LIST, and indexing it by purpose would drown the modules). */
-const SRC_ROOTS = ["src", "mobile"];
+ *  is a long LIST, and indexing it by purpose would drown the modules). The bench page is UI, not tests: its components
+ *  are found and shown in the gallery like any other. */
+const SRC_ROOTS = ["src", "mobile", "tests/e2e/bench/page"];
 /** The phone app's tree: indexed and checked, but out of a query's results unless `--mobile` is passed. */
 const MOBILE = "mobile/";
 /** What under `mobile/` is not source: generated native projects, dependencies, build output. */
 const SKIP_DIRS = new Set(["node_modules", "android", "ios", ".expo", "dist", "build"]);
 /** The stylesheets whose classes are indexed and ratcheted. */
-const CSS_FILES = ["src/sidebar/sidebar.css", "src/chat/chat.css", "src/sidebar/page-kit.css"];
+const CSS_FILES = ["src/sidebar/sidebar.css", "src/chat/chat.css", "src/sidebar/page-kit.css", "tests/e2e/bench/page/page.css"];
 /** Generated files: indexing them is noise, and their headers are written by a generator. */
 const SKIP = /\.gen\.ts$|\.d\.ts$/;
 
@@ -106,8 +107,12 @@ const withSig = flag("sig");
 function firstSentence(doc) {
     // Strip each line's own comment marker BEFORE flattening. Doing it after leaves `//` embedded mid sentence for
     // a multi-line `//` block, which reads as garbage in a one-line index.
-    const flat = doc.split("\n").map((l) => l.replace(/^\s*(?:\/\/+|\*+|\/\*+)\s?/, "").replace(/\s*\*+\/\s*$/, ""))
-        .join(" ").replace(/\s+/g, " ").trim();
+    const lines = doc.split("\n").map((l) => l.replace(/^\s*(?:\/\/+|\*+|\/\*+)\s?/, "").replace(/\s*\*+\/\s*$/, "")
+        // A tag that INTRODUCES the prose (`@file Shared interfaces for …`) is dropped and its text kept.
+        .replace(/^(\s*)@(?:file|fileoverview|description)\b\s*/, "$1"));
+    // The prose ends where the other JSDoc tags begin (`@param`, `@group`, `@gallery {json}`): a tag is never the summary.
+    const tag = lines.findIndex((l) => /^\s*@[a-z]/.test(l));
+    const flat = (tag >= 0 ? lines.slice(0, tag) : lines).join(" ").replace(/\s+/g, " ").trim();
     // A sentence ends at a period followed by a CAPITAL or the end — not at any period-space, which cuts
     // "wrap long code lines vs. horizontal scroll" into nonsense at the "vs.". Prose here is full of those
     // (vs. / e.g. / i.e.), and a truncated first sentence is worse than a long one.

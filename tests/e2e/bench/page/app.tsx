@@ -17,6 +17,7 @@ import { SpecCard } from "./spec";
 import { Watch } from "./streams";
 import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
+import { CursorTipLayer } from "../../../../src/sidebar/ui-kit";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { runClock } from "./clock";
 import { signed } from "../../../../src/sidebar/interval-bar";
@@ -150,6 +151,9 @@ function App() {
     const base = s.artifactBase ?? "/artifacts/";
     return (
         <>
+            {/* The cursor-following tip (the Memory chart's readout, anything else set through `cursorTip`): installed
+                above, the tooltip layer draws only `data-tip`s, and a `cursorTip` with no layer to draw it is never seen. */}
+            <CursorTipLayer />
             <Head s={s} disconnected={disconnected} />
             <main>
                 {buildError ? (

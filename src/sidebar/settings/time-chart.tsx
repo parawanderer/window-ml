@@ -11,7 +11,7 @@
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { cursorTip } from "../ui-kit";
+import { cursorTip, CursorRule } from "../ui-kit";
 
 /** One stacked series: its key in each point's `values`, what the tooltip and legend call it, and the class that
  *  colours it (the class sets `fill` for the area and `background` for the tooltip's swatch). */
@@ -110,7 +110,8 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
                 onPointerMove={fromPointer} onPointerDown={fromPointer} onPointerLeave={hide} onKeyDown={onKey} onBlur={hide}>
                 <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">{areas}</svg>
                 {p ? <>
-                    <div class="tc-rule" style={{ left: `${(x(p.t) / W) * 100}%` }} />
+                    {/* The resource panel's cursor line, snapped: the readout is that sample's, and so is the clock. */}
+                    <CursorRule frac={x(p.t) / W} snapped label={formatTime(p.t)} />
                     {series.map((s, si) => (v(p, s.key) > 0
                         ? <i key={s.key} class={`tc-dot ${s.cls}`} style={{ left: `${(x(p.t) / W) * 100}%`, top: `${(y(tops[at!][si]) / H) * 100}%` }} />
                         : null))}

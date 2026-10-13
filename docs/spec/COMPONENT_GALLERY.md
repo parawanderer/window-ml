@@ -21,7 +21,9 @@ It has two readers:
 failure the code index exists to prevent. So:
 
 - **Discovery** is the code index (`scripts/index.mjs`): every exported, PascalCase function in a `.tsx` file under
-  `src/` is a component. Its summary is the first sentence of its JSDoc, as in the index.
+  `src/`, or under the bench's sweep page (`tests/e2e/bench/page/`), is a component. Its summary is the first sentence
+  of its JSDoc, as in the index, which ends at the first JSDoc tag. A bench page component renders inside a `gl-bench`
+  tile, with the page's `page.css` applied through `@scope (.gl-bench)`, so its page-wide rules touch nothing else.
 - **Props** come from the TypeScript compiler, through the project the refactor tools already build
   (`scripts/refactor/project.mjs`): the type of the component's first parameter, resolved through aliases and imports.
 - **Custom entries** are found by convention, not registered: any `*.gallery.ts` or `*.gallery.tsx` file under `src/`
@@ -76,7 +78,7 @@ gap is what `@gallery` examples are for.
 ## Groups
 
 `@group a, b` in a component's JSDoc puts it in those groups on the page. Without a tag, the group is the component's
-folder relative to `src/` (`chat`, `sidebar/resource`, `sidebar/transcript`, …), so the page is sorted sensibly with no
+folder relative to `src/` (`chat`, `sidebar/resource`, `sidebar/transcript`, …; "bench page" for the sweep page's), so the page is sorted sensibly with no
 tags at all and a tag only overrides where the folder is the wrong answer. The page shows each group's count, so a
 label used once (`chat` against `chat-page`) stands out.
 

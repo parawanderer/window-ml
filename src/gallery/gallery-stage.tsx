@@ -120,7 +120,7 @@ export function ComponentTile({ item, variant, json, loader, ctx }: {
     if (mod.error || variant.error) return <pre class="gl-err">{mod.error ?? variant.error}</pre>;
     const Comp = mod.comp!;
     return (
-        <div ref={host} class="gl-host">
+        <div ref={host} class={`gl-host${c.file.startsWith("tests/e2e/bench/page/") ? " gl-bench" : ""}`}>
             <Boundary key={JSON.stringify(json)} onError={(e) => report(key, { state: "error", error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) })}>
                 <Comp {...buildProps(c.props, json, ctx)} />
             </Boundary>

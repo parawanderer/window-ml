@@ -6,9 +6,11 @@ description: See what a UI component in this repo looks like and how it renders 
 # gallery
 
 The code index answers "does this exist?" (`node scripts/index.mjs 'chip|pill'`). The gallery answers "what does it
-look like, and how does it render?". It lists every exported PascalCase function in a `.tsx` under `src/` (found through
-the index, props read from the TypeScript checker) plus every custom entry (`src/**/*.gallery.ts(x)`), and renders each
-live. Spec: `docs/spec/COMPONENT_GALLERY.md`.
+look like, and how does it render?". It lists every exported PascalCase function in a `.tsx` under `src/` and the bench's
+sweep page (`tests/e2e/bench/page/`, group "bench page", rendered with that page's `page.css` scoped to its tiles), found
+through the index with props read from the TypeScript checker, plus every custom entry (`src/**/*.gallery.ts(x)`), and
+renders each live. An entry's `@group` tags show as its tags row; its `@gallery` tags are the variants. Spec:
+`docs/spec/COMPONENT_GALLERY.md`.
 
 ```bash
 node scripts/gallery.mjs list 'chip|pill'                  # id, groups, variants, file:line, summary (TAB-separated)

@@ -174,16 +174,18 @@ test("status.md says what the box drew and what it is estimated to draw, as the 
     assert.doesNotMatch(statusText(SWEEP, 1_760_000_001_000), /Electricity/, "no box energy: no section");
 });
 
-test("the header badge and the model's pill show the power drawn, its cost, a warning for unpriced runs, and the estimate", async () => {
+test("the header badge and the model's pill show the power drawn, its cost, a warning for unpriced runs, and the estimate", async (t) => {
     const w = new JSDOM(await staticPage({ ...SWEEP, energy: ENERGY, energyForecast: EFORE }), { url: "http://localhost/", runScripts: "dangerously", pretendToBeVisual: true }).window;
+    t.after(() => w.close());   // closed even when an assertion fails: an open window keeps the test process alive
     await new Promise((r) => w.setTimeout(r, 10));
     const badge = w.document.querySelector(".badge.spend");
-    assert.match(badge.textContent, /power 1\.50 Wh 0\.0004 EUR · est\. 3\.50 Wh/);
+    // The separators are their own elements, spaced by the stylesheet: the text runs together here, not on screen.
+    assert.equal(badge.textContent, "spent0.0004 EUR 1.50 Wh·est. 3.50 Wh");
+    assert.deepEqual([...badge.querySelectorAll(".sep")].map((e) => e.textContent), ["·"]);
     assert.ok(badge.querySelector(".warn-price svg"), "the warning icon");
     assert.match(badge.querySelector(".warn-price").getAttribute("data-tip"), /1 run had no electricity price.*DevTools Settings > Spend/);
-    assert.match(badge.querySelector(".power .tt").getAttribute("data-tip"), /GPUs \+ CPU package/);
-    assert.match(w.document.querySelector(".role.spend").textContent, /power 1\.50 Wh/);
-    w.close();
+    assert.match(badge.querySelector(".tt").getAttribute("data-tip"), /GPUs \+ CPU package/);
+    assert.equal(w.document.querySelector(".role.spend").textContent, "spent0.0004 EUR 1.50 Wh·est. 3.50 Wh", "every call local: electricity is the figure, no token one");
 });
 
 // --- in the scores report ---

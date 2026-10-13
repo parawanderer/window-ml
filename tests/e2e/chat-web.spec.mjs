@@ -2712,7 +2712,7 @@ test("the runtime's storage chart reads out a day, and a largest session opens a
     await page.mouse.move(box.x + box.width * 0.9, box.y + box.height / 2);
     const tip = page.locator(".cursor-tip");
     await expect(tip).toContainText("Total");
-    await expect(page.locator(".tc-rule")).toHaveCount(1);
+    await expect(page.locator(".rc-cross")).toHaveCount(1);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height + 120);
     await expect(tip).toHaveCount(0);
 
@@ -3215,7 +3215,7 @@ test("an embedded output's rail folds it to one row naming it, without jumping t
     await page.keyboard.press("Enter");
     await expect(answer.locator(".tok-folded")).toHaveCount(0);
  });
- 
+
 // --- the input box stacks once a line would wrap beside its controls ---
 
 test("a paragraph gets the box's full width, the controls drop under it, and a short line brings them back", async () => {
@@ -3257,7 +3257,7 @@ test("the busy view draws no fold rails: it keeps the panel's own disclosures", 
     await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
     await expect(page.locator(".fold-rail")).toHaveCount(0);
 });
-    
+
 // --- the page's own text weights ---
 
 test("normal text is light and emphasis medium, not the browser's 400 and 700", async () => {

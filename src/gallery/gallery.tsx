@@ -255,8 +255,13 @@ function Stage({ s, item }: { s: GalleryState; item: GalleryItem }) {
                 <p class="gl-summary" dangerouslySetInnerHTML={{ __html: markdown(item.summary || "(no summary: the JSDoc has no first sentence)") }} />
                 <div class="gl-meta">
                     {item.component ? <code>{item.component.file}:{item.component.line}</code> : <code>custom entry</code>}
-                    {" · "}{item.groups.map((g) => <span key={g} class="gl-tag">{g}</span>)}
-                    {item.component && !item.component.tagged ? <span class="gl-dim"> (group from its folder: add <code>@group</code> to set one)</span> : null}
+                </div>
+                {/* The JSDoc's `@group` tags, as tags: each lists the entry in that section of the left column, and a click
+                    filters the list to it. Its `@gallery` tags are not repeated here: they are the variants below. */}
+                <div class="gl-tags">
+                    <span class="gl-tags-k">tags</span>
+                    {item.groups.map((g) => <button key={g} type="button" class="gl-tag" title={`List everything tagged ${g}`} onClick={() => setState({ q: g })}>{g}</button>)}
+                    {item.component && !item.component.tagged ? <span class="gl-dim">from its folder: add <code>@group</code> to set one</span> : null}
                 </div>
                 <div class="gl-toolbar">
                     <Seg label="theme" value={s.theme} options={["light", "dark", "system"] as const} onPick={(t) => setState({ theme: t })} />

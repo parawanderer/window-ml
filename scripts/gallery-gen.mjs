@@ -198,8 +198,11 @@ function entryPoints() {
     return entries;
 }
 
-/** The folder a file is in, relative to src/: the group a component falls back to. */
-const folderGroup = (file) => path.dirname(file).replace(/^src\/?/, "") || "src";
+/** The folder a file is in, relative to src/: the group a component falls back to. The bench page's are "bench page". */
+const folderGroup = (file) => (file.startsWith(BENCH_PAGE) ? "bench page" : path.dirname(file).replace(/^src\/?/, "") || "src");
+
+/** The bench's sweep page: its components render in the gallery with its own stylesheet, scoped to them. */
+export const BENCH_PAGE = "tests/e2e/bench/page/";
 
 /**
  * THE MANIFEST: every component and custom entry module. Each component carries its props schema, its variants and

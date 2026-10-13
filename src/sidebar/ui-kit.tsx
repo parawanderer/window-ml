@@ -254,6 +254,22 @@ export async function decideGate(st: AgentStep, hash: string, seq: number, ok: b
  *
  *  Not the native `title` for the same reason nothing else here is: it waits about a second, which on
  *  something you are hovering to decide what it MEANS is long enough to have given up. */
+/**
+ * THE CURSOR LINE on a time chart: a one-pixel accent rule at the hovered instant, with that instant's clock on a tab at
+ * its top (hung on the left past 72% across, so it stays inside the plot). Every chart over time draws this one: the
+ * resource panel's `Crosshair`, and `TimeChart` (the storage and bench memory charts). The caller owns the hover state
+ * and the dots; this is only the mark.
+ *  @group primitives, charts
+ *  @gallery none a one-pixel line inside a positioned plot: alone it has nothing to read against. See it with `shot TimeChart --do 'hover:.tc-plot'`.
+ */
+export function CursorRule({ frac, label, snapped = false }: { frac: number; label?: ComponentChildren; snapped?: boolean }) {
+    return (
+        <div class={`rc-cross${snapped ? " snapped" : ""}`} style={{ left: `${frac * 100}%` }}>
+            {label != null ? <span class={`rc-cross-t${frac > 0.72 ? " flip" : ""}`}>{label}</span> : null}
+        </div>
+    );
+}
+
 /** The one floating tip. `text` is MARKDOWN (escaped, rendered inline); `node` is authored JSX. Exactly
  *  one of them is set — see cursorTipOn, which picks by the type of what it was given. */
 export const cursorTip = signal<{ x: number; y: number; text?: string; node?: ComponentChildren } | null>(null);

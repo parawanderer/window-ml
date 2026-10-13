@@ -47,7 +47,7 @@ export function forecastTip(f: ForecastTally, currency: string, prices: string |
 /** The estimate beside a spend figure, while there is something left to estimate. */
 function Estimate({ f, currency, prices, whose }: { f?: ForecastTally | null; currency: string; prices: string | null; whose: string }) {
     if (!f || !f.left || f.remaining + f.spent === 0 && f.local + f.unknown === f.left) return null;
-    return <span class="est tt" data-tip={forecastTip(f, currency, prices, whose)}> · est. <b>{fmtMoney(f.total, currency)}</b>{f.unknown ? "+" : ""}</span>;
+    return <><Sep /><span class="est tt" data-tip={forecastTip(f, currency, prices, whose)}><span>est. <b>{fmtMoney(f.total, currency)}</b>{f.unknown ? "+" : ""}</span></span></>;
 }
 
 /** What an energy tally covers, said in full: the tip of every electricity figure. */
@@ -74,36 +74,63 @@ export function energyForecastTip(f: EnergyForecastTally, currency: string | nul
     ].filter(Boolean).join(" ");
 }
 
-/** The electricity segment: energy, its cost when priced, a warning while some runs have no price, and the estimate. */
-function Power({ t, f, ef, whose }: { t?: EnergyTally | null; f?: EnergyForecastTally | null; ef?: EnergyForecast | null; whose: string }) {
-    const est = f && f.left && f.totalWh > 0
-        ? <span class="tt" data-tip={energyForecastTip(f, ef?.currency ?? null, ef?.perKwh ?? null, whose)}> · est. <b>{f.totalWh.toFixed(2)} Wh</b>{f.unknown ? "+" : ""}</span> : null;
-    if (!t) return est ? <span class="power"> · power{est}</span> : null;
-    return <span class="power"><span class="tt" data-tip={energyTip(t, whose)}> · power <b>{t.Wh.toFixed(2)} Wh</b>{t.cost != null ? <> {fmtMoney(t.cost, t.currency ?? "")}</> : null}</span>{t.unpriced ? <span class="warn-price tt" data-tip={energyTip(t, whose)}><IconWarn /></span> : null}{est}</span>;
+/** A separator between a spend segment's parts. Outside every `.tt`: a tip wrapper is an inline-flex box, which trims
+ *  the spaces at the edges of its text (how "spent local" once read "spentlocal"). */
+const Sep = ({ plus = false }: { plus?: boolean }) => <span class="sep">{plus ? "+" : "·"}</span>;
+
+/** The box's electricity as a figure: its cost when priced (the energy beside it), else the energy, with the warning
+ *  while some runs have no price. */
+function Power({ t, whose }: { t: EnergyTally; whose: string }) {
+    const tip = energyTip(t, whose);
+    return <><span class="tt" data-tip={tip}><span>{t.cost != null ? <><b>{fmtMoney(t.cost, t.currency ?? "")}</b> <span class="wh">{t.Wh.toFixed(2)} Wh</span></> : <b>{t.Wh.toFixed(2)} Wh</b>}</span></span>
+        {t.unpriced ? <span class="warn-price tt" data-tip={tip}><IconWarn /></span> : null}</>;
 }
 
-/** The whole sweep's spend, in the header's counts, with the estimate for its end while cells are left. */
+/** The electricity estimate beside the figure, while runs are left. */
+function PowerEstimate({ f, ef, whose }: { f?: EnergyForecastTally | null; ef?: EnergyForecast | null; whose: string }) {
+    if (!f || !f.left || !(f.totalWh > 0)) return null;
+    return <><Sep /><span class="est tt" data-tip={energyForecastTip(f, ef?.currency ?? null, ef?.perKwh ?? null, whose)}><span>est. <b>{f.totalWh.toFixed(2)} Wh</b>{f.unknown ? "+" : ""}</span></span></>;
+}
+
+/**
+ * One spend figure: what the calls cost in tokens and what the box's electricity cost, each with its estimate. A tally
+ * whose every call was local has no token figure at all, only electricity; one with both shows them joined by "+".
+ */
+function SpendParts({ t, cur, e, f, fc, ef, efAll, whose }: { t?: SpendTally | null; cur: string; e?: EnergyTally | null; f?: ForecastTally | null; fc?: SpendForecast | null; ef?: EnergyForecastTally | null; efAll?: EnergyForecast | null; whose: string }) {
+    const allLocal = !!t && t.calls > 0 && t.local === t.calls;
+    const money = t && !(allLocal && e) ? <span class="tt" data-tip={spendTip(t, cur, whose)}><span>{figure(t, cur)}</span></span> : null;
+    const est = fc && !allLocal ? <Estimate f={f} currency={fc.currency} prices={fc.prices} whose={whose} /> : null;
+    return <>{money}{est}{e ? <>{money ? <Sep plus /> : null}<Power t={e} whose={whose} /></> : null}<PowerEstimate f={ef} ef={efAll} whose={whose} /></>;
+}
+
+/**
+ * The whole sweep's spend, in the header's counts, with the estimate for its end while cells are left.
+ *
+ *  @group bench page
+ *  @gallery {"spend": {"currency": "USD", "total": {"calls": 40, "computed": 0.1234, "computedCalls": 18, "reported": 0, "reportedCalls": 0, "local": 22, "unpriced": 0, "pending": 0}, "models": {}, "runs": {}}, "energy": {"total": {"runs": 8, "Wh": 77.5, "aboveWh": 20.1, "cost": 0.0203, "costAbove": 0.0052, "currency": "EUR", "unpriced": 0, "basis": "gpu+cpu"}, "models": {}, "runs": {}}, "energyForecast": {"currency": "EUR", "perKwh": 0.26216, "spentWh": 23.02, "remainingWh": 18.4, "totalWh": 120.4, "left": 2, "unknown": 0, "remainingCost": 0.0048, "basis": {"item": 2, "task": 0, "model": 0, "none": 0}, "models": {}}}
+ */
 export function SpendBadge({ spend, forecast, energy, energyForecast }: { spend?: SweepSpend | null; forecast?: SpendForecast | null; energy?: SweepEnergy | null; energyForecast?: EnergyForecast | null }) {
     if (!spend && !forecast?.left && !energy && !energyForecast?.left) return null;
-    const cur = spend?.currency ?? forecast?.currency ?? "";
-    const est = <Estimate f={forecast} currency={cur} prices={forecast?.prices ?? null} whose="this sweep" />;
-    const power = <Power t={energy?.total} f={energyForecast} ef={energyForecast} whose="this sweep" />;
-    if (!spend) return <span class="badge spend">{est}{power}</span>;
-    const t = spend.total;
-    const partial = t.unpriced || t.pending ? " partial" : "";
-    return <span class={`badge spend${partial}`}><span class="tt" data-tip={spendTip(t, spend.currency, "this sweep")}>spent {figure(t, spend.currency)}</span>{est}{power}</span>;
+    const t = spend?.total;
+    const partial = t && (t.unpriced || t.pending) ? " partial" : "";
+    return <span class={`badge spend${partial}`}><span class="rk">spent</span><SpendParts t={t} cur={spend?.currency ?? forecast?.currency ?? ""} e={energy?.total} f={forecast}
+        fc={forecast} ef={energyForecast} efAll={energyForecast} whose="this sweep" /></span>;
 }
 
-/** One driver model's spend, as a segment of its pill. */
+/**
+ * One driver model's spend, as a segment of its pill.
+ *
+ *  @group bench page
+ *  @gallery all local {"driver": "glm-4.7-flash:latest", "spend": {"currency": "USD", "total": {"calls": 12, "computed": 0, "computedCalls": 0, "reported": 0, "reportedCalls": 0, "local": 12, "unpriced": 0, "pending": 0}, "models": {"glm-4.7-flash:latest": {"calls": 12, "computed": 0, "computedCalls": 0, "reported": 0, "reportedCalls": 0, "local": 12, "unpriced": 0, "pending": 0}}, "runs": {}}, "energy": {"total": {"runs": 3, "Wh": 23.02, "aboveWh": 20.1, "cost": 0.006, "costAbove": 0.0052, "currency": "EUR", "unpriced": 0, "basis": "gpu+cpu"}, "models": {"glm-4.7-flash:latest": {"runs": 3, "Wh": 23.02, "aboveWh": 20.1, "cost": 0.006, "costAbove": 0.0052, "currency": "EUR", "unpriced": 0, "basis": "gpu+cpu"}}, "runs": {}}, "energyForecast": {"currency": "EUR", "perKwh": 0.26216, "spentWh": 23.02, "remainingWh": 18.4, "totalWh": 41.42, "left": 2, "unknown": 0, "remainingCost": 0.0048, "basis": {"item": 2, "task": 0, "model": 0, "none": 0}, "models": {"glm-4.7-flash:latest": {"currency": "EUR", "perKwh": 0.26216, "spentWh": 23.02, "remainingWh": 18.4, "totalWh": 41.42, "left": 2, "unknown": 0, "remainingCost": 0.0048, "basis": {"item": 2, "task": 0, "model": 0, "none": 0}}}}}
+ *  @gallery cloud, with local vision calls {"driver": "openrouter.minimax/minimax-m3", "spend": {"currency": "USD", "total": {"calls": 20, "computed": 0.1234, "computedCalls": 18, "reported": 0, "reportedCalls": 0, "local": 2, "unpriced": 0, "pending": 0}, "models": {"openrouter.minimax/minimax-m3": {"calls": 20, "computed": 0.1234, "computedCalls": 18, "reported": 0, "reportedCalls": 0, "local": 2, "unpriced": 0, "pending": 0}}, "runs": {}}, "energy": {"total": {"runs": 2, "Wh": 1.2, "aboveWh": 1.1, "cost": 0.0003, "costAbove": 0.0003, "currency": "EUR", "unpriced": 0, "basis": "gpu+cpu"}, "models": {"openrouter.minimax/minimax-m3": {"runs": 2, "Wh": 1.2, "aboveWh": 1.1, "cost": 0.0003, "costAbove": 0.0003, "currency": "EUR", "unpriced": 0, "basis": "gpu+cpu"}}, "runs": {}}}
+ *  @gallery no electricity price {"driver": "qwen3.5:9b", "spend": {"currency": "USD", "total": {"calls": 8, "computed": 0, "computedCalls": 0, "reported": 0, "reportedCalls": 0, "local": 8, "unpriced": 0, "pending": 0}, "models": {"qwen3.5:9b": {"calls": 8, "computed": 0, "computedCalls": 0, "reported": 0, "reportedCalls": 0, "local": 8, "unpriced": 0, "pending": 0}}, "runs": {}}, "energy": {"total": {"runs": 3, "Wh": 23.02, "aboveWh": 20.1, "cost": null, "costAbove": null, "currency": null, "unpriced": 3, "basis": "gpu+cpu"}, "models": {"qwen3.5:9b": {"runs": 3, "Wh": 23.02, "aboveWh": 20.1, "cost": null, "costAbove": null, "currency": null, "unpriced": 3, "basis": "gpu+cpu"}}, "runs": {}}}
+ */
 export function SpendRole({ spend, forecast, energy, energyForecast, driver }: { spend?: SweepSpend | null; forecast?: SpendForecast | null; energy?: SweepEnergy | null; energyForecast?: EnergyForecast | null; driver?: string | null }) {
     const t = driver ? spend?.models[driver] : null;
     const f = driver ? forecast?.models[driver] : null;
     const e = driver ? energy?.models[driver] : null;
     const ef = driver ? energyForecast?.models[driver] : null;
     if (!t && !f?.left && !e && !(ef?.left && ef.totalWh > 0)) return null;
-    const whose = `${driver}'s runs in this sweep`;
-    const est = forecast && <Estimate f={f} currency={forecast.currency} prices={forecast.prices} whose={whose} />;
-    const power = <Power t={e} f={ef} ef={energyForecast} whose={whose} />;
-    if (!t) return <span class="role spend"><span class="rk">spend</span>{est}{power}</span>;
-    return <span class="role spend"><span class="tt" data-tip={spendTip(t, spend!.currency, whose)}><span class="rk">spent</span>{figure(t, spend!.currency)}</span>{est}{power}</span>;
+    return <span class="role spend"><span class="rk">{t || e ? "spent" : "spend"}</span><SpendParts t={t} cur={spend?.currency ?? ""} e={e} f={f} fc={forecast}
+        ef={ef} efAll={energyForecast} whose={`${driver}'s runs in this sweep`} /></span>;
 }

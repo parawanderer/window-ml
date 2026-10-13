@@ -85,12 +85,12 @@ test("the history chart reads out a day's time and every part's bytes, from the 
     assert.match(text, /Everything else1\.00 KiB/);
     assert.doesNotMatch(text, /Tool output/, "a part with nothing that day is left out");
     assert.match(text, /Total2\.00 KiB/);
-    assert.ok(host.querySelector(".tc-rule"), "a rule marks the day being read");
+    assert.ok(host.querySelector(".rc-cross"), "a rule marks the day being read");
     assert.equal(host.querySelectorAll(".tc-dot").length, 2, "and a dot on each part that has bytes");
 
     plot.dispatchEvent(new window.MouseEvent("pointerleave", { bubbles: true })); await settle();
     assert.equal(cursorTip.value, null, "leaving takes the readout down");
-    assert.equal(host.querySelector(".tc-rule"), null);
+    assert.equal(host.querySelector(".rc-cross"), null);
 
     plot.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, clientX: 0, clientY: 0 })); await settle();
     assert.match(await tipText(), /Total1000 B/, "a tap (pointer down) reads the nearest day, here the first");

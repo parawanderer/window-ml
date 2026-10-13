@@ -227,21 +227,22 @@ async function page(state) {
 const tally = (o) => ({ calls: 0, computed: 0, computedCalls: 0, reported: 0, reportedCalls: 0, local: 0, unpriced: 0, pending: 0, ...o });
 const base = { name: "s", dims: ["model"], runs: [{ combo: { model: EXT }, taskId: "t", repeat: 0, state: "running", who: EXT, models: { driver: EXT } }], rows: [], jobs: 1, started: 1_760_000_000_000 };
 
-test("the header badge and the model's pill carry the estimate with its tip; a page from before the estimate shows only the spend", async () => {
+test("the header badge and the model's pill carry the estimate with its tip; a page from before the estimate shows only the spend", async (t) => {
     const f = forecast(PRED, { stateOf: () => "pending", modelOf: (i) => MODELS[i], cachedOf: (i) => i === 5, prices: "2026-10-10T12:07:01Z" });
     const spend = { currency: "USD", total: tally({ calls: 1, computed: 0.004, computedCalls: 1 }), models: { [EXT]: tally({ calls: 1, computed: 0.004, computedCalls: 1 }) }, runs: {} };
     const w = await page({ ...base, spend, forecast: f });
+    t.after(() => w.close());
     const badge = w.document.querySelector(".badge.spend");
-    assert.match(badge.textContent, /spent .*0\.004.* · est\. .*0\.03.*\+/);
+    assert.match(badge.textContent, /^spent0\.0040 USD·est\. 0\.0300 USD\+$/);
     const tip = badge.querySelector(".est").getAttribute("data-tip");
     assert.match(tip, /5 runs left/);
     assert.match(tip, /the snapshot of 2026-10-10 12:07 UTC/);
     assert.match(tip, /1 run on a local model: electricity, not priced here\. 1 run with no estimate \(no past run of who\), not in the figure\./);
     const pill = w.document.querySelector(".role.spend");
-    assert.match(pill.textContent, /spent.*0\.004.* · est\. .*0\.03/);
+    assert.match(pill.textContent, /^spent0\.0040 USD·est\. 0\.0300 USD/);
     assert.match(pill.querySelector(".est").getAttribute("data-tip"), new RegExp(`${EXT.replace(/[./]/g, "\\$&")}'s runs in this sweep by its end`));
     const old = await page({ ...base, spend });
+    t.after(() => old.close());
     assert.equal(old.document.querySelector(".badge.spend .est"), null);
-    assert.match(old.document.querySelector(".badge.spend").textContent, /^spent /);
-    w.close(); old.close();
+    assert.match(old.document.querySelector(".badge.spend").textContent, /^spent0\.0040 USD$/);
 });

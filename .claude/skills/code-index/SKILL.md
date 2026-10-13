@@ -13,7 +13,9 @@ node scripts/index.mjs fetch --sig                # …with signatures
 node scripts/index.mjs --exported --kind function # the module surface, not the private helpers
 ```
 
-One TAB-separated line per thing: `KIND · NAME · path:line · [signature] · first sentence of its docstring`.
+One TAB-separated line per thing: `KIND · NAME · path:line · [signature] · first sentence of its docstring` (the prose
+before the first JSDoc tag). It covers `src/`, `mobile/` and the bench's sweep page (`tests/e2e/bench/page/`, with its
+`page.css`); other tests and scripts are out.
 
 ## When to run it
 

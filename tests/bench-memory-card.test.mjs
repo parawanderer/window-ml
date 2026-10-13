@@ -109,6 +109,20 @@ test("the chart: one area per kind, stacked, over the sweep's readings, with its
     assert.match(chart.querySelector(".tc-plot").getAttribute("aria-label"), /peaking at 4\.8 GB of a 8\.0 GB limit/);
 });
 
+test("hovering the chart reads out that moment: its time, each kind's memory, and the total (the page draws the cursor tip)", async () => {
+    const { doc, w } = await page({ ...base, memory: MEMORY });
+    await new Promise((r) => w.setTimeout(r, 10));
+    const plot = doc.querySelector("#memory .tc-plot");
+    plot.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 70, right: 600, bottom: 70, x: 0, y: 0 });
+    plot.dispatchEvent(new w.PointerEvent("pointermove", { bubbles: true, clientX: 599, clientY: 30 }));
+    await new Promise((r) => w.setTimeout(r, 30));
+    const tip = doc.querySelector(".tc-tip");
+    assert.ok(tip, "the readout is on the page, not only computed");
+    assert.match(tip.querySelector(".tc-tip-time").textContent, /\d{1,2}:\d{2}:\d{2}/);
+    assert.match(tip.textContent, /held runs.*3\.3 GB/);
+    assert.match(tip.textContent, /Total.*4\.8 GB/);
+});
+
 test("fewer than two readings draw no chart; the rest of the card stays", async () => {
     const { doc } = await page({ ...base, memory: { ...MEMORY, history: MEMORY.history.slice(0, 1) } });
     assert.equal(doc.querySelector("#memory .tc"), null);

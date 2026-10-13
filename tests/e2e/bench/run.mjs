@@ -802,7 +802,12 @@ const main = async () => {
     // calls recorded: what its energy is read and priced by (electricity.mjs).
     const runHash = [], runPrice = [];
     ctx.spendOn = (i, ev) => {
-        if (ev?.session?.hash) runHash[i] ??= ev.session.hash;
+        // Known from the run's first event, not only once it ends: the page reads the box's generations for this
+        // session as this sweep's (the memory chart's ownership), which a running run's are too.
+        if (ev?.session?.hash && !runHash[i]) {
+            runHash[i] = ev.session.hash;
+            if (runsState[i] && !runsState[i].hash) { runsState[i].hash = ev.session.hash; push(); }
+        }
         if (!runPrice[i]) for (const c of eventCalls(ev, null)) if (c.usage?.electricity) { runPrice[i] = c.usage.electricity; break; }
         if (inSeed[i]) { if (ev.kind === "agent-result") inSeed[i] = false; return false; }
         return spent?.add(i, ev, driverOf(i)) ?? false;

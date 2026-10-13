@@ -191,6 +191,34 @@ test("index: --check-speed reports a cold build and passes well inside its budge
 
 // ---- fixes that came from USING it (see the skill's "what you owe it") ---------------------------------------
 
+test("index: a summary ends at the first JSDoc tag, and a tag that introduces the prose (@file) keeps it", async () => {
+    const fx = fixture({
+        "src/tagged.ts": `/**
+ * @file Where tagged things live. Second sentence.
+ */
+
+/** A pill for a spend figure
+ *  @group bench page
+ *  @gallery all local {"driver": "glm"}
+ */
+export function SpendPill() { return 1; }
+
+/**
+ * Has no capital after its period. @group x
+ * @param a the thing
+ */
+export function lower(a: number) { return a; }
+`,
+    });
+    try {
+        const rows = fx.run("");
+        const by = (name) => rows.find((r) => r[1] === name);
+        assert.equal(by("tagged.ts")[3] ?? by("tagged.ts")[4], "Where tagged things live", "@file's prose is the header");
+        assert.equal(by("SpendPill")[3], "A pill for a spend figure", "the @group and @gallery lines are not the summary");
+        assert.equal(by("lower")[3], "Has no capital after its period. @group x", "a tag mid-line is prose; only a tag LINE ends it");
+    } finally { fx.stop(); }
+});
+
 test("index: --word anchors the pattern, so a short query stops matching inside longer words", async () => {
     const fx = fixture({
         "src/a.ts": "// a.ts — about a table of orders.\nexport const one = 1;   // x\n",
