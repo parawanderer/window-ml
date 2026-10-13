@@ -865,3 +865,20 @@ test("after __mlEvictForTest the hand-overs held in memory are gone, as after an
     await sleep(50);
     assert.deepEqual(plain(bg.localStore.ml_handed_to_worker), ["evict-run"], "the second hand-over was stored");
 });
+
+test("the vm's chrome.storage.local hands out and keeps copies on every read and write, as the browser does, so a worker that changes what it read or wrote changes nothing stored", T, async () => {
+    // The harness fix in #625 copied only get(null). A get by key or a set that shares objects with the store lets the
+    // worker change storage by mutating them, which the browser never does, and a test then passes on state no
+    // browser would keep.
+    const bg = loadBackground({ local: { ml_probe: { n: 1, list: ["a"] } } });
+    const local = bg.context.chrome.storage.local;
+    for (const read of [() => local.get("ml_probe"), () => local.get(["ml_probe"]), () => local.get({ ml_probe: null }), () => local.get(null)]) {
+        const got = await read();
+        got.ml_probe.n = 99; got.ml_probe.list.push("mutated");
+    }
+    const written = { n: 2, list: ["b"] };
+    await local.set({ ml_written: written });
+    written.n = 99; written.list.push("mutated");
+    assert.deepEqual(plain(bg.localStore.ml_probe), { n: 1, list: ["a"] }, "a read's object is not the stored one");
+    assert.deepEqual(plain(bg.localStore.ml_written), { n: 2, list: ["b"] }, "a write's object is not the stored one");
+});

@@ -233,11 +233,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                         if (key == null) { if (holdRestore) await holdRestore; return structuredClone(localStore); }
                         const keys = typeof key === "string" ? [key] : Array.isArray(key) ? key : Object.keys(key || {});
                         const out = {};
-                        for (const k of keys) if (k in localStore) out[k] = localStore[k];
+                        for (const k of keys) if (k in localStore) out[k] = structuredClone(localStore[k]);
                         return out;
                     },
                     // Like the browser, a write fires storage.onChanged in this worker too (area "local").
-                    set: async (obj) => { const changes = changesOf(localStore, obj); Object.assign(localStore, obj); fireChanged(changes, "local"); },
+                    // Copies both ways, as the browser does (and as the session area below does).
+                    set: async (obj) => { const changes = changesOf(localStore, obj); Object.assign(localStore, structuredClone(obj)); fireChanged(changes, "local"); },
                     remove: async (keys) => { const ks = Array.isArray(keys) ? keys : [keys]; const changes = Object.fromEntries(ks.filter((k) => k in localStore).map((k) => [k, { oldValue: localStore[k] }])); for (const k of ks) delete localStore[k]; fireChanged(changes, "local"); },
                 },
                 session: {
