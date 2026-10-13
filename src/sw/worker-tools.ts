@@ -19,6 +19,7 @@ import { hintSession } from "../contract/contract-run";
 import { isCurrentPage } from "../dom/dom";
 import { fetchUrlFor } from "./sw-fetch-url";
 import { apiDocsTool } from "../tools/api-docs-tool";
+import { WORKER_BUILTINS } from "../tools/tool-registry";
 import { makeDomTools } from "../tools/tools";
 import { workerAnswerTool } from "./worker-answer";
 import { publicConfig } from "../contract/contract-config";
@@ -33,7 +34,7 @@ import type { PageTableData } from "./worker-page-read";
 /** The builtin tools a worker-built run executes in the worker rather than the page. `look` and `locate` are built per
  *  call, over a vision host pinned to the call's document (worker-look.ts, worker-locate.ts); naming them here gives a
  *  run whose only worker tool they are the state their model calls are metered into from the start. */
-export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate"]);
+export const WORKER_TOOL_NAMES: ReadonlySet<string> = WORKER_BUILTINS;   // the registry's realm "worker"
 
 /** What a run's worker tools ask of the worker's vision (worker-media.ts) and of the run's page (worker-page-read.ts),
  *  handed in by whoever builds the run's tools (sw-local-tools.ts), so this module reaches neither: python_exec's `image`

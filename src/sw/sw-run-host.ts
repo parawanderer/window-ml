@@ -51,6 +51,7 @@ import { claimValue, runMayClaim, valueHolders, readStoredColumns, withHeldValue
 import { isoServer } from "./iso-channel";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
+import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 
@@ -160,8 +161,9 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
 }
 
 /** The builtin tools whose factories set `requiresApproval`: the worker mints grants or consents for their calls, or
- *  acts for them with privileges (a debugger click), so a page's descriptor cannot take them off the gate. */
-const GATED_TOOL_NAMES: ReadonlySet<string> = new Set(["exec", "python_exec", "fetch_url", "navigate", "click", "type"]);
+ *  acts for them with privileges (a debugger click), so a page's descriptor cannot take them off the gate. Read from the
+ *  tool registry (`gated`); a site tool that takes one of these names is gated too. */
+export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.

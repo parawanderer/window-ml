@@ -5,6 +5,19 @@ changed rather than loaded into every session. AGENTS.md keeps the repository's 
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
 
+**Which tools are the extension's own: the tool registry.** Every builtin tool is declared once with `defineBuiltinTool`
+in `tool-registry.ts`: its name, the files that hold its factory, whether the worker always gates it (`gated`), whether
+its output can be kept as an `@tool:` pointer (`citable`), where a run the worker built executes it (`realm`: `page`,
+`worker`, or `loop` for `dereference`) and its start-card sentence (`cardLine`, SITE_ACCESS_SLICE3.md 1.1).
+`GATED_TOOL_NAMES` (sw-run-host.ts), `CITABLE_TOOLS` (tool-params.ts) and `WORKER_TOOL_NAMES` (worker-tools.ts) are
+reads of it, and `isBuiltinTool` answers "is this one of ours": a name it does not declare is the site's own tool, and
+a site tool that takes a builtin's name is treated as that builtin (gated, and given its line). The declarations sit in
+one file that imports nothing, not beside each factory, because agent-loop.ts, tool-exec.ts and the sidebar read these
+lists without importing the factories, and a declaration that ran only when its factory loaded would leave
+`GATED_TOOL_NAMES` short there, which fails open. `node scripts/check-tools.mjs` (pre-commit and CI) fails on a factory
+with no declaration and on a declaration whose files hold no factory for it. A new builtin tool: write its factory, add
+its `defineBuiltinTool` line, and decide `gated` from whether the worker mints a grant or acts with privileges for it.
+
 **The read-only dialect now has its own file, [`readonly-exec.md`](readonly-exec.md)**: the three stages, the
 contract, halting, and how to extend it. The paragraphs below are the older summary.
 

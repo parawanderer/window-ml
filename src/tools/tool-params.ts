@@ -13,6 +13,7 @@
 // neither.
 import type { JsonSchema } from "../contract";
 import { OUTPUT_CAP, type OutputCapTool } from "../contract/contract-pointers";
+import { CITABLE_BUILTINS } from "./tool-registry";
 
 /** The output-truncation pair for a tool in {@link OUTPUT_CAP}. Takes the TOOL, not the numbers: they were passed in
  *  as literals (`outputCapParams(500, 8000, …)`), a second copy of the table that nothing kept in step, so changing
@@ -136,6 +137,8 @@ export function takeCallTitle(args: Record<string, unknown>): { args: Record<str
 
 // The tools whose output is CITABLE with an `@tool:` token — they expose the opt-in `token` param, and (when
 // tool tokens are on) get a stable id minted onto every non-failed call so the answer renderer can resolve a
-// reference to it. Shared with injected.ts's per-call param injection so the two can't drift.
+// reference to it. Read from the tool registry (`citable`), so it cannot drift from the other builtin lists.
+// agent_api_docs is citable for the POINTER, not for citation: the reference is ~120 KB and it was the one output the
+// pipe dialect could not reach.
 /** The builtins whose output can be kept as an `@tool:` pointer, so a run with tool tokens offers them `token`. */
-export const CITABLE_TOOLS = new Set(["exec", "python_exec", "look", "locate", "fetch_url", "agent_api_docs"]);   // agent_api_docs is here for the POINTER, not for citation: the reference is ~120 KB and it was the one output the pipe dialect could not reach
+export const CITABLE_TOOLS: ReadonlySet<string> = CITABLE_BUILTINS;

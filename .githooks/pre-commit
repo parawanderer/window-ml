@@ -147,6 +147,13 @@ if echo "$staged" | grep -qE '^(src|mobile)/.*\.(ts|tsx|css)$'; then
         echo "            or mark it \`// state: ui|cache|plumbing|fixed|test\`."
         exit 1
     fi
+    # A builtin tool factory with no declaration in the tool registry (or a declaration with no factory): an undeclared
+    # builtin is treated as the site's own tool, so the worker does not gate it and the start card calls it the site's.
+    if ! node scripts/check-tools.mjs --staged; then
+        echo ""
+        echo "pre-commit: declare the tool with defineBuiltinTool in src/tools/tool-registry.ts, naming its factory's file."
+        exit 1
+    fi
     # A source file with no HEADER is invisible at the level that costs most: someone rebuilds the module.
     if ! node scripts/index.mjs --headerless >/dev/null; then
         echo ""
