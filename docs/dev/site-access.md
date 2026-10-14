@@ -307,7 +307,7 @@ decides it like any page turn (a page-built run that navigated within its site i
 The person's own message, relayed by such a page, is let through, spent at the router (`claimPersonTurn`) so a copy
 sent twice is refused the second time. What a run opened is kept in session storage (`ml_agent_opened`), so the rule
 outlives an eviction, and the router reads it back before judging a message that woke the worker. A refused page's START_RUN is
-recorded (`site.notStarted`, for the badge) and drawn as one quiet `agent-note` line in the driving run's steps, with no
+recorded (`site.notStarted`, for the badge) and drawn as one quiet `agent-note` line in the driving run's steps (once a minute per site and run), with no
 card and no model call; nothing is added to the driving run's messages.
 
 **Revoked while it runs (Q9).** A site that may still use window.ml but lost the agent level has its live runs
@@ -661,7 +661,9 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 - `tests/redteam-agent-level.test.mjs`: the agent level and the start card against the bundle: each level's refusals,
   the card's deny, timeout and eviction with zero model requests, a handle's later turns, the page turn budget, whose
   turn it is, waiting for the person, widening, the binding, a revoke, the first turn's history, the navigation rule,
-  the floods, the decision message, the upgrade and Q9. `tests/agent-start.test.mjs`: the pure rules, with
+  the floods, the decision message, the upgrade and Q9; `tests/redteam-agent-level-2.test.mjs`, the separate red-team
+  pass (widening by budget, crossOrigin and tool text, pictures on a turn, context lines, Q17 across an eviction and
+  its race). `tests/agent-start.test.mjs`: the pure rules, with
   `siteInstructions` against every composition of the stock prompt. `tests/sidebar-start-card.test.js`: the card in
   jsdom. `tests/e2e/site-access.spec.mjs`, attack 19: the card in a real browser.
 - `tests/run-start.test.mjs`, section "what a page may add to a run the worker built": the worker's half, against the

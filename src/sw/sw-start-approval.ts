@@ -203,9 +203,12 @@ export function openedByRun(tabId: number, documentId: string | undefined, runId
  * @param origin the asking page's origin
  */
 export function recordNotStarted(tabId: number, runId: string, origin: string): void {
-    notStarted.push({ tabId, origin, runId, ts: Date.now() });
+    const now = Date.now();
+    // One line per site and run a minute: a page that floods its starts does not flood the driver's steps.
+    const again = notStarted.some((n) => n.runId === runId && n.origin === origin && now - n.ts < 60_000);
+    notStarted.push({ tabId, origin, runId, ts: now });
     if (notStarted.length > 50) notStarted.shift();
-    if (!runId) return;
+    if (!runId || again) return;
     fan(tabId, { kind: "agent-note", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: OPENED_BY_AGENT_NOTE, site: origin });
 }
 
