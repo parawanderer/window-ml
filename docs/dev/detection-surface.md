@@ -72,7 +72,7 @@ names are the spec's.
 | 23 | `chrome.runtime` reachable from the page | **no**: no `externally_connectable` | `env.hasRuntime` false | — | — |
 | 24 | Navigation | navigate: a same-origin document request with a Referer and no `Sec-Fetch-User` (no user activation) | "navigate…" | Partly: `chrome.tabs.update` gives a browser-initiated request (`Sec-Fetch-Site: none`, no Referer), also not a click | — |
 | 25 | Worker requests | fetch_url: `Sec-Fetch-Site: none`, `mode: cors`, `dest: empty`, no Referer/Origin, `Accept-Language: en-GB` where the page sends `en-GB,en;q=0.9`, and a second request for `<path>.md`; the cookie only with `credentials` | "fetch_url from the worker…", "…with credentials" | `Accept-Language` yes (set it); the `.md` twin is Markdown negotiation | The negotiation |
-| 26 | `FETCH_IMAGE_B64` | b64: the target's cookie, a third `Accept-Language` on macOS (`en-GB,en-US;q=0.9,en;q=0.8`; the page's own value on Linux), and any content type returned (an HTML page of another origin read back) | "page-started ml.fetch is refused…; FETCH_IMAGE_B64 reads another origin WITH its cookie" | Yes (fixme): `credentials: "omit"` and an image check | None |
+| 26 | `FETCH_IMAGE_B64` | b64: no cookie and no Referer since #646 (`credentials: "omit"`, `no-referrer`); a third `Accept-Language` on macOS (`en-GB,en-US;q=0.9,en;q=0.8`; the page's own value on Linux); an HTML page of another origin is refused, only a raster image is read back | "page-started ml.fetch is refused…; FETCH_IMAGE_B64 reads another origin's image with NO cookie, and refuses its HTML" | Fixed in #646 | None |
 | 27 | Rendered fetch | a real tab on the target site with the person's cookie, `Sec-Fetch-Site: none` navigation with no `Sec-Fetch-User`, window.ml injected there like on any page | "rendered fetch…" | — | Rendering |
 | 28 | look, locate | nothing on the page beyond the card (CDP on: `Page.captureScreenshot`; off: `captureVisibleTab`) | "look and locate…", "look with CDP off…" | — | — |
 
@@ -101,10 +101,10 @@ None of them checks for window.ml itself; every verdict they reach here is the h
 
 Ranked; each also in the table.
 
-1. **`FETCH_IMAGE_B64` is credentialed** (row 26). The handler calls `fetch(url)` with the default credentials mode, and a
-   worker fetch to a host the extension has permission for carries that host's cookies. An approved page reads any
-   non-private URL's bytes as the person, HTML included. `background.ts` and AGENTS.md's security invariants both call it
-   uncredentialed. `test.fixme` in the spec.
+1. **`FETCH_IMAGE_B64` was credentialed** (row 26), fixed in #646. The handler called `fetch(url)` with the default
+   credentials mode, and a worker fetch to a host the extension has permission for carries that host's cookies. An
+   approved page read any non-private URL's bytes as the person, HTML included. It now names `credentials: "omit"` and
+   reads only a raster image (`src/sw/sw-image-fetch.ts`); the spec asserts no cookie and the HTML refused.
 2. **Any page identifies window.ml and learns its id**, with no run and no approval (rows 1-5): `'ml' in window`,
    `'__mlClosedRoots' in window`, `attachShadow`'s source, the injected `<script>`, the stack of injected.js's ready
    event, and a 200 from `chrome-extension://<id>/injected.js`. That fingerprints the person as a window.ml user on every
@@ -144,4 +144,4 @@ navigation, worker request headers).
 - **CDP `screenX`/`screenY` equal `clientX`/`clientY`**: no, they are offset by the window's position.
 - **BotD demo**: its hosted demo is gone (404); BotD was run from its CDN build.
 - Missing from the request: the `window.ml` global itself, the patched `attachShadow` on every page, the injected
-  `<script>` tag, the window-message protocol, the HUD card in the page's DOM, and `FETCH_IMAGE_B64`'s cookies.
+  `<script>` tag, the window-message protocol, the HUD card in the page's DOM, and `FETCH_IMAGE_B64`'s cookies (fixed in #646).

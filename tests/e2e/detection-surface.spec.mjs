@@ -443,23 +443,24 @@ test.describe("navigation and requests", () => {
         expect(nav.headers["sec-fetch-user"]).toBeUndefined();
     });
 
-    test("page-started ml.fetch is refused without a grant; FETCH_IMAGE_B64 reads another origin WITH its cookie", async () => {
+    test("page-started ml.fetch is refused without a grant; FETCH_IMAGE_B64 reads another origin's image with NO cookie, and refuses its HTML", async () => {
         const row = await scenario("ml-fetch", { path: "/?do=mlfetch" });
         const did = Object.fromEntries(row.load.did.map((d) => [d.name, d]));
         expect(did["ml.fetch"].error).toMatch(/^Refused: .* hasn't been approved for fetching on this page/);
         const img = row.requests.find((r) => r.path === "/img.png?via=b64");
-        // observed today: the target site's cookie. Its Accept-Language is platform-dependent (a third shape,
-        // en-GB,en-US;q=0.9,en;q=0.8, on macOS; the page's own value on the Linux CI runner), so it is not asserted.
-        expect(img.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "cors", cookie: "session=api.test-secret" });
-        // observed today: the bytes of an HTML page of another origin, fetched with that origin's cookie, reach the page.
-        expect(did["ml._fetchImageBase64 html"].ok).toContain("echo from api.test, cookie=yes");
-    });
-
-    test.fixme("FETCH_IMAGE_B64 is uncredentialed, as background.ts and AGENTS.md say", async () => {
-        // FINDING (security): background.ts's FETCH_IMAGE_B64 calls fetch(url) with the default credentials mode, and a
-        // worker fetch to a host the extension has permission for carries that host's cookies. So an approved page can
-        // read any non-private URL's bytes as the user (an HTML page included, no content-type check). AGENTS.md's
-        // "Security invariants" calls it uncredentialed. Fix: credentials: "omit" (and an image content-type check).
+        // credentials: "omit" (sw-image-fetch.ts): the target site's cookie is not sent, nor a Referer. Its Accept-Language
+        // is platform-dependent (a third shape, en-GB,en-US;q=0.9,en;q=0.8, on macOS; the page's own value on the Linux CI
+        // runner), so it is not asserted.
+        expect(img.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "cors" });
+        expect(img.headers.cookie, "the person's cookie for api.test is not sent").toBeUndefined();
+        expect(img.headers.referer).toBeUndefined();
+        expect(did["ml._fetchImageBase64"].ok, "the public image still reads").toMatch(/^data:image\/png;base64,/);
+        // An HTML page of another origin is not an image: refused with the one failure text, nothing of it read back, and
+        // its request carried no cookie either.
+        expect(did["ml._fetchImageBase64 html"].ok).toBeUndefined();
+        expect(did["ml._fetchImageBase64 html"].error).toBe("Could not read that URL as an image.");
+        const html = row.requests.find((r) => r.path === "/echo?via=b64html");
+        if (html) expect(html.headers.cookie).toBeUndefined();
     });
 
     test("the page's own fetch, for comparison: cross-site, no-cors, with a Referer and the full Accept-Language", async () => {
