@@ -79,7 +79,7 @@ import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
 import { shownFingerprint } from "./shown.mjs";
-import { storeFromEnv, openStore, pushAndRecord, lastPushLine, syncRecordFor, SYNC_FILE } from "./sync.mjs";
+import { storeFromEnv, openStore, pushAndRecord, lastPushLine, syncRecordFor, SYNC_FILE, refreshPool } from "./sync.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
@@ -90,6 +90,7 @@ import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { liveSpend, fetchFromPriceService, spendLine, eventCalls } from "./live-spend.mjs";
 import { sweepEnergy, energyLine, runEnergy } from "./electricity.mjs";
 import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool, predictEnergy, energyForecast, energyForecastText, priceFromSettings } from "./spend-predict.mjs";
+import { estimateLine } from "./estimate-line.mjs";
 import { headerHelp } from "./cli-help.mjs";
 import { statusWriter } from "./status.mjs";
 import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
@@ -583,10 +584,14 @@ const main = async () => {
         const scores = backend ? await openScores() : null;
         if (scores) {
             console.log("");
+            await refreshPool();
             const opts = { backend, scores, driverOf: (i) => cells[i].effects.backend?.model ?? backend.model ?? null, cacheCtx: { sweepDir, cache: args.cache, holdCli: args.hold, fingerprint } };
             const est = await estimateSpend(cells, cells.length, opts);
             const box = await openPool(BOX_DB);
-            if (box) { await estimateEnergy(cells, cells.length, { ...opts, boxLog: box, priceOf: est?.prices?.priceOf }); box.close(); }
+            const power = box ? await estimateEnergy(cells, cells.length, { ...opts, boxLog: box, priceOf: est?.prices?.priceOf }) : null;
+            box?.close();
+            const whole = estimateLine(est?.atStart, power?.atStart);
+            if (whole) console.log(`  ${whole}\n`);
         }
         console.log(`\n  (dry run — nothing executed)\n`);
         return;
@@ -820,9 +825,13 @@ const main = async () => {
     };
     // What the sweep will cost (spend-predict.mjs): each cell to run priced from its model's past runs of the task at the
     // price service's current rates (else the newest snapshot the log holds), from this clone's log and the pulled pool.
-    // Printed now; on the page, in status.md and at the end it narrows as cells finish.
+    // Printed now; on the page, in status.md and at the end it narrows as cells finish. The pool is first brought up to
+    // the store, so a fresh clone estimates from every clone's runs, not from its own empty log.
+    if (backend && scores) await refreshPool();
     const predicted = backend && scores ? await estimateSpend(cells, nRun, { backend, scores, driverOf, cacheCtx: ctx }) : null;
     const predictedPower = backend && scores && boxLog ? await estimateEnergy(cells, nRun, { backend, scores, boxLog, driverOf, cacheCtx: ctx, priceOf: predicted?.prices?.priceOf }) : null;
+    const wholeAtStart = estimateLine(predicted?.atStart, predictedPower?.atStart);
+    if (wholeAtStart) console.log(`  ${wholeAtStart}\n`);
     /** The spend so far, the forecast over it and the box's electricity, for the page and status files. */
     function spendState({ final = false } = {}) {
         const spend = spent?.summary(driverOf) ?? null;

@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { signV4 } from "../tests/e2e/bench/s3.mjs";
-import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S, isLooseRun, looseDirs, syncRecordFor, sweepRecord, syncableRuns, adopt, SYNC_FILE } from "../tests/e2e/bench/sync.mjs";
+import { push, pull, status, openStore, storeFromEnv, viewsSql, pushAndRecord, lastPush, lastPushLine, scheduleJob, SCHEDULE_S, isLooseRun, looseDirs, syncRecordFor, sweepRecord, syncableRuns, adopt, SYNC_FILE, refreshPool } from "../tests/e2e/bench/sync.mjs";
 import { openScores, logRuns, readRuns } from "../tests/e2e/bench/scores.mjs";
 import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
 
@@ -387,6 +387,27 @@ test("a sweep from before sync.json that never finished sends nothing until adop
     assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [off.dir] })).runs, 0);
     assert.equal((await status(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", root: off.root })).allPushed, true);
     await assert.rejects(adopt(tmp()), /not a sweep directory/);
+});
+
+test("before a sweep estimates, the pool is brought up to the store: every clone's rows, once; a store that does not answer is a line, not a failure", async () => {
+    objects.clear();
+    await push(store(), { clone: "other", scoresDb: await scoresWith([row("r1", 1), row("r2", 0)]), boxDb: "/x", sweeps: [] });
+    const into = tmp(), lines = [];
+    const cfg = { endpoint: url, bucket: "wml-bench", keyId: "k", secret: "s" };
+    assert.equal((await refreshPool({ cfg, into, log: (m) => lines.push(m) })).scores, 2, "a fresh clone gets the other clone's runs");
+    assert.equal((await refreshPool({ cfg, into, log: () => {} })).scores, 0, "and fetches nothing it already pulled");
+    const db = await openScores(path.join(into, "scores.sqlite"));
+    assert.deepEqual(readRuns(db).map((r) => r.run).sort(), ["r1", "r2"]);
+    db.close();
+    assert.equal(await refreshPool({ cfg: null, into }), null, "no store: nothing to do");
+    const silent = createServer(() => {});   // accepts, never answers
+    await new Promise((r) => silent.listen(0, "127.0.0.1", r));
+    try {
+        const said = [];
+        const r = await refreshPool({ cfg: { ...cfg, endpoint: `http://127.0.0.1:${silent.address().port}` }, into: tmp(), timeoutMs: 200, log: (m) => said.push(m) });
+        assert.equal(r, null);
+        assert.match(said.join("\n"), /not refreshed from the store \(no answer in 0\.2 s\)/);
+    } finally { silent.closeAllConnections(); silent.close(); }
 });
 
 test("a listing of the whole bucket sends no empty prefix: Garage refuses `prefix=` as an invalid signature", async () => {

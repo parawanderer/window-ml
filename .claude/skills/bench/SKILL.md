@@ -382,9 +382,10 @@ Before it runs, a sweep prints a spend estimate (`spend-predict.mjs`; `--dry` pr
 before paying for it): each cell the cache will not serve is the mean of its model's 20 most recent past runs of the same
 task (else the task under another wording, else the model's other tasks, else "no estimate", never 0), their logged calls
 re-priced at the price service's `/latest` rates (else the newest snapshot the log holds), local models apart as
-electricity. The history is this clone's scores log plus `artifacts/bench-pool/scores.sqlite` when `sync.mjs pull` has
-fetched every clone's. As cells finish, a finished one's estimate gives way to what it spent and a running one counts
-the larger of the two: the page shows `est.` beside each `spent` (a `+` when some runs have no estimate), status.md has
+electricity. The history is this clone's scores log plus `artifacts/bench-pool/`, which a sweep with a store configured
+first brings up to it (`refreshPool`: an incremental `sync.mjs pull` of the rows, never the traces, 60 s at most), so a
+fresh clone estimates from every clone's runs. As cells finish, a finished one's estimate gives way to what it spent and a running one counts
+the larger of the two: the page shows `est.` beside each `spent` while some run left has an estimate (`est. ≥` when others have none, so the end will be more; nothing when none has, as it would only repeat the spend), status.md opens its estimates with one line for the runs left, cloud money and local electricity apart and the runs neither covers counted (`estimateLine`, printed at the start and by `--dry` too: quote it rather than working one out), then has
 a Spend estimate section, and the end prints the start estimate beside the computed spend, so its error shows every sweep.
 
 A local model's cost is electricity (`electricity.mjs`), read from the box log (`box.sqlite`, beside the scores log) when

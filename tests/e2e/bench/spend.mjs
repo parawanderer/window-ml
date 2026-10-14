@@ -10,6 +10,8 @@
 // usual), so a turn's model is the matching event's when there is one, else the driver's: a turn IS the driver's call.
 // Rows logged before that have no model on most turns; `spendReport` reads those as the run's driver.
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { createHash } from "node:crypto";
 import { priceCalls, spendByModel } from "./cost.mjs";
 import { runEnergy, energyByModel, BASIS_WORDS } from "./electricity.mjs";
@@ -105,6 +107,34 @@ export function logCalls(db, rows) {
     let added = 0;
     for (const r of rows) added += Number(ins.run(...CALL_COLS.map((c) => r[c] ?? null)).changes);
     return added;
+}
+
+/**
+ * The calls of runs logged before calls were (#555), read back from each run's run.json where its sweep directory still
+ * holds it, so an old run is priced from its own calls, cached tokens apart, rather than from its token totals. Only runs
+ * the log has and has no calls for; a seeded run is skipped (where its scripted turn ends was not kept, and its fake
+ * calls nobody paid for). Returns `{ runs, calls, seeded, noFile }`; running it again adds nothing.
+ */
+export async function backfillCalls(db, sweepDirs) {
+    const { cellsOnDisk, historyRuns } = await import("./sweeps.mjs");
+    const missing = new Set(db.prepare("SELECT run FROM runs WHERE run NOT IN (SELECT DISTINCT run FROM calls)").all().map((r) => r.run));
+    const got = { runs: 0, calls: 0, seeded: 0, noFile: 0 };
+    for (const dir of sweepDirs) {
+        const cells = [...await cellsOnDisk(dir)];
+        for (const h of await historyRuns(dir)) {
+            try { cells.push({ rel: h.rel, saved: JSON.parse(await readFile(path.join(dir, h.rel, "cell.json"), "utf8")) }); } catch { /* never finished */ }
+        }
+        for (const { rel, saved } of cells) {
+            if (!saved?.hash || !missing.has(saved.hash)) continue;
+            missing.delete(saved.hash);
+            if (saved.measurement?.seeded) { got.seeded++; continue; }
+            let session;
+            try { session = JSON.parse(await readFile(path.join(dir, rel, "run.json"), "utf8")).session; } catch { got.noFile++; continue; }
+            const added = logCalls(db, callsOf(session, { run: saved.hash, driver: saved.models?.driver ?? null }));
+            if (added) { got.runs++; got.calls += added; }
+        }
+    }
+    return got;
 }
 
 /** The hashes of `wanted` the log has no body for yet. */

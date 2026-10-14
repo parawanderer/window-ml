@@ -232,6 +232,7 @@ test("status.md says what the box drew and what it is estimated to draw, as the 
     assert.match(md, /- glm: 1\.50 Wh over 2 runs/);
     assert.match(md, /## Electricity estimate \(narrows as runs finish\)\n\nelectricity 1\.50 Wh so far; about 3\.50 Wh by the end/);
     assert.doesNotMatch(statusText(SWEEP, 1_760_000_001_000), /Electricity/, "no box energy: no section");
+    assert.match(md, /## Estimate \(narrows as runs finish; the sections below break it down\)\n\nestimate for the 2 runs left: local about 2\.0 Wh, 0\.0005 EUR/);
 });
 
 test("the header badge and the model's pill show the power drawn, its cost, a warning for unpriced runs, and the estimate", async (t) => {
@@ -246,6 +247,24 @@ test("the header badge and the model's pill show the power drawn, its cost, a wa
     assert.match(badge.querySelector(".warn-price").getAttribute("data-tip"), /1 run had no electricity price.*DevTools Settings > Spend/);
     assert.match(badge.querySelector(".tt").getAttribute("data-tip"), /GPUs \+ CPU package/);
     assert.equal(w.document.querySelector(".role.spend").textContent, "spent0.0004 EUR 1.50 Wh·est. 3.50 Wh", "every call local: electricity is the figure, no token one");
+    assert.match(badge.querySelector(".est").getAttribute("data-tip"), /^\*\*Estimate for the 2 runs left: local about 2\.0 Wh, 0\.0005 EUR\.\*\* About 3\.50 Wh/, "the badge's estimate tip leads with the whole estimate");
+    assert.doesNotMatch(w.document.querySelector(".role.spend .est").getAttribute("data-tip"), /Estimate for the/, "a model's pill keeps its own");
+});
+
+test("an estimate shows only while some run left has one: '≥' when others have none, nothing when none has", async (t) => {
+    const page = async (extra) => {
+        const w = new JSDOM(await staticPage({ ...SWEEP, energy: ENERGY, ...extra }), { url: "http://localhost/", runScripts: "dangerously", pretendToBeVisual: true }).window;
+        t.after(() => w.close());
+        await new Promise((r) => w.setTimeout(r, 10));
+        return w.document.querySelector(".badge.spend").textContent;
+    };
+    assert.equal(await page({ energyForecast: { ...EFORE, unknown: 1 } }), "spent0.0004 EUR 1.50 Wh·est. ≥ 3.50 Wh", "a lower bound, said before the figure");
+    assert.equal(await page({ energyForecast: { ...EFORE, remainingWh: 0, totalWh: 1.5, unknown: 2 } }), "spent0.0004 EUR 1.50 Wh", "no run estimated: no estimate repeating the spend");
+    const spend = { currency: "USD", total: { calls: 4, computed: 0.1751, computedCalls: 4, reported: 0, reportedCalls: 0, local: 0, unpriced: 0, pending: 0 }, models: {}, runs: {} };
+    const fc = (remaining, unknown) => ({ currency: "USD", prices: null, spent: 0.1751, remaining, total: 0.1751 + remaining, left: 3, local: 0, unknown, why: "no past run of m", basis: { item: 3 - unknown, task: 0, model: 0 }, models: {} });
+    assert.equal(await page({ energy: null, spend, forecast: fc(0, 3) }), "spent0.1751 USD", "every run left unknown (a fresh clone's empty history): spent alone");
+    assert.equal(await page({ energy: null, spend, forecast: fc(0.1, 1) }), "spent0.1751 USD·est. ≥ 0.2751 USD");
+    assert.equal(await page({ energy: null, spend, forecast: fc(0.1, 0) }), "spent0.1751 USD·est. 0.2751 USD");
 });
 
 // --- in the scores report ---
