@@ -111,12 +111,26 @@ the worker, and the page answers geometry only):
       that throws still answers the page. A START_RUN/RESUME_RUN naming a live run is refused (a second turn replaced the
       controller the person's Stop reaches), and PAGE_CANCEL_RUN is bound to the run's tab (an approved page on another
       tab stopped the run, or cancelled its open gate) (redteam-run-payload.test.mjs): #642.
+- [x] `FETCH_IMAGE_B64` read any public URL AS THE PERSON: a worker fetch in the default credentials mode carries the
+      cookies of every host the extension reaches, so an approved page read another origin's HTML with its cookie
+      (found by the detection-surface spec, #644, row 26). It names `credentials: "omit"`, `no-referrer` and
+      `cache: "no-store"` now; reads only a raster image by its bytes (`imageMime`) under an image or octet-stream
+      content type, at most 16 MB; holds a redirect's final URL to the private-address rule, which also gained CGNAT
+      (tailnet), single-label and LAN-suffix names, and IPv4 embedded in IPv6, and no longer refuses a public name
+      starting `fc`/`fd`; and answers every failure after the request with one text (redteam-image-fetch.test.mjs):
+      #646.
 
 ## In progress
 
 (none)
 
 ## Known open
+
+- [ ] `FETCH_IMAGE_B64` judges a host by its NAME: a public name that resolves to a private address (DNS rebinding,
+      `*.nip.io`) is fetched, and a redirect's intermediate hops are requested before the final URL is judged (a worker
+      cannot read a hop's Location: `redirect: "manual"` answers an opaque response). An intermediate hop's body is never
+      read; a rebinding name's is read only if it is an image, without cookies. Closing it needs a resolved-address check the extension
+      platform does not offer to a worker.
 
 - [ ] Stylesheet timing: a page can move our host or `<html>` through a CSSOM edit made after one frame read and undone
       before the next. Closed for the HOSTS by their inline `all: initial !important` (`HOST_STYLE`, shell-shot.ts),

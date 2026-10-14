@@ -3204,8 +3204,8 @@ test("SECURITY (FETCH_SHEET_TITLE): internal-only — a page (sender.tab set) mu
 });
 
 test("SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata targets (SSRF)", async () => {
-    // Uncredentialed, so no auth-data leak — but it's a "read any URL's bytes" primitive at the extension
-    // origin, so a page can probe/read the user's INTERNAL network. Private/metadata hosts must be refused.
+    // A "read a URL's bytes" primitive at the extension origin, so a page could probe/read the user's INTERNAL
+    // network. Private/metadata hosts must be refused. The rest of its bounds: redteam-image-fetch.test.mjs.
     let fetched = false;
     const bg = loadBackground({
         config: baseConfig(),

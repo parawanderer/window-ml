@@ -142,6 +142,7 @@ learned by shipping the wrong version first.
 | the session archive (SQLite over OPFS, the offscreen worker, move-instead-of-delete) | `docs/dev/archive.md` |
 | the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
 | which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
+| what a page can observe of window.ml acting in it (globals, stacks, event trust, CDP traces, request headers) | `docs/dev/detection-surface.md` |
 | notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
@@ -402,5 +403,5 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
   directly. `FETCH_SHEET` fetches `credentials:"include"` (the user's cookies),
   so it's hard-locked to the `docs.google.com/.../export?` shape (`SHEET_URL_OK`)
   — without it, it's a cookie-authenticated "read any URL" exfil primitive.
-  (`FETCH_IMAGE_B64` is *uncredentialed* — default `same-origin` — so it can read
-  cross-origin public bytes but not the user's authenticated data.)
+  `FETCH_IMAGE_B64` names `credentials:"omit"`: a worker fetch's default sends the cookies of every host the
+  extension reaches. It reads only a public host's raster image (`sw-image-fetch.ts`).

@@ -1,10 +1,11 @@
 # Site access: which pages may use `window.ml`
 
-The design and its reasons are `docs/spec/SITE_ACCESS.md`. This is how the built parts work and where to change them.
+The design and its reasons are `docs/spec/SITE_ACCESS.md`; what a page may see of window.ml at all is `docs/spec/SITE_PRESENCE.md`. This is how the built parts work and where to change them.
 Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md):
 its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below; `requestAccess`,
 the badge, and the agent level's enforcement and start card are not built yet.
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
+What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 
 ## The gate
 
