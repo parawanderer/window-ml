@@ -5,6 +5,7 @@ Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_S
 its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below; `requestAccess`,
 the badge, and the agent level's enforcement and start card are not built yet.
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
+What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 
 ## The gate
 
