@@ -32,8 +32,8 @@ export const PYTHON_FULL = {
 /** The same three under {@link PY_CUT}: round 2's short texts, as its runs recorded them. */
 export const PYTHON_SHORT: typeof PYTHON_FULL = {
     tables: "Table(s) to load, ALREADY parsed (never re-read them): one source → `df`, or { name: source } → each under " +
-        "its name. A source: a page <table> selector, a Google Sheets URL, a URL fetch_url read, or an `@tool:` " +
-        "pointer to a table.",
+        "its name, a Python variable name (e.g. { sales: … }). A source: a page <table> selector, a Google Sheets URL, " +
+        "a URL fetch_url read, or an `@tool:` pointer to a table.",
     cast: "'pt' or 'box': the return is a clickable point ([x,y]) or box ([x1,y1,x2,y2]) in the input image's pixels, " +
         "placed on the page for you.",
     mode: "'readonly' (default): no network, may run without asking, Google Sheets included. 'full': network, always " +

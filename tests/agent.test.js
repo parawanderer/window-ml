@@ -3443,9 +3443,14 @@ test("pythonExec tables: a preview whose WHOLE table is stored goes to the sandb
     assert.deepEqual(JSON.parse(JSON.stringify(r.inputTables[0])), { name: "df", source: { kind: "pointer", label: "@tool:abc1234" }, columns: ["a", "b"], rows: [[1, 2], [3, 4]], rowCount: 300000 });
 });
 
-test("pythonExec tables: an invalid variable name in the map is rejected", async () => {
+test("pythonExec tables: a key that is not a variable name is not refused for its name", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
-    await assert.rejects(world.ml.pythonExec("return 1", { tables: { "2bad": "#t" } }), /valid Python variable name/);
+    const err = await world.ml.pythonExec("return 1", { tables: { "2bad": "#t" } }).catch((e) => e);
+    assert.doesNotMatch(String(err?.message ?? ""), /valid Python variable name/, "it loads as `_2bad` (here the selector matches nothing)");
+});
+
+test("pythonExec tables: a reserved name in the map is rejected (it would shadow a preloaded global)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
     await assert.rejects(world.ml.pythonExec("return 1", { tables: { pd: "#t" } }), /reserved/);
     await assert.rejects(world.ml.pythonExec("return 1", { tables: { tables: "#t" } }), /reserved/, "the `tables` dict name itself is reserved");
 });

@@ -272,14 +272,14 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         shot = await ctx.media.image(opts.image, typeof opts.margin === "number" && Number.isFinite(opts.margin) ? opts.margin : 0);
     }
     // The page's shape rule, so `[[url]]` (a list once unwrapped, its key "0" no variable name) is refused as it is there.
-    const specs: [string, unknown][] = tableSpecs(opts.tables ?? null).map(({ name, src }) => [name, src]);
+    const specs: [string, unknown, string?][] = tableSpecs(opts.tables ?? null).map(({ name, src, alias }) => [name, src, alias]);
     const loaded = [];
     for (const [name, src] of specs) loaded.push(await workerTable(ctx, name, src, !!opts.tableRaw));
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
     const requestId = `wpy-${crypto.randomUUID()}`;
     const r = await runPython({
         code, image: shot?.image ?? null, hardened: opts.mode !== "full", stream: !!opts.onStdout,
-        tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i][1] === "string" ? specs[i][1] : null })),
+        tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i][2] ?? (typeof specs[i][1] === "string" ? specs[i][1] : null) })),
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,
         untrusted: async () => (await senderTrust({ tab: { id: ctx.tabId, url: ctx.tabUrl() } as chrome.tabs.Tab, url: ctx.tabUrl() })) === "untrusted",

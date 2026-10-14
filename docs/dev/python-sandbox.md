@@ -33,7 +33,9 @@ can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, s
 STRING (`"{\"df\": \"https://…\"}"`, how glm-4.7-flash reads the schema's `oneOf`) is that map (`tablesMapFromJson`,
 dom.ts); the loader and the consent check both decode through it, or a sheet inside the string would skip its card. A
 path on the page's site (`/sales.csv`, `./x.csv`) is resolved against the page and read from the fetch cache like the
-absolute URL. Each source auto-dispatches by shape
+absolute URL. A map key that is not a variable name (models key the map by the URL itself) loads under a name
+derived from it (`derivedTableName`: `…/sales.csv` → `sales`) with the key as its alias; a reserved name is still
+refused. Each source auto-dispatches by shape
 (`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
 case-preserving; col/rowspans or a non-table fall back to `pd.read_html(outerHTML)` with bs4).
 Before that fallback ships, `_resolveTable` **guards the cases read_html would choke on**: an
