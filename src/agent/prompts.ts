@@ -166,12 +166,24 @@ export const SHADOW_TOOLS = ["findByText", "interactives", "describeElement", "a
  *  or `answer` is not told about `>>>` selectors it has no tool to use. Each is in {@link SHADOW_TOOLS}. */
 export const SHADOW_TRIGGER_TOOLS: readonly string[] = ["findByText", "describeElement", "interactives", "click", "type"];
 
+declare const __ML_PROMPT_VARIANT__: string | undefined;
+
+/** The `shadowcut` experiment (docs/spec/PROMPT_BUDGET.md, step 3): the shadow and iframe clauses keep the `>>>`
+ *  notation and drop the edge cases (uncapturable closed roots, cross-origin iframes), which the scanning tools, the
+ *  page orientation and describeElement already state where a model meets one. Off unless the build defines it. */
+const SHADOW_CUT = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "shadowcut";
+
 /**
  * The shadow-DOM clause, naming only the piercing tools this run HAS: a console run has no `click`/`type`, and a
  * model told they pierce went looking for them (a DeepSeek review, 2026-10-08).
  * @param names the run's tool names
  */
 export const shadowClause = (names: readonly string[], pierceClosed = true): string =>
+    SHADOW_CUT && pierceClosed
+        ? `\n\nShadow DOM: the DOM tools (${SHADOW_TOOLS.filter((n) => names.includes(n)).join(" / ")}) pierce shadow ` +
+          "roots automatically, open and closed. A control inside one is referenced as `host >>> inner`, one `>>>` per " +
+          "boundary, nesting `a >>> b >>> c`; pass that selector to any DOM tool."
+        :
     `\n\nShadow DOM: the DOM tools (${SHADOW_TOOLS.filter((n) => names.includes(n)).join(" / ")}) pierce ` +
     (pierceClosed ? "shadow roots automatically, open and closed (a closed one is captured when the page creates it). " : "OPEN shadow roots automatically. ") +
     "A control inside one is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: " +
@@ -189,8 +201,10 @@ const SHADOW_CLOSED_PIERCE_NOTE =
     " A few closed roots can't be captured (declarative `shadowrootmode=\"closed\"` or native browser roots); the " +
     "scanning tools flag those — reach them visually with `locate`/`@pt`.";
 // Same-origin iframes ALSO use `>>>`. Appended after the shadow clause whenever the DOM tools are present.
-export const IFRAME_CLAUSE =
-    " Iframes use the SAME `>>>` notation: a SAME-ORIGIN `<iframe>` is crossed like a shadow boundary — " +
+export const IFRAME_CLAUSE = SHADOW_CUT
+    ? " A SAME-ORIGIN `<iframe>` is crossed the same way: `iframe#id >>> button`. A root or frame no selector can " +
+      "enter is flagged where you meet it, with the way in."
+    : " Iframes use the SAME `>>>` notation: a SAME-ORIGIN `<iframe>` is crossed like a shadow boundary — " +
     "`iframe#id >>> button` (any iframe selector) reaches a control inside it, and describeElement flags " +
     "`#document (SAME-ORIGIN iframe)`. A CROSS-ORIGIN iframe is walled off by the Same-Origin Policy: NO " +
     "selector reaches inside — reach a control visually with `locate`/`@pt` (that click needs the extension's " +

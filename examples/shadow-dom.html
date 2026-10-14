@@ -166,7 +166,7 @@
     });
 
     // The mode toggle: rebuild the panel element in the chosen mode (a root's mode is immutable once set).
-    let mode = "open";
+    let mode = new URLSearchParams(location.search).get("mode") === "closed" ? "closed" : "open";   // ?mode=closed starts closed (the bench)
     const mount = document.getElementById("mount"), badge = document.getElementById("modeBadge");
     function render() {
       mount.replaceChildren();
