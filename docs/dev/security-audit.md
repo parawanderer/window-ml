@@ -118,7 +118,7 @@ the worker, and the page answers geometry only):
       content type, at most 16 MB; holds a redirect's final URL to the private-address rule, which also gained CGNAT
       (tailnet), single-label and LAN-suffix names, and IPv4 embedded in IPv6, and no longer refuses a public name
       starting `fc`/`fd`; and answers every failure after the request with one text (redteam-image-fetch.test.mjs):
-      #PR.
+      #646.
 
 ## In progress
 
