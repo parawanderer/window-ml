@@ -7,6 +7,16 @@
 // host's own `.shadowRoot` accessor still returns null, so component re-init guards (`if (this.shadowRoot)`)
 // behave identically; only our WeakMap holds the reference.
 //
+// The WeakMap lives in this script's CLOSURE: no global, nothing the page can write. The DOM tools (injected.js, a
+// separate script loaded later) ask for a READER for it as injected.js starts, by dispatching CLOSED_ROOTS_EVENT on
+// window. This script's capture listener, registered before any page script, answers the FIRST ask into its detail,
+// stops it, and removes itself, so it answers once. Injected.js loads after the page's own scripts, so a page can ask
+// first: it then reads its own closed roots (which it authored) and the tools get no reader, which turns piercing off
+// (fails closed). A page cannot put a root behind a host through the map. A page can still answer the tools' ask
+// itself, by wrapping `dispatchEvent` or `CustomEvent`, or by `document.open()`, which removes this listener, before
+// injected.js starts: as with any builtin the main-world tools call (docs/dev/detection-surface.md, row 4), the page
+// decides what the tools see in its own document.
+//
 // Why a SEPARATE document_start script and not injected.js: injected.js is appended by the content script
 // at document_idle — far too late; by then components have already attached their roots and the race is
 // lost. This must run FIRST, in the page's main world (a content script can't wrap the page's prototype
@@ -17,26 +27,35 @@
 // closed roots (`<template shadowrootmode="closed">`, attached by the HTML parser, never via attachShadow)
 // or native/browser-internal roots — the DOM tools steer those to visual locate/@pt.
 
+import { CLOSED_ROOTS_EVENT } from "./ids";
+
 (() => {
     const proto = Element.prototype as { attachShadow?: (init: ShadowRootInit) => ShadowRoot };
     const original = proto.attachShadow;
     if (typeof original !== "function") return;   // ancient engine with no shadow DOM → nothing to do
-    const KEY = "__mlClosedRoots";
-    // Idempotent: if this script somehow runs twice (SPA soft-nav, double injection), don't re-wrap.
-    if ((window as unknown as Record<string, unknown>)[KEY]) return;
     const roots = new WeakMap<Element, ShadowRoot>();
-    // Non-enumerable so it doesn't show up in casual `for..in`/Object.keys sweeps of window. It's readable by
-    // any same-realm script, but that's inherent — the page authored the closed root and could wrap
-    // attachShadow itself; this grants no cross-origin capability, only lifts our own selector reach.
-    Object.defineProperty(window, KEY, { value: roots, enumerable: false, configurable: false, writable: false });
+    // The builtins this closure calls, taken before any page script runs, so a page that rewrites them later cannot
+    // read or fill the map through them.
+    const apply = Reflect.apply;
+    const wmGet = WeakMap.prototype.get, wmSet = WeakMap.prototype.set;
+    const stop = Event.prototype.stopImmediatePropagation;
+    const removeListener = window.removeEventListener;
+    const read = (el: Element): ShadowRoot | null => { try { return (apply(wmGet, roots, [el]) as ShadowRoot | undefined) ?? null; } catch { return null; } };
     const patched = function (this: Element, init: ShadowRootInit): ShadowRoot {
-        const root = original.call(this, init);
+        const root = apply(original, this, [init]) as ShadowRoot;
         if (init && init.mode === "closed") {
-            try { roots.set(this, root); } catch { /* exotic/frozen host key → skip, feature just won't reach it */ }
+            try { apply(wmSet, roots, [this, root]); } catch { /* exotic/frozen host key → skip, feature just won't reach it */ }
         }
         return root;
     };
     try {
         Object.defineProperty(proto, "attachShadow", { value: patched, configurable: true, writable: true });
-    } catch { /* prototype frozen by the page → leave the native method; capture is simply unavailable */ }
+    } catch { return; /* prototype frozen by the page → leave the native method; capture is simply unavailable */ }
+    const answer = (e: Event): void => {
+        apply(stop, e, []);
+        apply(removeListener, window, [CLOSED_ROOTS_EVENT, answer, true]);
+        const d = (e as CustomEvent<{ read?: unknown } | null>).detail;
+        if (d && typeof d === "object") d.read = read;
+    };
+    window.addEventListener(CLOSED_ROOTS_EVENT, answer, true);
 })();

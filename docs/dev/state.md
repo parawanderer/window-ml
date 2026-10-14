@@ -58,7 +58,7 @@ page-hosted one. Several stores exist once per host.
 | Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page; a worker-built run's: worker) | no | maybe |
 | An isolated exec's `state` | `globalThis.__mlState` in the run's user-script world `wml-<runId>` (`sw-isolated-exec.ts`); a CDP world's dies with the call | no | no |
 | Crops already seen (vision) | `VisionMemory`, made FRESH on every re-adopt | no | maybe |
-| Process-wide run flags: closed-shadow piercing, CDP clicks | `window.__mlPierceClosed`, `cdpEnabled` (page; the last run to start wins) | no | `init` can disagree with what is in effect |
+| Process-wide run flags: closed-shadow piercing, CDP clicks | `pierceClosed` (`dom.ts`), `cdpEnabled` (page module variables; the last run to start wins) | no | `init` can disagree with what is in effect |
 
 ## Grants: what may happen without asking
 

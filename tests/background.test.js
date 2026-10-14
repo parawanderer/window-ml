@@ -799,6 +799,7 @@ async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approved
     let toolResult = null, n = 0, bg;
     bg = loadBackground({
         config: baseConfig({ cdp }),
+        openTabs: [{ id: 8, url: "https://page.test/", title: "Page" }],   // a top-frame document the exec is pinned to
         debuggerPermission,
         // Simulate the page running cdpEval's console-capture WRAPPER: it patches console, runs the source,
         // and returns { __mlWrapped, v, logs } by value — so console output survives the CDP round-trip.
@@ -850,7 +851,7 @@ test("CDP exec (ON + granted): a CSP-blocked exec re-runs the APPROVED source vi
     assert.match(toolResult, /CDP-RAN/, "the CDP result reached the model");
     // The evaluated expression WRAPS the approved source with the console-capture harness, so a page's
     // console.log survives the CDP round-trip (the "logs got lost in CDP" fix) instead of vanishing.
-    assert.ok(evals.some(e => /__logs/.test(e) && /console\[m\]/.test(e)), "the source is wrapped to capture console output");
+    assert.ok(evals.some(e => /__logs/.test(e) && /async \(console\) =>/.test(e)), "the source is wrapped to capture console output");
     void approvedJs;
 });
 
@@ -861,7 +862,7 @@ test("CDP exec: console.log output is captured and prefixed onto the value (not 
         simulateLogs: ["before: 3", "after add: [\"apple\"]"],
     });
     // The main-world path's `console:\n…\n\nvalue: …` shape, reproduced on the CDP path.
-    assert.match(toolResult, /console:/, "console output is surfaced");
+    assert.match(toolResult, /console \(page-writable\):/, "console output is surfaced");
     assert.match(toolResult, /before: 3/, "the logged lines reach the model");
     assert.match(toolResult, /value: CDP-RAN/, "the completion value is still there, after the logs");
 });
@@ -870,7 +871,7 @@ test("CDP exec past the output ceiling: the page-side capture stops at it, and t
     // The capture runs IN THE PAGE (sw-cdp.ts's wrapper), so this evaluates the wrapper for real.
     const { toolResult } = await driveCdpExec({ cdp: true, debuggerPermission: true, pageEcho: "x", realEval: true,
         approvedJs: "const s = 'x'.repeat(9000000); for (let i = 0; i < 10; i++) console.log(s); return 1;" });
-    assert.match(toolResult, /^console:\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less/);
+    assert.match(toolResult, /^console \(page-writable\):\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less/);
     assert.match(toolResult, /\n\nvalue: 1/);
 });
 
@@ -880,6 +881,7 @@ test("CDP exec: TWO execs in one run share ONE debugger attachment (attach once,
     let n = 0, bg;
     bg = loadBackground({
         config: baseConfig({ cdp: true }),
+        openTabs: [{ id: 8, url: "https://page.test/", title: "Page" }],
         onDebuggerCommand: (method) => (method === "Runtime.evaluate" ? { result: { value: { __mlWrapped: true, v: "OK", logs: [] } } } : undefined),
         onFetch: () => {
             n++;

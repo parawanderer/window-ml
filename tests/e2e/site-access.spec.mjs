@@ -763,7 +763,9 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
         for (const h of hosts) {
             if (h.shadowRoot !== null) found.push(`#${h.id}.shadowRoot`);
             try { h.attachShadow({ mode: "open" }); found.push(`#${h.id}.attachShadow succeeded`); } catch { /* it has its root */ }
-            if (window.__mlClosedRoots?.get?.(h)) found.push(`#${h.id} in the page world's closed-root capture`);
+            const ask = {};
+            window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: ask }));
+            if (typeof ask.read === "function" && ask.read(h)) found.push(`#${h.id} in the page world's closed-root capture`);
             if (h.querySelector("iframe")) found.push(`#${h.id} has an iframe in reach`);
         }
         if (typeof window.__wmlShellRoots !== "undefined") found.push("the shell's hook on the page's window");
@@ -1048,7 +1050,7 @@ test.describe("@security attack 18: the approval highlight", () => {
         const oh = Object.assign(document.createElement("div"), { id: "oh" });
         oh.attachShadow({ mode: "open" }).append(btn(document, "in", "Open", 5));
         document.body.append(ch, oh, btn(document, "lt", "Light", 6));
-        window.__mlPierceClosed = true;
+        window.ml._adoptRun("pierce-on", { toolNames: [], pierceClosed: true, builtBy: "worker" });   // as a re-adopt sets it
     });
     /** What the DOM tools resolve `sel` to in the main world, as `text@left,top` in the top viewport, or null. */
     const mainTarget = (page, sel) => page.evaluate((s) => {
@@ -1108,7 +1110,7 @@ test.describe("@security attack 18: the approval highlight", () => {
         try {
             const page = await open(ext, site.url("evil.test"), { approve: true });
             await buildRoots(page);
-            // The run started with piercing on (`window.__mlPierceClosed`, set at the run's start); the person turns it off.
+            // The run started with piercing on (dom.ts's flag, set at the run's start); the person turns it off.
             await ext.sw.evaluate(() => chrome.storage.sync.set({ pierceClosedShadow: false }));
             // The shell has the new setting once it stops outlining what only a closed root holds.
             await expect.poll(() => outline(ext, page, "#ch >>> .in"), { timeout: 5000 }).toBeNull();

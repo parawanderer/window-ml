@@ -137,6 +137,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const sameDocListeners = { history: [], fragment: [] };   // onHistoryStateUpdated / onReferenceFragmentUpdated; fired by bg.sameDocumentNav
     const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     /** The tab's top-frame document now: the last committed, else an open tab's first (`doc-<tabId>`). */
+    let topFrame = "F-top";   // the frame id the last Page.getFrameTree reported (a debugger fake below)
     const docOf = (tabId) => committedDocs.get(tabId) ?? (openTabs.some((t) => t.id === tabId) ? `doc-${tabId}` : undefined);
     const committedUrls = new Map();   // tabId → the main-frame URL last committed (or activated), for webNavigation.getFrame
     /** The tab's top-frame URL now, as getFrame reports it: the last committed, else the open tab's. */
@@ -307,7 +308,16 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 attach: async (target, version) => { debuggerCalls.push(["attach", target, version]); },
                 // `onDebuggerCommand(method, params)` lets a test script the reply (e.g. Runtime.evaluate's
                 // result / exceptionDetails for the CDP-exec tests); default returns undefined (clicks need none).
-                sendCommand: async (target, method, params) => { debuggerCalls.push(["sendCommand", target, method, params]); return onDebuggerCommand ? onDebuggerCommand(method, params) : undefined; },
+                // Unscripted, a tab's top frame is "F-top" and, as Chrome does on the enable that turns Runtime on, enabling
+                // Runtime reports its main world as context 1 (cdpEval pins every evaluate to it, sw-cdp.ts mainWorldContext).
+                sendCommand: async (target, method, params) => {
+                    debuggerCalls.push(["sendCommand", target, method, params]);
+                    const r = onDebuggerCommand ? await onDebuggerCommand(method, params) : undefined;
+                    if (method === "Page.getFrameTree") { topFrame = r?.frameTree?.frame?.id ?? "F-top"; if (r === undefined) return { frameTree: { frame: { id: topFrame } } }; }
+                    if (method === "Runtime.enable" && r === undefined)
+                        [...debuggerEventListeners].forEach((fn) => fn(target, "Runtime.executionContextCreated", { context: { id: 1, auxData: { isDefault: true, frameId: topFrame } } }));
+                    return r;
+                },
                 detach: async (target) => { debuggerCalls.push(["detach", target]); },
                 onDetach: { addListener: () => {} },   // the SW listens for an external detach (DevTools opened, target gone)
                 // CDP EVENTS (Runtime.bindingCalled — how a strict-page exec streams its console out live).
@@ -638,7 +648,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
 // inner HTML. Returns { ml, window, document } for querying in assertions.
 // `url` sets the document's address (jsdom's default is about:blank), for code that branches on where the page
 // IS — a local file:// page, for one.
-function loadDomWorld(html = "", { url } = {}) {
+function loadDomWorld(html = "", { url, beforeInjected } = {}) {
     const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, url ? { url } : undefined);
     const win = dom.window;
     const context = {
@@ -654,6 +664,7 @@ function loadDomWorld(html = "", { url } = {}) {
         // "not a URL", which silently takes whichever branch a failed parse means.
         URL,
         Event: win.Event,
+        CustomEvent: win.CustomEvent,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).
         Element: win.Element,
@@ -664,8 +675,12 @@ function loadDomWorld(html = "", { url } = {}) {
         clearTimeout: win.clearTimeout.bind(win)
     };
     vm.createContext(context);
+    // The document_start patch first, as the browser runs it: it captures closed roots and answers the DOM tools' ask.
+    vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
+    // The page's own scripts, which run before injected.js (it loads at document_idle).
+    if (beforeInjected) vm.runInContext(beforeInjected, context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
-    return { ml: win.ml, window: win, document: win.document };
+    return { ml: win.ml, window: win, document: win.document, context };
 }
 
 // Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom

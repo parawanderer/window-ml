@@ -36,16 +36,16 @@ export function answerMediaShape(els: Element[], show?: "inline" | "highlight"):
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "../dom/dom";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
-import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
+import { execErrorLine, evalWrapper, asyncWrapper } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "../pointers/text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
 import { DEREF_TOOL, type DerefRead } from "../pointers/token-pipe";
-import { DerefText } from "./deref-read";
+import { DerefText, DEREF_WARN, derefImpl } from "./deref-read";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "../dom/a11y";
 import { pageContext, agentState } from "../util";
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead, boundedLines, ceilingNote } from "../agent/output-clip";
+import { clipHeadTail, panelHead, boundedLines, ceilingNote, MAIN_CONSOLE_HEAD, CONSOLE_FORWARDS } from "../agent/output-clip";
 import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
 
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
@@ -62,10 +62,10 @@ import { EXEC_SHORT } from "./tool-details";
  *
  * `.pipe()` re-reads through the real asynchronous method, because a piped read mints its own pointer.
  */
-function derefValue(read: DerefRead): DerefText {
-    // The advisory goes to the console rather than into the value, exactly as the async path does — this is
-    // about to be split or parsed by the calling script, and exec captures console output into the result.
-    if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+function derefValue(read: DerefRead, warn: (s: string) => void): DerefText {
+    // The advisory goes to the exec's console rather than into the value, exactly as the async path does — this is
+    // about to be split or parsed by the calling script, and exec captures that console into the result.
+    if (read.warning) { try { warn(read.warning); } catch { /* a collector that threw: the advisory is lost, not the read */ } }
     const g = globalThis as unknown as { ml?: { dereference?: (r: string, o: { pipe: string | string[] }) => Promise<DerefText> } };
     const id = read.meta?.id ? `@tool:${read.meta.id}` : "";
     return new DerefText(read.value, read.meta, (stages) => Promise.resolve(g.ml!.dereference!(id, { pipe: stages })), read.readColumns);
@@ -482,20 +482,38 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // "read" data and gets nothing back. Capture console output during
                 // the eval and return it too, so that pattern still works.
                 // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept, and not streamed.
+                //
+                // `console` is a PARAMETER of the evaluated code, bound to this collector, never a swap of the page's
+                // global: the page's own `console.log` during the exec stays out of the model's result, and the page's
+                // `console` is native and identical before, during and after (docs/dev/detection-surface.md, row 10).
+                // A callback or timer the code sets up closes over the parameter, so it is still collected while the
+                // call runs; after it returns, a late line goes to the page's console, as before. `window.console`
+                // and `globalThis.console` are the page's and are not collected (fails safe).
                 const capture = boundedLines();
                 const logs = capture.lines;
                 const methods = ["log", "info", "warn", "error", "debug"] as const;
-                const saved: Record<string, typeof console.log> = {};
+                const pageConsole = console;
+                let collecting = true;
+                // NULL-prototype, its members defined rather than assigned: inheriting from the page's console let a
+                // method the page put there run with the collector as `this`, and an assignment would run a setter the
+                // page put on its console (handing it the collector). The five methods collect; the rest forward to the
+                // page's console, with the page's console as `this`.
+                const execConsole = Object.create(null) as Console;
+                for (const k of CONSOLE_FORWARDS) {
+                    Object.defineProperty(execConsole, k, { configurable: true, enumerable: true, writable: true,
+                        value: (...a: unknown[]) => Reflect.apply((pageConsole as unknown as Record<string, (...x: unknown[]) => unknown>)[k], pageConsole, a) });
+                }
                 for (const m of methods) {
-                    saved[m] = console[m];
-                    console[m] = (...a: unknown[]) => {
+                    Object.defineProperty(execConsole, m, { configurable: true, enumerable: true, writable: true, value: (...a: unknown[]) => {
+                        if (!collecting) { Reflect.apply(pageConsole[m], pageConsole, a); return; }
                         const line = a.map(x => {
                             if (typeof x === "string") return x;
                             try { return JSON.stringify(x); } catch { return String(x); }
                         }).join(" ");
                         if (capture.add(line)) ctx?.stream?.(line + "\n");   // LIVE: stream each console line (Jupyter-style) when streaming is on
-                    };
+                    } });
                 }
+                const warnHere = (text: string) => execConsole.warn(text);
 
                 // `ml` is SHADOWED as a parameter rather than mutated globally: a run must not leave the page's
                 // own `window.ml.dereference` swapped out, and two evaluations must not race over it. The
@@ -505,7 +523,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // is only to shadow it for the user's code, never to call it.
                 const g = globalThis as unknown as { ml?: Record<string, unknown>; window?: { ml?: Record<string, unknown> } };
                 const realMl = g.ml ?? g.window?.ml;
-                const mlSync = realMl && pointers.size
+                // Also introduced when the source names `dereference` at all: a computed or piped read goes through the
+                // real method, whose advisory must reach THIS exec's console rather than the page's.
+                const mlSync = realMl && (pointers.size || /\bdereference\b/.test(js))
                     ? new Proxy(realMl, {
                         get: (t, prop, r) => (prop === "dereference"
                             ? (ref: unknown, options?: { pipe?: string | string[] | null }) => {
@@ -517,13 +537,18 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                                 // running the dialect locally over the text we already hold would return the
                                 // right string and silently skip the mint, leaving the model unable to cite
                                 // what it just built.
-                                if (!hit || options !== undefined) return (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, options);
+                                // The extension's own `dereference` (deref-read.ts `derefImpl`), never the page's `ml.dereference`, which
+                                // the page can replace: the collector rides in its options, and a page method would be handed it.
+                                if (!hit || options !== undefined) {
+                                    const impl = derefImpl();
+                                    return impl ? impl(ref, { ...(options && typeof options === "object" ? options : {}), [DEREF_WARN]: warnHere })
+                                        : (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, options);
+                                }
                                 if (hit.error) throw new Error(hit.error);
                                 // Constructed once per handle and CACHED, so the macro and the longhand call it
-                                // expands to return the same object and `===` holds between them. Lazily, because
-                                // building it emits the read's advisory to the console and the capture that
-                                // collects console output for the model is not installed until below.
-                                if (!hit.value) hit.value = derefValue(hit.read!);
+                                // expands to return the same object and `===` holds between them. Lazily, so a read the
+                                // script never reaches emits no advisory into its console.
+                                if (!hit.value) hit.value = derefValue(hit.read!, warnHere);
                                 return hit.value;
                             }
                             : Reflect.get(t, prop, r)),
@@ -537,7 +562,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // actually used (see exec-trace.ts) — recorded here because only this code knows which it
                 // took, and the `src` parameter is the eval wrapper's own, not part of the shape.
                 let wrapKind: "eval" | "async" = "eval";
-                const wrapParams = mlSync ? ["state", "ml"] : ["state"];
+                let evaluator: { run: (src: string) => unknown; ran: () => boolean } | undefined;
+                const wrapParams = mlSync ? ["state", "ml", "console"] : ["state", "console"];
+                const wrapArgs: unknown[] = mlSync ? [agentState, mlSync, execConsole] : [agentState, execConsole];
                 try {
                     try {
                         // Fast path — preserves the last expression's value. Runs the source with the agent's
@@ -548,18 +575,19 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // substitute. Passing it unconditionally would SHADOW the page's real `ml` with
                         // whatever we resolved — including `undefined` when the lookup failed — and break
                         // every other `ml.*` call in exec for no reason.
-                        result = mlSync
-                            ? new Function("state", "ml", "src", "return eval(src);")(agentState, mlSync, js)
-                            : new Function("state", "src", "return eval(src);")(agentState, js);
+                        evaluator = evalWrapper(wrapParams)(...wrapArgs);
+                        result = evaluator.run(js);
                     } catch (e) {
                         // eval rejects top-level `await`/`return` with a SyntaxError,
                         // thrown at parse time before anything runs — so retry the
                         // source as an async function body (both now work). The model
                         // must `return` its value here (no last-expression auto-return).
                         // A genuine syntax error re-throws from this attempt and is reported.
-                        if (e instanceof SyntaxError) {
+                        // Only one the source threw BEFORE it started: a SyntaxError thrown while it ran (a
+                        // `JSON.parse`, or a page function the code calls) is its error, and running it again
+                        // would repeat everything it did first.
+                        if (e instanceof SyntaxError && !evaluator?.ran()) {
                             wrapKind = "async";
-                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (...args: string[]): (...a: unknown[]) => Promise<unknown> };
                             // eval threw away the completion value when it rejected top-level
                             // await/return. Re-run as an async body — but first preserve the REPL
                             // trailing-expression convention (the fast-path eval and python_exec
@@ -569,23 +597,22 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                             // back to the plain body (there the model must `return` explicitly).
                             const expr = js.trim().replace(/;\s*$/, "");
                             let fn: (...a: unknown[]) => Promise<unknown>;
-                            const params = mlSync ? ["state", "ml"] : ["state"];
-                            try { fn = new AsyncFunction(...params, `return (${expr})`); }
-                            catch { fn = new AsyncFunction(...params, js); }
-                            result = mlSync ? fn(agentState, mlSync) : fn(agentState);
+                            try { fn = asyncWrapper(wrapParams, `return (${expr})`); }
+                            catch { fn = asyncWrapper(wrapParams, js); }
+                            result = fn(...wrapArgs);
                         } else throw e;
                     }
                     if (result && typeof (result as Promise<unknown>).then === "function") result = await result;
                 } catch (e) {
                     failed = e;
                 } finally {
-                    for (const m of methods) console[m] = saved[m];
+                    collecting = false;
                 }
 
                 // Prefix any captured console output onto the returned value.
                 // A call past the ceiling says so AFTER the clip, where the model reads it, and in the panel's last line.
                 const overNote = capture.dropped ? ceilingNote(capture.dropped) : "";
-                const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}${overNote ? `\n${overNote}` : ""}` : "";
+                const logged = logs.length ? `${MAIN_CONSOLE_HEAD}\n${clipOut(logs.join("\n"), cap)}${overNote ? `\n${overNote}` : ""}` : "";
                 const clampNote = clamped ? `\n\n(output limit clamped to ${cap} chars — the hard ceiling.)` : "";
                 const withLogs = (value: string) => (logged ? `${logged}\n\nvalue: ${value}` : value) + clampNote;
                 // `queuedMs` is the field's own meaning — "elapsed before evaluation began" — which is exactly

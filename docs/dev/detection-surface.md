@@ -48,16 +48,16 @@ names are the spec's.
 | # | Signal | Fires for | How we know | Removable? | Cost of removing |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `window.ml` global, 71 members | installed, every http(s) page incl. unapproved | "an UNAPPROVED page sees window.ml…": `final.windowMl` 71 | Only `requestAccess` once slice 4 of SITE_ACCESS.md lands; the global itself stays | A page-callable API on unapproved pages is the open-slice design |
-| 2 | `__mlClosedRoots` on window, `Element.prototype.attachShadow` non-native (`name` "patched") | installed, every page, from document_start | same test: `mlClosedRootsAtLoad` true, `attachShadowNative` false | Yes: register shadow-patch only for approved origins (`chrome.scripting.registerContentScripts`) | Closed-shadow piercing on unapproved pages; hiding the patch by faking `toString` is itself detectable |
+| 2 | `Element.prototype.attachShadow` non-native (`name` "patched"), and a reader of the captured closed roots handed to a page that dispatches `wml-closed-roots` on window before injected.js does (once: after that ask, nobody gets it). No `__mlClosedRoots` global since SITE_PRESENCE step 1: the map is in shadow-patch's closure | installed, every page, from document_start | same test: `attachShadowNative` false, `closedRootReaderAtLoad` true, `mlClosedRootsAtLoad` false | Yes: register shadow-patch only for approved origins (`chrome.scripting.registerContentScripts`) | Closed-shadow piercing on unapproved pages; hiding the patch by faking `toString` is itself detectable |
 | 3 | `<script src="chrome-extension://<id>/injected.js">` added then removed | installed, every page | `domAdded` has it, `extIdLearnedBy` "dom" | Yes: inject injected.js as a `"world": "MAIN"` content script | None known; it also stops needing injected.js as a web-accessible resource |
 | 4 | The extension's id and function names in stacks | installed (injected.js's ready event through `dispatchEvent`); every page-realm tool (`querySelector*`, `getBoundingClientRect`, `elementFromPoint`, `focus`, `dispatchEvent`); exec-main (`eval at run (chrome-extension://<id>/injected.js…)`, `executeTool`, `runDelegatedToolIn`) | `extensionCallers`, `pageCallCaller`, `caughtStack` | Not while tools run in the page's world: any page can wrap a builtin and read `new Error().stack`. exec-strict shows bare `<anonymous>` frames; exec-iso shows nothing | Moving page tools to an isolated world loses main-world parity (page globals) |
 | 5 | Web-accessible `injected.js` (200, 847 KB) and `sidebar.html` (200) fetchable by id; a made-up id fails | installed | `warFetch` | Yes: `use_dynamic_url`, and 3 removes injected.js from the list | A web store build's id is fixed, so today one `fetch` detects the install |
 | 6 | Window messages | installed: `__mlSidebar`, `PAGE_ADOPT_HELLO`; run: `ADOPT_RUN`, `RUN_ADOPTED_NOW`, `RUN_READOPTED`, `PAGE_TOOL_RUN` (tool name and args), `PAGE_TOOL_RESULT`, `PAGE_TOOL_STREAM` (+stream), `ML_HL_RESOLVE`/`ML_HL_AT` (a point's highlight, when the card draws it before the gate is answered) | `messages` | Partly: a MessagePort between injected.js and content.ts | The page still shares the world the tool code runs in |
 | 7 | `div#ml-sb-card[popover]` on `<html>`, and `div#ml-sb-root-hl[popover]` for a click/type highlight (when drawn before the gate is answered) | run (HUD quiet) | `domAdded`, `domAttrs` | No | It is the person's view of the run |
 | 8 | Window `blur`, focus on `#ml-sb-card` | gated calls (approval card) | "an approval moves focus…" | Probably: do not focus the card | Keyboard approval |
-| 9 | `__mlPierceClosed` global | run | `globalsAdded` | Yes: keep the flag in a closure | None |
-| 10 | All five `console` methods replaced; the page's own console output collected into the model's tool result | exec-main, exec-strict | `consoleSwapped`, `results[0]` contains "page says during exec" | No in the main world (it is how output is captured); exec-iso swaps nothing visible | Capturing through `Runtime.consoleAPICalled` needs the debugger on every exec |
-| 11 | `__mlCdpStream` on the page's global, still there after the exec, the run and the detach | exec-strict+stream only | "strict-CSP page with streaming…": `final.mlCdpStream` true | Yes (fixme): name the binding for a world, or delete it in the wrapper's finally | Streaming of strict-page execs |
+| 9 | `__mlPierceClosed` global | **fixed** (SITE_PRESENCE step 1): the flag is a module variable in `dom.ts`, set per run | `globalsAdded` has no `__mlPierceClosed` (`expectRunTrace`) | Done | None |
+| 10 | **Fixed** (SITE_PRESENCE step 1): `console` is a parameter of the exec's code bound to the collector, never a swap, in all three paths; the page's console stays native and its own lines stay out of the result. `window.console`/`globalThis.console` from the exec are the page's and are not collected | exec-main, exec-strict | `consoleSwapped` [] during and after; `results[0]` does not contain "page says during exec" | Done | `globalThis.console.log` from the model's code is not captured (fails safe) |
+| 11 | `__mlCdpStream` on the page's global while a strict-page exec with streaming runs; gone after it since SITE_PRESENCE step 1 (the wrapper deletes it in its finally, `Runtime.removeBinding` does not) | exec-strict+stream only | "strict-CSP page with streaming…": `during.mlCdpStream` true; "__mlCdpStream is gone…": `final.mlCdpStream` false | Done for after the exec; during it the page shares the context the listener trusts | `Page.getFrameTree`, `Runtime.disable` and `Runtime.enable` per strict exec, to learn the context every evaluate is pinned to |
 | 12 | `Runtime.enable` console-getter tell (Error `stack`/`message`/`name` getters, a function's `toString`) | **never**: no shape changes when a client enables Runtime | "a debugger client's Runtime.enable is invisible…" (controlled attach, no extension); rebrowser's `runtimeEnableLeak`: "No leak detected" | — | — |
 | 13 | Selector click: one `click`, `isTrusted` false, no pointer/mouse down/up, client and screen (0,0), no activation, injected.js on the stack | click-sel; also a canvas with `cdp` off | "selector click…", "canvas click with CDP off…" | Only by making every click a CDP click | The debugger attached on every page a run clicks |
 | 14 | CDP click: trusted pointermove/mousemove then pointerdown/mousedown/pointerup/mouseup/click with activation; `pressure` 0.5 while pressed, 0 otherwise; size 1x1; the exact centre; `screenX` = `clientX` + the window's `screenX` | click-cdp (canvas, sealed, iframe; the frame's own probe sees it) | "canvas click (CDP)…", "sealed…", "cross-origin iframe…" | Matched to Playwright's baseline (`input-dispatch.ts`, `cdpClickPlan`) | Timing/cadence still differ from a person |
@@ -112,12 +112,29 @@ Ranked; each also in the table.
 3. **A run's tool calls are readable by the page** (rows 4, 6): `PAGE_TOOL_RUN` carries the tool name and arguments on the
    page's window, and page-realm tools call builtins the page can wrap. Inherent to tools that run in the page's world
    (docs/dev/site-access.md, "Adding a tool"), listed because it is also the strongest detector.
-4. **The page writes into the model's exec result** (row 10): while a main-world exec runs, the page's own `console.log`
-   lines are collected as the script's output and reach the model as `console:` text.
-5. **`__mlCdpStream` outlives the exec** (row 11): the existing todo in `tests/redteam-isolated.test.mjs` covers the page
-   calling it during the exec; it also stays on the page's global, a permanent marker. `test.fixme` in the spec.
-6. **`__mlClosedRoots` is a page-writable WeakMap** (row 2), read by the DOM tools when piercing is on: a page can put a
-   root of its choosing behind any host. Inferred from the source, not tested here; the page controls its own DOM anyway.
+4. **The page writes into the model's exec result** (row 10). Fixed for the page's own `console.log` lines (SITE_PRESENCE
+   step 1, `tests/redteam-exec-console.test.mjs`): `console` is a parameter of the exec's code, bound to a null-prototype
+   collector. A page function the exec calls can reach the wrapper functions (`.caller`, a stack frame's `getFunction()`);
+   each is one-shot, so the page cannot evaluate code of its own beside the collector, `state` and `ml`, nor run the
+   approved script again (#652 review). What remains is inherent to sharing the world: the page can rewrite the builtins
+   the collector and the value's serialisation call (`Array.prototype.map`, `JSON.stringify`), throw an error with a
+   stack of its choosing, and read the delegated path's `PAGE_TOOL_RESULT` off its window (row 6). The model reads a
+   main-world exec's console as `console (page-writable):`; the `value:` line is as page-writable and is not marked. The
+   open vectors are `todo`s in `tests/redteam-exec-shared-world.test.mjs`.
+5. **`__mlCdpStream` outlived the exec** (row 11). Fixed: the wrapper deletes it in its finally, its name is random per
+   exec (a page cannot define an accessor under it beforehand), and the listener takes `Runtime.bindingCalled` only from
+   the context the wrapper evaluated in: the top frame's main world, learnt by turning Runtime off and on so it reports
+   every live context, and passed as `contextId` to every evaluate. Turning Runtime off is safe for a concurrent CDP user
+   on the tab: measured in Chromium 151, it keeps bindings, isolated worlds, remote objects and pending awaited
+   evaluates. A frame's or another world's context is refused. The page's own scripts run in that same context and can
+   still find and call it during the exec: inherent, the `todo` in `tests/redteam-isolated.test.mjs`.
+6. **`__mlClosedRoots` was a page-writable WeakMap** (row 2). Fixed: the map is in shadow-patch's closure, filled and read
+   through builtins taken at document_start, and its read-only reader is handed out ONCE, to the ask injected.js makes as
+   it starts; a page that asks first gets the reader of its own roots and leaves the tools without one (piercing off,
+   fails closed) (`tests/redteam-exec-console.test.mjs`, `tests/redteam-exec-shared-world.test.mjs`). The page can
+   still answer the tools' ask itself before injected.js starts (wrapping `dispatchEvent`, or `document.open()`, which
+   removes the patch's listener), and decides what the tools see behind its own hosts by redefining the builtins they
+   call (`el.shadowRoot`), as for any main-world tool (row 4).
 
 Only "looks automated": rows 7-8, 13, 15-16, 20, 24-25, 27 (untrusted input, focus moves, script-started
 navigation, worker request headers). CDP click/typing (14, 17) now match Playwright's baseline field-for-field;
@@ -136,7 +153,8 @@ what still separates them from a person is timing and cadence, not the envelope.
   only for reserved targets: with `cdp` on (the default) a canvas, an `@pt` and `@focus` typing go through it too.
 - **`__mlCdpStream`** (leak 2) lands only on strict-CSP pages with streaming on (the normal main-world exec uses no CDP),
   and `Runtime.removeBinding` does not remove the global, as suspected.
-- **Console swap** (leak 3): in the main world for exec-main and exec-strict; not visible from exec-iso.
+- **Console swap** (leak 3): in the main world for exec-main and exec-strict; not visible from exec-iso. Removed since
+  (row 10): `console` is a parameter of the exec's code.
 - **Focus emulation** (leak 6) is used only by a rendered `fetch_url` on its own background tab, and that tab is made
   visible too (rAF ≥40 Hz), so "focused but hidden" does not occur. **`setWebLifecycleState`** (leak 7) only ever sets
   `active`: no `freeze`/`resume` was seen.

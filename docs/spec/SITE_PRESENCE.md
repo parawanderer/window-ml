@@ -1,6 +1,6 @@
 # Spec: a site sees window.ml only when the person said it may (decided 2026-10-14)
 
-**Status: decided, not built.** Replaces slice 4 of [SITE_ACCESS.md](SITE_ACCESS.md) and comes after slice 3's PR 2
+**Status: decided; step 1 of the Order built** (without the two CDP field fixes, out of scope with input simulation). Replaces slice 4 of [SITE_ACCESS.md](SITE_ACCESS.md) and comes after slice 3's PR 2
 (the agent level). It answers the measurement in [detection-surface.md](../dev/detection-surface.md): any page, approved or
 not, can tell today that the person has window.ml and learn its extension id, with no run and no approval.
 
@@ -77,8 +77,9 @@ runs it was not given, not that it sees nothing:
   strict-CSP pages wraps the source as `((console) => { ... })(collector)`. The isolated world uses the same pattern.
 - **`__mlCdpStream`** (strict-CSP pages with streaming only): the listener accepts only `bindingCalled` from the
   execution context it evaluated in, the wrapper deletes the global in its `finally`, and the model's view of a
-  main-world exec's output says the page could write into it. A nonce or a per-run name buys nothing (the page reads
-  or enumerates either).
+  main-world exec's output says the page could write into it. A nonce or a per-run name buys nothing against a page
+  that reads or enumerates either while the exec runs; the name is random per exec all the same (built in step 1), which
+  stops a page that defines an accessor under a fixed name beforehand and takes the binding as it is installed.
 - **`__mlClosedRoots` and `__mlPierceClosed`** move into closures.
 
 ## Redirects on auto-approved fetches

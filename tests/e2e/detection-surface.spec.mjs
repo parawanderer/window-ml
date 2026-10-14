@@ -99,7 +99,8 @@ const clickLastPoint = (body) => { const t = JSON.stringify(body.messages).match
 
 /** What every page shows with the extension merely installed (observed today, on approved and unapproved pages alike). */
 function expectInstalledTrace(load) {
-    expect(load.mlClosedRootsAtLoad, "`__mlClosedRoots` is on window before any page script").toBe(true);
+    expect(load.mlClosedRootsAtLoad, "no `__mlClosedRoots` global: the captured roots are in shadow-patch's closure").toBe(false);
+    expect(load.closedRootReaderAtLoad, "but any page that dispatches the DOM tools' ask gets the reader back").toBe(true);
     expect(load.attachShadowNative, "Element.prototype.attachShadow is not native code").toBe(false);
     expect(load.attachShadowName).toBe("patched");
     expect(load.domAdded, "the content script appends a <script> naming the extension's id").toContain("head>script[src=chrome-extension://<id>/injected.js]");
@@ -117,7 +118,7 @@ function expectRunTrace(during) {
     expect(during.domAdded, "the HUD card is a popover <div> on <html>").toContain("html>div#ml-sb-card");
     expect(during.domAttrs).toContain("ml-sb-card@popover");
     expect(during.messages, "the run's protocol rides the page's window").toEqual(expect.arrayContaining(["ADOPT_RUN", "RUN_ADOPTED_NOW", "PAGE_TOOL_RUN", "PAGE_TOOL_RESULT"]));
-    expect(during.globalsAdded).toContain("__mlPierceClosed");
+    expect(during.globalsAdded, "the pierce flag is in dom.ts's closure").not.toContain("__mlPierceClosed");
     expect(during.extensionCallers, "page-side tool code calls the page's builtins from chrome-extension://<id>/injected.js").toEqual(expect.arrayContaining(["document.querySelector", "document.querySelectorAll"]));
 }
 
@@ -144,7 +145,7 @@ test.describe("baselines", () => {
         // observed today: webdriver is true and the UA says HeadlessChrome with no extension at all. Both are the HARNESS's:
         // --remote-debugging-port alone sets webdriver (measured headful too), headless sets the UA. A person's own Chrome
         // has neither, and no launch this harness can drive gives a false baseline; the probe watches it for a change instead.
-        expect(row.load).toMatchObject({ webdriver: true, headlessUa: true, automationGlobals: [], attachShadowNative: true, mlClosedRootsAtLoad: false });
+        expect(row.load).toMatchObject({ webdriver: true, headlessUa: true, automationGlobals: [], attachShadowNative: true, mlClosedRootsAtLoad: false, closedRootReaderAtLoad: false });
         // observed today: three of the four console-getter shapes fire with NO debugger client (Chromium reads an
         // Error's message/name and a function's toString to report every console call), so they detect nothing.
         expect(row.load.cdpConsoleGetter).toEqual(expect.arrayContaining(["errMessage", "errName", "fnToString"]));
@@ -228,7 +229,7 @@ test.describe("installed, no run", () => {
 
     test.fixme("a page cannot tell that window.ml is installed", async () => {
         // FINDING (security/privacy): any page identifies the extension, and learns its id, with no run and no approval:
-        // `'ml' in window` (slice 4 of SITE_ACCESS.md is open), `'__mlClosedRoots' in window`, attachShadow's source,
+        // `'ml' in window` (slice 4 of SITE_ACCESS.md is open), the closed-root reader shadow-patch.js hands to any page that asks (`wml-closed-roots`), attachShadow's source,
         // the <script src="chrome-extension://<id>/injected.js"> a MutationObserver sees, the stack of injected.js's
         // dispatchEvent, and `fetch("chrome-extension://<id>/injected.js")` answering 200 (no use_dynamic_url). See
         // docs/dev/detection-surface.md, rows 1-6.
@@ -238,25 +239,28 @@ test.describe("installed, no run", () => {
 // --- exec, in each world ---
 
 test.describe("exec", () => {
-    test("main world (approved page): the console is swapped, the stack names injected.js, the page's console reaches the model", async () => {
+    test("main world (approved page): the page's console is untouched and stays out of the model's result; the stack names injected.js", async () => {
         const row = await scenario("exec-main", { script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
         expectRunTrace(row.during);
         expect(row.cdp).toEqual([]);
         expect(row.during).toMatchObject(NO_CDP);
-        // observed today: all five console methods are replaced for the length of the exec, visibly to a page timer.
-        expect(row.during.consoleSwapped).toEqual(["debug", "error", "info", "log", "warn"]);
+        // `console` is a parameter of the exec's code, so a page timer never sees its console replaced.
+        expect(row.during.consoleSwapped).toEqual([]);
         expect(row.after.final.consoleSwapped).toEqual([]);
         // observed today: a page function the exec calls sees eval'd code under chrome-extension://<id>/injected.js.
-        expect(row.during.pageCallCaller[0]).toMatch(/^at eval \(eval at run \(chrome-extension:\/\/<id>\/injected\.js:\d+:\d+\), <anonymous>:\d+:\d+\)$/);
+        // (EXEC_JS awaits, so it runs on the async path: the frame names that wrapper.)
+        expect(row.during.pageCallCaller[0]).toMatch(/^at eval \(eval at (run|asyncWrapper) \(chrome-extension:\/\/<id>\/injected\.js:\d+:\d+\), <anonymous>:\d+:\d+\)$/);
         expect(row.during.caughtStack.join("\n")).toContain("chrome-extension://<id>/injected.js");
-        // observed today: what the PAGE logs while the exec runs is collected into the model's tool result.
-        expect(row.results[0]).toContain("page says during exec");
+        // What the PAGE logs while the exec runs stays in the page's console, out of the model's tool result.
+        expect(row.results[0]).not.toContain("page says during exec");
     });
 
-    test("main world with streaming: the same, plus PAGE_TOOL_STREAM on the window", async () => {
-        const row = await scenario("exec-main-stream", { req: { stream: true }, script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
+    test("main world with streaming: the same, plus PAGE_TOOL_STREAM on the window for the exec's own lines", async () => {
+        const row = await scenario("exec-main-stream", { req: { stream: true }, script: () => [{ tool: "exec", args: { js: `console.log('exec says'); ${EXEC_JS}` } }] });
         expect(row.cdp).toEqual([]);
-        expect(row.during.consoleSwapped).toEqual(["debug", "error", "info", "log", "warn"]);
+        expect(row.during.consoleSwapped).toEqual([]);
+        expect(row.results[0]).toContain("exec says");
+        expect(row.results[0]).not.toContain("page says during exec");
         expect(row.during.messages).toContain("PAGE_TOOL_STREAM");
     });
 
@@ -276,31 +280,32 @@ test.describe("exec", () => {
         expect(row.load.final.mlIsoStream).toBe(false);
     });
 
-    test("strict-CSP page (main world through CDP): the console swap without the injected.js stack", async () => {
+    test("strict-CSP page (main world through CDP): no console swap, no injected.js stack", async () => {
         const row = await scenario("exec-strict", { path: "/?csp=strict", script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
-        expect(row.cdp).toEqual(["(attach)", "Runtime.evaluate", "Runtime.evaluate", "(detach)"]);
-        expect(row.during.consoleSwapped).toEqual(["debug", "error", "info", "log", "warn"]);
+        expect(row.cdp).toEqual(["(attach)", "Page.getFrameTree", "Runtime.disable", "Runtime.enable", "Runtime.evaluate", "Runtime.evaluate", "(detach)"]);
+        expect(row.during.consoleSwapped).toEqual([]);
+        expect(row.results[0]).not.toContain("page says during exec");
         // observed today: Runtime.evaluate code has no URL, so the stack is bare <anonymous> frames (no sourceURL marker).
         expect(row.during.pageCallCaller.every((f) => /^at <anonymous>:\d+:\d+$/.test(f))).toBe(true);
         expect(row.during.mlCdpStream).toBe(false);
     });
 
-    test("strict-CSP page with streaming: __mlCdpStream appears on the page's window, and stays", async () => {
+    test("strict-CSP page with streaming: __mlCdpStream is on the page's window only while the exec runs", async () => {
         const row = await scenario("exec-strict-stream", { path: "/?csp=strict", req: { stream: true }, script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
-        expect(row.cdp).toEqual(["(attach)", "Runtime.enable", "Runtime.addBinding", "Runtime.evaluate", "Runtime.evaluate", "Runtime.removeBinding", "(detach)"]);
+        // Runtime is turned off and on so it reports every live context: the listener takes the binding's calls only from
+        // the top frame's main world, which every evaluate then names.
+        expect(row.cdp).toEqual(["(attach)", "Page.getFrameTree", "Runtime.disable", "Runtime.enable", "Runtime.addBinding", "Runtime.evaluate", "Runtime.evaluate", "Runtime.removeBinding", "(detach)"]);
         expect(row.during.mlCdpStream).toBe(true);
-        // observed today: Runtime.removeBinding stops the notifications but leaves the function on the global (CDP's
-        // documented behaviour), so the page keeps `__mlCdpStream` after the exec, the run and the detach.
-        expect(row.load.final.mlCdpStream).toBe(true);
-        expect(row.load.final.globalsAdded).toContain("__mlCdpStream");
+        expect(row.during.consoleSwapped).toEqual([]);
+        expect(row.results[0]).not.toContain("page says during exec");
     });
 
-    test.fixme("__mlCdpStream is gone from the page's global once the strict-page exec ends", async () => {
-        // FINDING (security + detection): the binding has no executionContextName, so it is a main-world global a page
-        // can call while the exec runs (the todo in tests/redteam-isolated.test.mjs) and can test for ever after:
-        // `'__mlCdpStream' in window` names this tool, not just "automation". Runtime.removeBinding does not delete the
-        // global. Removable by naming the binding for a world the wrapper runs in, or by deleting it from the page in
-        // the wrapper's finally (the page can keep a reference); cost: streaming of strict-page execs.
+    test("__mlCdpStream is gone from the page's global once the strict-page exec ends", async () => {
+        const row = await scenario("exec-strict-stream-after", { path: "/?csp=strict", req: { stream: true }, script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
+        // The wrapper deletes the global in its finally (Runtime.removeBinding leaves it). The page can still call it while
+        // the exec runs, from the context the listener trusts: the model reads that console as page-writable.
+        expect(row.load.final.mlCdpStream).toBe(false);
+        expect(row.load.final.globalsAdded).not.toContain("__mlCdpStream");
     });
 });
 

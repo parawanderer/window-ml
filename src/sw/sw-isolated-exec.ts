@@ -18,12 +18,12 @@ import type { RenderDescriptor } from "../contract";
 import { currentForExec, type CurrentSnapshot, type ExecCurrent } from "../agent/current-context";
 import { splitStages } from "../pointers/text-pipe";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
-import { OUTPUT_CEILING, clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
+import { OUTPUT_CEILING, clipHeadTail, panelHead, ceilingNote, CONSOLE_FORWARDS } from "../agent/output-clip";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipOut } from "../dom/dom";
 import { grantableOrigin } from "../site-access";
 import type { ExecReason, Isolation } from "./exec-routing";
-import { ensureDebuggerAttached, touchDebugger, hasDebuggerPermission } from "./sw-cdp";
+import { ensureDebuggerAttached, touchDebugger, hasDebuggerPermission, stillOn } from "./sw-cdp";
 import { siteDecision } from "./sw-site-access";
 import { ISOLATED_KIT_SOURCE } from "../isolated-kit.gen";
 import type { IsoAnswer } from "./iso-channel";
@@ -116,8 +116,8 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
                 : "ml.dereference(" + JSON.stringify(String(ref)) + ") was not named in the script, so its value was not sent with it. Write the pointer as a literal (@tool:<id>) and run it again.");
             const r = e.r;
             if (r.error !== undefined && r.error !== null) throw new Error(r.error);
-            if (r.warning) console.warn(r.warning);
-            return __mlIsoKit.isoValue(r, e.i, __chanAsk);
+            if (r.warning) __C.warn(r.warning);
+            return __mlIsoKit.isoValue(r, e.i, __chanAsk, (s) => __C.warn(s));
         },
     };
     const ml = new Proxy(Object.freeze(__t0), { get(t, k) {
@@ -126,16 +126,19 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
         return k in t ? t[k] : __no(k);
     }, set() { return false; } });
     const state = (globalThis.__mlState ??= {});
-    const __logs = [], __M = ["log", "info", "warn", "error", "debug"], __S = {};
-    let __c = 0, __d = 0;
-    for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => { const __s = a.map((x) => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch { return String(x); } }).join(" "); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${stream ? `try { const __t = __s + "\\n", __ts = Date.now(); ${stream}; } catch {}` : ""} }; }
+    // \`console\` is a parameter of the script bound to this collector, as in the main world (tools.ts): the world's own
+    // console is never replaced, and a line after the call returns goes to it.
+    const __logs = [], __M = ["log", "info", "warn", "error", "debug"], __N = console, __C = Object.create(null);
+    for (const k of ${JSON.stringify(CONSOLE_FORWARDS)}) Object.defineProperty(__C, k, { configurable: true, enumerable: true, writable: true, value: (...a) => Reflect.apply(__N[k], __N, a) });
+    let __c = 0, __d = 0, __on = true;
+    for (const m of __M) Object.defineProperty(__C, m, { configurable: true, enumerable: true, writable: true, value: (...a) => { if (!__on) { Reflect.apply(__N[m], __N, a); return; } const __s = a.map((x) => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch { return String(x); } }).join(" "); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${stream ? `try { const __t = __s + "\\n", __ts = Date.now(); ${stream}; } catch {}` : ""} } });
     try {
-        const __v = await (async (ml, state) => ${inner})(ml, state);
+        const __v = await (async (ml, state, console) => ${inner})(ml, state, __C);
         const __vs = __v === undefined ? "(undefined)" : (typeof __v === "string" || __v instanceof String) ? String(__v) : (typeof Element !== "undefined" && __v instanceof Element) ? __v.outerHTML.slice(0, 2000) : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
         return { __mlWrapped: true, v: __vs, logs: __logs, dropped: __d };
     } catch (e) {
         return { __mlWrapped: true, threw: (e && e.stack) || String(e), logs: __logs, dropped: __d };
-    } finally { for (const m of __M) console[m] = __S[m]; }
+    } finally { __on = false; }
 })()`;
 }
 
@@ -305,12 +308,6 @@ export async function runInCdpWorld(tabId: number, documentId: string, runId: st
         }
         touchDebugger(tabId);
     }
-}
-
-/** Whether the tab's top frame still holds `documentId` (the browser's answer; unknown reads as no). */
-async function stillOn(tabId: number, documentId: string): Promise<boolean> {
-    const f = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
-    return f?.documentId === documentId;
 }
 
 /** What this browser offers for isolation now: user scripts if the person allowed them, else CDP if its setting is on

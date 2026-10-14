@@ -958,7 +958,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             if (!approvedSource) return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut };
                             const cfg = await getConfig();
                             if (!cfg.cdp) return { result: `${env.result || ""}\n\nRunning it needs Debugger-based actions (CDP), which are OFF — enable them in window.ml Settings → Advanced (the debugger clears the page's CSP/Trusted-Types), or fall back to a read-only survey / ml.fetch.`, renderIn: env.renderIn, renderOut: env.renderOut };
-                            const r = await cdpEval(tabId, approvedSource, onStream);
+                            // Pinned to the document the exec was routed to (or sent to): the page can force this path and then
+                            // navigate, and the approved code must not run, with a user gesture, on whatever document is next.
+                            const cdpDoc = execDoc ?? sentTo;
+                            if (!cdpDoc) return { result: `${env.result || ""}\n\nThe exec was not run through the debugger: could not tell which page the tab holds now. Run it again.`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const r = await cdpEval(tabId, cdpDoc, approvedSource, onStream);
                             if ("ok" in r) {
                                 // Rebuild the Out cell from the CDP run's own console/value. `env.renderOut` is
                                 // the page's CSP-BLOCKED render (an exec-out carrying that error), so forwarding

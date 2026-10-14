@@ -9,7 +9,7 @@ import type { RebuildConfig } from "./contract/contract-messages";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { mlPipe } from "./pointers/text-pipe";
 import { mlJsonPath } from "./json-path";
-import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom/dom";
+import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension, claimClosedRootReader } from "./dom/dom";
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { framePrompt } from "./agent/prompts";
@@ -19,7 +19,7 @@ import { suspiciousChars } from "./agent/security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
 import { makeDomTools, answerMediaShape } from "./tools/tools";
 import { pipeStages } from "./pointers/token-pipe";
-import { DerefText } from "./tools/deref-read";
+import { DerefText, DEREF_WARN, setDerefImpl, derefImpl } from "./tools/deref-read";
 import { makeBackgroundTaskPromise } from "./bridge";
 import { makeDynamicTools } from "./ml/dynamic-tools";
 import type { DynamicToolNamespace } from "./ml/dynamic-tools";
@@ -68,7 +68,8 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
     // iterate with cheap probes instead of dumping HTML into the model's
     // context. Every helper truncates hard and never returns outerHTML.
 
-
+    // The closed-root reader of shadow-patch.js, asked for now, while the page has had the least time to be first.
+    claimClosedRootReader();
 
     window.ml = {
         /** The agent's persistent JS scratchpad (also injected into every `exec` body as `state`). A live
@@ -120,7 +121,11 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
          * @returns The value, reduced by the pipe. Rejects with an actionable message when the pointer doesn't
          *          exist (a MemoryFault naming the nearest real pointers) or a pipe stage is wrong.
          */
-        dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<DerefValue> {
+        dereference: async function(ref: string, options: { pipe?: string | string[] | null } = {}): Promise<DerefValue> {
+            const pipe = options?.pipe ?? null;
+            // An exec's own `ml` passes its console collector under DEREF_WARN, and only to this function as it was
+            // defined (deref-read.ts `derefImpl`), never to a page's replacement.
+            const warn = (options as { [DEREF_WARN]?: (s: string) => void } | undefined)?.[DEREF_WARN];
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
             // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
@@ -128,7 +133,7 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
             // The advisory goes to console, NOT into the return value — this result is about to be parsed,
             // split or piped by the calling script, and exec captures console output into the step's result
             // and its live stream, so the warning still reaches the model without touching the data.
-            if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+            if (read.warning) { try { (warn ?? console.warn)(read.warning); } catch { /* no console in this realm */ } }
             // A String subclass, so every previous spelling still works while `.type`/`.json`/`.table`
             // answer what the caller used to have to sniff out of the bytes. `.pipe()` re-reads the SAME
             // pointer with more stages rather than piping the text it already holds — the store keeps the
@@ -136,7 +141,9 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
             // Always a promise here: a `pipe` re-read cannot be pre-resolved (the stages are only known now),
             // so the sync path in `exec` deliberately falls through to this one. Wrapped so the type is the
             // promise it actually is rather than the union the declaration allows.
-            const again = (stages: string | string[]): Promise<DerefValue> => Promise.resolve(window.ml.dereference(ref, { pipe: stages }));
+            const again = (stages: string | string[]): Promise<DerefValue> => warn
+                ? derefImpl()!(ref, { pipe: stages, [DEREF_WARN]: warn }) as Promise<DerefValue>
+                : Promise.resolve(window.ml.dereference(ref, { pipe: stages }));
             return new DerefText(read.value, read.meta, again, read.readColumns);
         },
         /**
@@ -471,6 +478,8 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
     // ml.agent. defineTool is detached (this-free), so pass it directly.
     // Pass a `verifyArea` capability (closes over ml) so the pure `wait` domTool can `verify` too — the
     // domTools stay ml-free; they just receive this function. center=null → a viewport shot (wait is area-first).
+    // Kept as defined, so an exec reaches this `dereference` even after the page replaces `window.ml.dereference`.
+    setDerefImpl(window.ml.dereference as (ref: unknown, options?: unknown) => Promise<unknown>);
     window.ml.domTools = makeDomTools(window.ml.defineTool,
         // A run whose verifies the worker takes gets the request instead of a picture taken here.
         async (ctx, center, verb, mutated) => verifiesInWorker(ctx)

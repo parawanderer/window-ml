@@ -38,7 +38,10 @@
             outer: [window.outerWidth, window.outerHeight], inner: [window.innerWidth, window.innerHeight], screen: [screen.width, screen.height, screen.availWidth, screen.availHeight],
             screenXY: [window.screenX, window.screenY], dpr: window.devicePixelRatio, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
             hardwareConcurrency: n.hardwareConcurrency, webgl,
-            mlClosedRoots: "__mlClosedRoots" in window, attachShadowNative: isNative(Element.prototype.attachShadow),
+            mlClosedRoots: "__mlClosedRoots" in window,
+            // The ask that replaced that global: shadow-patch.js answers it with a reader (docs/dev/detection-surface.md, row 2).
+            closedRootReader: (() => { const d = {}; try { window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: d })); } catch { /* none */ } return typeof d.read === "function"; })(),
+            attachShadowNative: isNative(Element.prototype.attachShadow),
             attachShadowSrc: short(fnToString.call(Element.prototype.attachShadow), 120), attachShadowName: Element.prototype.attachShadow.name,
             mlAtLoad: "ml" in window, globalsAtLoad: keys.length,
             navType: (performance.getEntriesByType("navigation")[0] || {}).type || null, referrer: document.referrer, historyLength: history.length,
@@ -56,7 +59,7 @@
     const savedConsole = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
     const tick = () => {
         watch("globalsAdded", () => Object.getOwnPropertyNames(window).filter((k) => !initialGlobals.has(k) && !/^__probe|^\d+$/.test(k)).sort());
-        watch("mlCdpStream", () => "__mlCdpStream" in window);
+        watch("mlCdpStream", () => Object.getOwnPropertyNames(window).some((k) => k.startsWith("__mlCdpStream")));
         watch("mlIsoStream", () => "__mlIsoStream" in window);
         watch("windowMl", () => ("ml" in window ? Object.keys(window.ml || {}).length : "absent"));
         watch("consoleSwapped", () => Object.keys(savedConsole).filter((m) => console[m] !== savedConsole[m]));

@@ -565,23 +565,24 @@ test("wait verify (text-only): describes the settled viewport WITHOUT the click-
 });
 
 test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
-    const { ml, document, window } = loadDomWorld('<button>light-only</button>');
-    // Simulate shadow-patch.js (not loaded in the test harness): a CLOSED root, stashed as it's created.
+    const { ml, document } = loadDomWorld('<button>light-only</button>');
+    // shadow-patch.js is loaded first (loadDomWorld), so this CLOSED root is captured as it's created.
     const host = document.createElement("sealed-widget");
     document.body.append(host);
     const closed = host.attachShadow({ mode: "closed" });
     closed.innerHTML = '<button class="secret" aria-label="Reveal code">x</button>';
-    window.__mlClosedRoots = new WeakMap([[host, closed]]);   // what the patch's WeakMap would hold
     const desc = (sel) => { const r = run(ml, "describeElement", { selector: sel }); return String(r.content ?? r); };
+    // The flag is set per run, as a re-adopt does: no global to write.
+    const pierce = (on) => ml._adoptRun(`pierce-${on}`, { toolNames: [], pierceClosed: on, builtBy: "worker" });
 
     // Flag OFF (default): the closed root stays unreachable — behaviour is exactly as before the feature.
-    window.__mlPierceClosed = false;
+    pierce(false);
     assert.match(desc("button.secret"), /No element/, "flag off: a CLOSED root is not pierced by selector");
     assert.match(desc("sealed-widget"), /#shadow-root \(CLOSED\)/, "flag off: flagged CLOSED and steered to locate");
     assert.doesNotMatch(desc("sealed-widget"), /pierced/, "flag off: not reported as pierced");
 
     // Flag ON: the captured closed root becomes selector-reachable, like an open one.
-    window.__mlPierceClosed = true;
+    pierce(true);
     assert.match(desc("button.secret"), /button/, "flag on: a captured CLOSED root IS pierced by selector");
     const hostDesc = desc("sealed-widget");
     assert.match(hostDesc, /#shadow-root \(CLOSED, pierced\)/, "the host is flagged CLOSED, pierced");
@@ -826,7 +827,7 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     // join with \n, and the length cap must NOT collapse whitespace (regression:
     // exec used dom.ts `truncate`, whose \s+→" " flattened every line into spaces).
     const multi = await execText(ml, { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
-    assert.match(multi, /^console:\nline 1\nline 2\nline 3\n\nvalue: /);
+    assert.match(multi, /^console \(page-writable\):\nline 1\nline 2\nline 3\n\nvalue: /);
     // The #1 exec mistake: .map on a raw NodeList → steer to Array.from/spread.
     const nodelist = await execText(ml, { js: "document.querySelectorAll('li').map(x => x.tagName)" });
     assert.match(nodelist, /is not a function/);
@@ -948,7 +949,7 @@ test("scroll tool errors clearly for a missing element target", async () => {
 test("exec captures console output and returns it with the value", async () => {
     const { ml } = loadDomWorld();
     const res = await execText(ml, { js: "console.log('hello', 42); 'done'" });
-    assert.match(res, /console:\nhello 42/);
+    assert.match(res, /console \(page-writable\):\nhello 42/);
     assert.match(res, /value: done/);
 });
 
@@ -3927,7 +3928,7 @@ test("exec Out (raw): the model-facing result still carries the full console out
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const out = await exec.run({ js: "console.log('a'); console.log('b'); 7" }, {});
-    assert.match(out.content, /^console:\n/, "the console block leads");
+    assert.match(out.content, /^console \(page-writable\):\n/, "the console block leads");
     assert.match(out.content, /a\nb/, "every logged line is present");
     assert.match(out.content, /\n\nvalue: 7$/, "then the returned value — the exact text the model reads");
 });
@@ -3999,7 +4000,7 @@ test("exec past the output ceiling: whole lines up to it, the rest counted, and 
     const exec = ml.domTools.find(t => t.name === "exec");
     const streamed = [];
     const out = await exec.run({ js: "const s = 'x'.repeat(9000000); for (let i = 0; i < 10; i++) console.log(s); 1" }, { stream: (t) => streamed.push(t.length) });
-    assert.match(out.content, /^console:\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less: filter, count or aggregate in the script\.\]\n\nvalue: 1$/);
+    assert.match(out.content, /^console \(page-writable\):\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less: filter, count or aggregate in the script\.\]\n\nvalue: 1$/);
     assert.match(out.render.stdout, /\[output stopped at the 32000000-char limit[^\]]*\]$/, "the panel's last line");
     assert.equal(out.render.seen, 500);
     assert.equal(streamed.length, 3, "a line past the ceiling is not streamed either");
