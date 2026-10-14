@@ -73,3 +73,23 @@ test("each budget eviction is reported with its key and bytes, and a failing rep
     assert.equal(cache.get("b"), "yyyyyy");
     assert.ok(cache.wasEvicted("a"));
 });
+
+// --- which reads are cached (fetchIsCacheable, the one rule the page and a worker-hosted run share) ---
+
+test("a read is cached in the default format, or as a parsed table in any format; never as-you, rendered or failed", async () => {
+    const { fetchIsCacheable } = await import("../src/ml/fetch-result.ts");
+    const page = { ok: true, type: "html", text: "<p>x</p>" };
+    const table = { ok: true, type: "csv", text: "a\n1", table: { columns: ["a"], rows: [[1]] } };
+    const plain = { credentials: false, rendered: false };
+    const cases = [
+        [page, { ...plain, format: "markdown" }, true],
+        [table, { ...plain, format: "markdown" }, true],
+        [table, { ...plain, format: "html" }, true],     // a data body comes back the same in either format
+        [page, { ...plain, format: "html" }, false],     // an HTML page's bytes differ by format: not under the URL's key
+        [table, { credentials: true, rendered: false, format: "markdown" }, false],
+        [table, { credentials: false, rendered: true, format: "markdown" }, false],
+        [{ ...table, ok: false }, { ...plain, format: "html" }, false],
+        [null, { ...plain, format: "markdown" }, false],
+    ];
+    for (const [r, mode, want] of cases) assert.equal(fetchIsCacheable(r, mode), want, `${r?.type ?? r} ${JSON.stringify(mode)}`);
+});
