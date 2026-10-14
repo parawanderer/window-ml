@@ -3400,6 +3400,7 @@ test("pythonExec tables: a URL not in the page's fetch cache says the cache is t
     const err = await world.ml.pythonExec("return 1", { tables: "https://example.com/data.csv" }).catch((e) => e);
     assert.match(err.message, /not in this page's fetch cache/);
     assert.match(err.message, /does not survive a navigation/);
+    assert.match(err.message, /credentials:true or rendered:true \(those reads are never cached\)/, "names the cause a model that fetched as-you hits");
     assert.doesNotMatch(err.message, /in this run/);
 });
 

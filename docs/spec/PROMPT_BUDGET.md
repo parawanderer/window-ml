@@ -121,6 +121,29 @@ of `ml.current.env` and what `ml.fetch` resolves to, then where the API is docum
 - **Not shipped**: no behaviour to buy with 82 characters per call. The interview stays, to rerun if the tool's
   description is ever cut.
 
+## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
+
+Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed
+it lost the task under BOTH prompts for reasons no description fixes: it sent `tables` as a JSON string of the map
+(`"{\"df\": \"http://…\"}"`), which was refused as "not a valid CSS selector"; it fetched the CSV with
+`format: "html"`, which the cache did not keep, so `tables` said the URL was "not fetched here" one step later; it
+named the path the task gave (`/sales.csv`); and its code re-read the URL with `pd.read_csv` in a sandbox with no
+network. Each is now accepted (`tablesMapFromJson`, shared with the external-sheet consent check; `fetchIsCacheable`,
+shared by the page and a worker-hosted run; a path resolved against the page; `read_csv` of a loaded source returns
+it). glm-4.7-flash on csv-total, 16 runs each, current prompt (sweeps `tool-use` on branch
+`fix/python-tables-json-string`):
+
+| Build | Passed |
+| --- | --- |
+| main (round 2's two sweeps) | 8/16 |
+| + JSON-string map | 12/16 |
+| + path, `read_csv` of a loaded URL | 12/16 |
+| + a table cached in either format | 14/16, passes in 2-4 steps |
+
+The last two failures: a fetch with `credentials: true` (never cached, by design; the error now says so) and a
+malformed tool call. So the `python_exec` cut is worth measuring again on top of these fixes: the regression it was
+blamed for was mostly this.
+
 ## Step 3 result, round 2: `locate`'s option texts (2026-10-10)
 
 `locate` keeps its triggers in the schema and serves its full description and parameter texts from

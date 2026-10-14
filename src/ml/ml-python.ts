@@ -167,7 +167,7 @@ export const _loadTable = async function(this: MlApi, name: string, src: string 
             : mlFetchCache.wasEvicted(src)
                 ? `pythonExec tables — "${src}" was fetched earlier, but its parsed table has since been dropped from the page's fetch cache to keep memory bounded. Call fetch_url on it again (it is already approved), then pass the URL here.`
                 // NOT "in this run": the cache is the PAGE's, so a URL the run fetched before it navigated is gone too.
-                : `pythonExec tables — "${src}" is not in this page's fetch cache: it was not fetched here, or it was fetched on a page the run has since left (the cache does not survive a navigation). Call fetch_url on it, then pass the URL here.`);
+                : `pythonExec tables — "${src}" is not in this page's fetch cache: it was not fetched here, it was fetched with credentials:true or rendered:true (those reads are never cached), or it was fetched on a page the run has since left (the cache does not survive a navigation). Call fetch_url on it without credentials or rendered, then pass the URL here.`);
     }
     if (isCurrent || (typeof src === "string" && googleSheetCsvUrl(src))) {
         const target = isCurrent ? (typeof location !== "undefined" ? location.href : "") : String(src);
