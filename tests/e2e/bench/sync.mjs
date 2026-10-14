@@ -520,6 +520,24 @@ ${args.map((a) => `    <string>${esc(a)}</string>`).join("\n")}
     return { label, plist, path: path.join(home, "Library", "LaunchAgents", `${label}.plist`), log };
 }
 
+/**
+ * The pool brought up to the store before a sweep estimates from it: every clone's score rows, calls, price snapshots and
+ * box frames (`pull`, which fetches only the objects it has not pulled before), so a fresh clone's estimate has the
+ * history every other clone made. Never fails a sweep: with no store, or one that has not answered in `timeoutMs`, it
+ * says so and the estimate uses what is here.
+ */
+export async function refreshPool({ cfg = storeFromEnv(), timeoutMs = 60_000, into = POOL, log = console.log } = {}) {
+    if (!cfg) return null;
+    let timer;
+    try {
+        return await Promise.race([pull(openStore(cfg), { into, log }),
+            new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer in ${timeoutMs / 1000} s`)), timeoutMs); })]);
+    } catch (e) {
+        log(`  pool: not refreshed from the store (${e.message}); estimating from this clone's history alone`);
+        return null;
+    } finally { clearTimeout(timer); }
+}
+
 /** A store client from settings (s3.mjs), carrying its bucket name for views.sql. */
 export const openStore = (cfg) => ({ ...s3Client(cfg), bucket: cfg.bucket });
 

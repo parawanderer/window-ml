@@ -11,6 +11,7 @@ import path from "node:path";
 import { fmtBytes, limitWhence } from "./memory-budget.mjs";
 import { spendLine } from "./live-spend.mjs";
 import { forecastText, energyForecastText } from "./spend-predict.mjs";
+import { estimateLine } from "./estimate-line.mjs";
 import { energyLine } from "./electricity.mjs";
 
 /** What status.json keeps of the page's state: everything but the timeline and the box's samples (timeline.md, memory.md). */
@@ -47,6 +48,8 @@ export function statusText(s, now = Date.now()) {
         for (const [m, t] of Object.entries(s.energy.models ?? {})) out.push(`- ${m}: ${energyLine(t)}`);
         out.push("", "A run's draw: everything the box drew while generating for it, plus its draw above rest in the 30 s after each generation.", "");
     }
+    const whole = estimateLine(s.forecast, s.energyForecast);
+    if (whole) out.push("## Estimate (narrows as runs finish; the sections below break it down)", "", whole, "");
     if (s.energyForecast?.left) out.push("## Electricity estimate (narrows as runs finish)", "", energyForecastText(s.energyForecast), "");
     if (s.forecast?.left) out.push("## Spend estimate (narrows as runs finish)", "", ...forecastText(s.forecast).map((l) => l.replace(/^ {2}/, "")), "");
     const m = s.memory;

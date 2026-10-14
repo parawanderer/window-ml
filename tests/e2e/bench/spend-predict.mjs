@@ -25,17 +25,26 @@ export const BASIS = { item: "past runs of the same task", task: "past runs of t
 
 /**
  * Every logged run with its calls, from one or more scores logs (the local one first; a run in two is counted once):
- * `{ run, model, task, taskHash, at, calls: [{ model, usage }] }`. A turn logged without its model was the driver's.
+ * `{ run, model, task, taskHash, at, calls: [{ model, usage }], approx }`. A turn logged without its model was the
+ * driver's. A run logged before calls were (#555) has only its token totals: it becomes ONE driver call of them,
+ * `approx`, with no cached tokens apart, so it prices at the full input rate and estimates high; `nearest` takes it only
+ * where no run with its calls is.
  */
 export function pastRuns(dbs) {
     const runs = new Map();
     for (const db of dbs.filter(Boolean)) {
         let rows, calls;
-        try { rows = db.prepare("SELECT run, model, task, task_hash, at FROM runs").all(); calls = readCalls(db); } catch { continue; }
+        try { rows = db.prepare("SELECT run, model, task, task_hash, at, prompt_tokens, completion_tokens FROM runs").all(); calls = readCalls(db); } catch { continue; }
         const mine = new Map();
-        for (const r of rows) if (!runs.has(r.run)) mine.set(r.run, { run: r.run, model: r.model, task: r.task, taskHash: r.task_hash, at: r.at, calls: [] });
+        for (const r of rows) if (!runs.has(r.run)) mine.set(r.run, { run: r.run, model: r.model, task: r.task, taskHash: r.task_hash, at: r.at, calls: [], approx: false, totals: r });
         for (const c of calls) mine.get(c.run)?.calls.push({ model: c.model ?? (c.kind === "turn" ? mine.get(c.run).model : null), usage: c.usage });
-        for (const [k, v] of mine) if (v.calls.length) runs.set(k, v);
+        for (const [k, { totals, ...v }] of mine) {
+            if (!v.calls.length && totals.prompt_tokens != null) {
+                v.calls.push({ model: v.model, usage: { promptTokens: totals.prompt_tokens, completionTokens: totals.completion_tokens ?? 0 } });
+                v.approx = true;
+            }
+            if (v.calls.length) runs.set(k, v);
+        }
     }
     return [...runs.values()];
 }
@@ -59,8 +68,10 @@ const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 /** A model's past runs nearest a cell: of the same item, else the task under any wording, else any task (`[basis, runs]`). */
 function nearest(history, { model, task, taskHash }) {
     const own = history.filter((r) => r.model === model);
+    const exact = (rs) => (rs.some((r) => !r.approx) ? rs.filter((r) => !r.approx) : rs);   // a run's own calls over its token totals
     const levels = [["item", own.filter((r) => r.task === task && r.taskHash === taskHash)], ["task", own.filter((r) => r.task === task)], ["model", own]];
-    return levels.find(([, rs]) => rs.length) ?? [null, []];
+    const [basis, rs] = levels.find(([, rs]) => rs.length) ?? [null, []];
+    return [basis, exact(rs)];
 }
 
 /** The `n` most recent of some runs. */
