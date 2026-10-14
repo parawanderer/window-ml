@@ -2392,18 +2392,22 @@ test("CANCEL_RUN for an unknown run id is a harmless no-op", async () => {
 test("CANCEL_ALL_RUNS (the popup panic button) aborts every live run and reports the count", async () => {
     // Two runs both parked at their in-flight model call. The panic button aborts all controllers → each
     // resolves { cancelled: true }; the response reports how many were live.
+    let inFlight = 0;
     const bg = loadBackground({
         config: baseConfig(),
         onFetch: (call) => new Promise((_, reject) => {
             const abort = () => { const e = new Error("aborted"); e.name = "AbortError"; reject(e); };
             if (call.opts.signal?.aborted) return abort();
             call.opts.signal?.addEventListener("abort", abort);
+            inFlight++;
         }),
     });
     const base = { systemPrompt: "s", tools: [], model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools" };
     const p1 = bg.send({ type: "START_RUN", payload: { ...base, runId: "all1", task: "a" } }, { tab: { id: 1 } });
     const p2 = bg.send({ type: "START_RUN", payload: { ...base, runId: "all2", task: "b" } }, { tab: { id: 2 } });
-    await new Promise(r => setTimeout(r, 0));   // let both reach their in-flight model call
+    // Wait for both to reach their in-flight model call: the router awaits the site checks first, so one tick is not enough.
+    for (let i = 0; i < 200 && inFlight < 2; i++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(inFlight, 2, "both runs reached their model call");
     const res = await bg.send({ type: "CANCEL_ALL_RUNS", payload: {} });
     assert.equal(res.data.cancelled, 2, "both live runs were counted + aborted");
     assert.ok((await p1).data?.cancelled, "run 1 resolved cancelled");
