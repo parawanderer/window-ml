@@ -37,13 +37,14 @@ import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { pageRebuild } from "./agent/run-assembly";
-import { PAGE_STARTED_TYPES } from "./page-relay";
+import { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
+import { runControlPayloadError } from "./sw/run-payload-check";
 import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
@@ -113,6 +114,14 @@ startValueSweeps();
     const s = activeRuns.get(tabId) ?? new Set<string>();
     s.add(runId); activeRuns.set(tabId, s);
 };
+// TEST-ONLY (SW realm only, like the ones above): what the worker holds for runs, store by store, so a test can assert a
+// refused or failed START_RUN/RESUME_RUN left nothing behind (tests/redteam-run-payload.test.mjs).
+(globalThis as unknown as { __mlRunStateForTest?: unknown }).__mlRunStateForTest = () => ({
+    controllers: [...runControllers.keys()], inboxes: [...runInboxes.keys()], bgRuns: [...bgRuns.keys()],
+    activeRuns: [...activeRuns.entries()].map(([tab, ids]) => [tab, [...ids]]), rebuilds: [...runRebuilds.keys()],
+    replayTabs: [...runReplayBuffer.keys()], deref: [...derefByRun.keys()], context: [...contextByRun.keys()], turns: [...turnByRun.keys()],
+    starting: [...workerRunsStarting], sessions: sessionServer.index.list().map((s) => s.id.hash),
+});
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
 (globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
@@ -231,7 +240,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         let answered = false;
         const toPage = (r?: unknown): void => { answered = true; void forPage(r).then(sendResponse); };
         // An async handler keeps the channel itself; a fire-and-forget one never answers, so close it here.
-        if (route(message, sender, toPage) !== true && !answered) sendResponse(undefined);
+        // A handler that throws still answers: the page's promise settles, and the throw is not left unhandled.
+        let kept: boolean | undefined;
+        try { kept = route(message, sender, toPage); } catch (e) { if (!answered) toPage({ error: (e as Error)?.message || String(e) }); return; }
+        if (kept !== true && !answered) sendResponse(undefined);
     });
     return true;
 });
@@ -254,6 +266,12 @@ function workerClaimOf(ev: unknown): WorkerClaim {
 
 /** The message router: every handler, behind the origin gate above. */
 function route(message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void): boolean | undefined {
+    // A run-control payload is checked whole before any handler reads it: the run host registers a run's controller, inbox,
+    // tab and snapshot before it reads the toolset, so a malformed one would leave a run that never starts registered.
+    if (RUN_CONTROL_TYPES.has(message?.type)) {
+        const bad = runControlPayloadError(message.type, message.payload);
+        if (bad) { sendResponse({ error: bad }); return; }
+    }
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
@@ -437,10 +455,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         return;
     }
     // The page's own cancel of a run it built (ml-agent-handle's cancel), relayed under its own type so the gate above
-    // applies to it; the shell's Stop is CANCEL_RUN. A worker-built run is the person's: a page cannot stop it.
+    // applies to it; the shell's Stop is CANCEL_RUN. A worker-built run is the person's: a page cannot stop it. A page-built
+    // run is its own tab's, as for INJECT_MESSAGE: an approved page on another tab knows the id from the run's events.
     if (message.type === "PAGE_CANCEL_RUN") {
         const runId = (message.payload as CancelRunPayload)?.runId;
-        if (!isWorkerRun(runId)) cancelBackgroundRun(runId);
+        const owner = runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId;
+        if (!isWorkerRun(runId) && owner != null && owner === sender.tab?.id) cancelBackgroundRun(runId);
         return;
     }
     if (message.type === "CANCEL_RUN") {

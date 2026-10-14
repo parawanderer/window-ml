@@ -103,6 +103,14 @@ the worker, and the page answers geometry only):
       "bounds"): #629. The same holds for a result that is not a string, a keyval's/elements' lists and an exec-out's
       notes, and the page texts folded in after the answer: a navigate's text verify and pageInfo, a page-hosted verify
       ring-back, and the page context joined to a worker-built run's system prompt (review-verify.test.mjs "size"): #629.
+- [x] A run-control payload a page sends (START_RUN, RESUME_RUN, INJECT_MESSAGE, PAGE_CANCEL_RUN) is checked whole at
+      the router before anything is registered (`runControlPayloadError`, `src/sw/run-payload-check.ts`): every field the
+      worker reads has the type it is read as, lists are bounded, no own `__proto__` key at any depth. Before, a START_RUN
+      without `tools` threw in `hostRun` after its controller, inbox, tab and snapshot were registered, answered the page
+      nothing and left them behind. A throw later in the setup now unwinds those registrations (`settle`), and a handler
+      that throws still answers the page. A START_RUN/RESUME_RUN naming a live run is refused (a second turn replaced the
+      controller the person's Stop reaches), and PAGE_CANCEL_RUN is bound to the run's tab (an approved page on another
+      tab stopped the run, or cancelled its open gate) (redteam-run-payload.test.mjs): #642.
 
 ## In progress
 
@@ -142,6 +150,8 @@ the worker, and the page answers geometry only):
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] Error text that reaches the page outside `forPage`: `VALUE_COLUMNS` errors and the `PYTHON_STREAM` and
       `SERVER_TOOL_STREAM` frames (content.ts). None is built from the config today.
+- [ ] A page's INJECT_MESSAGE (`a.say()`) still carries its own `origin` into the run's inbox, so a steer can read as typed
+      on an extension surface: page-turn attribution, Q2a in [SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md).
 - [ ] Site access slice 3 (`requestAccess`, the agent level and its start card; decided 2026-10-13, built in the PRs of
       [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md)), slice 4.
 

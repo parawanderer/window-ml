@@ -72,6 +72,18 @@ another tab holds, running or settled, is refused. `approvalRouting` stays the p
 run's gates are shown (`"external"` hides the buttons and waits on the worker-realm `__mlApprovals` channel), never
 whether they block.
 
+**A run-control payload is checked whole before anything reads it.** `route()` runs `runControlPayloadError`
+(`src/sw/run-payload-check.ts`) on every `RUN_CONTROL_TYPES` message first: each field the worker reads has the type it
+is read as (every `StartRunPayload` field but three left to their readers: `maxSteps` to `stepBudget`, `approvalRouting`,
+whose unknown value reads as "ui", and the rebuild's vision facts to `run-vision.ts`; RESUME_RUN's `runId` and `task`;
+INJECT_MESSAGE's and PAGE_CANCEL_RUN's), every list is bounded (`RUN_PAYLOAD_LIMITS`), a run id is a short token, and
+no object at any depth has an own `__proto__` key. A field it does not read is left alone, so a new field the run host
+reads goes into the checker with it. Behind it, `hostRun` undoes the turn's registrations (controller, inbox, tab,
+snapshot, turn) when its setup throws (`settle`), and the listener answers a page whose handler threw. A START_RUN or
+RESUME_RUN naming a run whose turn is live is refused (`startBackgroundRun`), so a second turn never replaces the
+controller the person's Stop reaches, and a PAGE_CANCEL_RUN acts only on a run its sender's tab owns, as INJECT_MESSAGE
+does.
+
 **A page's answer cannot carry a picture, a reply or a spend into a worker-built run.** For a run the worker built or
 was handed (`makeWorkerRun`, mid-turn included), the run host drops `image`, `imageLabel`, `images`, `feedback` and
 `subUsage` from every page envelope (`withoutPageVision`, `sw/worker-verify.ts`), so a page can neither show the model
