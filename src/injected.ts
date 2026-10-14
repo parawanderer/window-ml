@@ -37,7 +37,7 @@ import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
 import { agent } from "./ml/ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 import { mlSchema } from "./ml/ml-schema";
-import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
+import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-result";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
@@ -362,11 +362,8 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
                     // `.markdown` and `.table` for every caller (exec, a read-only survey, the fetch_url tool), so none
                     // re-derives them. Computed here in the page main world, which has a DOM; the cached copy carries it.
                     derivedFetchFields(r, { markdown: htmlToMarkdown, python: currentHasTool("python_exec") });
-                    // Cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated —
-                    // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`
-                    // returns different bytes for the same url, and letting it share the key would hand a later
-                    // reader the wrong document.
-                    if (r && r.ok && !credentials && !rendered && format === "markdown") mlFetchCache.set(key, cacheCopy(r));
+                    // Keyed by url ALONE: which reads may share that key is `fetchIsCacheable`'s rule (never as-you bytes).
+                    if (fetchIsCacheable(r, { credentials, rendered, format })) mlFetchCache.set(key, cacheCopy(r));
                     return r;
                 });
         },

@@ -14,7 +14,7 @@ import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
 import { fetchSheetCsv } from "./sw-fetch";
 import { tableFromDelimited } from "../table/table-data";
-import { derivedFetchFields, cacheCopy } from "../ml/fetch-result";
+import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "../ml/fetch-result";
 import { hintSession } from "../contract/contract-run";
 import { isCurrentPage } from "../dom/dom";
 import { fetchUrlFor } from "./sw-fetch-url";
@@ -204,8 +204,8 @@ function runMl(ctx: RunCtx): MlApi {
             const data = r.data;
             const md = data.type === "html" && typeof data.text === "string" && data.markdown === undefined ? await htmlToMarkdownOffscreen(data.text) : undefined;
             derivedFetchFields(data, { markdown: () => md, python: ctx.python });
-            // The page's cache rule: a successful uncredentialed, non-rendered, default-format read only.
-            if (data.ok && !credentials && !rendered && format === "markdown") ctx.cache.set(String(url), cacheCopy(data));
+            // The page's cache rule, the same function.
+            if (fetchIsCacheable(data, { credentials, rendered, format })) ctx.cache.set(String(url), cacheCopy(data));
             return data;
         },
         // No page here: python_exec's selector warning finds nothing (a send naming a selector goes to the page).

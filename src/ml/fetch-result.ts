@@ -55,6 +55,21 @@ function deepFreeze<T>(v: T): T {
 }
 
 /**
+ * Whether a fetch result goes into the read cache (the page's `mlFetchCache`, a worker-hosted run's own), keyed by URL
+ * alone. Never an as-you (`credentials`) or `rendered` read. In the default format any successful read; in
+ * `format: "html"` only a parsed table, because a data body never negotiates and comes back the same in either format,
+ * while an HTML page's bytes differ by format and must not share the URL's key. Without the table case a CSV fetched
+ * as `format: "html"` read as "not fetched here" to python_exec's `tables` one step later (glm-4.7-flash, 2026-10-14).
+ * @param r the result
+ * @param mode how it was fetched
+ * @returns true to cache it
+ */
+export function fetchIsCacheable(r: FetchResult | null | undefined, mode: { credentials: boolean; rendered: boolean; format: "markdown" | "html" }): boolean {
+    if (!r?.ok || mode.credentials || mode.rendered) return false;
+    return mode.format === "markdown" || !!r.table;
+}
+
+/**
  * The copy of a result a fetch cache keeps: frozen, so a read-only survey that writes to what it re-read (`r.markdown =
  * "…"`) cannot change what the next re-read shows as the site's content. A copy, because the caller of the fetch keeps
  * the original and may still add to it. The table facade is read-only by construction and is shared as it is.

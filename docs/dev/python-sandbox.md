@@ -29,7 +29,11 @@ single source (→ `df`) or a `{ varName: source }` map (→ each loaded under i
 can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, single-sourced in
 `python-env.ts` beside the prelude's reserved names). Each df is bound BOTH under its name AND in a
 `tables` dict — a model that mirrors the arg name and reaches for `tables['name']` just works
-(the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). Each source auto-dispatches by shape
+(the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). A map sent as a JSON
+STRING (`"{\"df\": \"https://…\"}"`, how glm-4.7-flash reads the schema's `oneOf`) is that map (`tablesMapFromJson`,
+dom.ts); the loader and the consent check both decode through it, or a sheet inside the string would skip its card. A
+path on the page's site (`/sales.csv`, `./x.csv`) is resolved against the page and read from the fetch cache like the
+absolute URL. Each source auto-dispatches by shape
 (`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
 case-preserving; col/rowspans or a non-table fall back to `pd.read_html(outerHTML)` with bs4).
 Before that fallback ships, `_resolveTable` **guards the cases read_html would choke on**: an
@@ -112,7 +116,8 @@ interception (PRELUDE, `python-runtime.ts`):** models reach for their pre-traini
 with the selector/name they passed — `Image.open('canvas#stage')`, `pd.read_csv('current')`,
 `pd.read_html('#sel')` — and the fs-less sandbox would just throw, burning a turn. The prelude
 patches `Image.open`/`pd.read_csv`/`pd.read_html` to return the pre-loaded `img`/`df` **when it's
-actually loaded** (never for a real file-like or a URL — a genuine http `read_csv` /
+actually loaded** (never for a real file-like or a URL — except the exact URL a table was loaded FROM, which is that
+table: re-reading what `tables` already fetched is the commonest first try — a genuine http `read_csv` /
 `Image.open(BytesIO)` passes through). Patched once (module attrs + `_`-prefixed originals survive
 RESET; funcs resolve `img`/`tables` from `globals()` each call → current-run data, no stale
 closure). And when that CAN'T resolve it — data preloaded but the code still errors trying to

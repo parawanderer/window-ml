@@ -119,6 +119,9 @@ if "_ml_orig_image_open" not in globals():
 if "_ml_orig_read_csv" not in globals():
     _ml_orig_read_csv = pd.read_csv
     def _ml_read_csv(_fp, *_a, **_k):
+        # The exact source a table was loaded from (a URL included) is that table: the sandbox has no network,
+        # and re-reading what \`tables\` already loaded is the commonest first try. Any other URL is not hijacked.
+        if isinstance(_fp, str) and _fp in (globals().get("tables") or {}): return globals()["tables"][_fp]
         if _ml_tableish(_fp):
             _t = _ml_pick_table(_fp)
             if _t is not None: return _t
@@ -127,6 +130,7 @@ if "_ml_orig_read_csv" not in globals():
 if "_ml_orig_read_html" not in globals():
     _ml_orig_read_html = pd.read_html
     def _ml_read_html(_fp, *_a, **_k):
+        if isinstance(_fp, str) and _fp in (globals().get("tables") or {}): return [globals()["tables"][_fp]]
         if _ml_tableish(_fp):
             _t = _ml_pick_table(_fp)
             if _t is not None: return [_t]   # read_html returns a LIST of tables

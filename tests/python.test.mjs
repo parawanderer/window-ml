@@ -366,6 +366,15 @@ test("loader: a real URL is NOT hijacked even with a table loaded (readonly → 
     assert.equal(r.ok, false, "'://' → not tableish → falls through to the real (blocked) loader");
 });
 
+test("loader: read_csv(<the URL a table was loaded FROM>) is that table, with no network (the commonest first try)", { skip }, async () => {
+    const url = "http://site.test/sales.csv";
+    const r = await pyRun(`return [int(pd.read_csv('${url}')['A'].sum()), int(pd.read_html('${url}')[0]['A'].sum())]`,
+        { tables: [{ ...rows("sales", ["A"], [[1], [2]]), alias: url }], hardened: true });
+    assert.deepEqual(r.value, [3, 3]);
+    const other = await pyRun("return pd.read_csv('http://site.test/other.csv')", { tables: [{ ...rows("sales", ["A"], [[1]]), alias: url }], hardened: true });
+    assert.equal(other.ok, false, "a URL that is not a loaded source still falls through to the blocked loader");
+});
+
 test("loader: patched loaders see the CURRENT run's data across runs (no stale closure)", { skip }, async () => {
     // Patched ONCE, but resolve img/tables from globals() each call — so run 2's data wins.
     const a = await pyRun("return int(pd.read_csv('current')['V'].sum())", { tables: [rows("df", ["V"], [[5]])] });
