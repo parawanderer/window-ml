@@ -310,10 +310,15 @@ const GLOBAL_MISS = /\b[\w$.]+ is not defined\b|Cannot read propert(?:y|ies) of 
  * EXEC'S WORLD — what a default world cost the run (the exec-world spec): its exec calls, the ones whose result says a
  * page global was missing, and how many of those the NEXT exec retried with `world: "page"`. `null` for a run with no
  * exec, so a report averages over the runs that used it.
+ *
+ * And how many went through the approval GATE (`gated`: an approval other than `readonly`) rather than being answered
+ * as a read-only survey (`readonly`). An isolated default sends page-reading surveys to the gate (#664: the dialect
+ * runs only in the page's world), so the isolated arm changes where exec runs AND how a survey is approved; this
+ * separates the two.
  */
 export function execWorld(events) {
     const execs = stepsOf(events).filter((s) => s.tool === "exec");
-    if (!execs.length) return { calls: null, misses: null, pageRetries: null };
+    if (!execs.length) return { calls: null, misses: null, pageRetries: null, readonly: null, gated: null };
     const text = (s) => { const v = s.modelResult ?? s.result ?? s.error ?? ""; return typeof v === "string" ? v : JSON.stringify(v); };
     let misses = 0, pageRetries = 0;
     execs.forEach((s, i) => {
@@ -321,7 +326,9 @@ export function execWorld(events) {
         misses++;
         if (execs[i + 1]?.arguments?.world === "page") pageRetries++;
     });
-    return { calls: execs.length, misses, pageRetries };
+    const readonly = execs.filter((s) => s.approval === "readonly").length;
+    const gated = execs.filter((s) => s.approval && s.approval !== "readonly").length;
+    return { calls: execs.length, misses, pageRetries, readonly, gated };
 }
 
 /**
@@ -502,6 +509,7 @@ export const COLUMNS = [
     { key: "recoveryRate", label: "recovery", about: "After a pointer fault, the share where the next step got it right instead of giving up or retyping.", agg: "spread", get: (m) => m.recovery.rate, digits: 2, good: "high" },
     { key: "execCalls", label: "exec", about: "Exec calls per run, over the runs that used exec at all.", agg: "spread", get: (m) => m.execWorld?.calls ?? null, digits: 1 },
     { key: "pageRetries", label: "page retry", about: "Exec results saying a page global was not defined that the next exec retried with world \"page\", per run that used exec. What an isolated default costs.", agg: "spread", get: (m) => m.execWorld?.pageRetries ?? null, digits: 2, good: "low" },
+    { key: "execGated", label: "exec gated", about: "Exec calls per run that went through the approval gate instead of being answered as a read-only survey, over the runs that used exec. An isolated default sends page-reading surveys to the gate.", agg: "spread", get: (m) => m.execWorld?.gated ?? null, digits: 1 },
     { key: "steps", label: "steps", about: "Agent steps (tool calls and answers) per run.", agg: "spread", get: (m) => m.steps, digits: 1 },
     { key: "tokens", label: "tokens", about: "Prompt plus completion tokens per run as the backend reported them, sub-calls included. Against the fake model these are its own chars/4 estimates.", agg: "spread", get: (m) => m.tokens.total, digits: 0, good: "low" },
     { key: "runMs", label: "secs", about: "Wall-clock seconds per run. With several jobs at once, runs share the machine and this stretches.", agg: "spread", get: (m) => m.runMs / 1000, digits: 1, good: "low" },

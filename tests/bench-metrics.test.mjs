@@ -502,13 +502,27 @@ test("execWorld: a missing page global retried with world \"page\" counts once; 
         ...step(4, "exec", { js: "window.__APP__?.cart" }, "undefined"),
         end("done"),
     ];
-    assert.deepEqual(execWorld(ev), { calls: 4, misses: 2, pageRetries: 1 });
+    assert.deepEqual(execWorld(ev), { calls: 4, misses: 2, pageRetries: 1, readonly: 0, gated: 0 });
 });
 
 test("execWorld: a run with no exec is blank, not zero, so a report averages over the runs that used it", () => {
     const ev = [start(), ...step(1, "findByText", { text: "x" }, "found"), end("done")];
-    assert.deepEqual(execWorld(ev), { calls: null, misses: null, pageRetries: null });
+    assert.deepEqual(execWorld(ev), { calls: null, misses: null, pageRetries: null, readonly: null, gated: null });
     const m = measureRun({ events: ev });
     assert.equal(COLUMNS.find((c) => c.key === "pageRetries").get(m), null);
     assert.equal(COLUMNS.find((c) => c.key === "execCalls").get({}), null, "a measurement stored before the metric existed reads blank");
+});
+
+test("execWorld: a survey answered as read-only is not gated; one the gate approved, or refused, is", () => {
+    const ev = [
+        start(),
+        ...step(1, "exec", { js: "document.title" }, "Ledger", { approval: "readonly" }),
+        ...step(2, "exec", { js: "document.title" }, "Ledger", { approval: "user" }),
+        ...step(3, "exec", { js: "document.title" }, "denied", { approval: "denied" }),
+        end("done"),
+    ];
+    const w = execWorld(ev);
+    assert.equal(w.readonly, 1);
+    assert.equal(w.gated, 2);
+    assert.equal(COLUMNS.find((c) => c.key === "execGated").get({ execWorld: w }), 2);
 });
