@@ -47,13 +47,16 @@ test("the card returns focus to the page element after an approval resolves", as
     expect(await activeId(page)).toBe("field");
 
     // One gated action (a mutating exec — requiresApproval, never auto-approved here). It doesn't touch #field's
-    // focus, so the ONLY thing that moves focus is the card borrowing it. approvalRouting:"both" keeps the UI
-    // (so the card shows + grabs focus) while also listing the gate on the SW channel (so we can read hash/seq).
+    // focus, so the ONLY thing that moves focus is the card borrowing it. The run is one the PERSON started (as the
+    // Commander does): only such a run's gate borrows focus, a site's never does (SITE_ACCESS_SLICE3.md, Q15).
+    // approvalRouting "both" keeps the UI (so the card shows + grabs focus) while also listing the gate on the SW
+    // channel (so we can read hash/seq).
     fake.setScript([
         { tool: "exec", args: { js: "document.title = 'RAN'; 'ok'" } },
         { content: "Done." },
     ]);
-    const runPromise = page.evaluate(() => window.ml.agent("set the title with exec", { env: false, approvalRouting: "both" }));
+    const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, page.url());
+    await ext.sw.evaluate(({ tabId }) => globalThis.__mlStartUserRunForTest(tabId, { task: "set the title with exec", surface: "hud" }, { approvalRouting: "both" }), { tabId });
 
     // The card mounts + borrows focus when the approval appears → focus leaves #field for the card host.
     await expect.poll(() => activeId(page), { timeout: 15000 }).not.toBe("field");
@@ -70,6 +73,23 @@ test("the card returns focus to the page element after an approval resolves", as
 
     // THE ASSERTION: focus is handed back to #field, so the run's next @focus/type would target the page.
     await expect.poll(() => activeId(page), { timeout: 15000 }).toBe("field");
+    await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(2);   // the second step answers "Done."
+});
 
-    await runPromise;   // the fake-LLM's second step answers "Done." — the run completes cleanly
+test("a gate of a run a SITE started takes no focus: Enter in the page's own field approves nothing (Q15)", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    await page.evaluate(() => { const i = Object.assign(document.createElement("input"), { id: "field" }); document.body.appendChild(i); i.focus(); });
+    const before = fake.calls().length;
+    fake.setScript([{ tool: "exec", args: { js: "document.title = 'RAN'; 'ok'" } }, { content: "Done." }]);
+    await page.evaluate(() => { window.ml.agent("set the title with exec", { env: false, approvalRouting: "both" }); });
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    await page.waitForTimeout(600);
+    expect(await activeId(page), "the site's gate took focus").toBe("field");
+    for (let i = 0; i < 5; i++) { await page.keyboard.press("Enter"); await page.waitForTimeout(80); }
+    expect(fake.calls().length - before, "Enter in the page approved the site's gate").toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    expect(gate?.tool, "the gate is still open").toBe("exec");
+    await ext.sw.evaluate((k) => globalThis.__mlApprovals.resolve(k, false), gate.key);
 });

@@ -131,7 +131,17 @@ export interface Session {
     // run()'s task, and a mid-run say() — is a `say` (all rendered identically as "you"); every turn's final
     // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves
     // them with the turn step-groups in order. (`summary` still holds the LATEST answer for the title/status.)
-    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean; display?: import("../contract/contract-run").PromptDisplay }[];
+    /** A message in the conversation after the task. `site`: a turn the SITE sent, shown with its name (Q2a). */
+    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean; display?: import("../contract/contract-run").PromptDisplay; site?: string }[];
+    /** The site that started this run, when a site did (docs/spec/SITE_ACCESS_SLICE3.md): its first task is shown with
+     *  the site's name, and its tool gates take no focus and no Enter of their own (Q15). Written only by the worker. */
+    site?: string;
+    /** A start card the worker raised for this run, and how it ended. `askOnly`: the session exists only for the card. */
+    startAsk?: { ask: import("../contract/contract-agent").StartAsk; outcome?: "allowed" | "denied" | "expired"; ts: number; askOnly?: boolean };
+    /** The site ended its turn waiting for the person (Q2b): its prompt, shown labelled over the reply box. */
+    siteWait?: { prompt: string; site: string; ts: number };
+    /** Quiet lines in the step list the worker wrote (Q17). */
+    notes?: { text: string; ts: number; atStep: number }[];
     answers?: { text: string; ts: number; atStep: number; status: Status; hitCap?: boolean; cancelled?: boolean; error?: string }[];
 }
 

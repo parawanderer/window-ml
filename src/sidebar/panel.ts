@@ -116,6 +116,11 @@ window.addEventListener("message", (e: MessageEvent) => {
         void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: approvalPayload(d) }).catch(() => {});
         return;
     }
+    // A start card's answer, from the real panel-app iframe (the e.source check above): forwarded as SET_START_APPROVAL.
+    if (d.__mlSidebarApp === "startDecision" && typeof d.requestId === "string" && (d.decision === "allow" || d.decision === "always" || d.decision === "deny")) {
+        void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: d.requestId, decision: d.decision } }).catch(() => {});
+        return;
+    }
     if (typeof d.__mlLightbox === "string") { showLightbox(d.__mlLightbox); return; }
     // Hover-highlight reverse channel: the app asks to outline a page element/point on hover. The panel
     // can't touch the inspected page, so relay to the background → that tab's content-script shell, which

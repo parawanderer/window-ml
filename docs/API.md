@@ -361,6 +361,16 @@ when idle, appends to history for the next `run()`. `run(task?)` starts a turn
 same session. `res.transcript` accumulates the whole conversation's actions and
 replies.
 
+**Where the loop runs.** Without `host`, the extension hosts the loop, so its approval gates are the extension's own
+and can't be answered by the page. That needs your site to be allowed to start agents (below, "Which sites may use
+`window.ml`"); a site that isn't gets a refusal naming `host: "page"`. `ml.agent(task, { host: "page" })` runs the
+loop in the page instead: plain `window.ml` use, whose gates are your own `approve` and which gets nothing the page
+couldn't do itself (no server tools). A site on the self-approval list keeps its own loop when no debug surface is on.
+For a run the extension hosts, a later turn continues the extension's copy of the history, not `a.messages`: what you
+add with `say()` while idle is sent as part of the next turn, and a first turn can't carry a history of its own (a
+`fork()`'s is refused). `a.waitForPerson(prompt)` ends the page's part of a turn and hands the conversation to you:
+the run stops and its prompt shows, labelled with the site's name, above the reply box.
+
 **Resume by hash.** When you only have the hash — copied from the debug sidebar,
 or `res.hash`/`a.hash` from an earlier call — **`ml.resumeAgent(hash)`** hands you
 the live handle back (the agent analogue of `ml.resumeChat`), so you can read its
@@ -474,11 +484,22 @@ because the extension builds them, not the page; the page they are on is lent no
 "Sites that approve their own actions" (DevTools Settings → Permissions, not the popup) may answer its own approval
 prompts, which is the strongest grant there is: add only a site you control. That list is by origin like the rest: a
 bare host means `https://` on the default port, loopback included, and `http://` or another port is written out as its
-own origin; an install's older list of hosts became their `https://` origins. Starting an agent is a separate
-permission per site (Off, Ask each time, Always, Denied), set in the same Settings section; it is stored and shown, and
-not enforced yet. Not built yet: a site asking for access with `ml.requestAccess()`, and the card that asks you
-before a site's agent starts. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference for the
-remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
+own origin; an install's older list of hosts became their `https://` origins. Not built yet: a site asking for access
+with `ml.requestAccess()`. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
+for the remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
+
+**Starting agents.** Starting an agent is a second permission per site (Off, Ask each time, Always, Denied), set in
+DevTools Settings → Permissions; a site you allow starts at Off, and one allowed before this permission existed at Ask
+each time. With "Ask each time", every `ml.agent` or `ml.createAgent` run the site starts first shows a card with the
+site's task in its own words, the tools, the model and the step budget, and nothing runs until you allow it. Allowing
+covers that conversation's later messages from the site up to the page turn budget on the card; past it the site asks
+to keep going. Turns you drive yourself (a reply, Continue) are yours and never count against it. The model reads a
+turn the site sent as the site's ("Message from the page (origin): ..."), never as yours, and the transcript shows it
+with the site's name. "Always allow agents" skips the card for that site. A site may always cancel its own run. A page
+that a running agent opened by navigating never starts an agent; its attempt shows quietly in the run's steps.
+`ml.agent({ host: "page" })` runs the loop in the page instead: it is plain `window.ml` use and gets no server tools.
+The card shows on the page's corner card, the overlay sidebar and the DevTools panel; the chat page and the phone
+cannot show it yet.
 
 **What an allowed page still owns.** `window.ml` lives in the page's *main world* (that's the point: you call it
 from the console and userscripts), so a *hostile* page you have allowed can manipulate it: it can override

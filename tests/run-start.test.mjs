@@ -425,7 +425,8 @@ test("a run a page built, followed up from a tab now on an unapproved site, is d
     await flush(20);
     const chats = bg.calls.filter((c) => c.url.includes("/chat/completions"));
     assert.equal(chats.length, 2);
-    assert.deepEqual(chats[1].body.messages.filter((m) => m.role === "user").map((m) => m.content), ["first", "and then this"]);
+    // The page's first task is marked as the page's (SITE_ACCESS_SLICE3.md, Q2a); the person's follow-up is theirs.
+    assert.deepEqual(chats[1].body.messages.filter((m) => m.role === "user").map((m) => m.content), ["Message from the page (https://builder.example): first", "and then this"]);
 });
 
 // --- what a page may add to a run the worker built (attack 16) ---

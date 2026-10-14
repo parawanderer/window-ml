@@ -37,6 +37,8 @@ import { CALL_TITLE } from "../../tools/tool-params";
 import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
 import { deepestUserLine } from "../../python/py-format";
+import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
+import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
@@ -765,13 +767,14 @@ export function SteerSeen({ seen }: { seen: boolean }) {
 // All render as "you"; a mid-run steer additionally carries a `steer` delivery indicator (queued/seen).
 // With a `display` (context was folded into `text`), it shows what was typed and the attachment, and a
 // rendered/raw switch to the exact `text` the model got. Without one, `text` IS what was typed: no switch.
-export const UserBubble = ({ text, ts, images, steer, display }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean }; display?: PromptDisplay }) => {
+export const UserBubble = ({ text, ts, images, steer, display, site }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean }; display?: PromptDisplay; site?: string }) => {
     const [raw, setRaw] = useState(false);
     const shown = display && !raw ? display.typed : text;
     return (
         <>
-            <div class={`msg user${shown || display ? "" : " no-text"}`}>
-                <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
+            <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}`}>
+                {/* A message a SITE sent carries its name, never "you" (docs/spec/SITE_ACCESS_SLICE3.md, Q2a). */}
+                <div class="mrow"><span class="who">{site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
                 {shown ? <UserText text={shown} /> : null}
             </div>
             <SentImages images={images} />
@@ -978,7 +981,7 @@ export function AgentRunView({ s }: { s: Session }) {
     const r = rev.value;
     const runLive = services().stillLive(s.hash);
     const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
-        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} display={s.taskDisplay} /> },
+        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} display={s.taskDisplay} site={s.site} /> },
         // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
         // "exec" eight times, and the busy view is the developer's whole trace and keeps all of them. The fold only
         // happens once the streak has ENDED, so a live run is never collapsing out from under you.
@@ -1008,7 +1011,9 @@ export function AgentRunView({ s }: { s: Session }) {
             el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
         })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} /> })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} site={sy.site} /> })),
+        // The worker's quiet lines (a start a page this run opened asked for, Q17).
+        ...(s.notes || []).map((n, i) => ({ pos: n.atStep + 0.5, ts: n.ts, el: <div key={`n${i}`} class="arun-note">{n.text}</div> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     // Only the newest items are drawn: a long run costs as much DOM as it has steps, and a step with a screenshot or
     // a table costs several times a chat turn (transcript-window.tsx).
@@ -1022,6 +1027,8 @@ export function AgentRunView({ s }: { s: Session }) {
             <EarlierInThread sessionKey={s.hash} hidden={hidden} />
             {drawn.map(it => it.el)}
             {s.liveStream && runLive ? <LiveStream ls={s.liveStream} s={s} /> : null}
+            <StartAskCard s={s} />
+            <SiteWaitPrompt s={s} />
             {/* THE RUN SAYS HOW IT ENDED, or the transcript simply stops. A run that died without a terminal event
                 leaves nothing after its last step, so the page went on claiming it was running — and when the
                 runtime settled it, the only place that said so was the row in the list. One of them was a history

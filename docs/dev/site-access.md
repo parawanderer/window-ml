@@ -2,8 +2,8 @@
 
 The design and its reasons are `docs/spec/SITE_ACCESS.md`; what a page may see of window.ml at all is `docs/spec/SITE_PRESENCE.md`. This is how the built parts work and where to change them.
 Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md):
-its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below; `requestAccess`,
-the badge, and the agent level's enforcement and start card are not built yet.
+its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below, and its PR 2
+(the agent level enforced, and the start card) in "Starting agents"; `requestAccess` and the badge are not built yet.
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 
@@ -188,8 +188,8 @@ still wins). An edit the rules do not know changes nothing, and the worker refus
 the browser writes it. Edits and the migration's writes run one at a time (`serially` in `sw-site-access.ts`), so two
 editors writing at once cannot lose either change, and an edit is refused while the migration cannot complete.
 
-Nothing enforces the agent level yet: it is stored, shown and edited, and the start card (PR 2 of the slice 3
-reference) is what will read it.
+The agent level is enforced on every START_RUN, RESUME_RUN and INJECT_MESSAGE a page sends ("Starting agents",
+below).
 
 Edits arrive as `SITE_ACCESS` messages, answered for extension pages only (`isExtensionSender`), with the lists, and for
 an `origin` its `decision` (`use`), its `levels`, and `implied` when only the self-approval list allows it. Two editors:
@@ -238,6 +238,86 @@ areas, and no longer the sync area. The table over sender shapes x readers is `t
 notice in `tests/sidebar-settings.test.js`, drawn from the real bundle's answers; the popup in
 `tests/popup-whitelist.test.js`. That first test also pins every line of `src/` that names the old setting, so a new
 reader of it fails there.
+
+## Starting agents
+
+A site that may use window.ml starts, continues and steers the extension's agent only at its agent level
+([../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md), PR 2). The rules are pure (`src/agent-start.ts`: the
+1.7 refusals, what an approval is bound to, the card's lines, how a page-sent turn is marked); the worker's half is
+`src/sw/sw-start-approval.ts`; the card is `src/sidebar/card/card-start.tsx` (sidebar.md, "The start card").
+
+**At the router.** `AGENT_LEVEL_TYPES` (page-relay.ts) is START_RUN, RESUME_RUN and INJECT_MESSAGE; PAGE_CANCEL_RUN
+stays allowed. After `pageRefusal`, the router applies the navigation rule (below), then `agentRefusal`
+(sw-site-access.ts), which reads `levelsFor(...).agents` from `sender` alone: `off` and `denied` are refused with the
+1.7 text (a START_RUN's names `host: "page"`, since `ml.agent` sends it), `ask` and `always` go on.
+
+**At the run host.** `startBackgroundRun` (and `pageInject`, sw-page-turn.ts, for a steer) asks `gatePageTurn`, which
+reads the level again and decides each turn a page sends:
+
+- `always`: the turn rides. A record is still kept (scope `always`), so a later turn knows the run's site and tab, and
+  a site turned back to "ask" is asked again for it.
+- `ask`: a card when the run has no approval (or one that rode on "always"); a `change` card when a START_RUN adds a
+  gated builtin or a server tool, changes the model, or changes the site's instructions (Q3, `widening`); a `more` card
+  when a page-sent turn would pass the page turn budget (`PAGE_TURN_BUDGET`, 10). Otherwise the turn rides and a
+  page-sent one is counted.
+- An approval (`ml_start_approved`, session storage) is written before the turn runs, bound to the run id, its tab, its
+  origin, the gated builtins, the server tools, the resolved model and a digest of the site's instructions. Another
+  tab, or another origin on the same tab, is refused. A revoke of the site or its level drops every approval of that
+  origin at the `storage.onChanged` event and again at worker start (`dropRevoked`), and re-approving does not bring
+  them back.
+- A first turn carrying `resumeMessages` is refused (Q4). A later turn's history is the worker's (`bgRuns`), never the
+  page's copy; the page sends what it added since (an idle `say()`) as part of the turn's text. None held after an
+  eviction is an empty history, which still continues the session.
+- The asks: one waiting per origin per tab, `START_ASKS_MAX` (3) across the browser, 3 minutes each (a test shortens it
+  through a worker global), and three denials or timeouts quiet an origin for the browser session or until its level
+  changes (`ml_start_denials`). An ask is in memory only: an eviction loses it, which refuses the start.
+- The decision is `SET_START_APPROVAL`, sent by the shell for a message from the card's frame over its private port, or
+  by the DevTools panel. It is in neither `HANDLE_MAP` nor `PAGE_RELAYED_EXTRA`, a shell's answer counts only for an ask
+  on its own tab, and an answer for an ask the worker no longer holds changes nothing. The ask's id reaches only the
+  worker's surfaces: `ML_DEBUG_TO_PAGE` to the shell and the DevTools port, never the session index, the replay buffer
+  or `ml.__events()`.
+
+**What the card shows** is the worker's snapshot (`StartAsk`): the origin from `sender`, the task verbatim, the site's
+own instructions (`siteInstructions`: what is left of the page-built system prompt once the extension's preamble,
+every clause `composeSystemPrompt` can add for the toolset, the notes marker and a page context block made only of
+`pageContext()`'s lines are removed), the tool lines from the registry's `cardLine` (a site tool that takes a builtin's
+name gets the builtin's line; the site's own tools are counted), the model the worker resolves, and the budgets.
+
+**Whose turn it is (Q2, Q2a).** A turn the page sent reaches the model as "Message from the page ({origin}): ...", the
+first task included, and the transcript shows it with the site's name (`agent-site-say`, never `agent-say`). The page's
+own `agent-say` for a run the worker hosts is no longer admitted (`pageMayWrite`), so it cannot draw its message as the
+person's. A message the PERSON sends through the extension for a page-built run is relayed by the page, as its handle
+lives there: `userRunAction` notes it first (`notePersonTurn`), and the page's copy of exactly that text is the
+person's turn, unmarked and not counted (`takePersonTurn`, once per note, two minutes). A page that swaps the text gets
+a page turn. INJECT_MESSAGE's `origin` (where a message was typed) is never read from a page.
+
+**Waiting for the person (Q2b).** `handle.waitForPerson(prompt)` sends INJECT_MESSAGE with `waitForPerson`: for a run
+this site's approval covers, the worker stops the run and fans `agent-wait`, and the reply box opens under the prompt,
+labelled "The site asks: ({origin})". What the person types is their turn, as above.
+
+**A page a running agent opened (Q17).** `openedByRun` answers for a sender's tab and document. While a run is live on
+the tab, any document other than the one it started on (a run this worker did not see start, resumed after an
+eviction, has no start page at all) may not start, continue or steer an agent. After it ends, a document the tab
+committed while it was live still starts no new agent; only that run's own next turn is taken from it, and its approval
+decides it like any page turn (a page-built run that navigated within its site is continued from the page it is on).
+The person's own message, relayed by such a page (`personTurnWaiting`), is let through. A refused page's START_RUN is
+recorded (`site.notStarted`, for the badge) and drawn as one quiet `agent-note` line in the driving run's steps, with no
+card and no model call; nothing is added to the driving run's messages.
+
+**Revoked while it runs (Q9).** A site that may still use window.ml but lost the agent level has its live runs
+cancelled (`cancelBackgroundRun`), and the result's summary says "Cancelled: this site may no longer start agents.". A
+site revoked whole keeps #621's hand-over to the worker.
+
+**Where the card shows (Q7).** The tab's HUD card, the overlay sidebar and the DevTools panel. Not the chat page and not
+the phone: the start ask is a live notice that never enters the session index, which is all the chat page reads, and
+showing it there would need the ask in the index and the hub's gate protocol. The chat page's mode is talking to the
+model, while a site's agent helps with the page the person is looking at, so there is no natural place for a site's
+start ask there yet. The external `__mlApprovals` channel never sees a start ask.
+
+**Where the loop runs (Q1).** `ml.agent({ host: "page" })` runs the loop in the page, as plain window.ml use: its gates
+are the caller's `approve`, its model calls `FETCH_LLM`, and a server tool's call is refused unless the site
+self-approves (`SERVER_TOOL_EXEC`'s own rule). Without `host`, the run is the worker's, except a self-approving site
+with no debug surface on, which keeps its own loop as before (its `approve` is what the list is for).
 
 ## The page's cancel
 
@@ -570,7 +650,14 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 - `tests/site-access.test.mjs`: the pure rules, `levelsFor` and `applyEdit` over every (use x agents x selfApprove)
   state, and the migration enumerated.
 - `tests/site-access-upgrade.test.mjs`: the upgrade from the old lists and sync whitelist, against the bundle.
-- `tests/event-admission.test.mjs`: `pageMayWrite` over every event kind the contract defines, for each claim.
+- `tests/event-admission.test.mjs`: `pageMayWrite` over every event kind the contract defines, for each claim; the
+  worker-only notices of a site's agent refused from a page for every claim.
+- `tests/redteam-agent-level.test.mjs`: the agent level and the start card against the bundle: each level's refusals,
+  the card's deny, timeout and eviction with zero model requests, a handle's later turns, the page turn budget, whose
+  turn it is, waiting for the person, widening, the binding, a revoke, the first turn's history, the navigation rule,
+  the floods, the decision message, the upgrade and Q9. `tests/agent-start.test.mjs`: the pure rules, with
+  `siteInstructions` against every composition of the stock prompt. `tests/sidebar-start-card.test.js`: the card in
+  jsdom. `tests/e2e/site-access.spec.mjs`, attack 19: the card in a real browser.
 - `tests/run-start.test.mjs`, section "what a page may add to a run the worker built": the worker's half, against the
   bundle.
 - `tests/run-start.test.mjs`, section "where a read-only survey of a worker-built run is evaluated": the routing and

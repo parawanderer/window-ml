@@ -5,6 +5,10 @@ changed rather than loaded into every session. AGENTS.md keeps the repository's 
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
 
+**A run a site starts (START_RUN from a page) needs the site's agent level** and, on "ask", the person's answer on the
+start card before anything runs; its turns reach the model marked as the page's, and a later turn continues the
+worker's history, not the page's copy (site-access.md, "Starting agents").
+
 **Which tools are the extension's own: the tool registry.** Every builtin tool is declared once with `defineBuiltinTool`
 in `tool-registry.ts`: its name, the files that hold its factory, whether the worker always gates it (`gated`), whether
 its output can be kept as an `@tool:` pointer (`citable`), where a run the worker built executes it (`realm`: `page`,

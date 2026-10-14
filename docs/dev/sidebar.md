@@ -181,6 +181,36 @@ every closed root and with none, and outlines an element only where that cannot 
 acts on; otherwise it outlines nothing. A same-origin frame's closed roots are never read, as in the main world.
 A future page-input channel would follow the pattern.
 
+## The start card
+
+A site asking to start its agent, keep it going past its page turn budget, or widen what it may do
+(`src/sidebar/card/card-start.tsx`; the worker's half and the rules are site-access.md, "Starting agents"). One
+component, `StartAskBody` (heading, the site's task quoted, its instructions behind Show) and `StartAskFoot` (the tool
+lines, model, budgets and buttons), drawn by the HUD card (`hud-card.tsx`, the body in the scrolling area and the foot
+in the fixed footer, so a long quote cannot push the buttons away) and by the transcript (`StartAskCard` at the end of
+`AgentRunView`, for the overlay and the DevTools panel). A surface without `services().answerStart` (the chat page)
+draws nothing.
+
+- It arrives as the worker-only `agent-start-ask` notice (contract-debug.ts `SiteRunEvent`) and leaves on
+  `agent-start-decided`; the reducer makes a session for an ask that has none yet (an off-mode start before anything
+  ran) and drops it if the start is denied. `pageMayWrite` refuses every worker-only kind from a page, whatever the
+  claim, so a page can neither draw a card nor answer one.
+- The site's words are a `<pre>` of text with bidi and zero-width characters made visible, folded at 12 lines. Every
+  other line is the worker's.
+- No focus, no key: the card never asks the shell for focus and has no Enter or Escape. Its buttons are disabled and
+  blank for `START_ARM_MS` (1 s) after it appears or its request changes, with no tooltip meanwhile.
+- On the HUD card an Allow is taken only while nothing covers it: a fresh IntersectionObserver v2 (`trackVisibility`)
+  at the click (`uncoveredNow`); one kept from the first paint is never told again. Chrome reports a cross-process
+  frame covered when anything overlaps it, its own container's frost included, so while a start card is up the app asks
+  the shell for a solid container with no resize handles (`__mlSidebarCardSolid`, `data-solid`). The overlay sidebar
+  is translucent and overlapped by its own tab, so the check is not applied there (security-audit.md).
+- A start card waits behind an open tool gate of another run on the HUD (`selectedRun` prefers a gate), and the head
+  counts the asks waiting ("1 more waiting").
+- A run a site started is marked by the worker's `agent-site` notice (`Session.site`): its task and its page-sent turns
+  (`agent-site-say`) show the site's host where a person's message says "you", and its tool gates take no focus and no
+  Enter shortcut of their own (Q15). A site's `agent-wait` puts its prompt, labelled "The site asks: ({origin})", over
+  the reply box (`SiteWaitPrompt`); an `agent-note` is one dim line in the step list.
+
 ## Traps
 
 - **The app talks to its host only through `parent-channel.ts`** (`toHost`, `onHostMessage`), never

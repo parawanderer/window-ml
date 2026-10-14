@@ -744,7 +744,7 @@ test("settings search: Escape in the box clears it", async () => {
 
 /** A worker over `storage` (the old layout or the new), and a Settings world whose SITE_ACCESS it answers. */
 async function settingsOverWorker({ config = {}, local = {} } = {}) {
-    const bg = loadBackground({ config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", ...config }, local, siteGate: true });
+    const bg = loadBackground({ config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", ...config }, local, siteGate: true, siteAgents: null });
     const w = await loadSidebarWorld({ siteAccess: (payload) => bg.send({ type: "SITE_ACCESS", payload }, { url: "chrome-extension://test/sidebar.html" }) });
     // One browser's storage: what the worker writes reaches every open extension page's storage.onChanged, as Chrome does.
     bg.context.chrome.storage.onChanged.addListener((changes, area) => { for (const fn of [...w.changeListeners]) fn(JSON.parse(JSON.stringify(changes)), area); });

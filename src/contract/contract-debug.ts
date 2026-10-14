@@ -8,7 +8,7 @@
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
 import type { JsonSchema } from "../contract";
 import type { ExtendProfile, NeutralMessage, TokenUsage, GenPhase } from "./contract-chat";
-import type { RemoteToolTarget, RemoteTiming, PersistGrant, ReusedGrant } from "./contract-agent";
+import type { RemoteToolTarget, RemoteTiming, PersistGrant, ReusedGrant, StartAsk } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "./contract-render";
 
 /** Groups turns of one createChat conversation; `turn` is the 0-based index. */
@@ -336,6 +336,31 @@ export interface DebugSessionResumed extends DebugBase {
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError | DebugChatStream
     | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn
     | DebugSessionResumed;
+
+/** A site asks the person to start, widen or keep driving its agent (docs/spec/SITE_ACCESS_SLICE3.md 1.1): the start
+ *  card. Worker-only: a page may never write it (event-admission.ts `WORKER_ONLY_KINDS`). */
+export interface DebugStartAsk extends DebugBase { kind: "agent-start-ask"; ask: StartAsk; }
+
+/** A start ask was answered, or will never be: the card clears, or shows "expired". */
+export interface DebugStartDecided extends DebugBase { kind: "agent-start-decided"; requestId: string; outcome: "allowed" | "denied" | "expired"; }
+
+/** This run was started by a site (`site` is its origin): its page-sent turns carry that name, and its tool gates take no
+ *  focus and no Enter shortcut of their own (Q15). */
+export interface DebugAgentSite extends DebugBase { kind: "agent-site"; site: string; }
+
+/** The site ended its turn waiting for the person (Q2b): the reply box opens under its prompt, labelled as the site's. */
+export interface DebugAgentWait extends DebugBase { kind: "agent-wait"; prompt: string; site: string; }
+
+/** A page-sent turn of a site's run, shown with the site's name (Q2a). */
+export interface DebugAgentSiteSay extends DebugBase { kind: "agent-site-say"; text: string; site: string; sayId?: string; }
+
+/** One quiet line in a run's step list, written by the worker: a start a page this run opened asked for (Q17). */
+export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: string; site?: string; }
+
+/** The events only the worker writes about a site's agent. Kept out of `MlDebugEvent`: they are live notices for the
+ *  surfaces that show the run (the HUD card, the overlay, the DevTools panel), never kept in the session index or an
+ *  export. */
+export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentWait | DebugAgentSiteSay | DebugAgentNote;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

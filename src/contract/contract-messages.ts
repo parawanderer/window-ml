@@ -276,6 +276,9 @@ export interface ResumeRunPayload {
 export interface InjectMessagePayload {
     runId: string;
     text: string;
+    /** The page ends its turn waiting for the person (`handle.waitForPerson`): the run stops and this prompt is shown,
+     *  labelled as the site's, above the reply box. `text` is then empty. */
+    waitForPerson?: string;
     /** A stable id for this steer message, minted page-side, so the SW can fan an `agent-say-seen`
      *  event (the "seen" indicator) keyed to the same bubble when the loop actually drains it. */
     sayId?: string;

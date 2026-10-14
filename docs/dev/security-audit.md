@@ -93,7 +93,20 @@ the worker, and the page answers geometry only):
       an agent level in storage (`ml_site_agents`, an install's allowed origins at "ask"), which no page-started type
       can write (`SITE_ACCESS` stays extension-only, red-team (f)). The upgrade is a fixture against the bundle
       (site-access-upgrade.test.mjs); http://host of an old whitelisted host stays untrusted for `CDP_CLICK` and
-      `pageApprovalAllowed`. The level is not enforced yet (PR 2).
+      `pageApprovalAllowed`. The level is enforced since PR 2 (below).
+- [x] Site access slice 3, PR 2: the agent level is enforced on a page's START_RUN, RESUME_RUN and INJECT_MESSAGE
+      (`AGENT_LEVEL_TYPES`, `agentRefusal`); "ask" raises the start card before anything runs, and its approval is bound
+      to the run's tab, origin, gated tools, server tools, model and instructions (a widening asks again), with a page
+      turn budget a page-sent turn draws from and a person's turn never does. A page-sent turn reaches the model marked
+      as the page's, and a page can no longer draw its message as the person's (`agent-say` from a page is refused for a
+      hosted run; the worker writes the site's turns as `agent-site-say`). A first turn's page-written history is
+      refused and a later turn's is ignored (the worker's is used). A page a running agent opened starts nothing (Q17). A
+      revoke of the level cancels the site's live runs (Q9). A page's INJECT_MESSAGE no longer carries its own
+      `origin` into the run's inbox (the item #642 left open). The decision (`SET_START_APPROVAL`) is extension-only, the
+      ask never reaches `__mlApprovals` or `ml.__events()`, and the card has no focus, no key, a 1 s arming delay and,
+      on the HUD card, an occlusion check (redteam-agent-level.test.mjs, agent-start.test.mjs,
+      sidebar-start-card.test.js, site-access.spec.mjs attack 19). The tool gates of a page-started run take no focus
+      and no Enter of their own (Q15).
 - [x] A page's answer to a delegated call is held to the caps the worker applies to page data it reads itself (owner
       decision 2026-10-13: `PAGE_TABLE_CAPS`, one constant with `pageRead`), for every run whose loop is in the worker
       (`capPageAnswer` in `toPage`): a table is cut to fit with its source's row count kept, a text or picture over 16M
@@ -185,17 +198,19 @@ the worker, and the page answers geometry only):
       - [ ] A page element put in the top layer from a CLOSED shadow root of the page's, or whose `toggle` event a
             page listener added before the content script loaded stops, is not noticed until something else asks for a
             raise. It paints over our UI with
-            `pointer-events: none` and the clicks reach ours (clickjacking the card). Proposed: an occlusion check on
-            the approval controls (IntersectionObserver v2 `trackVisibility`), refusing a click while they are covered.
+            `pointer-events: none` and the clicks reach ours (clickjacking the card). The start card's Allow on the HUD
+            card refuses a click while covered (IntersectionObserver v2 `trackVisibility`, the container solid while it
+            asks; site-access.spec.mjs attack 19, a page re-opening its overlay faster than the raise budget). Still
+            open: the tool gates' Approve, and the start card in the overlay sidebar, whose translucent panel and tab
+            Chrome reports as covering it whatever the page does.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only, drawn as text;
       pictures are dropped since #626).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] Error text that reaches the page outside `forPage`: `VALUE_COLUMNS` errors and the `PYTHON_STREAM` and
       `SERVER_TOOL_STREAM` frames (content.ts). None is built from the config today.
-- [ ] A page's INJECT_MESSAGE (`a.say()`) still carries its own `origin` into the run's inbox, so a steer can read as typed
-      on an extension surface: page-turn attribution, Q2a in [SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md).
-- [ ] Site access slice 3 (`requestAccess`, the agent level and its start card; decided 2026-10-13, built in the PRs of
-      [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md)), slice 4.
+- [ ] Site access slice 3 (`requestAccess`, the badge and the popup; decided 2026-10-13, built in the PRs of
+      [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md); the agent level and its start card are PR 2,
+      above), slice 4.
 
 ## The plan to get to "thoroughly investigated"
 

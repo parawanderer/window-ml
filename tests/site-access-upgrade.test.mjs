@@ -22,7 +22,7 @@ const OLD = {
 
 /** A worker started over the old storage. */
 const upgraded = (extra = {}) => loadBackground({
-    config: baseConfig(structuredClone(OLD.sync)), local: { ...structuredClone(OLD.local), ...(extra.local || {}) }, siteGate: true, onFetch, ...(extra.opts || {}),
+    config: baseConfig(structuredClone(OLD.sync)), local: { ...structuredClone(OLD.local), ...(extra.local || {}) }, siteGate: true, siteAgents: null, onFetch, ...(extra.opts || {}),
 });
 /** A value from the worker's realm as plain data, so it compares by structure. */
 const plain = (x) => JSON.parse(JSON.stringify(x ?? null));
@@ -86,14 +86,14 @@ test("UPGRADE: a restart after the upgrade migrates nothing again: a level the p
     await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "agents", origin: "https://a.test", level: "off" } } }, SETTINGS);
     await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "selfApprove", origin: "https://x.test", on: false } } }, SETTINGS);
     // A worker restart over the same storage, with an older build on another machine syncing a host in meanwhile.
-    const again = loadBackground({ config: { ...bg.stored, pageApprovalDomains: ["x.test", "y.test"] }, local: structuredClone(bg.localStore), siteGate: true, onFetch });
+    const again = loadBackground({ config: { ...bg.stored, pageApprovalDomains: ["x.test", "y.test"] }, local: structuredClone(bg.localStore), siteGate: true, siteAgents: null, siteAgents: null, onFetch });
     assert.deepEqual(await levels(again, "https://a.test"), { use: "always", agents: "off", selfApprove: false });
     assert.deepEqual(await levels(again, "https://x.test"), { use: "unknown", agents: "off", selfApprove: false });
     assert.deepEqual(await levels(again, "https://y.test"), { use: "unknown", agents: "off", selfApprove: false });
 });
 
 test("UPGRADE: a fresh install migrates to an empty schema 2 and allows nothing", async () => {
-    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch });
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, siteAgents: null, onFetch });
     assert.match((await chat(bg, "https://a.test/")).error, /not approved/);
     assert.equal(bg.localStore.ml_site_schema, 2);
     assert.deepEqual(bg.localStore.ml_site_selfapprove ?? [], []);
@@ -102,7 +102,7 @@ test("UPGRADE: a fresh install migrates to an empty schema 2 and allows nothing"
 // --- the worker's writes: one at a time, a failed migration, an edit during it ---
 
 test("S3: two edits sent together both land, a denial included", async () => {
-    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch, local: { ml_site_schema: 2, ml_site_always: ["https://a.test", "https://b.test", "https://c.test"], ml_site_agents: { "https://a.test": "ask", "https://b.test": "ask" } } });
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, siteAgents: null, onFetch, local: { ml_site_schema: 2, ml_site_always: ["https://a.test", "https://b.test", "https://c.test"], ml_site_agents: { "https://a.test": "ask", "https://b.test": "ask" } } });
     const edit = (e) => bg.send({ type: "SITE_ACCESS", payload: { edit: e } }, SETTINGS);
     await Promise.all([edit({ op: "agents", origin: "https://a.test", level: "denied" }), edit({ op: "revoke", origin: "https://b.test" }), edit({ op: "deny", origin: "https://c.test" }), edit({ op: "allow", origin: "https://d.test", scope: "always" })]);
     assert.deepEqual(await levels(bg, "https://a.test"), { use: "always", agents: "denied", selfApprove: false });
@@ -128,7 +128,7 @@ test("UPGRADE: a migration whose write fails leaves no self-approval and no agen
     assert.equal((await chat(bg, "https://x.test/")).data, "ok");
     assert.equal(bg.localStore.ml_site_schema, 2);
     // And a worker that starts over storage whose migration never landed migrates then.
-    const again = loadBackground({ config: baseConfig(structuredClone(OLD.sync)), local: structuredClone(OLD.local), siteGate: true, onFetch });
+    const again = loadBackground({ config: baseConfig(structuredClone(OLD.sync)), local: structuredClone(OLD.local), siteGate: true, siteAgents: null, siteAgents: null, onFetch });
     assert.deepEqual(await levels(again, "https://x.test"), { use: "always", agents: "always", selfApprove: true });
 });
 
@@ -146,7 +146,7 @@ test("UPGRADE: an edit sent while the migration runs is not lost to it", async (
 });
 
 test("UPGRADE: entries that could not be carried over are named in the notice, also when none could", async () => {
-    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["*.x.test", "y.test:8443"] }), siteGate: true, onFetch });
+    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["*.x.test", "y.test:8443"] }), siteGate: true, siteAgents: null, onFetch });
     const res = plain((await bg.send({ type: "SITE_ACCESS", payload: {} }, SETTINGS)).data);
     assert.equal(res.upgradeNotice, true);
     assert.deepEqual(res.upgradeDropped, ["*.x.test", "y.test:8443"]);

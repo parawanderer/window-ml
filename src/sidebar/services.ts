@@ -45,6 +45,9 @@ export interface SidebarServices {
      *  approval, where there is nothing to explain. */
     /** Answer the gate of step `seq`, or the nested ask `ask` inside it. */
     answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string, ask?: string): void;
+    /** Answer a site's start card (docs/spec/SITE_ACCESS_SLICE3.md 1.1). Only the surfaces that may show the card have
+     *  it: the HUD card, the overlay and the DevTools panel (Q7). Absent elsewhere, and the card is then not drawn. */
+    answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. */
     sendToSession(session: string, text: string, images?: string[]): Promise<SendOutcome>;

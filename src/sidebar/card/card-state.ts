@@ -88,7 +88,9 @@ export const isPendingGate = (hash: string, st: AgentStep): boolean =>
 export const runIsDone = (s: Session): boolean => s.status !== "pending" && (s.summary != null || !!s.error || !!s.cancelled);
 /** Is this run WAITING ON YOU — a gate open with no decision yet? What makes a card demand attention
  *  rather than merely report. */
-export const runIsPending = (s: Session): boolean => (s.steps || []).some(st => isPendingGate(s.hash, st));
+export const runIsPending = (s: Session): boolean => hasPendingGate(s) || (!!s.startAsk && !s.startAsk.outcome);
+/** Is a tool gate of this run open? A start card waits behind one (docs/spec/SITE_ACCESS_SLICE3.md 1.1). */
+export const hasPendingGate = (s: Session): boolean => (s.steps || []).some(st => isPendingGate(s.hash, st));
 // The runs the card cares about: non-silent agent runs the user hasn't dismissed. A silent run
 // (ml.agent({ silent })) shows no card (approvals still surface, handled per-run below). Stable tab
 // order by createdTs so tabs don't reshuffle as runs emit.
@@ -103,7 +105,9 @@ export const selectedRun = (): Session | null => {
     if (!runs.length) return null;
     const cur = cardSelectedHash.value && runs.find(s => s.hash === cardSelectedHash.value);
     if (cur) return cur;
-    const pending = runs.filter(runIsPending).sort((a, b) => b.lastTs - a.lastTs)[0];
+    // A tool gate first: a start card raised meanwhile waits its turn behind it, counted in the head ("1 more waiting").
+    const pending = runs.filter(hasPendingGate).sort((a, b) => b.lastTs - a.lastTs)[0]
+        ?? runs.filter(runIsPending).sort((a, b) => b.lastTs - a.lastTs)[0];
     return pending || runs.reduce<Session | null>((best, s) => (!best || s.lastTs > best.lastTs ? s : best), null);
 };
 

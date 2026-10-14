@@ -362,6 +362,10 @@ export interface StepOptions {
 
 /** Options for ml.agent — the loop, whitelist, cap and approval gate. */
 export interface AgentOptions {
+    /** Where the loop runs. `"page"`: in this page, as plain `window.ml` use, with no server tools; the page's own
+     *  `approve` decides its gates. Absent: the extension hosts it, which needs this site to be allowed to start
+     *  agents (each start may show the person a card first). */
+    host?: "page" | null;
     /** tool registry (default ml.domTools) */
     tools?: MlTool[] | null;
     /** appended to `tools` */
@@ -461,6 +465,48 @@ export interface MlAgentHandle {
     say(text: string, origin?: import("./contract-run").PromptOrigin): void;
     /** abort the in-flight loop → it resolves { cancelled: true }. */
     cancel(): void;
+    /** end the page's part of the turn and hand the conversation to the person: the run stops, and the extension shows
+     *  `prompt`, labelled as this site's, above a reply box. What the person types is their own turn. Runs the
+     *  extension hosts only. */
+    waitForPerson(prompt: string): Promise<void>;
     /** a NEW handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */
     fork(): MlAgentHandle;
+}
+
+/** One line of the start card's "It can:" list, written by the worker (agent-start.ts `cardToolLines`). */
+export interface StartAskLine { text: string; isNew?: boolean }
+
+/**
+ * What a start card shows (docs/spec/SITE_ACCESS_SLICE3.md 1.1): the worker's snapshot of a site's request to start,
+ * widen, or keep driving its agent. Every field is the worker's; the site's own words are only `task` and
+ * `instructions`, which the card quotes and never renders.
+ */
+export interface StartAsk {
+    /** The worker's id for this one ask; a decision names it. Never sent to the page. */
+    requestId: string;
+    /** `start` a new agent, `more` page turns past the budget, `change` what an allowed agent can do (Q3). */
+    kind: "start" | "more" | "change";
+    /** The site's origin, as the browser reported it. */
+    origin: string;
+    /** The task (or, for `more`, the new turn's text), verbatim. */
+    task: string;
+    /** The site's own instructions to the model, when it wrote any. */
+    instructions?: string;
+    /** The instructions are new or changed on this turn. */
+    instructionsNew?: boolean;
+    lines: StartAskLine[];
+    /** The model the worker resolved, after the filter. */
+    model: string | null;
+    modelNew?: boolean;
+    /** Steps a turn. */
+    budget: number;
+    /** The page turn budget this ask grants. */
+    pageTurns: number;
+    /** For `more`: the page turns used so far, of the `allowed` before, and how many this ask is for. */
+    used?: number;
+    allowed?: number;
+    asks?: number;
+    /** When the worker raised the ask (epoch ms); it expires `expiresMs` later. */
+    since: number;
+    expiresMs: number;
 }

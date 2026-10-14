@@ -4268,3 +4268,36 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 }
 .chat-dialog-field:focus { border-color: var(--fg-dim); }
 .chat-dialog-hint { margin: 0 0 12px; color: var(--fg-faint); font-size: .9em; }
+
+/* The start card: a site asking to start its agent, keep it going or widen it (card-start.tsx, SITE_ACCESS_SLICE3.md 1.1). */
+.start-card { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--panel-2); }
+/* A dim line of the start card: who started it, what a choice covers. */
+.start-dim { color: var(--fg-dim); font-size: .9em; line-height: 1.4; }
+/* The site's own words on a start card: plain text in a bordered block, whitespace kept, never rendered, height capped. */
+.start-quote { margin: 0; padding: 6px 8px; border: 1px solid var(--border); border-left: 3px solid var(--fg-dim); border-radius: 6px;
+    background: var(--bg); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .92em;
+    max-height: 14em; overflow: auto; }
+/* The label over a start card's quote, saying whose words they are. */
+.start-quote-label { color: var(--fg-dim); font-size: .82em; margin: 6px 0 3px; }
+/* The fold control and the Show disclosure of a start card: plain text buttons. */
+.start-fold, .start-show { background: none; border: 0; padding: 0; color: var(--fg); text-decoration: underline; cursor: pointer; font: inherit; font-size: .9em; }
+/* The fixed foot of a start card: what the agent can do, the model, the budgets and the buttons. */
+.start-foot { display: flex; flex-direction: column; gap: 4px; }
+/* The "It can:" label over a start card's tool lines. */
+.start-can { font-weight: 600; font-size: .9em; }
+/* A start card's tool lines, one fixed sentence each, written by the worker. */
+.start-lines { margin: 0; padding-left: 18px; font-size: .9em; line-height: 1.45; }
+/* One fact line of a start card's foot: the model, the steps a turn, the page turn budget. */
+.start-line { font-size: .9em; }
+/* A start card's button row: blank and disabled for its first second. */
+.start-row { margin-top: 6px; }
+.start-row .appr-btn:disabled { min-width: 4em; opacity: .55; cursor: default; }
+/* The "new" chip on a start card line a widening turn adds. */
+.start-new { margin-left: 6px; padding: 0 5px; border-radius: 6px; font-size: .75em; border: 1px solid var(--border); color: var(--fg-dim); }
+/* The site's prompt over the reply box when it waits for the person, labelled as the site's. */
+.start-wait { margin: 8px 0; }
+/* A quiet line the worker writes in a run's step list (a start a page the run opened asked for). */
+.arun-note { color: var(--fg-dim); font-size: .85em; margin: 4px 0; font-style: italic; }
+/* How many other asks wait behind the one a HUD card shows. */
+.card-more-waiting { margin-left: 8px; font-size: .8em; color: var(--fg-dim); }

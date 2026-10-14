@@ -149,6 +149,13 @@ const CARD_CSS = `
 #${SB_CARD}-wrap.no-anim { transition: none !important; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
+/* SOLID while a start card waits (card-start.tsx): no frost and no see-through, so the card's occlusion check (an
+   IntersectionObserver that tracks visibility, which reads any filter or translucency on the way up as "covered") can
+   tell a page drawn over the buttons from the card's own glass. */
+#${SB_CARD}-wrap[data-solid="1"] { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; animation: none !important; background: rgb(250 250 252) !important; }
+#${SB_CARD}-wrap[data-solid="1"][data-theme="dark"] { background: rgb(24 24 27) !important; }
+/* Nor any handle over the frame: Chrome reports a cross-process frame covered when anything overlaps it at all. */
+#${SB_CARD}-wrap[data-solid="1"] #${SB_CARD}-resize, #${SB_CARD}-wrap[data-solid="1"] #${SB_CARD}-resize-x { display: none !important; }
 #${SB_CARD}-wrap[data-theme="dark"] { background: rgb(24 24 27 / 71%); border-color: rgba(255, 255, 255, .12);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .5), 0 3px 10px rgba(0, 0, 0, .34); }
 /* left/top/width/height are all set in px by the shell (layoutCard). data-state drives reveal
@@ -955,12 +962,12 @@ function feedDebug(ev: any, fromWorker: boolean): void {
         // by the background replay, and if its start event were ever dropped (a burst landing before this
         // listener, an on-click late injection) mounting only on `agent` would leave the card permanently
         // absent while live steps arrive. Mounting on the first event we DO see recovers it.
-        if (!cardHost && (ev.kind === "agent" || ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent-stream")) mountCard();
+        if (!cardHost && (ev.kind === "agent" || ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent-stream" || ev.kind === "agent-start-ask")) mountCard();
         if (cardHost) {
             // A genuine new run event (step / result / start) is what discards a transient size
             // override (a user drag, or a "Show work" expand) so the card SNAPS to fit the new
             // content — NOT the noisy ResizeObserver height stream, which mustn't undo a drag.
-            if (ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent") cardManualH = null;
+            if (ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent" || ev.kind === "agent-start-ask") cardManualH = null;
             if (cardReady) toApp(d);
             else pushBg(d);
         }
@@ -1009,6 +1016,13 @@ function fromApp(d: any): void {
         // from, so the run's next `@focus`/type + its precheck target that element (the canvas/field), not the
         // card. Runs BEFORE the tool executes (async in the background), so a click that re-focuses wins anyway.
         if (cardBorrowedFocus) { const el = cardBorrowedFocus; cardBorrowedFocus = null; try { if (el.isConnected) el.focus(); } catch { /* gone/unfocusable */ } }
+        return;
+    }
+    // A start card's answer (docs/spec/SITE_ACCESS_SLICE3.md 1.1): forwarded as SET_START_APPROVAL only because it came
+    // over the app's private port. The worker takes it only for an ask on this tab.
+    if (d.__mlSidebarApp === "startDecision" && frame && typeof d.requestId === "string"
+        && (d.decision === "allow" || d.decision === "always" || d.decision === "deny")) {
+        try { void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: d.requestId, decision: d.decision } }).catch(() => {}); } catch { /* extension context gone */ }
         return;
     }
     // The composer's "start this task": the WORKER assembles and hosts the run (sw-run-start.ts,
@@ -1114,6 +1128,11 @@ function fromApp(d: any): void {
     // "Show work" toggled: release any manual drag override and re-fit to the new content (capped) — the
     // trace appearing/disappearing changes the reported content height, so it slides to exactly fit (a
     // short trace stops at its content, a long one caps + scrolls). No forced max → no empty space.
+    // A start card is up (or gone): the container goes solid while it asks, so the card's own occlusion check reads it.
+    if (typeof d.__mlSidebarCardSolid === "boolean" && frame) {
+        if (cardWrap) cardWrap.dataset.solid = d.__mlSidebarCardSolid ? "1" : "";
+        return;
+    }
     if (typeof d.__mlSidebarCardExpand === "boolean" && frame) {
         cardManualH = null;
         layoutCard();
