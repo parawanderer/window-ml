@@ -182,7 +182,9 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
     const bgSurface: "overlay" | "devtools" | "off" | null = pageLoop ? null
         : (surface === "overlay" || surface === "devtools") ? surface : "off";
     if (!bgSurface) systemPrompt = withoutCurrentClause(systemPrompt, toolset);
-    if (env) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
+    // A run the extension hosts gets its page context from the extension, which reads it from the browser rather than
+    // from this page (docs/spec/SITE_ACCESS_SLICE3.md: a page's own context lines would be taken for its instructions).
+    if (env && !bgSurface) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
     // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
     // `answerSet.elements()` / `.media()` / `.toMarkdown()` at assembly. (Was two accumulator arrays.)
     // Debug sidebar: announce the run + each step. Its own session hash
@@ -295,7 +297,7 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
                     navigate, crossOrigin, approvalRouting,
                     page: { origin: location.origin, url: location.href, title: document.title || undefined },
                 }),
-                task: turnTask,
+                task: turnTask, env,
                 ...(pageHistory ? { resumeMessages: pageHistory } : {}),
                 // Offsets so the background's emitted step/seq continue past prior turns (the sidebar's
                 // turn groups stay distinct on the background path too — otherwise turn N's step 1

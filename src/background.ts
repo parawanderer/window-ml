@@ -45,7 +45,7 @@ import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { pageInject } from "./sw/sw-page-turn";
-import { approvalsReady, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart } from "./sw/sw-start-approval";
+import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart } from "./sw/sw-start-approval";
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
@@ -256,15 +256,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
 async function navigationRefusal(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown; images?: unknown } }, sender: chrome.runtime.MessageSender): Promise<string | null> {
     const tabId = sender.tab?.id;
     if (tabId == null) return null;
-    // What a run opened before an eviction is read back first: a message that wakes the worker is judged on it.
-    await approvalsReady;
+    // What a run opened before an eviction is read back first, and a run's end recorded: a message that wakes the worker,
+    // or that comes the moment a run ends, is judged on it.
+    await navigationSettled(tabId);
     // The person's own message for a run, relayed by the page that run opened (the run's handle lives in the page): theirs,
     // not the page's. Only exactly the text the person sent through the extension (sw-start-approval.ts `notePersonTurn`).
     const p = message.payload;
     const runId = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined, p?.runId);
     if (runId == null) return null;
     // Spent here, once: a page that sends the person's text twice gets one person's turn and one refusal.
-    if (claimPersonTurn(message)) return null;
+    if (await claimPersonTurn(message)) return null;
     if (message.type === "START_RUN") recordNotStarted(tabId, runId, originOf(sender.origin ?? sender.url ?? sender.tab?.url) ?? "");
     return START_REFUSED.openedByAgent;
 }
@@ -403,7 +404,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // send it, and a shell's answer only counts for an ask on its own tab.
     if (message.type === "SET_START_APPROVAL") {
         const p = (message.payload || {}) as { requestId?: unknown; decision?: unknown };
-        resolveStart(p.requestId, p.decision, isExtensionSender(sender) ? undefined : sender.tab?.id ?? -1);
+        // Answered, so the surface can say "expired" for an ask this worker no longer holds (an eviction, a timeout).
+        sendResponse({ data: resolveStart(p.requestId, p.decision, isExtensionSender(sender) ? undefined : sender.tab?.id ?? -1) });
         return;
     }
     if (message.type === "CONTENT_READY") {

@@ -161,6 +161,9 @@ export interface StartRunPayload {
      *  background streams it to the card as usual; the card reads this and suppresses itself. Approvals
      *  still surface (privileged consent can't be silenced). */
     silent?: boolean;
+    /** The run wants the page's context in its system prompt (`ml.agent`'s `env`, default true). For a run a page starts,
+     *  the worker writes that context itself from the browser's facts, never the page's copy. */
+    env?: boolean;
     /** A createAgent handle's prior history: when present, the background CONTINUES it (appends `task`)
      *  instead of building a fresh system+task — so the page-side control.messages stays authoritative
      *  across turns (the run's final history rides back in the response). Empty/absent → a fresh first turn

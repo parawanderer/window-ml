@@ -503,6 +503,10 @@ export interface StartAsk {
     budgetNew?: boolean;
     /** The page turn budget this ask grants. */
     pageTurns: number;
+    /** The run has tools its page runs itself (any that is not a server tool). */
+    pageTools?: boolean;
+    /** How many images the site attached to the turn: the model sees them, the card counts them. */
+    images?: number;
     /** For `more`: the page turns used so far, of the `allowed` before, and how many this ask is for. */
     used?: number;
     allowed?: number;

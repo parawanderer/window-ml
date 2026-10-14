@@ -55,7 +55,9 @@ export const DEFAULT_TURN_STEPS = 10;
  * @returns the marked text
  */
 export function pageTurnText(origin: string, text: string): string {
-    return `Message from the page (${origin}): ${text}`;
+    // Every line after the first is marked as the page's too, so a line the page wrote to look like the person's
+    // ("[The person replies]: ...") reads as part of the page's message.
+    return `Message from the page (${origin}): ${text.split("\n").join("\n| ")}`;
 }
 
 /** What one approval is bound to (Q3): a later turn that adds a gated builtin or a server tool, changes the model, or
@@ -141,7 +143,7 @@ export function cardToolLines(tools: readonly ToolLike[], facts: { crossOrigin?:
     let site = 0;
     for (const t of tools) {
         if (!t || typeof t.name !== "string") continue;
-        if (t.remote && typeof t.remote.toolId === "string" && typeof t.remote.fn === "string") { server.push(`${t.remote.toolId}.${t.remote.fn}`); continue; }
+        if (t.remote && typeof t.remote.toolId === "string" && typeof t.remote.fn === "string") { server.push(serverToolName(t.remote.toolId, t.remote.fn)); continue; }
         if (!isBuiltinTool(t.name)) { site++; continue; }
         const text = cardLine(t.name, facts);
         if (!text) continue;
@@ -163,28 +165,41 @@ export function cardToolLines(tools: readonly ToolLike[], facts: { crossOrigin?:
  * @param digest the digest to apply
  * @returns name → digest
  */
-export function toolTexts(tools: readonly ToolLike[], digest: (s: string) => string): Record<string, string> {
+export async function toolTexts(tools: readonly ToolLike[], digest: (s: string) => Promise<string>): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
     for (const t of tools) {
         if (!t || typeof t.name !== "string") continue;
         let text: string;
         try { text = JSON.stringify([t.description ?? null, t.parameters ?? null]); } catch { text = String(Math.random()); }
-        out[t.name] = digest(text);
+        out[t.name] = await digest(text);
     }
     return out;
 }
 
-/** Bidi controls and zero-width characters, which can make a quote read other than it is. */
-const INVISIBLE = /[؜​-‏‪-‮⁠-⁩﻿]/g;
+/** Characters that draw nothing or change how the text around them reads: format controls (bidi, zero-width, tag
+ *  characters), every default-ignorable code point (soft hyphen, variation selectors, Hangul fillers), private use. */
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}]/gu;
 
 /**
- * A site's text with every bidi control and zero-width character made visible as `⟨U+202E⟩`, so a quote reads as it
- * is (3.2).
+ * A site's text with every invisible or bidi character made visible as `⟨U+202E⟩`, so a quote reads as it is (3.2).
+ * Astral code points (the tag characters a model reads as text) are matched whole.
  * @param text the site's text
  * @returns the same text, with those characters shown
  */
 export function visibleControls(text: string): string {
-    return text.replace(INVISIBLE, (c) => `⟨U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}⟩`);
+    return text.replace(INVISIBLE, (c) => `⟨U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}⟩`);
+}
+
+/**
+ * A server tool as a card line names it: its bundle and function, as the page named them, with every invisible or bidi
+ * character removed, cut, and quoted, so a name cannot pass for the worker's own words or reverse them.
+ * @param toolId the bundle's id
+ * @param fn the function
+ * @returns the quoted name
+ */
+export function serverToolName(toolId: string, fn: string): string {
+    const clean = `${toolId}.${fn}`.replace(INVISIBLE, "").replace(/[\r\n\t"]/g, " ");
+    return `"${clean.length > 64 ? clean.slice(0, 63) + "…" : clean}"`;
 }
 
 /** The heading's `{host}`: the origin with its scheme dropped (1.1, "Placeholders"). */

@@ -4299,5 +4299,3 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 .start-wait { margin: 8px 0; }
 /* A quiet line the worker writes in a run's step list (a start a page the run opened asked for). */
 .arun-note { color: var(--fg-dim); font-size: .85em; margin: 4px 0; font-style: italic; }
-/* How many other asks wait behind the one a HUD card shows. */
-.card-more-waiting { margin-left: 8px; font-size: .8em; color: var(--fg-dim); }

@@ -21,7 +21,7 @@ import { installTooltipLayer } from "./tooltip-layer";
 import { trackPointer, pointerGone } from "./pointer-gone";
 import { ContextMenu, CursorTipLayer, highlightPos } from "./ui-kit";
 import { Hash } from "./copy-hash";
-import { forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
+import { expireStartAsk, forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
 import { ProfileBadge, SessionRow, AgentBadge } from "./transcript/reply";
@@ -472,6 +472,8 @@ function onMessage(d: any): void {
     else if (d.__mlDebugReset) resetSessions();
     // The shell drops what the page wrote to a session the worker has since started (shell.ts dropPageSession).
     else if (typeof d.__mlForgetSession === "string") { forgetSessionReduced(d.__mlForgetSession); rev.value++; }
+    // The worker no longer holds a start card's ask this surface answered (card-start.tsx): it shows expired.
+    else if (typeof d.__mlStartExpired === "string") expireStartAsk(d.__mlStartExpired);
     // The chart's keys, RELAYED from the page by the overlay's shell while the pointer is on a plot (see `chartKey`):
     // hovering does not move focus, so the page's document is the one receiving them.
     else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);

@@ -102,7 +102,12 @@ the worker, and the page answers geometry only):
       hosted run; the worker writes the site's turns as `agent-site-say`). A first turn's page-written history is
       refused and a later turn's is ignored (the worker's is used). A page a running agent opened starts nothing (Q17). A
       revoke of the level cancels the site's live runs (Q9). A page's INJECT_MESSAGE no longer carries its own
-      `origin` into the run's inbox (the item #642 left open). The decision (`SET_START_APPROVAL`) is extension-only, the
+      `origin` into the run's inbox (the item #642 left open). The review of #647 closed two blockers (instructions hidden as
+      page-context lines: the worker writes a site's run's context itself; an ask outliving the document that raised it)
+      and the should-fixes after them: SHA-256 bindings, a builtin-named tool's text the extension's own and a site tool's
+      shown on the card (S2), quoted server-tool names, the person's budget in their ticket, no first-turn images on a
+      resumed turn, Q17 for prerender activations and tabs a run opened, every invisible character shown, a folded idle
+      say, expired asks, the site's mark in the session index, the images count (redteam-agent-level-3.test.mjs). The decision (`SET_START_APPROVAL`) is extension-only, the
       ask never reaches `__mlApprovals` or `ml.__events()`, and the card has no focus, no key, a 1 s arming delay and,
       on the HUD card, an occlusion check (redteam-agent-level.test.mjs, agent-start.test.mjs,
       sidebar-start-card.test.js, site-access.spec.mjs attack 19). The tool gates of a page-started run take no focus

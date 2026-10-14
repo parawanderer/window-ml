@@ -138,6 +138,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
     const committedListeners = [];   // chrome.webNavigation.onCommitted listeners; fired by bg.commit(tabId, …)
+    const targetListeners = [];      // chrome.webNavigation.onCreatedNavigationTarget listeners; fired by bg.openedFrom(…)
     const sameDocListeners = { history: [], fragment: [] };   // onHistoryStateUpdated / onReferenceFragmentUpdated; fired by bg.sameDocumentNav
     const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     /** The tab's top-frame document now: the last committed, else an open tab's first (`doc-<tabId>`). */
@@ -235,6 +236,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             // the harness on its own, so a test that never commits sees no document at all.
             webNavigation: {
                 onCommitted: { addListener: (fn) => committedListeners.push(fn), removeListener: (fn) => { const i = committedListeners.indexOf(fn); if (i >= 0) committedListeners.splice(i, 1); } },
+                onCreatedNavigationTarget: { addListener: (fn) => targetListeners.push(fn) },
                 // Like the browser, a live tab always has a top-frame document: the last one committed, else its first.
                 getFrame: async ({ tabId, frameId }) => (frameId === 0 && docOf(tabId) ? { documentId: docOf(tabId), frameId: 0, ...(urlOf(tabId) ? { url: urlOf(tabId) } : {}) } : null),
                 // A same-document navigation (pushState, a fragment) keeps the document: fired by bg.sameDocumentNav only.
@@ -457,6 +459,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             if (frameId === 0) { committedDocs.set(tabId, documentId); committedUrls.set(tabId, url); }
             for (const fn of [...committedListeners]) fn({ tabId, frameId, documentId, url, ...extra });
         },
+        /** A tab opened FROM another tab's page (a link into a new tab, `window.open`): webNavigation.onCreatedNavigationTarget. */
+        openedFrom: (sourceTabId, tabId, url = "https://page.test/") => { for (const fn of [...targetListeners]) fn({ sourceTabId, sourceFrameId: 0, tabId, url }); },
         /** A prerendered document becoming the tab's top frame (activation): the browser fires no main-frame commit
          *  for it (its commit was reported earlier, with the prerender's own non-zero frameId); getFrame names it. */
         activate: (tabId, { documentId, url }) => { committedDocs.set(tabId, documentId); committedUrls.set(tabId, url); },

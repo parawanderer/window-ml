@@ -21,7 +21,10 @@ import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
 import { grantableOrigin, originOf } from "../site-access";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
-import type { MlConfig } from "../contract/contract-config";
+import { type MlConfig, modelFilterAllows } from "../contract/contract-config";
+import { withPageContext } from "../agent/run-assembly";
+import { workerPageContext } from "../agent/site-instructions";
+import { ourToolTexts } from "./builtin-texts";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
 import { sealedDescribe } from "../tools/tools";
@@ -63,7 +66,7 @@ import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerV
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { hostAsks, stepAsks } from "./sw-asks";
-import { approvalFor, cancelReasons, gatePageTurn, imagesDigest, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
+import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
@@ -190,12 +193,16 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                 // The step budget this turn asks for: a raise is a widening, unless the person asked for it (Continue +N).
                 const p = { ...stored.p, maxSteps: stepBudget(rp.maxSteps) ?? stored.p.maxSteps };
                 const verdict = await gatePageTurn({ type: "RESUME_RUN", runId: rp.runId, tabId, origin, text: typeof rp.task === "string" ? rp.task : "",
-                    p, model: stored.p.model || cfg.model || null, pageHistory: false, known: true, personClaimed: personClaimed(message) });
+                    p, model: stored.p.model || cfg.model || null, pageHistory: false, known: true, personClaimed: personClaimed(message), docId,
+                    siteTools: ourToolTexts(stored.p, stored.p.pageUrl ?? "").siteTools });
                 if ("error" in verdict) { sendResponse({ error: verdict.error }); return; }
-                // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile.
-                if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
-                if (running()) { sendResponse({ error: RUNNING }); return; }
-                hostRun(message, tabId, sendResponse, undefined, { origin, person: verdict.person, first: false, docId });
+                // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile. A turn refused
+                // here gives back what it spent (a page turn, the person's message).
+                if (workerHeld()) { await verdict.refund(); sendResponse({ error: WORKER_RUN_REFUSED }); return; }
+                if (running()) { await verdict.refund(); sendResponse({ error: RUNNING }); return; }
+                // The person's turn runs at the budget they chose, never at one the page named.
+                const resumed = verdict.person ? { ...message, payload: { ...rp, maxSteps: verdict.budget } } : message;
+                hostRun(resumed, tabId, sendResponse, undefined, { origin, person: verdict.person, first: false, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
             }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         }
         return getConfig().then(async (cfg) => {
@@ -210,18 +217,36 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             const p = pageStartPayload(message.payload, sender, cfg) as StartRunPayload;
             if (!origin || !p || typeof p !== "object" || typeof p.runId !== "string" || !Array.isArray(p.tools)) { hostRun({ ...message, payload: p }, tabId, sendResponse); return; }
             const stored = bgRuns.get(p.runId);
+            // A tool named like one of ours reads to the model as ours; a site's own tool's text is shown on the card (S2).
+            const texts = ourToolTexts(p, p.pageUrl ?? sender.url ?? "");
+            p.tools = texts.tools;
+            // The model the run would call, after the filter: a start the filter refuses is refused before any card, as the
+            // first model call would refuse it, so the card never names a model that cannot run.
+            const model = p.model || cfg.model || null;
+            const modelRefusal = model && !modelFilterAllows(model, cfg.modelFilter)
+                ? `Model "${model}" is blocked by the model filter (/${cfg.modelFilter}/). Only matching models are callable — change or clear the filter in the extension settings.` : null;
             const verdict = await gatePageTurn({ type: "START_RUN", runId: p.runId, tabId, origin, text: typeof p.task === "string" ? p.task : "", p,
-                model: p.model || cfg.model || null, pageHistory: Array.isArray(p.resumeMessages) && p.resumeMessages.length > 0, known: !!stored || !!approvalFor(p.runId),
-                images: imagesDigest(p.images), personClaimed: personClaimed(message) });
+                model, pageHistory: Array.isArray(p.resumeMessages) && p.resumeMessages.length > 0, known: !!stored || !!approvalFor(p.runId),
+                images: p.images, personClaimed: personClaimed(message), docId, modelRefusal, siteTools: texts.siteTools });
             if ("error" in verdict) { sendResponse({ error: verdict.error }); return; }
-            // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile.
-            if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
-            if (running()) { sendResponse({ error: RUNNING }); return; }
+            // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile. A turn refused
+            // here gives back what it spent (a page turn, the person's message).
+            if (workerHeld()) { await verdict.refund(); sendResponse({ error: WORKER_RUN_REFUSED }); return; }
+            if (running()) { await verdict.refund(); sendResponse({ error: RUNNING }); return; }
+            // The page's context is the worker's to write, from the browser's facts (B1): whatever context the page wrote
+            // into its prompt is the site's, shown on the card as its instructions. Added after the card's snapshot, since
+            // the time in it changes every turn.
+            if (p.env !== false) {
+                const title = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => null))?.title;
+                p.systemPrompt = withPageContext(p.systemPrompt, workerPageContext(p.pageUrl ?? sender.url ?? "", title));
+            }
+            // The person's turn runs at the budget they chose (or the approved one), never at one the page named.
+            if (verdict.person && verdict.budget) p.maxSteps = verdict.budget;
             // A later turn's history is the worker's, never the page's copy (Q4): what this run said and was told is what
             // the person allowed it, and a page could otherwise hand it a conversation it never had. None held (the worker
             // restarted between turns) is an empty one, which still continues the session rather than restarting it.
             const history = verdict.first ? undefined : (bgRuns.get(p.runId)?.messages ?? []);
-            hostRun({ ...message, payload: { ...p, resumeMessages: history } }, tabId, sendResponse, undefined, { origin, person: verdict.person, first: verdict.first, docId });
+            hostRun({ ...message, payload: { ...p, resumeMessages: history } }, tabId, sendResponse, undefined, { origin, person: verdict.person, first: verdict.first, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
         }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
     }).catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
 }
@@ -278,7 +303,7 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
 /** What a turn a SITE sent carries into `hostRun`: the site's origin, whether this turn is the person's own (a message
  *  they sent through the extension that the page relayed, `notePersonTurn`), whether it is the run's first, and the
  *  document that sent it. */
-export interface SiteTurn { origin: string; person: boolean; first: boolean; docId?: string }
+export interface SiteTurn { origin: string; person: boolean; first: boolean; docId?: string; /** the page's own text folded ahead of the person's (an idle `say()`), which stays the page's */ pagePrefix?: string }
 
 /** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run
  *  it built (sw-run-start.ts), where there is no sender. `sendResponse` fires once the whole run finishes. `turnOrigin`
@@ -314,7 +339,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // again below: raising a cap STICKS. Bounded the same way the loop is, so a bad number from a page cannot
         // ask the worker for an unbounded run.
         const budget = stepBudget(rp.maxSteps);
-        p = { ...stored.p, task: rp.task, ...(budget ? { maxSteps: budget } : {}), ...(turnOrigin ? { origin: turnOrigin } : {}) };
+        // No images: the first turn's were that turn's (a page's, for a run a site started), and a resumed turn that
+        // carried them again would show the model the same pictures as this turn's, unlabelled.
+        p = { ...stored.p, task: rp.task, images: undefined, ...(budget ? { maxSteps: budget } : {}), ...(turnOrigin ? { origin: turnOrigin } : {}) };
         capRaised = budget != null && budget !== stored.p.maxSteps;
         resumeOriginalTask = stored.p.task;
         resumeMessages = stored.messages;
@@ -335,7 +362,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // site's words with its name instead. A turn the person sent through the extension, which the page only relayed, is
     // theirs (`site.person`).
     // A turn of images alone is the page's too: its marker is what tells the model whose pictures they are.
-    const modelTask = site && !site.person && (p.task || p.images?.length) ? pageTurnText(site.origin, p.task || "") : p.task;
+    const modelTask = site && site.person && site.pagePrefix ? `${pageTurnText(site.origin, site.pagePrefix)}\n\n${p.task.slice(site.pagePrefix.length + 2)}`
+        : site && !site.person && (p.task || p.images?.length) ? pageTurnText(site.origin, p.task || "") : p.task;
     // A run switched to another model (`session.model`) keeps it, whoever starts its next turn: a handle sends the
     // model it was built with, and a stored snapshot may predate the switch.
     const switched = runModelFor(runId);
@@ -604,11 +632,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         /** A site-run notice (contract-debug.ts `SiteRunEvent`) to every surface showing the run, and into the replay a
-         *  re-adopting page's shell rebuilds the card from; never the session index, which keeps no such kind. */
+         *  re-adopting page's shell rebuilds the card from. */
         const siteNotice = (event: Record<string, unknown>): void => {
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
             relayDebugEvent(tabId, event);
             if (p.crossPage !== false) bufferReplay(tabId, event);
+            // The site's mark and its turns reach the session index too (it takes them from the worker only), so the chat
+            // page names the site on its turns as every other surface does.
+            if (event.kind === "agent-site" || event.kind === "agent-site-say") ingestSessionEvent(event, { tabId, trusted: true });
         };
         // Fan a lightweight run event verbatim (no step/seq offset) to every surface — used for the
         // "seen" indicator (agent-say-seen), which keys off its own id, not a step position.
@@ -694,12 +725,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event
         // a handle's setter fans page-side, and the reducer already folds it into the session.
         else if (capRaised) fanEvent({ kind: "agent-cap", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, maxSteps: p.maxSteps });
+        // A run the person started (the worker built it): its gates may take the card's focus. Every other run's never do,
+        // a run whose marker went missing included (Q15).
+        if (p.builtBy === "worker") siteNotice({ kind: "agent-person", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 } });
         if (site) {
             // The run is a site's: every surface marks it so (its gates take no focus, Q15), and a later turn is shown as the
             // site's or the person's, which the page's own copy of the message no longer is (event-admission.ts).
             siteNotice({ kind: "agent-site", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, site: site.origin });
             if (!site.first && p.task) {
-                if (site.person) fanEvent({ kind: "agent-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: p.task });
+                if (site.person && site.pagePrefix) {
+                    siteNotice({ kind: "agent-site-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: site.pagePrefix, site: site.origin });
+                    fanEvent({ kind: "agent-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: p.task.slice(site.pagePrefix.length + 2) });
+                } else if (site.person) fanEvent({ kind: "agent-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: p.task });
                 else siteNotice({ kind: "agent-site-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: p.task, site: site.origin });
             }
         }

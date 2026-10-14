@@ -57,11 +57,13 @@ interface PendingStart {
     tabId: number;
     origin: string;
     since: number;
+    /** The document that asked, when the browser named it. */
+    docId?: string;
     settle: (d: StartDecision) => void;
 }
 
-/** What the person (or the clock) answered. */
-export type StartDecision = "allow" | "always" | "deny" | "timeout";
+/** What the person (or the clock) answered. `gone`: the document that asked, or its tab, went away first. */
+export type StartDecision = "allow" | "always" | "deny" | "timeout" | "gone";
 
 const pending = new Map<string, PendingStart>();   // state: declared below (run.startAsk)
 
@@ -75,7 +77,9 @@ const agentOpened = new Map<number, Map<string, string>>();   // state: declared
 
 /** Load what an earlier life of this worker stored, then drop what a revoke made while it was gone left behind. */
 export const approvalsReady: Promise<void> = (async () => {
-    const got = await (chrome.storage.session?.get([APPROVALS_KEY, DENIALS_KEY, OPENED_KEY]) ?? Promise.resolve({})).catch(none) as Record<string, unknown>;
+    // A module some unit tests load outside an extension (through sw-fetch.ts): nothing to read there.
+    if (typeof chrome === "undefined") return;
+    const got = await (chrome.storage?.session?.get([APPROVALS_KEY, DENIALS_KEY, OPENED_KEY]) ?? Promise.resolve({})).catch(none) as Record<string, unknown>;
     const a = got[APPROVALS_KEY], d = got[DENIALS_KEY], o = got[OPENED_KEY];
     if (o && typeof o === "object") for (const [tab, docs] of Object.entries(o as Record<string, Record<string, unknown>>)) {
         if (!docs || typeof docs !== "object") continue;
@@ -100,7 +104,7 @@ function isApproval(v: unknown): v is StartApproval {
 
 /** Store both maps as they are now. */
 function save(): Promise<void> {
-    const run = writes.catch(() => undefined).then(() => chrome.storage.session?.set({
+    const run = writes.catch(() => undefined).then(() => chrome.storage?.session?.set({
         [APPROVALS_KEY]: Object.fromEntries(approvals), [DENIALS_KEY]: Object.fromEntries(denials),
         [OPENED_KEY]: Object.fromEntries([...agentOpened].map(([tab, docs]) => [String(tab), Object.fromEntries(docs)])),
     }));
@@ -147,36 +151,93 @@ export function noteRunStart(runId: string, tabId: number, documentId: string | 
     startDocs.set(runId, { tabId, ...(documentId ? { documentId } : {}) });
 }
 
-/** A run's turn ended. */
+/** Tabs whose run's end is still being recorded (`noteRunEnd`): the navigation rule waits for it. */
+const ending = new Map<number, Promise<void>>();   // state: plumbing (a few milliseconds)
+
+/** The tab's top-frame document now, as the browser reports it. */
+async function currentDoc(tabId: number): Promise<string | undefined> {
+    const f = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
+    return typeof f?.documentId === "string" ? f.documentId : undefined;
+}
+
+/** Remember that a run opened a document of a tab ("*" for the whole tab, one the run created). */
+function markOpened(tabId: number, doc: string, runId: string): void {
+    let docs = agentOpened.get(tabId);
+    if (!docs) { docs = new Map(); agentOpened.set(tabId, docs); }
+    docs.set(doc, runId);
+    if (docs.size > 64) docs.delete(docs.keys().next().value as string);
+    void save();
+}
+
+/**
+ * A run's turn ended. The document its tab shows now, when it is not the one the run started on, was reached by the
+ * run however it got there (a commit this worker heard, or a prerendered page it activated, which fires no top-frame
+ * commit), and is recorded as such.
+ * @param runId the run
+ */
 export function noteRunEnd(runId: string): void {
+    const start = startDocs.get(runId);
     startDocs.delete(runId);
+    if (!start) return;
+    const work = currentDoc(start.tabId).then((doc) => {
+        if (doc && doc !== start.documentId && start.documentId) markOpened(start.tabId, doc, runId);
+    }).finally(() => { if (ending.get(start.tabId) === work) ending.delete(start.tabId); });
+    ending.set(start.tabId, work);
+}
+
+/**
+ * Wait until what the navigation rule reads about a tab is settled: what an earlier life of the worker stored, and a
+ * run's end being recorded.
+ * @param tabId the tab
+ */
+export async function navigationSettled(tabId: number): Promise<void> {
+    await approvalsReady;
+    await ending.get(tabId)?.catch(() => undefined);
 }
 
 /** The live runs on a tab. */
 const liveRunsOn = (tabId: number): string[] => [...runInboxes].filter(([, v]) => v.tabId === tabId).map(([k]) => k);
 
-/** A top-frame commit on a tab with a run live on it: that document was opened by the run. */
+/** A top-frame commit: on a tab with a run live on it, that document was opened by the run; and a start card the tab's
+ *  previous document raised is answered "gone", so nothing it asked for starts on the page that replaced it. */
 function onCommit(d: { tabId: number; frameId: number; documentId?: string }): void {
+    if (d.frameId !== 0 || typeof d.documentId !== "string") return;
+    for (const p of [...pending.values()]) if (p.tabId === d.tabId && p.docId !== d.documentId) p.settle("gone");
     const live = liveRunsOn(d.tabId);
-    if (d.frameId !== 0 || typeof d.documentId !== "string" || !live.length) return;
-    let docs = agentOpened.get(d.tabId);
-    if (!docs) { docs = new Map(); agentOpened.set(d.tabId, docs); }
-    docs.set(d.documentId, live[0]);
-    if (docs.size > 64) docs.delete(docs.keys().next().value as string);
-    void save();
+    if (live.length) markOpened(d.tabId, d.documentId, live[0]);
 }
-chrome.webNavigation?.onCommitted?.addListener?.(onCommit);
-chrome.tabs?.onRemoved?.addListener?.((tabId: number) => {
+globalThis.chrome?.webNavigation?.onCommitted?.addListener?.(onCommit);
+/** A tab a running agent's tab opened (a link its click followed into a new tab, a `window.open`): the agent's. */
+globalThis.chrome?.webNavigation?.onCreatedNavigationTarget?.addListener?.((d: { sourceTabId: number; tabId: number }) => {
+    const live = liveRunsOn(d.sourceTabId);
+    if (live.length) markOpened(d.tabId, "*", live[0]);
+});
+globalThis.chrome?.tabs?.onCreated?.addListener?.((t: chrome.tabs.Tab) => {
+    const live = t.openerTabId != null && t.id != null ? liveRunsOn(t.openerTabId) : [];
+    if (live.length && t.id != null) markOpened(t.id, "*", live[0]);
+});
+globalThis.chrome?.tabs?.onRemoved?.addListener?.((tabId: number) => {
+    for (const p of [...pending.values()]) if (p.tabId === tabId) p.settle("gone");
     let dropped = agentOpened.delete(tabId);
     for (const [k, v] of approvals) if (v.tabId === tabId) { approvals.delete(k); dropped = true; }
     if (dropped) void save();
 });
 
 /**
+ * A tab a run opened for itself (a `fetch_url` render): nothing in it may start an agent.
+ * @param tabId the tab
+ * @param runId the run, or "" when the caller does not know it
+ */
+export function noteAgentTab(tabId: number, runId: string): void {
+    markOpened(tabId, "*", runId);
+}
+
+/**
  * The run whose navigation reached this document, if one did and it may not act here: while a run is live on the tab,
  * any document other than the one it started on (a run this worker did not see start, resumed after an eviction, has no
- * start page at all); and after, a document the tab committed while a run was live, for anything but that run's own
- * next turn, which its approval decides. Null for a page that was not reached that way.
+ * start page at all); and after, a document the run reached, for anything but that run's own next turn, which its
+ * approval decides. A tab a run opened (a new tab its click opened, a render) is the run's whole. Null for a page that
+ * was not reached that way. Call `navigationSettled` first.
  * @param tabId the sender's tab
  * @param documentId the sender's document, as the browser stamped it
  * @param runId the run the message names, if any
@@ -189,10 +250,11 @@ export function openedByRun(tabId: number, documentId: string | undefined, runId
         if (!start) return r;
         if (start.documentId && documentId && start.documentId !== documentId) return r;
     }
-    const opener = documentId ? agentOpened.get(tabId)?.get(documentId) : undefined;
+    const docs = agentOpened.get(tabId);
+    const opener = (documentId ? docs?.get(documentId) : undefined) ?? docs?.get("*");
     if (opener === undefined) return null;
-    if (!live.length && runId === opener) return null;
-    return live.includes(opener) ? opener : (live[0] ?? "");
+    if (!live.length && runId === opener && opener) return null;
+    return live.includes(opener) ? opener : (live[0] ?? opener ?? "");
 }
 
 /**
@@ -224,22 +286,25 @@ export function stopForPerson(runId: string): void {
 // --- the person's own turns ---
 
 /** What the person sent through the extension for a run a page built, waiting for the page to relay it. */
-const personTurns = new Map<string, { text: string; images: string; ts: number }[]>();   // state: declared below (run.personTurn)
+const personTurns = new Map<string, { text: string; images: string; budget?: number; ts: number }[]>();   // state: declared below (run.personTurn)
 
 /** How long a person's message waits for the page to relay it. */
 const PERSON_TURN_TTL_MS = 120_000;
 
 /**
  * The person sent a message (or Continue, with empty text) through the extension for a run a page built. The page's
- * relay of exactly this text is the person's turn: unlabelled, and not drawn from the page turn budget.
+ * relay of exactly this text and these images is the person's turn: unlabelled, not drawn from the page turn budget,
+ * and run at the step budget the person chose (their Continue's), never one the page names.
  * @param runId the run
  * @param text the text the page will relay, as the page frames it
  * @param images the images the person attached, which the page relays with it
+ * @param budget the steps a turn the person chose, when they chose one
  */
-export function notePersonTurn(runId: string, text: string, images: readonly unknown[] = []): void {
+export async function notePersonTurn(runId: string, text: string, images: readonly unknown[] = [], budget?: number): Promise<void> {
+    const digest = await imagesDigest(images);
     const now = Date.now();
     const list = (personTurns.get(runId) ?? []).filter((t) => now - t.ts < PERSON_TURN_TTL_MS).slice(-4);
-    list.push({ text, images: imagesDigest(images), ts: now });
+    list.push({ text, images: digest, ...(budget ? { budget } : {}), ts: now });
     personTurns.set(runId, list);
 }
 
@@ -248,12 +313,16 @@ export function notePersonTurn(runId: string, text: string, images: readonly unk
  * @param images the images (data URLs)
  * @returns the digest, empty for none
  */
-export function imagesDigest(images: readonly unknown[] | undefined): string {
+export async function imagesDigest(images: readonly unknown[] | undefined): Promise<string> {
     return images?.length ? textDigest(images.map((x) => String(x)).join("\n")) : "";
 }
 
+/** The person's turn a page relayed: the step budget they chose, and the page's own text it was folded behind (a
+ *  `say()` the page queued while idle is sent ahead of the next turn's text), which stays the page's. */
+export interface PersonTurn { budget?: number; pagePrefix?: string }
+
 /** Messages whose person's turn the router spent (the navigation rule), so the run host takes them as the person's. */
-const claimedMessages = new WeakSet<object>();   // state: plumbing (one message's life)
+const claimedMessages = new WeakMap<object, PersonTurn>();   // state: plumbing (one message's life)
 
 /**
  * At the router: spend the person's turn this message relays, once, and remember the message as theirs. A page that sends
@@ -261,48 +330,52 @@ const claimedMessages = new WeakSet<object>();   // state: plumbing (one message
  * @param message the page's message
  * @returns true when it carried the person's turn
  */
-export function claimPersonTurn(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown; images?: unknown } }): boolean {
+export async function claimPersonTurn(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown; images?: unknown } }): Promise<boolean> {
     const p = message.payload;
     const text = message.type === "INJECT_MESSAGE" ? p?.text : p?.task;
     if (typeof p?.runId !== "string" || typeof text !== "string") return false;
-    if (!takePersonTurn(p.runId, text, imagesDigest(Array.isArray(p.images) ? p.images : undefined))) return false;
-    claimedMessages.add(message as object);
+    const turn = takePersonTurn(p.runId, text, await imagesDigest(Array.isArray(p.images) ? p.images : undefined));
+    if (!turn) return false;
+    claimedMessages.set(message as object, turn);
     return true;
 }
 
-/** Whether the router already spent the person's turn for this message. */
-export function personClaimed(message: object): boolean {
-    return claimedMessages.has(message);
+/** The person's turn the router already spent for this message, if it did. */
+export function personClaimed(message: object): PersonTurn | undefined {
+    return claimedMessages.get(message);
 }
 
 /**
- * Whether the person sent exactly this text for the run and the page has not relayed it yet, without spending it. The
- * navigation rule lets the person's own turn through from a page their run opened, where nothing of the page's is.
- * @param runId the run
- * @param text what the page sent
- * @returns true when it is the person's turn waiting to be relayed
- */
-export function personTurnWaiting(runId: unknown, text: unknown): boolean {
-    if (typeof runId !== "string" || typeof text !== "string") return false;
-    const now = Date.now();
-    return (personTurns.get(runId) ?? []).some((t) => now - t.ts < PERSON_TURN_TTL_MS && t.text === text);
-}
-
-/**
- * Spend the person's turn that matches what a page sent, if there is one.
+ * Spend the person's turn that matches what a page sent, if there is one: exactly their text, or their text after the
+ * page's own folded ahead of it; and exactly their images.
  * @param runId the run
  * @param text what the page sent
  * @param images the digest of the images it sent with it (`imagesDigest`)
- * @returns true when this is the person's turn
+ * @returns the person's turn, or null when this is not one
  */
-export function takePersonTurn(runId: string, text: string, images = ""): boolean {
+export function takePersonTurn(runId: string, text: string, images = ""): PersonTurn | null {
     const now = Date.now();
     const list = (personTurns.get(runId) ?? []).filter((t) => now - t.ts < PERSON_TURN_TTL_MS);
-    const i = list.findIndex((t) => t.text === text && t.images === images);
-    if (i < 0) { personTurns.set(runId, list); return false; }
+    const i = list.findIndex((t) => t.images === images && (t.text === text || (t.text !== "" && text.endsWith(`\n\n${t.text}`))));
+    if (i < 0) { personTurns.set(runId, list); return null; }
+    const t = list[i];
     list.splice(i, 1);
     if (list.length) personTurns.set(runId, list); else personTurns.delete(runId);
-    return true;
+    const prefix = t.text === text ? "" : text.slice(0, text.length - t.text.length - 2);
+    return { ...(t.budget ? { budget: t.budget } : {}), ...(prefix ? { pagePrefix: prefix } : {}) };
+}
+
+/**
+ * Give back a person's turn a page relayed, when the turn it was spent on was refused after all (the run was busy).
+ * @param runId the run
+ * @param text the person's text
+ * @param turn what was spent
+ */
+async function refundPersonTurn(runId: string, text: string, turn: PersonTurn, images: string): Promise<void> {
+    const list = personTurns.get(runId) ?? [];
+    const own = turn.pagePrefix ? text.slice(turn.pagePrefix.length + 2) : text;
+    list.push({ text: own, images, ...(turn.budget ? { budget: turn.budget } : {}), ts: Date.now() });
+    personTurns.set(runId, list);
 }
 
 // --- the gate ---
@@ -331,14 +404,22 @@ export interface PageTurn {
     pageHistory: boolean;
     /** The worker holds this run's history (it ran a turn of it before). */
     known: boolean;
-    /** A digest of the images the turn attaches, empty for none: the person's turn is theirs only with their own. */
-    images?: string;
-    /** The router already spent the person's turn for this very message (`claimPersonTurn`). */
-    personClaimed?: boolean;
+    /** The images the turn attaches. */
+    images?: readonly unknown[];
+    /** The person's turn the router already spent for this very message (`claimPersonTurn`). */
+    personClaimed?: PersonTurn;
+    /** The document that sent the turn, when the browser named it: a card it raised is for it alone. */
+    docId?: string;
+    /** The site's own tools' texts (`ourToolTexts`), quoted on the card with its other instructions. */
+    siteTools?: string;
+    /** The resolved model passes the model filter; a start the filter would refuse is refused before any card. */
+    modelRefusal?: string | null;
 }
 
-/** What the gate decided for a turn: refused, or allowed, and whether it is the person's (unlabelled, not counted). */
-export type TurnVerdict = { error: string } | { person: boolean; first: boolean };
+/** What the gate decided for a turn: refused, or allowed. `person`: it is the person's turn (unlabelled, not counted),
+ *  with `budget` the steps it runs at and `pagePrefix` the page's own text folded ahead of it. `refund` gives back what
+ *  the turn spent, for a caller that refuses it after all (the run turned out busy). */
+export type TurnVerdict = { error: string } | { person: boolean; first: boolean; budget?: number; pagePrefix?: string; refund: () => Promise<void> };
 
 /**
  * Decide one page-sent turn of a run a site starts or drives: START_RUN, RESUME_RUN or a steer (INJECT_MESSAGE). Reads
@@ -359,15 +440,28 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
     if (rec && rec.tabId !== t.tabId) return { error: `Run "${t.runId}" belongs to another tab.` };
     const first = t.type === "START_RUN" && !rec && !t.known;
     if (first && t.pageHistory) return { error: START_REFUSED.firstTurnHistory };
-    const person = !first && (!!t.personClaimed || takePersonTurn(t.runId, t.text, t.images ?? ""));
+    if (t.modelRefusal) return { error: t.modelRefusal };
+    const imageDigest = await imagesDigest(t.images);
+    const personTurn = first ? null : (t.personClaimed ?? takePersonTurn(t.runId, t.text, imageDigest));
+    const person = !!personTurn;
     const names = t.p.tools.map((x) => x.name);
-    const budget = typeof t.p.maxSteps === "number" ? t.p.maxSteps : DEFAULT_TURN_STEPS;
-    const facts = { instructions: textDigest(siteInstructions(t.p.systemPrompt, names)), tools: toolTexts(t.p.tools, textDigest), crossOrigin: !!t.p.crossOrigin, budget };
+    const asked = typeof t.p.maxSteps === "number" ? t.p.maxSteps : DEFAULT_TURN_STEPS;
+    // The person's turn runs at the budget THEY chose (their Continue's), else the approved one: never the page's number.
+    const budget = person && rec ? Math.max(rec.bound.budget, personTurn?.budget ?? 0) : asked;
+    // What the site wrote that the model reads: its part of the system prompt, and its own tools' texts (S2, owner 2026-10-14).
+    const written = [siteInstructions(t.p.systemPrompt, names), t.siteTools ?? ""].filter(Boolean).join("\n\n");
+    const facts = { instructions: await textDigest(written), tools: await toolTexts(t.p.tools, textDigest), crossOrigin: !!t.p.crossOrigin, budget };
     // A START_RUN is a whole new payload; a RESUME_RUN or a steer carries only a step budget of its own.
     const bound = t.type === "START_RUN" || !rec ? bindingOf(t.p.tools, t.model, facts) : { ...rec.bound, budget };
-    // The person's own turn may set its own step budget (Continue +N); only the site's turns are held to the approved one.
-    const compared = person && rec ? { ...bound, budget: Math.min(bound.budget, rec.bound.budget ?? bound.budget) } : bound;
+    // The person's own budget is theirs to raise: only the rest of the turn is held to the approval.
+    const compared = person && rec ? { ...bound, budget: rec.bound.budget } : bound;
     const pageTurn = !first && !person;
+    const verdict = (): TurnVerdict => ({ person, first, ...(person ? { budget } : {}), ...(personTurn?.pagePrefix ? { pagePrefix: personTurn.pagePrefix } : {}),
+        refund: async () => {
+            if (personTurn) await refundPersonTurn(t.runId, t.text, personTurn, imageDigest);
+            const a = approvals.get(t.runId);
+            if (pageTurn && a && a.pageTurns.used > 0) { approvals.set(t.runId, { ...a, pageTurns: { ...a.pageTurns, used: a.pageTurns.used - 1 } }); await save(); }
+        } });
     if (level === "always") {
         // An approval the person made on a card covers only what the card showed: a widening that rides on "always"
         // makes it one that rode on "always", so a site turned back to "ask" is asked again for it.
@@ -376,7 +470,7 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
             ? { ...rec, scope, bound, budget, pageTurns: { ...rec.pageTurns, used: rec.pageTurns.used + (pageTurn ? 1 : 0) } }
             : { runId: t.runId, tabId: t.tabId, origin: t.origin, scope: "always", budget, pageTurns: { allowed: PAGE_TURN_BUDGET, used: 0 }, bound, ts: Date.now() });
         await save();
-        return { person, first };
+        return verdict();
     }
     // "ask"
     const widened = rec ? widening(rec.bound, compared) : null;
@@ -384,21 +478,27 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
         : widened ? "change"
         : pageTurn && rec.pageTurns.used >= rec.pageTurns.allowed ? "more" : null;
     if (!kind) {
-        if (pageTurn && rec) { rec = { ...rec, pageTurns: { ...rec.pageTurns, used: rec.pageTurns.used + 1 } }; approvals.set(t.runId, rec); await save(); }
-        return { person, first };
+        if (rec) { rec = { ...rec, bound: person ? { ...rec.bound, budget } : rec.bound, pageTurns: { ...rec.pageTurns, used: rec.pageTurns.used + (pageTurn ? 1 : 0) } }; approvals.set(t.runId, rec); await save(); }
+        return verdict();
     }
     if ((denials.get(t.origin)?.count ?? 0) >= START_DENIALS_QUIET) return { error: START_REFUSED.quieted };
     if ([...pending.values()].some((x) => x.origin === t.origin && x.tabId === t.tabId)) return { error: START_REFUSED.waiting };
     if (pending.size >= START_ASKS_MAX) return { error: START_REFUSED.tooMany };
     const ask: StartAsk = {
         requestId: crypto.randomUUID(), kind, origin: t.origin, task: t.text,
-        ...((): Partial<StartAsk> => { const ins = siteInstructions(t.p.systemPrompt, names); return ins ? { instructions: ins, ...(widened?.instructions ? { instructionsNew: true } : {}) } : {}; })(),
+        ...(written ? { instructions: written, ...(widened?.instructions ? { instructionsNew: true } : {}) } : {}),
         lines: cardToolLines(t.p.tools, { crossOrigin: !!t.p.crossOrigin }, widened ? { gated: [...widened.gated, ...(widened.crossOrigin ? ["navigate"] : [])], server: widened.server } : {}),
         model: t.model, ...(widened?.model ? { modelNew: true } : {}), ...(widened?.budget ? { budgetNew: true } : {}), budget, pageTurns: PAGE_TURN_BUDGET,
         ...(kind === "more" && rec ? { used: rec.pageTurns.used, allowed: rec.pageTurns.allowed, asks: 1 } : {}),
+        ...(t.images?.length ? { images: t.images.length } : {}),
+        // Tools the page runs itself (every one that is not a server tool): only then does the card say the page decides
+        // what they do.
+        ...(t.p.tools.some((x) => !x.remote) ? { pageTools: true } : {}),
         since: Date.now(), expiresMs: START_ASK_TIMEOUT_MS,
     };
     const decision = await askPerson(ask, t);
+    // The document that asked went away, or its tab closed: nothing it asked for starts. Not counted as a denial.
+    if (decision === "gone") return { error: START_REFUSED.unanswered };
     if (decision === "deny" || decision === "timeout") {
         const lv = String(level);
         const d = denials.get(t.origin);
@@ -407,7 +507,12 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
         return { error: decision === "timeout" ? START_REFUSED.unanswered : kind === "more" ? START_REFUSED.moreDeclined(rec?.pageTurns.allowed ?? PAGE_TURN_BUDGET) : START_REFUSED.declined };
     }
     if (decision === "always") await editSiteAccess({ op: "agents", origin: t.origin, level: "always" }).catch(() => undefined);
-    // Asked again after the wait: a revoke while the card was up wins.
+    // Asked again after the wait: the tab must still show the document that asked (a navigation the worker did not hear
+    // as a commit, a prerender activated); a revoke while the card was up wins.
+    if (t.docId) {
+        const doc = await currentDoc(t.tabId);
+        if (doc && doc !== t.docId) return { error: START_REFUSED.unanswered };
+    }
     const now = (await siteLevels(t.origin)).agents;
     if (now !== "ask" && now !== "always") return { error: now === "denied" ? START_REFUSED.denied(t.origin) : t.type === "START_RUN" ? START_REFUSED.noLevelStart(t.origin) : START_REFUSED.noLevel(t.origin) };
     const prev = approvals.get(t.runId);
@@ -416,7 +521,7 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
         : { allowed: PAGE_TURN_BUDGET, used: 0 };
     approvals.set(t.runId, { runId: t.runId, tabId: t.tabId, origin: t.origin, scope: "agent", budget, pageTurns: turns, bound, ts: Date.now() });
     await save();
-    return { person, first };
+    return verdict();
 }
 
 /**
@@ -439,7 +544,7 @@ function askPerson(ask: StartAsk, t: PageTurn): Promise<StartDecision> {
                 outcome: d === "allow" || d === "always" ? "allowed" : d === "deny" ? "denied" : "expired" });
             resolve(d);
         };
-        pending.set(ask.requestId, { ask, runId: t.runId, tabId: t.tabId, origin: t.origin, since: ask.since, settle });
+        pending.set(ask.requestId, { ask, runId: t.runId, tabId: t.tabId, origin: t.origin, since: ask.since, ...(t.docId ? { docId: t.docId } : {}), settle });
         fan(t.tabId, { kind: "agent-start-ask", id: t.runId, ts: Date.now(), save: false, session: { hash: t.runId, turn: 0 }, ask });
     });
 }
@@ -520,7 +625,7 @@ defineState({
 defineState({
     id: "run.personTurn", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
     describe: "Messages you sent this site's agent that its page has not passed on yet; the page's copy of one counts as yours.",
-    read: ({ runId }) => { const l = runId ? personTurns.get(runId) : undefined; return l?.length ? l.map((x) => ({ text: x.text, ts: x.ts })) : undefined; },
+    read: ({ runId }) => { const l = runId ? personTurns.get(runId) : undefined; return l?.length ? l.map((x) => ({ text: x.text, ts: x.ts, ...(x.budget ? { budget: x.budget } : {}) })) : undefined; },
 });
 
 defineState({

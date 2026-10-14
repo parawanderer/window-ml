@@ -120,6 +120,20 @@ export function awaitingStart(key: string): boolean {
 }
 
 /**
+ * Mark a start card's ask expired: the worker no longer holds it (it restarted, or the ask ran out), so the card says so
+ * rather than waiting on an answer nothing will take.
+ * @param requestId the ask
+ */
+export function expireStartAsk(requestId: string): void {
+    for (const s of sessionMap.values()) {
+        if (s.startAsk?.ask.requestId !== requestId || s.startAsk.outcome) continue;
+        s.startAsk = { ...s.startAsk, outcome: "expired" };
+        if (s.startAsk.askOnly) { s.status = "err"; s.ended = true; s.cancelled = true; s.summary = ""; }
+        rev.value++;
+    }
+}
+
+/**
  * The worker's notices about a SITE's agent (contract-debug.ts `SiteRunEvent`). The shell and the panel pass these
  * only when they came from the worker (event-admission.ts `WORKER_ONLY_KINDS`). A start card makes a session of its own
  * when the run has none yet (an off-mode start, before anything ran); the rest wait for the run's start like a step.
@@ -151,6 +165,7 @@ function onSiteRunEvent(ev: SiteRunEvent, key: string, runtime?: string): void {
     }
     if (!s) { queueOrphan(key, ev as unknown as MlDebugEvent); return; }
     if (ev.kind === "agent-site") s.site = ev.site;
+    else if (ev.kind === "agent-person") s.person = true;
     else if (ev.kind === "agent-site-say") {
         const seen = !!(ev.sayId && steerSeen.has(ev.sayId));
         s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), id: ev.sayId, seen, site: ev.site }];

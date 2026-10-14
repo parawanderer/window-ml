@@ -13,6 +13,7 @@ import type { ValueFormat } from "../pointers/value-store";
 import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "../util";
+import { noteAgentTab } from "./sw-start-approval";
 
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----
 // Fetch the sheet's CSV export with the user's own cookies (credentials:"include"), so a
@@ -587,6 +588,8 @@ export async function fetchRenderedContent(url: string, incognito: boolean, cdp:
         tabId = tab.id;
     }
     if (tabId == null) throw new Error(`Couldn't open a ${incognito ? "private " : ""}tab to render "${url}".`);
+    // A tab the extension opened to read a page: nothing in it starts an agent (SITE_ACCESS_SLICE3.md, Q17).
+    noteAgentTab(tabId, "");
     try {
         // Before the deferred/lazy widgets fire, make the (backgrounded/minimized) tab believe it's foregrounded
         // so focus/visibility-gated loads run — only when the user enabled CDP (it attaches the debugger).

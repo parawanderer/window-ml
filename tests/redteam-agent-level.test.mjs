@@ -23,7 +23,7 @@ const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test",
 const ORIGIN = "https://site.example";
 const URL0 = `${ORIGIN}/page`;
 /** The page on a tab, as the browser stamps its messages. */
-const page = ({ tab = 7, doc = "doc-1", url = URL0 } = {}) => ({ tab: { id: tab, url }, url, origin: new URL(url).origin, frameId: 0, documentId: doc });
+const page = ({ tab = 7, doc = `doc-${tab}`, url = URL0 } = {}) => ({ tab: { id: tab, url }, url, origin: new URL(url).origin, frameId: 0, documentId: doc });
 /** The content-script shell of a tab: the browser cannot tell it from the page (same sender). */
 const shell = (tab = 7) => ({ tab: { id: tab, url: URL0 }, url: URL0, frameId: 0 });
 const EXT = { url: "chrome-extension://test/sidebar.html" };
@@ -290,7 +290,7 @@ test("binding: the run id from another tab, or another site on the same tab, is 
     await startAllowed(w);
     const tab = await send(w.bg, { type: "START_RUN", payload: payload({ task: "x" }) }, page({ tab: 8 }));
     assert.match(tab.error, /another tab/);
-    const site = await send(w.bg, { type: "START_RUN", payload: payload({ task: "x" }) }, page({ url: "https://other.example/p", doc: "doc-1" }));
+    const site = await send(w.bg, { type: "START_RUN", payload: payload({ task: "x" }) }, page({ url: "https://other.example/p" }));
     assert.equal(site.error, START_REFUSED.otherSite("r1"));
     assert.ok(w.bg.sessionStore.ml_start_approved?.r1, "positive control: the approval was stored");
     await w.bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "agents", origin: ORIGIN, level: "off" } } }, EXT);
@@ -339,7 +339,7 @@ test("a page a running agent's navigation reached starts no agent: refused with 
     // The driver: a run its page started on document doc-1, live while the tab moves to doc-2.
     const orig = w.bg.context.chrome.tabs.sendMessage;
     w.bg.context.chrome.tabs.sendMessage = async (...a) => { if (a[1]?.type === "RUN_TOOL_IN_PAGE" && !a[1].payload.finish && !a[1].payload.renderOnly && !a[1].payload.precheck) await hold; return orig(...a); };
-    const run = w.bg.send({ type: "START_RUN", payload: payload() }, page({ doc: "doc-1" }));
+    const run = w.bg.send({ type: "START_RUN", payload: payload() }, page());
     assert.ok(await until(() => w.models.length === 1));
     w.bg.commit(7, { documentId: "doc-2", url: `${ORIGIN}/reached` });
     const r = await send(w.bg, { type: "START_RUN", payload: payload({ runId: "intruder", task: "hijack" }) }, page({ doc: "doc-2", url: `${ORIGIN}/reached` }));
@@ -348,7 +348,7 @@ test("a page a running agent's navigation reached starts no agent: refused with 
     assert.equal(w.models.length, 1, "the reached page's start called the model");
     assert.ok(w.events.some((e) => e.kind === "agent-note" && e.id === "r1" && e.text === OPENED_BY_AGENT_NOTE), "no quiet line in the driver's steps");
     // Positive control: the page the run started on may still steer it.
-    const own = await w.bg.send({ type: "INJECT_MESSAGE", payload: { runId: "r1", text: "own steer" } }, page({ doc: "doc-1" }));
+    const own = await w.bg.send({ type: "INJECT_MESSAGE", payload: { runId: "r1", text: "own steer" } }, page());
     assert.equal(own.data, true);
     release();
     await run;
@@ -469,7 +469,7 @@ test("Q17 after the run ended: the page it opened still starts no new agent, whi
     } });
     const orig = w.bg.context.chrome.tabs.sendMessage;
     w.bg.context.chrome.tabs.sendMessage = async (...a) => { if (a[1]?.type === "RUN_TOOL_IN_PAGE" && !a[1].payload.finish && !a[1].payload.renderOnly && !a[1].payload.precheck) await hold; return orig(...a); };
-    const run = w.bg.send({ type: "START_RUN", payload: payload() }, page({ doc: "doc-1" }));
+    const run = w.bg.send({ type: "START_RUN", payload: payload() }, page());
     assert.ok(await until(() => w.models.length === 1));
     w.bg.commit(7, { documentId: "doc-2", url: `${ORIGIN}/reached` });   // the run's navigation lands
     release();
@@ -492,7 +492,7 @@ test("Q17: the person's own message, relayed by a page the run opened, is let th
     } });
     const orig = w.bg.context.chrome.tabs.sendMessage;
     w.bg.context.chrome.tabs.sendMessage = async (...a) => { if (a[1]?.type === "RUN_TOOL_IN_PAGE" && !a[1].payload.finish && !a[1].payload.renderOnly && !a[1].payload.precheck) await hold; return orig(...a); };
-    const run = w.bg.send({ type: "START_RUN", payload: payload() }, page({ doc: "doc-1" }));
+    const run = w.bg.send({ type: "START_RUN", payload: payload() }, page());
     assert.ok(await until(() => w.models.length === 1));
     w.bg.commit(7, { documentId: "doc-2", url: `${ORIGIN}/reached` });
     const reached = page({ doc: "doc-2", url: `${ORIGIN}/reached` });

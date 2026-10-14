@@ -16,6 +16,7 @@ import { services } from "../services";
 import { cursorTipOn } from "../ui-kit";
 import { Dialog } from "../dialog";
 import { IconInfo } from "../icons";
+import { expireStartAsk } from "../debug-reducer";
 
 /** How long the buttons stay disarmed after the card appears or changes. */
 export const START_ARM_MS = 1000;
@@ -96,6 +97,7 @@ export function StartAskBody({ ask }: { ask: StartAsk }) {
                 ? <div class="start-dim">It has sent {ask.used ?? 0} of the {ask.allowed ?? PAGE_TURN_BUDGET} messages you allowed and asks to send {ask.asks ?? 1} more.</div>
                 : <div class="start-dim">Started by this page, not by you.</div>}
             <SiteQuote label="The task, in the site's own words" text={ask.task} />
+            {ask.images ? <div class="start-dim">{ask.images === 1 ? "The site attached 1 image." : `The site attached ${ask.images} images.`}</div> : null}
             {ask.instructions
                 ? <div class="start-ins">
                     <span class="start-dim">The site also wrote instructions the model reads before the task.</span>{ask.instructionsNew ? <NewChip /> : null}{" "}
@@ -147,6 +149,12 @@ export function StartAskFoot({ ask }: { ask: StartAsk }) {
         const t = setTimeout(() => setArmed(true), START_ARM_MS);
         return () => clearTimeout(t);
     }, [ask.requestId]);
+    // Expired at its own deadline, whatever the worker says: a worker evicted while the card waited never says anything.
+    useEffect(() => {
+        const left = ask.since + ask.expiresMs - Date.now();
+        const t = setTimeout(() => expireStartAsk(ask.requestId), Math.max(0, left));
+        return () => clearTimeout(t);
+    }, [ask.requestId]);
     // On the HUD card, an Allow is taken only while nothing the page drew covers it (3.3, overlay clickjacking); a Deny
     // always is. The card goes solid while it asks so the check can read it (shell.ts `data-solid`). The overlay sidebar
     // is translucent and overlapped by its own tab, so the browser reports it covered whatever the page does: there the
@@ -164,7 +172,7 @@ export function StartAskFoot({ ask }: { ask: StartAsk }) {
             <ul class="start-lines">
                 {ask.lines.map((l) => <li key={l.text}>{l.text}{l.isNew ? <NewChip /> : null}</li>)}
             </ul>
-            {ask.lines.length ? <div class="start-dim">{PAGE_TOOLS_NOTE}</div> : null}
+            {ask.pageTools ? <div class="start-dim">{PAGE_TOOLS_NOTE}</div> : null}
             <div class="start-line">Model: <code>{ask.model ?? ""}</code>{ask.modelNew ? <NewChip /> : null}</div>
             <div class="start-line">Up to {ask.budget} steps a turn{ask.budgetNew ? <NewChip /> : null}</div>
             <div class="start-line">The site may send up to {m} more messages to this agent before it asks again</div>

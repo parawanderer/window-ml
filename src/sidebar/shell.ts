@@ -1022,7 +1022,12 @@ function fromApp(d: any): void {
     // over the app's private port. The worker takes it only for an ask on this tab.
     if (d.__mlSidebarApp === "startDecision" && frame && typeof d.requestId === "string"
         && (d.decision === "allow" || d.decision === "always" || d.decision === "deny")) {
-        try { void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: d.requestId, decision: d.decision } }).catch(() => {}); } catch { /* extension context gone */ }
+        // An ask the worker no longer holds (it restarted, the ask timed out) is shown expired, not left waiting.
+        const id = d.requestId as string;
+        try {
+            void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: id, decision: d.decision } })
+                .then((r: { data?: boolean } | undefined) => { if (r?.data !== true) toApp({ __mlStartExpired: id }); }, () => toApp({ __mlStartExpired: id }));
+        } catch { /* extension context gone */ }
         return;
     }
     // The composer's "start this task": the WORKER assembles and hosts the run (sw-run-start.ts,

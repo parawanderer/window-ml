@@ -26,7 +26,7 @@ const HOSTILE_TASK = [
 const ask = (hash, extra = {}) => ({
     kind: "agent-start-ask", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 },
     ask: { requestId: `req-${hash}`, kind: "start", origin: ORIGIN, task: HOSTILE_TASK, instructions: "Be terse.",
-        lines: [{ text: "Read this page" }, { text: "Run code on this page" }], model: "m", budget: 4, pageTurns: 10,
+        lines: [{ text: "Read this page" }, { text: "Run code on this page" }], pageTools: true, model: "m", budget: 4, pageTurns: 10,
         since: Date.now(), expiresMs: 180000, ...extra },
 });
 
@@ -121,7 +121,7 @@ test("start card: an expired ask says so and offers nothing to click", async () 
 
 test("start card: a page cannot draw one: the shell refuses the worker-only kinds from the page (event-admission), and the card shows only what came from the worker", async () => {
     const { pageMayWrite } = await import("../src/event-admission.ts");
-    for (const kind of ["agent-start-ask", "agent-start-decided", "agent-site", "agent-site-say", "agent-wait", "agent-note"]) assert.equal(pageMayWrite(kind, "none"), false, kind);
+    for (const kind of ["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-site-say", "agent-wait", "agent-note"]) assert.equal(pageMayWrite(kind, "none"), false, kind);
 });
 
 // --- a site's run in the transcript ---
@@ -152,10 +152,58 @@ test("a site's run: its task and its later turns carry the site's name, never 'y
     void doc;
 });
 
-test("a gate of a run the PERSON started still focuses the card (the shortcut stays theirs)", async () => {
+test("a gate of a run the PERSON started still focuses the card (the shortcut stays theirs); one with no worker mark does not (fails closed)", async () => {
+    const un = await card();
+    await un.w.dispatch(agentStart("unmarked", "do it", "m"));
+    await un.w.dispatch(agentStep("unmarked", 1, { seq: 0, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#x" }, renderIn: { type: "action", verb: "Click", kind: "button", target: "X", selector: "#x" } }));
+    await un.w.flush();
+    assert.ok(!un.posted.some((m) => m.__mlSidebarCardFocus), "a run with no mark of whose it is took focus");
     const { w, posted } = await card();
     await w.dispatch(agentStart("mine", "do it", "m"));
+    await w.dispatch({ kind: "agent-person", id: "mine", ts: Date.now(), save: false, session: { hash: "mine", turn: 0 } });
     await w.dispatch(agentStep("mine", 1, { seq: 0, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#x" }, renderIn: { type: "action", verb: "Click", kind: "button", target: "X", selector: "#x" } }));
     await w.flush();
     assert.ok(posted.some((m) => m.__mlSidebarCardFocus));
+});
+
+// --- the review of #647: what the card says, and when it gives up ---
+
+test("start card: the images the site attached are counted; the page-tools note shows only when the page runs tools", async () => {
+    const { w, doc } = await card();
+    await w.dispatch(ask("i1", { images: 2 }));
+    await w.flush();
+    assert.ok(doc.body.textContent.includes("The site attached 2 images."));
+    assert.ok(doc.body.textContent.includes("The page supplies these tools, so it can change what each one does."));
+    const { w: w2, doc: doc2 } = await card();
+    await w2.dispatch(ask("i2", { pageTools: undefined, lines: [{ text: 'Use server tools: "web.search". Their arguments leave this machine' }] }));
+    await w2.flush();
+    assert.ok(!doc2.body.textContent.includes("The page supplies these tools"), "the note shows for server tools only");
+});
+
+test("start card: it expires at its own deadline with no word from the worker, and when the worker says it no longer holds it", async () => {
+    const { w, doc } = await card();
+    await w.dispatch(ask("e1", { since: Date.now(), expiresMs: 300 }));
+    await w.flush();
+    assert.ok(doc.querySelector(".start-row"), "positive control: the card is up");
+    await sleep(400);
+    await w.flush();
+    assert.ok(doc.body.textContent.includes("This request expired, and nothing ran. The site can ask again."));
+    const { w: w2, doc: doc2 } = await card();
+    await w2.dispatch(ask("e2"));
+    await w2.raw({ __mlStartExpired: "req-e2" });
+    await w2.flush();
+    assert.ok(doc2.body.textContent.includes("This request expired, and nothing ran. The site can ask again."));
+});
+
+test("start card: minimised, the pill says who asks", async () => {
+    const { w, posted, doc } = await card();
+    await w.dispatch(ask("p1"));
+    await w.flush();
+    const collapse = doc.querySelector('.card-head [aria-label="Collapse"]');
+    assert.ok(collapse, "a start card can be minimised");
+    collapse.click();
+    await w.flush();
+    const pill = doc.querySelector(".card-toast");
+    assert.ok(pill, JSON.stringify(posted.filter((m) => m.__mlSidebarCard)));
+    assert.match(pill.textContent, /evil\.example wants to start an agent/);
 });

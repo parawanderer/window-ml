@@ -12,7 +12,7 @@ const KINDS = [...new Set([...readFileSync(new URL("../src/contract/contract-deb
 // Not `agent-say`: the worker shows every turn of a run it hosts itself, the site's with its name (SITE_ACCESS_SLICE3.md, Q2a).
 const LIFECYCLE = new Set(["agent", "agent-result"]);
 /** The kinds only the worker writes about a site's agent (the start card, its outcome, the site's turns, its wait). */
-const WORKER_ONLY = new Set(["agent-start-ask", "agent-start-decided", "agent-site", "agent-wait", "agent-site-say", "agent-note"]);
+const WORKER_ONLY = new Set(["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-wait", "agent-site-say", "agent-note"]);
 
 // --- what a page may add ---
 

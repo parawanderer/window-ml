@@ -16,7 +16,7 @@ const PAGE_LIFECYCLE: ReadonlySet<string> = new Set(["agent", "agent-result"]);
 /** The kinds only the worker writes about a site's agent (contract-debug.ts `SiteRunEvent`): a start card, its outcome,
  *  the mark that a run is a site's, the site's turns shown with its name, its wait for the person, a quiet note. A page
  *  that could write one could draw a start card the worker never raised, or a turn the person never sent. */
-export const WORKER_ONLY_KINDS: ReadonlySet<SiteRunEvent["kind"]> = new Set<SiteRunEvent["kind"]>(["agent-start-ask", "agent-start-decided", "agent-site", "agent-wait", "agent-site-say", "agent-note"]);
+export const WORKER_ONLY_KINDS: ReadonlySet<SiteRunEvent["kind"]> = new Set<SiteRunEvent["kind"]>(["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-wait", "agent-site-say", "agent-note"]);
 
 /**
  * Whether a page-sent event may enter a session. A page that could write into a run the worker hosts could draw a step

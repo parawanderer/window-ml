@@ -24,13 +24,14 @@ function* compositions(names) {
 }
 const TOOLSETS = [[], ["findByText", "exec"], ["findByText", "click", "type", "exec", "python_exec", "agent_api_docs", "navigate", "fetch_url"], ["describeElement", "look", "locate", "answer"], builtinTools().map((d) => d.name)];
 
-test("the extension's own prompt holds no site instructions, for every composition and with the page's context", () => {
+test("the extension's own prompt holds no site instructions, for every composition; a page's own context block is the site's", () => {
     const ctx = "URL: https://site.example/p\nTitle: A page\nPage language: en\nNow: 14/10/2026 (Europe/Brussels) — ISO 2026-10-14T00:00:00.000Z\nLocale: en-GB\nBrowser: Chrome 130";
     let n = 0;
     for (const names of TOOLSETS) for (const f of compositions(names)) {
         const p = composeSystemPrompt(f);
         assert.equal(siteInstructions(p, names), "", JSON.stringify(f));
-        assert.equal(siteInstructions(withPageContext(p, ctx), names), "", `with context: ${JSON.stringify(f)}`);
+        // A context block the page wrote is the site's: the worker writes a site's run's context itself (B1).
+        assert.match(siteInstructions(withPageContext(p, ctx), names), /^Current page context:/, `with context: ${JSON.stringify(f)}`);
         n++;
     }
     assert.ok(n > 1000, `${n} compositions`);
@@ -47,10 +48,10 @@ test("what a site wrote is what is left: its systemAppend, its own system, text 
     assert.equal(siteInstructions(undefined, names), "");
 });
 
-test("a digest tells a changed instruction apart and is stable", () => {
-    assert.equal(textDigest("a"), textDigest("a"));
-    assert.notEqual(textDigest("a"), textDigest("b"));
-    assert.notEqual(textDigest(""), textDigest(" "));
+test("a digest tells a changed instruction apart and is stable", async () => {
+    assert.equal(await textDigest("a"), await textDigest("a"));
+    assert.notEqual(await textDigest("a"), await textDigest("b"));
+    assert.notEqual(await textDigest(""), await textDigest(" "));
 });
 
 // --- what an approval is bound to (Q3) ---
@@ -64,7 +65,7 @@ test("a binding holds the gated builtins (a site tool named like one included) a
     for (const name of GATED_BUILTINS) assert.deepEqual(bindingOf([t(name)], null, F()).gated, [name], name);
 });
 
-test("widening: an added gated tool, server tool, another model, other instructions or tool texts, crossOrigin turned on, or a bigger step budget ask again; a smaller toolset or budget rides", () => {
+test("widening: an added gated tool, server tool, another model, other instructions or tool texts, crossOrigin turned on, or a bigger step budget ask again; a smaller toolset or budget rides", async () => {
     const a = bindingOf([t("exec"), t("click")], "m", F());
     assert.equal(widening(a, bindingOf([t("exec")], "m", F())), null);
     assert.equal(widening(a, bindingOf([t("exec"), t("click"), t("findByText")], "m", F())), null, "a tool that is not gated, with no text of its own, rides");
@@ -80,8 +81,8 @@ test("widening: an added gated tool, server tool, another model, other instructi
     assert.equal(widening(a, bindingOf([t("exec")], "m", F({ crossOrigin: true })))?.crossOrigin, true);
     assert.equal(widening(bindingOf([], "m", F({ crossOrigin: true })), bindingOf([], "m", F())), null, "crossOrigin turned off rides");
     assert.equal(widening(a, bindingOf([t("exec")], "m", F({ budget: 11 })))?.budget, true);
-    const id = (x) => x;
-    assert.notEqual(toolTexts([{ name: "a", description: "x" }], id).a, toolTexts([{ name: "a", description: "y" }], id).a);
+    const id = async (x) => x;
+    assert.notEqual((await toolTexts([{ name: "a", description: "x" }], id)).a, (await toolTexts([{ name: "a", description: "y" }], id)).a);
 });
 
 // --- the card's lines ---
@@ -90,7 +91,7 @@ test("the card's lines come from the registry whatever the site named its tools:
     const lines = cardToolLines([t("findByText"), t("describeElement"), t("exec"), t("click"), t("type"), t("answer"), t("Delete all your files"), t("helper"), t("srv", { toolId: "web", fn: "search" })], { crossOrigin: false });
     assert.deepEqual(lines.map((l) => l.text), [
         "Read this page", "Run code on this page", "Click and type on this page",
-        "Use server tools: web.search. Their arguments leave this machine", "Use 2 tools the site defined. They run as the site's own code",
+        'Use server tools: "web.search". Their arguments leave this machine', "Use 2 tools the site defined. They run as the site's own code",
     ]);
     assert.ok(!JSON.stringify(lines).includes("Delete all your files"), "a site tool's name reached the card");
     assert.deepEqual(cardToolLines([t("navigate")], { crossOrigin: true }).map((l) => l.text), ["Open other pages in this tab, on any site"]);

@@ -136,6 +136,9 @@ export interface Session {
     /** The site that started this run, when a site did (docs/spec/SITE_ACCESS_SLICE3.md): its first task is shown with
      *  the site's name, and its tool gates take no focus and no Enter of their own (Q15). Written only by the worker. */
     site?: string;
+    /** This run was started by the person (the worker's `agent-person` notice): only such a run's gates take the card's
+     *  focus and Enter, so a run whose marker is missing fails closed (Q15). */
+    person?: boolean;
     /** A start card the worker raised for this run, and how it ended. `askOnly`: the session exists only for the card. */
     startAsk?: { ask: import("../contract/contract-agent").StartAsk; outcome?: "allowed" | "denied" | "expired"; ts: number; askOnly?: boolean };
     /** The site ended its turn waiting for the person (Q2b): its prompt, shown labelled over the reply box. */

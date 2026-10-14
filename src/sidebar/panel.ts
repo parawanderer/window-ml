@@ -118,7 +118,11 @@ window.addEventListener("message", (e: MessageEvent) => {
     }
     // A start card's answer, from the real panel-app iframe (the e.source check above): forwarded as SET_START_APPROVAL.
     if (d.__mlSidebarApp === "startDecision" && typeof d.requestId === "string" && (d.decision === "allow" || d.decision === "always" || d.decision === "deny")) {
-        void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: d.requestId, decision: d.decision } }).catch(() => {});
+        // An ask the worker no longer holds (it restarted, the ask timed out) is shown expired, not left waiting.
+        const id = d.requestId as string;
+        void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: id, decision: d.decision } })
+            .then((r: { data?: boolean } | undefined) => { if (r?.data !== true) frame.contentWindow?.postMessage({ __mlStartExpired: id }, "*"); },
+                () => frame.contentWindow?.postMessage({ __mlStartExpired: id }, "*"));
         return;
     }
     if (typeof d.__mlLightbox === "string") { showLightbox(d.__mlLightbox); return; }

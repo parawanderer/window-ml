@@ -348,6 +348,9 @@ export interface DebugStartDecided extends DebugBase { kind: "agent-start-decide
  *  focus and no Enter shortcut of their own (Q15). */
 export interface DebugAgentSite extends DebugBase { kind: "agent-site"; site: string; }
 
+/** This run was started by the PERSON (built by the worker): its tool gates may take the card's focus and Enter. */
+export interface DebugAgentPerson extends DebugBase { kind: "agent-person"; }
+
 /** The site ended its turn waiting for the person (Q2b): the reply box opens under its prompt, labelled as the site's. */
 export interface DebugAgentWait extends DebugBase { kind: "agent-wait"; prompt: string; site: string; }
 
@@ -360,7 +363,7 @@ export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: st
 /** The events only the worker writes about a site's agent. Kept out of `MlDebugEvent`: they are live notices for the
  *  surfaces that show the run (the HUD card, the overlay, the DevTools panel), never kept in the session index or an
  *  export. */
-export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentWait | DebugAgentSiteSay | DebugAgentNote;
+export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentPerson | DebugAgentWait | DebugAgentSiteSay | DebugAgentNote;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

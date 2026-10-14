@@ -272,39 +272,63 @@ reads the level again and decides each turn a page sends:
 - A first turn carrying `resumeMessages` is refused (Q4). A later turn's history is the worker's (`bgRuns`), never the
   page's copy; the page sends what it added since (an idle `say()`) as part of the turn's text. None held after an
   eviction is an empty history, which still continues the session.
+- An ask belongs to the document that raised it: a top-frame commit on its tab, or the tab closing, answers it "gone"
+  (refused as unanswered, and not counted as a denial), and after the person's answer the tab must still show the
+  asking document (`webNavigation.getFrame`), for a document replaced with no commit the worker heard.
 - The asks: one waiting per origin per tab, `START_ASKS_MAX` (3) across the browser, 3 minutes each (a test shortens it
   through a worker global), and three denials or timeouts quiet an origin for the browser session or until its level
   changes (`ml_start_denials`). An ask is in memory only: an eviction loses it, which refuses the start.
 - The decision is `SET_START_APPROVAL`, sent by the shell for a message from the card's frame over its private port, or
   by the DevTools panel. It is in neither `HANDLE_MAP` nor `PAGE_RELAYED_EXTRA`, a shell's answer counts only for an ask
-  on its own tab, and an answer for an ask the worker no longer holds changes nothing. The ask's id reaches only the
+  on its own tab, and an answer for an ask the worker no longer holds changes nothing and is answered `{ data: false }`,
+  so the surface shows the card expired (as it does on its own at the ask's deadline). The ask's id reaches only the
   worker's surfaces: `ML_DEBUG_TO_PAGE` to the shell and the DevTools port, never the session index, the replay buffer
   or `ml.__events()`.
 
-**What the card shows** is the worker's snapshot (`StartAsk`): the origin from `sender`, the task verbatim, the site's
-own instructions (`siteInstructions`: what is left of the page-built system prompt once the extension's preamble,
-every clause `composeSystemPrompt` can add for the toolset, the notes marker and a page context block made only of
-lines shaped exactly as `pageContext()` writes them (`CONTEXT_LINES`) are removed), the tool lines from the registry's `cardLine` (a site tool that takes a builtin's
-name gets the builtin's line; the site's own tools are counted), the model the worker resolves, and the budgets.
+**What the card shows** is the worker's snapshot (`StartAsk`): the origin from `sender`, the task verbatim, how many
+images the site attached, the site's own instructions (`siteInstructions`: what is left of the page-built system prompt
+once the extension's preamble, wherever it sits, every clause `composeSystemPrompt` can add for the toolset and the
+notes marker are removed; plus each site-defined tool's description and parameters, `siteToolTexts`, S2), the tool
+lines from the registry's `cardLine` (a server tool's name quoted and stripped of invisible characters,
+`serverToolName`), the tool lines from the registry's `cardLine` (a site tool that takes a builtin's
+name gets the builtin's line; the site's own tools are counted), the model the worker resolves after the filter (a
+start the filter refuses is refused before any card), and the budgets.
+
+**The page's context and a builtin's text are the worker's (B1, S2).** A page that starts a worker-hosted run sends no
+"Current page context" block; the worker writes one from the browser's facts (`workerPageContext`: the sender's URL, the
+tab's title cut at 80 characters, the time and the locale) after the card's snapshot, so a context block the page wrote
+is the site's and shows on the card. A tool named like a builtin is given the extension's own description and
+parameter descriptions (`builtin-texts.ts`, from the factories the worker builds a person's run with); a site's own
+tool keeps its text, which the card shows and the binding covers. The bindings' digests are SHA-256.
 
 **Whose turn it is (Q2, Q2a).** A turn the page sent reaches the model as "Message from the page ({origin}): ...", the
-first task included, and the transcript shows it with the site's name (`agent-site-say`, never `agent-say`). The page's
+first task included, and the transcript shows it with the site's name (`agent-site-say`, never `agent-say`), which also reach the session index from the worker only, so the chat page
+names the site too. The page's
 own `agent-say` for a run the worker hosts is no longer admitted (`pageMayWrite`), so it cannot draw its message as the
 person's. A message the PERSON sends through the extension for a page-built run is relayed by the page, as its handle
-lives there: `userRunAction` notes it first (`notePersonTurn`), and the page's copy of exactly that text, with exactly the
-images the person attached, is the person's turn, unmarked and not counted (`takePersonTurn`, once per note, two
-minutes). A page that swaps the text or adds a picture gets a page turn. A page turn of pictures alone is marked too. INJECT_MESSAGE's `origin` (where a message was typed) is never read from a page.
+lives there: `userRunAction` notes it first (`notePersonTurn`, with the images and the step budget the person chose),
+and the page's copy of exactly that text, with exactly those images, is the person's turn, unmarked, not counted, and
+run at the person's budget (or the approved one), never the `maxSteps` the page relays (`takePersonTurn`, once per
+note, two minutes). An honest page that folded an idle `say()` ahead of it sends the say, a blank line and the person's
+text: the say is marked as the page's, the person's text is theirs. A page that swaps the text or adds a picture gets a
+page turn. A page turn of pictures alone is marked too, and every line of a page's text after the first is prefixed
+`| `, so a line it wrote to look like the person's reads as part of its message. A resumed turn never carries the first
+turn's images. A turn refused after the gate (the run turned busy) gives back what it spent. INJECT_MESSAGE's `origin` (where a message was typed) is never read from a page.
 
 **Waiting for the person (Q2b).** `handle.waitForPerson(prompt)` sends INJECT_MESSAGE with `waitForPerson`: for a run
 this site's approval covers, the worker stops the run and fans `agent-wait`, and the reply box opens under the prompt,
-labelled "The site asks: ({origin})". What the person types is their turn, as above.
+labelled "The site asks: ({origin})". What the person types is their turn, as above. At most one wait a run every 10 s
+(`WAIT_GAP_MS`).
 
 **A page a running agent opened (Q17).** `openedByRun` answers for a sender's tab and document. While a run is live on
 the tab, any document other than the one it started on (a run this worker did not see start, resumed after an
 eviction, has no start page at all) may not start, continue or steer an agent. After it ends, a document the tab
 committed while it was live still starts no new agent; only that run's own next turn is taken from it, and its approval
 decides it like any page turn (a page-built run that navigated within its site is continued from the page it is on).
-The person's own message, relayed by such a page, is let through, spent at the router (`claimPersonTurn`) so a copy
+A prerendered document the run's tab activated (no top-frame commit) is recorded when the run ends, from what the tab
+shows then; a tab the run's page opened (`webNavigation.onCreatedNavigationTarget`, an `openerTabId`) and a tab the
+extension opens to render a page for `fetch_url` are agent-opened whole. The person's own message, relayed by such a
+page, is let through, spent at the router (`claimPersonTurn`) so a copy
 sent twice is refused the second time. What a run opened is kept in session storage (`ml_agent_opened`), so the rule
 outlives an eviction, and the router reads it back before judging a message that woke the worker. A refused page's START_RUN is
 recorded (`site.notStarted`, for the badge) and drawn as one quiet `agent-note` line in the driving run's steps (once a minute per site and run), with no

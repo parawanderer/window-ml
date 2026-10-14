@@ -187,7 +187,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         if (decision === "always" || decision === "session") {
             // The page relays it, as the run's handle lives there: its copy of exactly this text is the person's turn,
             // not one of the site's (docs/spec/SITE_ACCESS_SLICE3.md, Q2). Framed as the page frames it (injected.ts).
-            notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext).text : "", action === "send" ? body.images : []);
+            await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
             return null;
         }
         makeWorkerRun(hash);
