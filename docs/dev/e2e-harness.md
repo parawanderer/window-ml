@@ -287,6 +287,19 @@ as in AGENTS.md — they are all under `src/`.
   Two things this demo found that the specs did not: the log's story ended at "discarded, reloaded" with nothing
   saying whether the run went on (so a retry that works now says so), and the tab id, identical on every line,
   was spending exactly the width that wrapped each record into two.
+- **`site-refusal-demo.mjs`** — a **narrated demo, not a test** of a website being REFUSED by site access
+  (`docs/dev/site-access.md`): `npm run build && node tests/e2e/site-refusal-demo.mjs` (`BEAT=`, `HOLD=0`,
+  `HEADLESS=1` for the screenshots; they land in `tests/e2e/artifacts/site-refusal-demo/`). Six beats: an unknown
+  site's `ml.chat` is refused and a readout drawn IN the page shows exactly what the page received, with the backend's
+  request count (the demo throws if the URL, host or key is in it) · the toolbar popup for that site · Deny, and the
+  next call refused with no reload · `https://host:port` allowed, its plain-http copy refused · the person starts an
+  agent on the still-denied site from the Commander and it works, while the page's own call is refused beside it
+  (`openRunInSidebar`) · Settings → Permissions, allow the site there, and the page's call works. Hostnames come
+  from `fixtures/hostile/server.mjs`, as in `site-access.spec.mjs`, whose assertions this is the watchable twin of.
+  Two things to copy: the popup reads its OWN window's active tab, so the demo opens `popup.html` as a page with
+  `chrome.tabs.query` answered by an init script (the buttons and worker messages are real); and the Commander is
+  the HUD, which exists only in `debugMode: "off"`, so the run starts there and the demo then switches to `overlay`
+  and reloads, since the run lives in the worker.
 - **`touch-tips-demo.mjs`** — a **narrated demo, not a test** of READING A TOOLTIP WITHOUT A POINTER:
   `npm run build && node tests/e2e/touch-tips-demo.mjs` (`BEAT=`, `HOLD=0`; screenshots in
   `tests/e2e/artifacts/touch-tips-demo/`). One phone context (`hasTouch`), left open at the end. Five beats: the
@@ -461,6 +474,7 @@ thing. The parts:
   outstanding when its tab is discarded, then reloaded in place and retried — and a trap, measured: a real
   `chrome.tabs.discard` DESTROYS the target and takes Playwright's connection to the WHOLE browser with it, so a
   spec cannot stage one and this demo patches Chrome's own `discarded` flag once instead),
+  `site-refusal-demo` (an unapproved, a denied and an http-copy site refused, a run the person starts working anyway),
   `touch-tips-demo` (reading a tooltip with no pointer, on a PHONE context — and a trap for the next demo author:
   a synthetic hover cannot be held in a HEADFUL window, because the real cursor is elsewhere and Chromium corrects
   the pointer straight back out; it holds fine headless, which is why a spec can assert one and a watched demo
