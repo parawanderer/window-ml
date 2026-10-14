@@ -431,7 +431,8 @@ test.describe("navigation and requests", () => {
         // observed today: the ONLY Emulation.* command the extension sends, on the render tab only.
         expect(row.cdp).toEqual(["(attach)", "Emulation.setFocusEmulationEnabled", "Page.setWebLifecycleState", "(detach)"]);
         const tab = row.others["http://api.test/?via=rendered"];
-        expect(tab.hasFocus).toEqual([false, true]);
+        // false then true on macOS; already true at the probe's first look on Linux (the emulation lands first).
+        expect(tab.final.hasFocus).toBe(true);
         expect(tab.visibility).toEqual(["hidden", "visible"]);
         expect(tab.lifecycle.filter((t) => t === "visibilitychange").length).toBeGreaterThanOrEqual(2);
         expect(tab.lifecycle).not.toContain("freeze");
@@ -447,10 +448,9 @@ test.describe("navigation and requests", () => {
         const did = Object.fromEntries(row.load.did.map((d) => [d.name, d]));
         expect(did["ml.fetch"].error).toMatch(/^Refused: .* hasn't been approved for fetching on this page/);
         const img = row.requests.find((r) => r.path === "/img.png?via=b64");
-        // observed today: a third Accept-Language shape (en-GB,en-US;q=0.9,en;q=0.8 on macOS), and the target site's cookie.
-        const pageLanguage = row.requests.find((r) => r.host === "probe.test").headers["accept-language"];
+        // observed today: the target site's cookie. Its Accept-Language is platform-dependent (a third shape,
+        // en-GB,en-US;q=0.9,en;q=0.8, on macOS; the page's own value on the Linux CI runner), so it is not asserted.
         expect(img.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "cors", cookie: "session=api.test-secret" });
-        expect(img.headers["accept-language"]).not.toBe(pageLanguage);
         // observed today: the bytes of an HTML page of another origin, fetched with that origin's cookie, reach the page.
         expect(did["ml._fetchImageBase64 html"].ok).toContain("echo from api.test, cookie=yes");
     });
