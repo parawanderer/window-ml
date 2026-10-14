@@ -49,9 +49,9 @@ The page must learn as little as possible from it:
   random custom-element name per session, a closed shadow root, no `ml-` id, class or attribute, present only while the
   approval waits.
 
-What stays visible, and is not removed (owner decision, 2026-10-14): CDP input looks like CDP input (trusted events
-with no pointer path, at the target's centre), and synthetic input is untrusted. Making the agent's input pass as a
-person's is out of scope. The two one-field defects the measurement found, `pressure` 0 on a pressed CDP click and an
+What stays visible, and is not removed: CDP input looks like CDP input (trusted events with no pointer path, at the
+target's centre), and synthetic input is untrusted. Input simulation and event fidelity are handled out-of-band in a
+separate subsystem and are out of scope for this repository. The two one-field defects the measurement found, `pressure` 0 on a pressed CDP click and an
 empty `code` on CDP typing, are bugs and are fixed.
 
 ## A visible page
