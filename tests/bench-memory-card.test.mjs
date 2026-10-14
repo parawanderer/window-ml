@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { staticPage } from "../tests/e2e/bench/serve.mjs";
+import { statusText } from "../tests/e2e/bench/status.mjs";
 import { appCss } from "../tests/e2e/bench/page/bundle.mjs";
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
@@ -121,6 +122,28 @@ test("hovering the chart reads out that moment: its time, each kind's memory, an
     assert.match(tip.querySelector(".tc-tip-time").textContent, /\d{1,2}:\d{2}:\d{2}/);
     assert.match(tip.textContent, /held runs.*3\.3 GB/);
     assert.match(tip.textContent, /Total.*4\.8 GB/);
+});
+
+test("the pressure around ours: the machine in use behind the stack, swap and ours out of RAM as lines, an unknown reading a gap; the readout names each", async () => {
+    const history = MEMORY.history.map((p, i) => ({ ...p, pressure: { machine: 12 * GB, swap: (2 + i * 0.1) * GB, out: i === 6 ? null : 300 * MB } }));
+    const { doc, w } = await page({ ...base, memory: { ...MEMORY, history } });
+    await new Promise((r) => w.setTimeout(r, 10));
+    const chart = doc.querySelector("#memory .tc");
+    const classes = [...chart.querySelectorAll("svg path")].map((p) => p.getAttribute("class"));
+    assert.deepEqual(classes, ["tc-back mem-machine", "mem-runner", "mem-page", "mem-tool", "mem-running", "mem-held", "tc-line mem-swap", "tc-line mem-out dashed", "tc-line mem-out dashed"],
+        "behind, the stack, then the lines; the out line in two pieces around its unknown reading");
+    assert.match(chart.querySelector(".tc-axis").textContent, /4\.8 GB peak of 8\.0 GB · swap up to 3\.2 GB/, "the peak is still ours alone");
+    const plot = chart.querySelector(".tc-plot");
+    plot.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 80, right: 600, bottom: 80, x: 0, y: 0 });
+    plot.dispatchEvent(new w.PointerEvent("pointermove", { bubbles: true, clientX: 300, clientY: 30 }));
+    await new Promise((r) => w.setTimeout(r, 30));
+    const tip = doc.querySelector(".tc-tip").textContent;
+    assert.match(tip, /Total4\.8 GBswap in use \(the whole machine\)2\.6 GBours out of RAM \(compressed or swapped\)unknownthe whole machine in use12\.0 GB/, "the lines and the backdrop after the total, not in it; the unknown said so");
+    const md = statusText({ ...base, memory: { ...MEMORY, history } }, 1_760_000_100_000);
+    assert.match(md, /swap in use peaked at 3\.2 GB/);
+    assert.match(md, /\| machine in use \| swap in use \| ours out of RAM \|/);
+    assert.match(md, /\| 12\.0 GB \| 2\.0 GB \| 300 MB \|/);
+    assert.doesNotMatch(statusText({ ...base, memory: MEMORY }, 1_760_000_100_000), /machine in use/, "a sweep from before: its table as it was");
 });
 
 test("fewer than two readings draw no chart; the rest of the card stays", async () => {

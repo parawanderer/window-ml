@@ -268,5 +268,15 @@ td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
 .mem-tool { fill: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 45%, transparent) }
 .mem-running { fill: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 55%, transparent) }
 .mem-held { fill: color-mix(in srgb, var(--warn) 60%, transparent); background: color-mix(in srgb, var(--warn) 60%, transparent) }
+/* the pressure around it: the whole machine in use behind the stack, swap in use and our memory out of RAM as lines */
+.mem-machine { fill: color-mix(in srgb, var(--fg-faint) 14%, transparent); background: color-mix(in srgb, var(--fg-faint) 30%, transparent) }
+/* the machine's swap in use, as a line over the memory chart */
+.mem-swap { stroke: var(--err); background: var(--err) }
+/* how much of the bench's own memory is out of RAM (compressed or swapped), as a dashed line over the memory chart */
+.mem-out { stroke: var(--warn); background: var(--warn) }
+.memory .mem-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--fg-dim); margin: 2px 0 6px }
+.memory .mem-legend > span { display: inline-flex; align-items: center; gap: 4px }
+.memory .mem-legend .tc-sw { width: 10px; height: 3px; border-radius: 1px }
+.memory .mem-legend .tc-sw.mem-machine { height: 8px }
 .memory .mlimit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 12px }
 .memory .mlimit input { font: inherit; width: 6em; padding: 2px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg) }

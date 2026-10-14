@@ -72,7 +72,12 @@ them itself (`release-duplicates` releases this sweep's own duplicates, one of e
 releasing the largest group), and status.md and the Memory card show the same while it waits. On
 exit, paused or not, it prints the MENU: every clone's held runs grouped by model · task · failure, each group with a
 command to paste for attach, keep one and release the rest, release all, plus how to resume and what to do with them.
-The page has the same as its Memory card (with a chart of the readings over the sweep, and each group folding). Any
+The page has the same as its Memory card (with a chart of the readings over the sweep, and each group folding). The
+chart also draws the PRESSURE around the bench: the whole machine in use behind its stack, swap in use as a line, and,
+dashed, how much of the bench's own memory is out of RAM (compressed or swapped; `top`'s CMPRS on macOS, which does not
+say which of the two, read every 30 s; VmSwap on Linux). The stack is RESIDENT memory, which shrinks when the bench is
+swapped out, so read the dashed line beside it. status.md's memory table has the same three columns. Windows: the
+machine figure only. Any
 time: `hold.mjs --menu` (the menu), `hold.mjs --ledger` (every entry and its memory), `hold.mjs --stop <pid> <pid> …`.
 **The limit can change while sweeps run.** `hold.mjs --limit 12G` (or the Memory card's control on a live page, POST
 `/memory-limit`) sets one MACHINE-WIDE limit, kept beside the ledger (`limit.json`); every running sweep reads it on its

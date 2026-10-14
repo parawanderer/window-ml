@@ -17,8 +17,12 @@ import { cursorTip, CursorRule } from "../ui-kit";
  *  colours it (the class sets `fill` for the area and `background` for the tooltip's swatch). */
 export interface TimeSeries { key: string; label: string; cls: string }
 
-/** One sample: a time in epoch milliseconds, and each series' value then. A missing key counts as zero. */
-export interface TimePoint { t: number; values: Record<string, number | undefined> }
+/** One sample: a time in epoch milliseconds, and each series' value then. A missing key counts as zero in the stack;
+ *  a backdrop's or a line's missing (or null) value is UNKNOWN, drawn as a gap, never as zero. */
+export interface TimePoint { t: number; values: Record<string, number | null | undefined> }
+
+/** A line over the stack, not part of it (its value is not added to the total): a dashed one reads as "of the above". */
+export interface TimeLine extends TimeSeries { dashed?: boolean }
 
 /** The viewBox the areas are drawn in; the SVG is stretched to the box, so these are units, not pixels. */
 const W = 1000, H = 100;
@@ -43,10 +47,12 @@ export function nearestPoint(points: TimePoint[], t: number): number {
  * @param formatTime how a sample's time is written in the tooltip
  * @param label the chart's accessible name: what a screen reader hears instead of the picture
  * @param axis what goes under the chart, usually its first time, its peak and its last time
+ * @param backdrop an area drawn from zero BEHIND the stack and not part of it, such as everything else in use
+ * @param lines figures drawn over the stack as lines, not added to it, such as a limit or a count of something else
  */
-export function TimeChart({ points, series, format, formatTime = defaultTime, label, axis, height = 90 }: {
+export function TimeChart({ points, series, format, formatTime = defaultTime, label, axis, height = 90, backdrop = null, lines = [] }: {
     points: TimePoint[]; series: TimeSeries[]; format: (v: number) => string; formatTime?: (t: number) => string;
-    label: string; axis?: ComponentChildren; height?: number;
+    label: string; axis?: ComponentChildren; height?: number; backdrop?: TimeSeries | null; lines?: TimeLine[];
 }) {
     const [at, setAt] = useState<number | null>(null);
     const box = useRef<HTMLDivElement>(null);
@@ -58,7 +64,10 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
     const t0 = points[0].t, t1 = points[points.length - 1].t, span = Math.max(1, t1 - t0);
     const v = (p: TimePoint, k: string) => p.values[k] ?? 0;
     const tops = points.map((p) => { let sum = 0; return series.map((s) => (sum += v(p, s.key))); });
-    const max = Math.max(1, ...tops.map((stack) => stack[stack.length - 1] ?? 0));
+    /** A backdrop's or a line's value at a point, or null when unknown. */
+    const known = (p: TimePoint, k: string) => { const val = p.values[k]; return typeof val === "number" && Number.isFinite(val) ? val : null; };
+    const extra = [...(backdrop ? [backdrop] : []), ...lines].flatMap((s) => points.map((p) => known(p, s.key) ?? 0));
+    const max = Math.max(1, ...tops.map((stack) => stack[stack.length - 1] ?? 0), ...extra);
     const x = (t: number) => ((t - t0) / span) * W;
     const y = (val: number) => H - (val / max) * H;
     const areas = series.map((s, si) => {
@@ -66,6 +75,20 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
         const below = points.map((p, i) => `${x(p.t)},${y(si ? tops[i][si - 1] : 0)}`).reverse();
         return <path key={s.key} class={s.cls} d={`M${top.join("L")}L${below.join("L")}Z`} />;
     });
+    /** The known stretches of a backdrop or a line, each a run of points with a value: a gap where it is unknown. */
+    const runs = (k: string) => {
+        const out: TimePoint[][] = [];
+        let cur: TimePoint[] = [];
+        for (const p of points) { if (known(p, k) == null) { if (cur.length) out.push(cur); cur = []; } else cur.push(p); }
+        if (cur.length) out.push(cur);
+        return out;
+    };
+    const back = backdrop ? runs(backdrop.key).filter((r) => r.length > 1).map((r, i) => (
+        <path key={`b${i}`} class={`tc-back ${backdrop.cls}`} d={`M${r.map((p) => `${x(p.t)},${y(known(p, backdrop.key)!)}`).join("L")}L${x(r.at(-1)!.t)},${H}L${x(r[0].t)},${H}Z`} />
+    )) : [];
+    const overlays = lines.flatMap((s) => runs(s.key).filter((r) => r.length > 1).map((r, i) => (
+        <path key={`${s.key}${i}`} class={`tc-line ${s.cls}${s.dashed ? " dashed" : ""}`} vector-effect="non-scaling-stroke" d={`M${r.map((p) => `${x(p.t)},${y(known(p, s.key)!)}`).join("L")}`} />
+    )));
 
     /** The tooltip for sample `i`: its time, then each series with a value, then the total when there is more than one. */
     const tip = (i: number) => {
@@ -77,6 +100,10 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
                 <div class="tc-tip-time">{formatTime(p.t)}</div>
                 {rows.map((s) => <div key={s.key} class="rc-tip-line"><span class="rc-tip-name"><i class={`tc-sw ${s.cls}`} />{s.label}</span><span>{format(v(p, s.key))}</span></div>)}
                 {rows.length !== 1 ? <div class="rc-tip-line tc-tip-total"><span class="rc-tip-name">Total</span><span>{format(total)}</span></div> : null}
+                {[...lines, ...(backdrop ? [backdrop] : [])].map((s, i) => {
+                    const val = known(p, s.key);
+                    return <div key={s.key} class={`rc-tip-line${i ? "" : " tc-tip-sep"}`}><span class="rc-tip-name"><i class={`tc-sw ${s.cls}${(s as TimeLine).dashed ? " dashed" : ""}`} />{s.label}</span><span>{val == null ? "unknown" : format(val)}</span></div>;
+                })}
             </div>
         );
     };
@@ -108,7 +135,7 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
         <div class="tc">
             <div class="tc-plot" ref={box} style={{ height: `${height}px` }} tabIndex={0} role="img" aria-label={label}
                 onPointerMove={fromPointer} onPointerDown={fromPointer} onPointerLeave={hide} onKeyDown={onKey} onBlur={hide}>
-                <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">{areas}</svg>
+                <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">{back}{areas}{overlays}</svg>
                 {p ? <>
                     {/* The resource panel's cursor line, snapped: the readout is that sample's, and so is the clock. */}
                     <CursorRule frac={x(p.t) / W} snapped label={formatTime(p.t)} />

@@ -51,7 +51,9 @@ function newest(dir) {
     }
     return t;
 }
-const stale = () => !existsSync(path.join(OUT, "gallery.js")) || newest(path.join(ROOT, "src")) > statSync(path.join(OUT, "gallery.js")).mtimeMs;
+/** Every directory the gallery's components come from: the extension's, and the bench page's (gallery-gen.mjs `BENCH_PAGE`). */
+const SOURCES = [path.join(ROOT, "src"), path.join(ROOT, "tests/e2e/bench/page")];
+const stale = () => !existsSync(path.join(OUT, "gallery.js")) || Math.max(...SOURCES.map(newest)) > statSync(path.join(OUT, "gallery.js")).mtimeMs;
 
 /** Build dist-gallery/ (staged, swapped in on success). The manifest is a virtual module, never a file in src/. */
 async function build() {

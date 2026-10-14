@@ -68,9 +68,15 @@ export function statusText(s, now = Date.now()) {
             const kinds = [...new Set(h.flatMap((p) => Object.keys(p.values)))];
             const total = (p) => Object.values(p.values).reduce((a, b) => a + b, 0);
             const peak = h.reduce((a, p) => (total(p) > total(a) ? p : a));
-            out.push(`Over the sweep (the page's chart; ${h.length} readings, peak ${fmtBytes(total(peak))} at ${clock(peak.t)}):`, "",
-                `| time | ${kinds.join(" | ")} | total | room |`, `| --- | ${kinds.map(() => "---").join(" | ")} | --- | --- |`,
-                ...spread(h, 12).map((p) => `| ${clock(p.t)} | ${kinds.map((k) => fmtBytes(p.values[k] ?? 0)).join(" | ")} | ${fmtBytes(total(p))} | ${fmtBytes(p.room)} |`), "");
+            // The pressure around it, where it was read: the whole machine in use, swap in use, and how much of the
+            // bench's own memory was out of RAM (compressed or swapped), which its resident figures above leave out.
+            const pr = h.some((p) => p.pressure);
+            const fig = (v) => (v == null ? "?" : fmtBytes(v));
+            const swapPeak = Math.max(0, ...h.map((p) => p.pressure?.swap ?? 0));
+            out.push(`Over the sweep (the page's chart; ${h.length} readings, peak ${fmtBytes(total(peak))} at ${clock(peak.t)}${pr ? `; swap in use peaked at ${fmtBytes(swapPeak)}` : ""}):`, "",
+                `| time | ${kinds.join(" | ")} | total | room |${pr ? " machine in use | swap in use | ours out of RAM |" : ""}`, `| --- | ${kinds.map(() => "---").join(" | ")} | --- | --- |${pr ? " --- | --- | --- |" : ""}`,
+                ...spread(h, 12).map((p) => `| ${clock(p.t)} | ${kinds.map((k) => fmtBytes(p.values[k] ?? 0)).join(" | ")} | ${fmtBytes(total(p))} | ${fmtBytes(p.room)} |${pr ? ` ${fig(p.pressure?.machine)} | ${fig(p.pressure?.swap)} | ${fig(p.pressure?.out)} |` : ""}`), "");
+            if (pr) out.push("Ours out of RAM: the bench's processes' pages in the compressor or swapped to disk (macOS does not say which per process; Linux's is its swap), read every 30 s. The kinds' figures are resident memory, which shrinks when they are swapped out.", "");
         }
         if (m.groups?.length) {
             out.push("Held open, by model · task · failure:", "");

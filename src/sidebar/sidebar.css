@@ -3992,6 +3992,13 @@ pre.code.dlines > code.hljs { display: block; }
 .tc-tip-time { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .tc-tip .rc-tip-line > :last-child { font-variant-numeric: tabular-nums; }
 .tc-tip-total { border-top: 1px solid var(--tip-line); padding-top: 2px; margin-top: 1px; }
+/* A TimeChart's backdrop (an area behind the stack, not part of it) and its lines (figures over it, not added): the
+   caller's class colours them, `stroke` for a line and `fill` for the backdrop, as `background` does for the swatch. */
+.tc-back { stroke: none; }
+.tc-line { fill: none; stroke-width: 1.5px; }
+.tc-line.dashed { stroke-dasharray: 4 3; }
+.tc-sw.dashed { background-image: repeating-linear-gradient(90deg, transparent 0 2px, var(--tip-bg, #000) 2px 3px); }
+.tc-tip-sep { border-top: 1px solid var(--tip-line); padding-top: 2px; margin-top: 1px; }
 .tc-sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 
 /* The Settings ARCHIVE FOLDER section (archive-section.tsx): one state at a time, its next step a primary button. */
