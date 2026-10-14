@@ -118,7 +118,8 @@ not, record that and choose between `declarativeNetRequest` rules and following 
 1. The `console` parameter, `__mlCdpStream`, the closures and the one-field CDP fixes (no UI, no new string).
 2. Presence in storage, the main-world content script, `use_dynamic_url`, the MessagePort, the silent relay, the popup
    and Settings rows (new strings: owner approval).
-3. Tools in the isolated world on hidden pages, and `chrome.dom` for closed roots.
+3. Tools in the isolated world on hidden pages, and `chrome.dom` for closed roots. Exec's default world is now a switch
+   (`execDefaultWorld`, else the build's `__EXEC_DEFAULT_WORLD__`), and a call can ask for `world: "page" | "isolated"`.
 4. The side panel for the card and the transcript, and the anonymised highlight.
 5. The redirect measurement, then the rule.
 

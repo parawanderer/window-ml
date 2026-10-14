@@ -27,6 +27,7 @@ import { BUILD_INFO } from "../build-info.gen";
 import { setCdpEnabled } from "../tools/builtin-tools";
 import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgentRun, exitAgentRun, subcallUsage } from "../bus";
 import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "../contract";
+import { pageWorldRefusal } from "../tools/tool-details";
 import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "../dom/dom";
 import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
 import { TokenStore } from "../pointers/token-pipe";
@@ -477,6 +478,8 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         tryReadonly: autoRO ? async (name, args, live) => {
             if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
             if (outputCapEscalated("exec", args)) return null;   // a raised output cap must hit the human gate, never auto-approve
+            // A `world` this page's run cannot give is refused by the tool's precheck, never surveyed here in the main world.
+            if (pageWorldRefusal((args as { world?: unknown }).world)) return null;
             try {
                 // Expand pointer macros BEFORE the dialect sees the source. `@tool:abc` is not
                 // JavaScript, so the tokenizer rejects it and the whole survey falls through to the

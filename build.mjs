@@ -93,6 +93,13 @@ const DEFINES = Object.fromEntries(process.argv
     .map((a, i) => (a === "--define" ? process.argv[i + 1] : null))
     .filter(Boolean)
     .map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
+// The world an exec without `world` runs in (src/sw/exec-routing.ts), a JSON string: "page" (what ships) unless a variant
+// says `--define __EXEC_DEFAULT_WORLD__='"isolated"'`. Anything else is a typo that would build the shipped default
+// silently, so it fails the build.
+const EXEC_WORLDS = [JSON.stringify("page"), JSON.stringify("isolated")];
+DEFINES.__EXEC_DEFAULT_WORLD__ ??= JSON.stringify("page");
+if (!EXEC_WORLDS.includes(DEFINES.__EXEC_DEFAULT_WORLD__))
+    throw new Error(`__EXEC_DEFAULT_WORLD__ must be one of ${EXEC_WORLDS.join(", ")}, got ${DEFINES.__EXEC_DEFAULT_WORLD__}`);
 
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a
@@ -111,7 +118,7 @@ const base = {
     jsx: "automatic",    // the sidebar entry is Preact TSX
     jsxImportSource: "preact",
     loader: { ".css": "text" },   // import highlight.js theme CSS as a string (injected into the shadow root)
-    ...(Object.keys(DEFINES).length ? { define: DEFINES } : {}),
+    define: DEFINES,
     logLevel: "info",
 };
 

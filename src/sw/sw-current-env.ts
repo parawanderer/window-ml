@@ -5,6 +5,7 @@ import { defineState } from "../state-registry";
 import { routeExec, type ExecRoute } from "./exec-routing";
 import { isolationAvailable, pageApproved } from "./sw-isolated-exec";
 import { getConfig } from "./sw-llm";
+import { defaultExecWorld, type ExecWorld } from "../contract/contract-config";
 import { activeRuns, bgRuns, tabPageUrl } from "./sw-runs";
 import type { CurrentEnv, CurrentSnapshot, ExecWhere } from "../agent/current-context";
 
@@ -27,8 +28,9 @@ export async function currentEnv(tabId: number, readonlyAutoApprove: boolean): P
     // A tab the browser no longer has is not approved on the strength of the URL the worker last saw it at: fail closed.
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     const url = tab ? (tab.url || tabPageUrl.get(tabId) || "") : "";
-    const [approved, isolation] = await Promise.all([pageApproved(url), getConfig().then((c) => isolationAvailable(!!c.cdp))]);
-    return envOf(url, approved, isolation, readonlyAutoApprove);
+    const config = await getConfig();
+    const [approved, isolation] = await Promise.all([pageApproved(url), isolationAvailable(!!config.cdp)]);
+    return envOf(url, approved, isolation, readonlyAutoApprove, defaultExecWorld(config.execDefaultWorld));
 }
 
 /**
@@ -37,9 +39,10 @@ export async function currentEnv(tabId: number, readonlyAutoApprove: boolean): P
  * @param approved whether its site is approved
  * @param isolation what the browser offers
  * @param readonlyAutoApprove the run's `autoApproveReadonly`
+ * @param defaultWorld where an exec that names no `world` runs (the column is for such an exec)
  */
-export function envOf(url: string, approved: boolean, isolation: { userScripts: boolean; cdp: boolean }, readonlyAutoApprove: boolean): CurrentEnv {
-    const route = (js: string) => whereOf(routeExec(js, approved, isolation));
+export function envOf(url: string, approved: boolean, isolation: { userScripts: boolean; cdp: boolean }, readonlyAutoApprove: boolean, defaultWorld: ExecWorld = "page"): CurrentEnv {
+    const route = (js: string) => whereOf(routeExec(js, approved, isolation, { defaultWorld }));
     return {
         // The page controls its URL (pushState makes it megabytes): a long one is cut, so it cannot push ml.current
         // over what an approved exec is sent (EXEC_CURRENT_CHARS). Approval was decided on the whole URL above.

@@ -176,6 +176,12 @@ export interface MlConfig {
      *  Attaching flashes Chrome's "is debugging" banner — only for these reserved actions, so the flash marks
      *  the risk. Specs: docs/spec/CDP_CLICK.md, docs/spec/EXEC_STRICT_CSP.md. */
     cdp: boolean;
+    /** Where an agent's approved `exec` runs when the call names no `world`: `page` (the page's main world) or
+     *  `isolated` (a world of its own on the page, which the page's scripts cannot see; the main world when none is
+     *  available). Empty (the default, and what an install from before this setting holds): the build's default,
+     *  `page` as shipped. Policy still isolates what it must, whatever this says (exec-routing.ts). Not in the public
+     *  config: a page is not told it. */
+    execDefaultWorld: "" | ExecWorld;
     /** Advanced, default OFF. When ON, a SAME-ORIGIN fetch that uses the user's cookies/session — a
      *  `credentials:true` GET, or a `rendered:true` load in a normal (non-incognito) tab — auto-approves
      *  (no prompt), like a same-origin navigate. OFF → those always ask, so the user stays in charge of when
@@ -311,11 +317,29 @@ export const DEFAULT_CONFIG: MlConfig = {
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: true,
+    execDefaultWorld: "",               // empty: the build's default world (BUILD_DEFAULT_WORLD)
     pageApprovalDomains: [],
     groundingEnabled: false,
     groundingModel: "",
     groundingRange: DEFAULT_GROUNDING_RANGE,
 };
+
+/** The world an exec asks for with its `world` argument, or the default one. */
+export type ExecWorld = "page" | "isolated";
+
+declare const __EXEC_DEFAULT_WORLD__: string | undefined;
+/** The world an exec without `world` runs in, as this build was made: `page` unless the build says `isolated`
+ *  (build.mjs, `--define __EXEC_DEFAULT_WORLD__='"isolated"'`). The bench builds one variant per value. */
+export const BUILD_DEFAULT_WORLD: ExecWorld =
+    (typeof __EXEC_DEFAULT_WORLD__ === "string" && __EXEC_DEFAULT_WORLD__ === "isolated") ? "isolated" : "page";
+
+/**
+ * The default world for an exec that names none: the stored setting when it is set, else the build's.
+ * @param stored the config's `execDefaultWorld` ("" or absent: not set, which is what an install from before it holds)
+ */
+export function defaultExecWorld(stored: unknown): ExecWorld {
+    return stored === "page" || stored === "isolated" ? stored : BUILD_DEFAULT_WORLD;
+}
 
 /** First qwen2.5vl on a server model list (7b → 3b → any qwen*vl) — the grounding
  *  model auto-detect used when the field is blank. "" if none present. Pure; shared

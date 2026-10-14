@@ -36,7 +36,10 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { routeExec, execNames } from "./exec-routing";
+import { routeExec, execNames, withoutWorld, type ExecRoute } from "./exec-routing";
+import { defaultExecWorld } from "../contract/contract-config";
+import { outputCapPrecheck } from "../contract/contract-pointers";
+import { pageWorldRefusal } from "../tools/tool-details";
 import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelector } from "./worker-answer";
 import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { withEnv } from "./sw-current-env";
@@ -346,6 +349,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     const pyMedia = pyMediaFor(runId, tabId);
     const verifyHere = async (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
         workerVerify(runId, tabId, doc, req, verb, await visionFacts(), tabUrlNow);
+    /** Where an approved exec of this run would go now (exec-routing.ts): the tab's site as the browser reports it, the
+     *  isolation it offers, the call's `world`, and the default world (the stored setting, else the build's). */
+    const execRoute = async (js: string, world: unknown): Promise<ExecRoute> => {
+        const url = (await chrome.tabs.get(tabId).catch(() => null))?.url || tabPageUrl.get(tabId) || "";
+        const cfg = await getConfig();
+        return routeExec(js, await pageApproved(url), await isolationAvailable(!!cfg.cdp), { world, defaultWorld: defaultExecWorld(cfg.execDefaultWorld) });
+    };
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string, pageRouted = false): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
@@ -658,13 +668,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
                     const js = name === "exec" && byWorker() && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
                     let execNote: string | undefined, execDoc: string | undefined;
+                    // The route is decided here, so the page is not told which world was asked for: it sees the call only when
+                    // the call runs in its world, where that is no news.
+                    const pageArgs = js !== undefined ? withoutWorld(args as Record<string, unknown>) : args;
                     if (js !== undefined) {
                         // The document FIRST, then its URL: the call is pinned to that document, so a navigation after this
                         // read makes the send fail instead of landing on the next page, whatever the URL then says. The URL
                         // is the browser's, not the run's start page (a worker that restarted has no navigation record).
                         execDoc = await documentOn(tabId);
-                        const url = (await chrome.tabs.get(tabId).catch(() => null))?.url || tabPageUrl.get(tabId) || "";
-                        const route = routeExec(js, await pageApproved(url), await isolationAvailable(!!(await getConfig()).cdp));
+                        const route = await execRoute(js, (args as { world?: unknown }).world);
                         recordRunLog(runId, { subsystem: "routing", kind: `exec-${route.where}`, reason: route.reason, detail: { tool: name, ...(route.where === "isolated" ? { how: route.how } : {}) } });
                         if (route.where === "refused") return { result: route.result, renderIn: execCodeIn(js) };
                         if (route.where === "isolated") {
@@ -752,7 +764,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             // A worker-built run's answer set is the worker's: the script is sent its shape, and what it changed
                             // comes back to be replayed (worker-answer.ts).
                             const answerShape = js !== undefined && workerAnswer() ? await answerShapeFor(runId) : undefined;
-                            env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc, pageRouted) as Partial<import("../contract").PageToolEnvelope>;
+                            env = await sendTool({ runId, name, args: pageArgs as Record<string, unknown>, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc, pageRouted) as Partial<import("../contract").PageToolEnvelope>;
                             if (answerShape && env?.answerOps !== undefined) await replayOps(env.answerOps);
                         } catch (e) {
                             if (e instanceof HandedOverMidCall) throw e;
@@ -1026,6 +1038,20 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
                 tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
                     if (name !== "exec") return null;
+                    // A call that names its world: one it cannot have goes to the precheck, which says why, and one that asked
+                    // for an isolated world is answered in the worker or not at all, never in the page's (the page leg below).
+                    // Nor one the DEFAULT world isolates: the page would see its script and could answer for it.
+                    const world = (args as { world?: unknown }).world;
+                    // A page-built run's exec runs in the page's world or not at all: a world it cannot have is refused in the
+                    // precheck below, never surveyed by the page.
+                    if (!byWorker() && pageWorldRefusal(world)) return null;
+                    const worldAsked = byWorker() && world !== undefined;
+                    if (worldAsked && (typeof args.js !== "string" || (await execRoute(args.js, world)).where === "refused")) return null;
+                    let pageLegOk = !worldAsked || world === "page";
+                    if (pageLegOk && !worldAsked && byWorker() && typeof args.js === "string" && defaultExecWorld((await getConfig()).execDefaultWorld) === "isolated") {
+                        const r = await execRoute(args.js, undefined);
+                        pageLegOk = !(r.where === "isolated" && r.reason === "default");
+                    }
                     // The WORKER first (docs/spec/SITE_ACCESS.md slice 2): a survey that reads only the run and the box is
                     // answered here, where the run's context and pointers live, and never enters the page. One that reaches
                     // for the page comes back `needs-page` and goes there, where pointer reads are refused, so a survey that
@@ -1051,13 +1077,17 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
                         return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;
                     }
+                    if (!pageLegOk) {
+                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: "world-isolated", detail: { tool: name } });
+                        return null;
+                    }
                     // Live console lines reach the loop's fan the way a delegated tool's do (delegateStreams). Dropped
                     // BEFORE returning, so a chunk still in flight from a refused try cannot land after the loop's
                     // discard: it finds no sink.
                     if (live) delegateStreams.set(runId, live.push);
                     try {
                         const answerShape = workerAnswer() ? await answerShapeFor(runId) : undefined;
-                        const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live, ...(answerShape ? { answerShape } : {}) }, live?.push)
+                        const env = await sendTool({ runId, name, args: byWorker() ? withoutWorld(args) : args, readonlyTry: true, stream: !!live, ...(answerShape ? { answerShape } : {}) }, live?.push)
                             .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                         // Only an answered survey's changes count: a refused try leaves nothing behind, as on the page.
                         if (answerShape && env?.readonly && env.answerOps !== undefined) await replayOps(env.answerOps);
@@ -1076,6 +1106,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
                 // that HAVE a precheck (avoids a useless round-trip on every gated call).
                 precheck: async (name, args) => {
+                    // A worker-built run's exec is checked here, never on the page: its checks need nothing of the page's, and
+                    // the page is not shown a call that may run in another world. A `world` it cannot have is refused before
+                    // the person is asked to approve it (a call without one is routed after approval, as before).
+                    if (name === "exec" && byWorker()) {
+                        if (typeof args.js === "string" && args.world !== undefined) { const r = await execRoute(args.js, args.world); if (r.where === "refused") return r.result; }
+                        return outputCapPrecheck("exec", args);
+                    }
+                    if (name === "exec") { const refused = pageWorldRefusal(args.world); if (refused) return refused; }
                     if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                     const env = await sendTool({ runId, name, args, precheck: true })
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;

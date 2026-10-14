@@ -22,7 +22,7 @@ import { OUTPUT_CEILING, clipHeadTail, panelHead, ceilingNote, CONSOLE_FORWARDS 
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipOut } from "../dom/dom";
 import { grantableOrigin } from "../site-access";
-import type { ExecReason, Isolation } from "./exec-routing";
+import { pageGlobalHint, type ExecReason, type Isolation } from "./exec-routing";
 import { ensureDebuggerAttached, touchDebugger, hasDebuggerPermission, stillOn } from "./sw-cdp";
 import { siteDecision } from "./sw-site-access";
 import { ISOLATED_KIT_SOURCE } from "../isolated-kit.gen";
@@ -329,6 +329,8 @@ const WHY: Record<ExecReason, string> = {
     "unapproved-page": "this site is not approved for window.ml",
     current: "it reads ml.current",
     pointer: "it reads pointer values",
+    requested: "you asked for it",
+    default: "it is the default here",
     plain: "",
 };
 
@@ -359,7 +361,9 @@ export async function runIsolatedExec(o: {
     const serve = o.reads.some((r) => r.error === undefined) ? o.serve : undefined;
     const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve);
     const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there, and ml has only ${["current", "dereference"].filter((m) => m !== "current" || b.current || b.currentError).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
-    if ("error" in r) return { result: `Error: ${r.error}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };
+    // A page global's miss, where the call could have run in the page's world: the one line that says how.
+    const hint = "error" in r ? pageGlobalHint({ where: "isolated", reason: o.reason }, r.error) : "";
+    if ("error" in r) return { result: `Error: ${r.error}${hint ? `\n${hint}` : ""}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };
     const kept = r.logs.join("\n");
     const stdout = r.dropped ? `${kept}\n${ceilingNote(r.dropped)}` : kept;
     const text = r.logs.length ? `console:\n${clipOut(kept, ISO_EXEC_CAP)}${r.dropped ? `\n${ceilingNote(r.dropped)}` : ""}\n\nvalue: ${r.value}` : r.value;

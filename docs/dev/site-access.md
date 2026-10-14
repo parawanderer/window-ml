@@ -323,7 +323,7 @@ sent no answer content at `finish`, and answers none.
 ## Where an approved exec of a worker-built run runs
 
 `delegateTool` (`sw-run-host.ts`) asks `routeExec` (`src/sw/exec-routing.ts`) before it mints any grant on the tab. The
-rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs`):
+rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs`, `tests/exec-world.test.mjs`):
 
 - A plain script on an approved page: the page's main world, full parity.
 - A script naming `ml.current` or a pointer (read lexically by `execNames`; a miss fails closed, since an unnamed
@@ -332,6 +332,22 @@ rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs
   world `wml-<runId>` when the person has allowed user scripts, else a CDP isolated world when the CDP setting is on.
 - Neither available: refused on an unapproved page and for `ml.current`; a pointer script on an approved page runs in
   the main world with a note (owner's decision).
+- The call's `world` (owner's decisions, 2026-10-14): `"isolated"` runs isolated or is refused, never downgraded to the
+  main world; `"page"` runs in the main world, and is REFUSED wherever the rules above isolate (a pointer, `ml.current`,
+  an unapproved page), with a sentence saying why and to omit `world`. A malformed value is refused.
+- No `world`: the default world, `defaultExecWorld` (contract-config.ts): the stored `execDefaultWorld` (DevTools
+  Settings → "Where exec runs by default"; empty, the default and what an older install holds, means unset), else the
+  build constant `__EXEC_DEFAULT_WORLD__` (build.mjs, a JSON string, `"page"` as shipped; the bench builds a variant per
+  value). An isolated default with no isolation runs in the main world as before: a default is not a request.
+- An isolated exec's error that reads like a missing page global (`is not defined`, `Cannot read properties of
+  undefined`) gets one line, `Page globals need world: "page".` (`pageGlobalHint`), only when its route was
+  `requested` or `default`: where policy isolated it, `"page"` would be refused, so the hint would start a loop.
+- The page is never told the world: every exec message to the page drops `world` (`withoutWorld`), a worker-built
+  run's exec precheck runs in the worker (it used to be sent to the page, script and all), and a read-only survey whose
+  exec would run isolated (asked, or by the default) is not sent to the page's leg: it is answered in the worker or
+  goes to the gate. A page-built run (the page's own world) refuses `"isolated"` in the worker's precheck and on the
+  page (`pageWorldRefusal`), and its survey is not tried. `ml.current.env.exec` answers for an exec without `world`
+  under the default. The red-team pass is `tests/redteam-exec-world.test.mjs`; the table is `tests/exec-world.test.mjs`.
 
 The isolated script runs inside one wrapper built as source (`isolatedWrapper`): it binds `ml` (`current` deep-frozen,
 `dereference` answering only the reads sent with the call, each the page's own `DerefText` from `src/isolated-kit.ts`),

@@ -48,6 +48,20 @@ export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "`state` (`ml.state`) persists across calls: stash results and helpers there and reuse them. Use exec only " +
     "when the other tools can't answer.";
 
+/** exec's `world` parameter, as the model reads it (exec-routing.ts decides what each value does). */
+export const EXEC_WORLD_PARAM = `"page": page JS globals. "isolated": hidden from page scripts.`;
+
+/**
+ * Why an exec run in the page's own world refuses its `world`, or null when it runs: `isolated` is never downgraded to
+ * this world (a run the page started has no other), and any other value but `page` is malformed.
+ * @param world the call's `world`
+ */
+export function pageWorldRefusal(world: unknown): string | null {
+    if (world === undefined || world === "page") return null;
+    if (world === "isolated") return `Error: world "isolated" is not available in this run, so this exec did not run. Omit world.`;
+    return `Error: world must be "page" or "isolated", or omitted.`;
+}
+
 /** `fetch_url`'s short form: what to reach for and when; the mechanics are {@link TOOL_DETAILS}. */
 export const FETCH_SHORT =
     "GET a URL via the extension (bypasses CORS; no cookies by default) to READ a raw file, a JSON API or another " +
