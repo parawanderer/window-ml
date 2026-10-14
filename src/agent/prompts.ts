@@ -168,33 +168,26 @@ export const SHADOW_TRIGGER_TOOLS: readonly string[] = ["findByText", "describeE
 
 /**
  * The shadow-DOM clause, naming only the piercing tools this run HAS: a console run has no `click`/`type`, and a
- * model told they pierce went looking for them (a DeepSeek review, 2026-10-08).
+ * model told they pierce went looking for them (a DeepSeek review, 2026-10-08). It states the `>>>` notation and no
+ * edge cases: a root no capture reaches is flagged by the scanning tools where a model meets one (measured, the
+ * shadow/iframe cut in docs/spec/PROMPT_BUDGET.md).
  * @param names the run's tool names
+ * @param pierceClosed whether the user's closed-root piercing setting (pierceClosedShadow) is on
  */
 export const shadowClause = (names: readonly string[], pierceClosed = true): string =>
     `\n\nShadow DOM: the DOM tools (${SHADOW_TOOLS.filter((n) => names.includes(n)).join(" / ")}) pierce ` +
-    (pierceClosed ? "shadow roots automatically, open and closed (a closed one is captured when the page creates it). " : "OPEN shadow roots automatically. ") +
-    "A control inside one is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: " +
-    "`a >>> b >>> c`. Pass that selector to any DOM tool and it re-resolves it; describeElement flags " +
-    (pierceClosed ? "`#shadow-root (OPEN)` or `(CLOSED, pierced)`" : "a `#shadow-root (OPEN)`") + " and shows its contents." +
-    (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE);
-// The closed-root sentence, part of the clause. Which one depends on the user's closed-root piercing setting
-// (pierceClosedShadow, on by default; see injected.ts): with it off, a closed root is visual-only.
+    (pierceClosed ? "shadow roots automatically, open and closed. " : "OPEN shadow roots automatically. ") +
+    "A control inside one is referenced as `host >>> inner`, one `>>>` per boundary, nesting `a >>> b >>> c`; pass " +
+    "that selector to any DOM tool." + (pierceClosed ? "" : SHADOW_CLOSED_NOTE);
+// With closed-root piercing off (see injected.ts), every closed root is visual-only: kept, as that setting is unmeasured.
 const SHADOW_CLOSED_NOTE =
     " A CLOSED shadow root is unreachable by ANY selector — click it visually with `locate`/`@pt` if you " +
     "have that tool, else say you can't.";
-// Piercing on: only the few closed roots the extension can't capture (declarative / native) stay visual-only, and
-// the scanning tools flag exactly those.
-const SHADOW_CLOSED_PIERCE_NOTE =
-    " A few closed roots can't be captured (declarative `shadowrootmode=\"closed\"` or native browser roots); the " +
-    "scanning tools flag those — reach them visually with `locate`/`@pt`.";
-// Same-origin iframes ALSO use `>>>`. Appended after the shadow clause whenever the DOM tools are present.
+/** Same-origin iframes ALSO use `>>>`. Appended after the shadow clause whenever the DOM tools are present. A
+ *  cross-origin frame is flagged, with its page to fetch, by the page orientation and describeElement. */
 export const IFRAME_CLAUSE =
-    " Iframes use the SAME `>>>` notation: a SAME-ORIGIN `<iframe>` is crossed like a shadow boundary — " +
-    "`iframe#id >>> button` (any iframe selector) reaches a control inside it, and describeElement flags " +
-    "`#document (SAME-ORIGIN iframe)`. A CROSS-ORIGIN iframe is walled off by the Same-Origin Policy: NO " +
-    "selector reaches inside — reach a control visually with `locate`/`@pt` (that click needs the extension's " +
-    "\"reserved-element clicking\" enabled, a debugger/CDP click).";
+    " A SAME-ORIGIN `<iframe>` is crossed the same way: `iframe#id >>> button`. A root or frame no selector can " +
+    "enter is flagged where you meet it, with the way in.";
 // Appended to SHADOW_CLAUSE only when `exec` is available — the JS mapping is useless without it.
 // `ml.queryAll` resolves the WHOLE dialect (`>>>` hops + `:contains`) in one call, so the model
 // doesn't hand-chain `.shadowRoot`/`.contentDocument` (and it also reaches pierced closed roots).

@@ -245,6 +245,19 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                         + `<table id="sales"><thead><tr><th>Rep</th><th>Region</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th></tr></thead><tbody>`
                         + rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table>`);
                 }
+                if (p === "/frames") {   // a SAME-ORIGIN iframe (a reveal button inside) and a CROSS-ORIGIN one, for the
+                    // `iframe >>> inner` notation and the SOP wall. ORDER-5521 is not in the DOM until the button is pressed.
+                    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+                    return res.end(`<!doctype html><meta charset=utf-8><title>Order status</title><body><h1>Your order</h1>`
+                        + `<h2>Checkout widget</h2><iframe id="checkout" src="/frames-checkout" width="420" height="120"></iframe>`
+                        + `<h2>Partner widget</h2><iframe id="partner" src="${crossOrigin}/" width="560" height="700"></iframe>`);
+                }
+                if (p === "/frames-checkout") {
+                    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+                    return res.end(`<!doctype html><meta charset=utf-8><title>checkout</title><body><p>Order placed.</p>`
+                        + `<button id="show">Show order number</button> <span id="num">hidden</span>`
+                        + `<script>document.getElementById('show').onclick=()=>{document.getElementById('num').textContent='ORDER-5521'}</script>`);
+                }
                 if (RAW[p]) return sendRaw(res, RAW[p]);          // raw JSON/CSV/code endpoints (ml.fetch e2e)
                 if (p === "/examples") return send(res, `<!doctype html><meta charset=utf-8><title>examples</title>`
                     + `<h1>Example pages</h1><ul>${[...EXAMPLE_PAGES].sort().map((f) => `<li><a href="/${f.replace(/\.html$/, "")}">${f}</a></li>`).join("")}</ul>`);

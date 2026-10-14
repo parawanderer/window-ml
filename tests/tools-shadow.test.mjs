@@ -10,11 +10,14 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { makeDomTools } from "../src/tools/tools.ts";
+import { iframeStats } from "../src/dom/dom.ts";
+import { pageContext } from "../src/util.ts";
 
-function mount(html) {
-    const dom = new JSDOM(`<!doctype html><body>${html}</body>`);
+function mount(html, url) {
+    const dom = new JSDOM(`<!doctype html><body>${html}</body>`, url ? { url } : undefined);
     globalThis.window = dom.window;
     globalThis.document = dom.window.document;
+    globalThis.location = dom.window.location;
     Object.defineProperty(dom.window.HTMLElement.prototype, "innerText", { get() { return this.textContent; }, configurable: true });
     return dom.window.document;
 }
@@ -64,4 +67,33 @@ test("describeElement: an ordinary miss (no sealed host in the path) stays a pla
     mount(`<div id="d"></div>`);
     const res = await describeTool(async () => { throw new Error("must not be called"); }).run({ selector: ".nope" });
     assert.match(String(res), /No element matches/, "no sealed host → the resolver is never consulted");
+});
+
+// --- a cross-origin iframe: no selector enters it, but its page can be READ ---
+// In the shadowcut sweep (docs/spec/PROMPT_BUDGET.md) every model that read a cross-origin widget fetched the frame's
+// src, and every one that tried only `locate` gave up; so both places that flag such a frame name its page.
+
+/** Make frames read as a browser shows a cross-origin one: jsdom loads none, so each has an about:blank document. */
+const walledOff = (...ids) => ids.forEach((id) => Object.defineProperty(document.getElementById(id), "contentDocument", { get: () => null }));
+
+const CROSS = `<iframe id="partner" src="http://other.test:9/widget"></iframe><iframe id="local" srcdoc="<p>x</p>"></iframe>`;
+
+test("a cross-origin frame's page URL is named by describeElement and, with fetch_url, by the page orientation", async () => {
+    mount(CROSS, "http://site.test/frames");
+    walledOff("partner");
+    assert.deepStrictEqual(iframeStats().crossSrc, ["http://other.test:9/widget"], "an http(s) src is listed; a srcdoc frame has none");
+    const desc = (await describeTool().run({ selector: "#partner" })).content;
+    assert.match(desc, /CROSS-ORIGIN iframe/);
+    assert.match(desc, /To READ its text, fetch its page: http:\/\/other\.test:9\/widget\./);
+    assert.match(pageContext((n) => n === "fetch_url"), /READ one's text by fetch_url on its page: http:\/\/other\.test:9\/widget/);
+    assert.doesNotMatch(pageContext(() => false), /fetch_url/, "without fetch_url the orientation names no tool it lacks");
+});
+
+test("a cross-origin frame with no fetchable src (about:, data:, javascript:) gets no read advice", async () => {
+    mount(`<iframe id="d" src="data:text/html,hi"></iframe>`, "http://site.test/");
+    walledOff("d");
+    const desc = (await describeTool().run({ selector: "#d" })).content;
+    assert.match(desc, /CROSS-ORIGIN iframe/);
+    assert.doesNotMatch(desc, /To READ its text/);
+    assert.deepStrictEqual(iframeStats().crossSrc, []);
 });

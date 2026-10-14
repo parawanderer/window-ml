@@ -163,7 +163,8 @@ export const pageContext = (hasTool?: (name: string) => boolean): string => {
         if (f.same || f.cross) {
             parts.push(`Iframes: ${f.same ? `${f.same} same-origin (the DOM tools cross these — references look like \`iframe >>> inner\`)` : ""}` +
                 (f.same && f.cross ? "; " : "") +
-                (f.cross ? `${f.cross} cross-origin (walled off by SOP — reach a control visually via locate/@pt + reserved-element clicking)` : "") + ".");
+                (f.cross ? `${f.cross} cross-origin (walled off by SOP — reach a control visually via locate/@pt + reserved-element clicking` +
+                    (f.crossSrc.length && hasTool?.("fetch_url") ? `; READ one's text by fetch_url on its page: ${f.crossSrc.join(", ")}` : "") + ")" : "") + ".");
         }
     } catch {}
     return parts.join("\n");

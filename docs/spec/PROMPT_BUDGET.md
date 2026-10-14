@@ -2,7 +2,8 @@
 
 Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450), `answer` left
 the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
-3) `python_exec`'s option texts shipped measured (below); the shadow/iframe and pipe-example cuts are still open.**
+3) `python_exec`'s option texts and the shadow/iframe edge cases shipped measured (below); the pipe-example cut was
+dropped unmeasured, as too small to be worth a sweep.**
 Started 2026-10-08, updated 2026-10-14.
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
@@ -68,8 +69,8 @@ These change what the model knows without asking, so each is a bet that it looks
 | Cut | Where its text goes instead |
 | --- | --- |
 | `ml.current` clause (~1,400 chars) down to one sentence | the signature into `agent_api_docs` |
-| Shadow DOM closed-root and iframe edge cases | the scanning tools' own descriptions, which already flag those roots |
-| Pipe dialect worked examples | the dialect grammar stays; examples to `agent_api_docs` |
+| Shadow DOM closed-root and iframe edge cases | SHIPPED, measured: the tools' flags where a model meets one (below) |
+| Pipe dialect worked examples | DROPPED: of `PIPE_CLAUSE`'s 1,285 characters, about 85 are an example that teaches no rule |
 | `fetch_url`'s table details (pandas dtypes, `df.head()`) | SHIPPED, measured: `agent_api_docs({ tool })` (below) |
 | `exec`'s description repeating `ml.fetch`, `ml.a11y`, `ml.state` | SHIPPED, measured: `agent_api_docs({ tool })` (below) |
 | Tool-output-tokens clause (2,669 chars in a UI run) | SHIPPED, measured: 3,738 → ~1,470 chars with `DEREF_CLAUSE` |
@@ -143,6 +144,33 @@ it). glm-4.7-flash on csv-total, 16 runs each, current prompt (sweeps `tool-use`
 The last two failures: a fetch with `credentials: true` (never cached, by design; the error now says so) and a
 malformed tool call. So the `python_exec` cut is worth measuring again on top of these fixes: the regression it was
 blamed for was mostly this.
+
+## Step 3 result: the shadow/iframe edge cases (2026-10-14)
+
+The shadow and iframe clauses (`shadowClause`, `IFRAME_CLAUSE` in `src/agent/prompts.ts`) keep the `>>>` notation and
+drop the edge cases: closed roots no capture reaches, and cross-origin iframes. Those are flagged where a model meets
+them: the scanning tools' note on unscanned closed roots, the page orientation's iframe line, and describeElement's
+flags. 1,154 characters down to 496, on every run with the DOM tools. With closed-root piercing off, the clause still
+says a closed root is visual-only (that setting was not measured).
+
+Measured with the variant `shadowcut` on five fixture tasks: the code behind a click in nested open roots
+(`/shadow-dom`), the same in a captured closed root (`/shadow-dom?mode=closed`), in a declarative closed root
+(`SEAL-9931`), a same-origin iframe with a reveal button and a cross-origin one (`/frames`). The variant and its sweep spec
+are deleted; the first commit of the PR that shipped the cut has them.
+
+- **First sweep** (`prompt-budget-shadowcut`, 5 models x 5 tasks x 2 prompts x 4): open, captured-closed and
+  same-origin tasks 54/60 current against 55/60 cut. The cross-origin iframe lost, 17/20 → 13/20: glm-4.7-flash,
+  MiniMax M3 and qwen3.6 each one or two fewer.
+- **That was the tool's flag, under both prompts.** Every pass read the widget by fetching the frame's src; every
+  failure tried only `locate`, and no text named the fetch. describeElement's flag and the orientation's iframe line
+  now name the frame's page to fetch (the orientation only when the run has `fetch_url`), and the fixture frame is tall
+  enough to show its code.
+- **Recheck** (`prompt-budget-shadowcut-iframe`, the cross-origin task x 8): 39/40 current, 38/40 cut. qwen3.6 8 → 7,
+  reading the URL the fixture page shows in a `<code>` element as "the code"; glm-4.7-flash 7/8 both, asking the user
+  to change settings instead of fetching. Shipped on Shane's call, as rounds 2 and 3 shipped with a one-run gap.
+- **Not covered: the declarative closed root is out of reach either way**, 1/20 under both prompts, most runs at the
+  10-step cap. glm-4.7-flash read the first panel's code; once, under the current text, qwen3.6 answered with a code
+  the page does not hold. The removed sentence did not help it, but the case does not work, and it is open below.
 
 ## Step 3 result, round 3: `python_exec`'s option texts (2026-10-14)
 
@@ -259,3 +287,5 @@ From the memories and git, as of 2026-10-08:
 
 - Whether the `title` instruction stays in the prompt. Two reviewers called it duplicated; its comment in
   `prompts.ts` says it is said once there so each schema can carry one line, which is the step 2 pattern already.
+- A declarative closed root (`shadowrootmode="closed"`) is out of reach in practice: 1 run in 40 read `SEAL-9931` on
+  `/shadow-dom`, and one answered with a code that is not on the page. Read those runs before changing the tools.
