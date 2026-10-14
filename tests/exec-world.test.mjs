@@ -170,6 +170,7 @@ const OLD_CONFIG = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-te
  */
 async function worldRun(calls, { us = true, approved = true, config = {}, autoRO = false } = {}) {
     let n = 0, bg, approvals = 0;
+    const cards = [];
     const ctx = vm.createContext({ console: { log() {}, info() {}, warn() {}, error() {}, debug() {} }, document: { title: "Site" } });
     vm.runInContext("globalThis.window = globalThis", ctx);
     bg = loadBackground({
@@ -185,7 +186,7 @@ async function worldRun(calls, { us = true, approved = true, config = {}, autoRO
         },
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
-            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) { approvals++; void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }); }
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) { approvals++; cards.push(JSON.parse(JSON.stringify(msg.event.renderIn ?? null))); void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }); }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
             if (msg.payload.renderOnly || msg.payload.precheck) return {};
@@ -203,7 +204,8 @@ async function worldRun(calls, { us = true, approved = true, config = {}, autoRO
     const results = bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1).body.messages.filter((m) => m.role === "tool").map((m) => m.content);
     const log = JSON.parse(JSON.stringify((await bg.context.__mlRunLog.all()).filter((r) => r.run === hash && r.subsystem === "routing")));
     const isolated = bg.userScriptCalls.filter(([k, inj]) => k === "execute" && !/^globalThis\.__mlIsoStarted$/.test(inj.js[0].code)).length;
-    return { execMsgs, ran, results, log: log.filter((r) => /^exec-/.test(r.kind)).map((r) => [r.kind, r.reason]), roLog: log.filter((r) => /^readonly-/.test(r.kind)).map((r) => [r.kind, r.reason]), isolated, approvals };
+    const tools = bg.calls.find((c) => c.url.includes("/chat/completions")).body.tools;
+    return { cards, tools, execMsgs, ran, results, log: log.filter((r) => /^exec-/.test(r.kind)).map((r) => [r.kind, r.reason]), roLog: log.filter((r) => /^readonly-/.test(r.kind)).map((r) => [r.kind, r.reason]), isolated, approvals };
 }
 
 const PLAIN = "document.title = 'x'; return 1";
@@ -270,4 +272,63 @@ test("a read-only survey with world: \"isolated\" never runs in the page's world
     const tries = page.execMsgs.filter((p) => p.readonlyTry);
     assert.equal(tries.length, 1);
     assert.ok(!("world" in tries[0].args), "the page's read-only try is not told the world");
+});
+
+// --- review of #664: the card, the schema, null, a non-string js, and the survey on the default build ---
+
+const { WORLD_CARD } = await import("../src/sw/exec-routing.ts");
+const { withExecWorld } = await import("../src/tools/tool-details.ts");
+
+test("the approval card says the world when the call's world moves the exec away from where the default runs it", T, async () => {
+    const steered = await worldRun([{ js: PLAIN, world: "page" }], { config: { execDefaultWorld: "isolated" } });
+    assert.equal(steered.cards.length, 1);
+    assert.equal(steered.cards[0].note, WORLD_CARD.main, "an isolated default, and the model asked for the page's world");
+    assert.equal(WORLD_CARD.main, "Runs in the page's own world, where the page's scripts can see and change it.");
+    const iso = await worldRun([{ js: PLAIN, world: "isolated" }]);
+    assert.equal(iso.cards[0].note, WORLD_CARD.isolated);
+    assert.equal(WORLD_CARD.isolated, "Runs in an isolated world, hidden from the page's scripts.");
+    // Where the call lands where the default would: no line.
+    for (const [call, config] of [[{ js: PLAIN, world: "page" }, {}], [{ js: PLAIN, world: "isolated" }, { execDefaultWorld: "isolated" }], [{ js: PLAIN }, { execDefaultWorld: "isolated" }]]) {
+        const r = await worldRun([call], { config });
+        assert.equal(r.cards[0]?.note, undefined, JSON.stringify([call, config]));
+    }
+    for (const s of Object.values(WORLD_CARD)) assert.doesNotMatch(s, /\u2014|\u2013/, "no dashes");
+});
+
+test("world is offered to a run the worker drives and not to one a page started", T, async () => {
+    const worker = await worldRun([]);
+    const exec = worker.tools.find((t) => t.function.name === "exec");
+    assert.deepEqual(exec.function.parameters.properties.world.enum, ["page", "isolated"]);
+    // The page's own exec tool (what a page-built run's model is sent) has no `world`.
+    const { makeDomTools } = await import("../src/tools/tools.ts");
+    const pageExec = makeDomTools((t) => t).find((t) => t.name === "exec");
+    assert.ok(pageExec.parameters.properties.js, "positive control: the page's exec schema");
+    assert.equal(pageExec.parameters.properties.world, undefined, "the page's exec offers no world");
+    const tools = [{ name: "exec", parameters: { type: "object", properties: { js: { type: "string" } } } }, { name: "click", parameters: { type: "object", properties: {} } }];
+    const out = withExecWorld(tools);
+    assert.ok(out[0].parameters.properties.world && !tools[0].parameters.properties.world, "a copy, the input untouched");
+    assert.equal(out[1], tools[1]);
+});
+
+test("world: null is world omitted", T, async () => {
+    for (const def of ["page", "isolated"]) for (const avail of Object.values(AVAIL)) for (const [approved, js] of Object.values(FORCED))
+        assert.deepEqual(routeExec(js, approved, avail, { world: null, defaultWorld: def }), routeExec(js, approved, avail, { defaultWorld: def }));
+    assert.equal(pageWorldRefusal(null), null);
+    const r = await worldRun([{ js: PLAIN, world: null }]);
+    assert.deepEqual(r.log, [["exec-main", "plain"]]);
+    assert.ok(r.execMsgs.every((p) => !("world" in p.args)), "null is not sent on either");
+});
+
+test("an exec whose js is not a string is refused in the worker, and nothing with its world reaches the page", T, async () => {
+    const r = await worldRun([{ js: 5, world: "page" }]);
+    assert.match(r.results[0], /^Error: invalid arguments for "exec": "js" must be a string\./);
+    assert.equal(r.execMsgs.length, 0, JSON.stringify(r.execMsgs));
+    assert.equal(r.approvals, 0);
+});
+
+test("on the default build, a world-less read-only survey still auto-answers on the page's leg", T, async () => {
+    const r = await worldRun([{ js: "document.title" }], { autoRO: true });
+    assert.deepEqual(r.roLog, [["readonly-page", "reads-page"]]);
+    assert.equal(r.approvals, 0, "no gate");
+    assert.match(r.results[0], /SURVEYED IN THE PAGE/);
 });

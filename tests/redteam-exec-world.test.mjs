@@ -172,6 +172,39 @@ test("GET_CONFIG and the worker's ml.config() view never expose execDefaultWorld
     assert.ok(!("execDefaultWorld" in publicConfig({ ...DEFAULT_CONFIG, execDefaultWorld: "isolated" }, false)), "publicConfig (ml.config() in the worker too) omits it");
 });
 
+/** What a run's model read back from one survey of `ml.current.env`, the run started by `start(bg)`. */
+async function envSurvey(start) {
+    let n = 0;
+    const bg = loadBackground({
+        config: { ...OLD_CONFIG, autoApproveReadonly: true, execDefaultWorld: "isolated" }, openTabs: [SITE],
+        userScripts: { available: true, execute: async () => undefined },
+        local: { ml_site_always: ["https://site.example"] },
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            return jsonResponse(n++ === 0
+                ? { choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: "JSON.stringify(ml.current.env.exec)" }) } }] } }] }
+                : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined),
+    });
+    await start(bg);
+    for (let i = 0; i < 200 && n < 2; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    return String(bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1).body.messages.find((m) => m.role === "tool")?.content);
+}
+
+test("a page-built run's ml.current.env does not tell the page the stored default world, and says where its exec really runs", T, async () => {
+    // Positive control: a run the worker built, under the same setting, is told its exec runs isolated.
+    const worker = await envSurvey((bg) => bg.context.__mlStartUserRunForTest(7, { task: "env", surface: "hud" }));
+    assert.match(worker, /\\?"readsNeither\\?":\\?"isolated/, `positive control: ${worker}`);
+    const execDesc = { name: "exec", description: "run js", parameters: { type: "object", properties: { js: { type: "string" } }, required: ["js"] }, requiresApproval: true, capabilities: [], precheck: true };
+    const page = await envSurvey((bg) => bg.send({ type: "START_RUN", payload: { runId: "page-env", task: "t", systemPrompt: "s", tools: [execDesc], model: "default-model", think: null, maxSteps: 3, autoApproveReadonly: true, autoApprovePython: false, surface: "off" } },
+        { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https://site.example", documentId: "doc-7", frameId: 0 }));
+    assert.match(page, /readsNeither/, `the survey read env: ${page}`);
+    assert.doesNotMatch(page, /readsNeither\\?":\\?"isolated/, `the page's own run learnt the isolated default: ${page}`);
+    assert.match(page, /readsNeither\\?":\\?"page/, "its exec runs in the page's world, and env says so");
+});
+
 // --- 3. the page cannot force a refusal loop ---
 
 test("the page-global hint never suggests world \"page\" where page would be refused, even when the page shapes the error; it does where page is open", T, async () => {

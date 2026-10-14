@@ -68,7 +68,8 @@ export interface WorldAsk { world?: unknown; defaultWorld?: ExecWorld }
  * @returns the route
  */
 export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask: WorldAsk = {}): ExecRoute {
-    const { world, defaultWorld = "page" } = ask;
+    // null is omitted: some OpenAI-compatible models send null for an optional field.
+    const world = ask.world === null ? undefined : ask.world, defaultWorld = ask.defaultWorld ?? "page";
     if (world !== undefined && world !== "page" && world !== "isolated")
         return { where: "refused", reason: "requested", result: `Error: world must be "page" or "isolated", or omitted.` };
     const names = execNames(js);
@@ -120,7 +121,26 @@ export function pageGlobalHint(route: { where: string; reason: ExecReason }, err
  * @param args the call's arguments
  */
 export function withoutWorld(args: Record<string, unknown>): Record<string, unknown> {
-    if (!("world" in args)) return args;
+    if (!("world" in args)) return args;   // null too: it is removed, as omitted
     const { world: _world, ...rest } = args;
     return rest;
+}
+
+/** What the approval card says when a call's `world` sends it somewhere other than where an exec without one would run.
+ *  User-facing text (owner-approved strings). */
+export const WORLD_CARD = {
+    main: "Runs in the page's own world, where the page's scripts can see and change it.",
+    isolated: "Runs in an isolated world, hidden from the page's scripts.",
+} as const;
+
+/**
+ * The approval card's line for an exec whose `world` moves it away from where the default would run it, or "" when it
+ * lands where an exec without `world` would (or is refused, which is decided before any card). Under an isolated default
+ * this is what shows a person that the model, perhaps steered by the page, asked for the page's world.
+ * @param asked the route with the call's `world`
+ * @param byDefault the route of the same script without one
+ */
+export function worldCardNote(asked: ExecRoute, byDefault: ExecRoute): string {
+    if (asked.where === byDefault.where || asked.where === "refused") return "";
+    return WORLD_CARD[asked.where];
 }

@@ -342,12 +342,25 @@ rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs
 - An isolated exec's error that reads like a missing page global (`is not defined`, `Cannot read properties of
   undefined`) gets one line, `Page globals need world: "page".` (`pageGlobalHint`), only when its route was
   `requested` or `default`: where policy isolated it, `"page"` would be refused, so the hint would start a loop.
-- The page is never told the world: every exec message to the page drops `world` (`withoutWorld`), a worker-built
-  run's exec precheck runs in the worker (it used to be sent to the page, script and all), and a read-only survey whose
-  exec would run isolated (asked, or by the default) is not sent to the page's leg: it is answered in the worker or
-  goes to the gate. A page-built run (the page's own world) refuses `"isolated"` in the worker's precheck and on the
-  page (`pageWorldRefusal`), and its survey is not tried. `ml.current.env.exec` answers for an exec without `world`
-  under the default. The red-team pass is `tests/redteam-exec-world.test.mjs`; the table is `tests/exec-world.test.mjs`.
+- `world` is offered only to a run the worker drives (`withExecWorld`, at the turn's start; the start event carries the
+  same list): a page-built run's exec runs in its page's world. `null` is omitted.
+- What the page is sent of it: nothing for a run the worker drives. `sendTool` drops `world` from every exec message to
+  the tab (`withoutWorld`), exec's In is drawn in the worker, and its precheck runs there too (it used to be sent to the
+  page, script and all; a `js` that is no string is refused there). A read-only survey whose exec would run isolated
+  (asked, or by the default) skips the page's leg: it is answered in the worker or goes to the gate. A page-built run
+  refuses `"isolated"` in the worker's precheck, at the call, and on the page (`pageWorldRefusal`), and its survey is
+  not tried. `ml.current.env.exec` answers for an exec without `world` under the default; for a page-built run it uses
+  the page's world, so the page never learns the stored default.
+- The approval card says the world when the call's `world` moves the exec away from where the default would run it
+  (`worldCardNote`, the code block's note): "Runs in the page's own world, where the page's scripts can see and change
+  it." or "Runs in an isolated world, hidden from the page's scripts." Under an isolated default, a page that steers the
+  model to its own world (by shaping an error so the hint fires, or by injection) is seen by the person approving.
+- KNOWN CONFOUND under an isolated default: a read-only survey that reads the page is no longer auto-answered (the
+  page's leg runs the dialect in the main world); it goes to the approval gate and, approved, runs isolated. So the
+  isolated default changes two things at once: where exec runs, and that page-reading surveys need approval. Running
+  the dialect in the isolated world (SITE_PRESENCE step 3) removes it. On the shipped `"page"` default a world-less
+  survey auto-answers on the page's leg as before (`tests/exec-world.test.mjs`, "default build").
+- The red-team pass is `tests/redteam-exec-world.test.mjs`; the table is `tests/exec-world.test.mjs`.
 
 The isolated script runs inside one wrapper built as source (`isolatedWrapper`): it binds `ml` (`current` deep-frozen,
 `dereference` answering only the reads sent with the call, each the page's own `DerefText` from `src/isolated-kit.ts`),

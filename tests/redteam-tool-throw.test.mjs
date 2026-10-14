@@ -77,12 +77,12 @@ test("main world: a page answering with a malformed envelope (answerMedia not it
     assert.deepEqual(ok.log, []);
 });
 
-test("main world: delegateTool's own setup throwing on an odd argument (exec's js an object) is an error result", async () => {
-    // `{ toString: 1 }` cannot be made a string: tabGrantsForCall's String(js) threw before anything was sent.
+test("main world: an exec whose js cannot be a string is an error result, and the run goes on", async () => {
+    // `{ toString: 1 }` cannot be made a string: tabGrantsForCall's String(js) threw in delegateTool before anything was
+    // sent. A worker-built run's precheck now refuses a js that is no string before the gate (#664), so it never gets there.
     const r = await runSteps([{ name: "exec", args: { js: { toString: 1 } } }]);
     wentOn(r, 1);
-    assert.match(r.results[0], THREW);
-    assert.ok(r.log.some((x) => x.kind === "threw" && x.reason === "run" && x.detail?.tool === "exec"), JSON.stringify(r.log));
+    assert.match(r.results[0], /^Error: invalid arguments for "exec": "js" must be a string\./);
 });
 
 // --- the worker: a tool the worker runs itself, and the decisions before it ---

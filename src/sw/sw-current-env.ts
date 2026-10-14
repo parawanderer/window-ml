@@ -23,14 +23,16 @@ const whereOf = (r: ExecRoute): ExecWhere => (r.where === "main" ? "page" : r.wh
  * so it cannot drift from where an exec actually goes.
  * @param tabId the run's tab (passed in: the worker records a run in `bgRuns` only when a turn ends)
  * @param readonlyAutoApprove the run's `autoApproveReadonly`
+ * @param pageBuilt a run a page drives: its exec runs in the page's world, so the default world is not used (nor told)
  */
-export async function currentEnv(tabId: number, readonlyAutoApprove: boolean): Promise<CurrentEnv> {
+export async function currentEnv(tabId: number, readonlyAutoApprove: boolean, pageBuilt = false): Promise<CurrentEnv> {
     // A tab the browser no longer has is not approved on the strength of the URL the worker last saw it at: fail closed.
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     const url = tab ? (tab.url || tabPageUrl.get(tabId) || "") : "";
     const config = await getConfig();
     const [approved, isolation] = await Promise.all([pageApproved(url), isolationAvailable(!!config.cdp)]);
-    return envOf(url, approved, isolation, readonlyAutoApprove, defaultExecWorld(config.execDefaultWorld));
+    // A run a page started runs its exec in that page's world, whatever the default: neither wrong there nor the page's to learn.
+    return envOf(url, approved, isolation, readonlyAutoApprove, pageBuilt ? "page" : defaultExecWorld(config.execDefaultWorld));
 }
 
 /**
@@ -58,9 +60,10 @@ export function envOf(url: string, approved: boolean, isolation: { userScripts: 
  * @param current the snapshot as the loop made it
  * @param tabId the run's tab
  * @param readonlyAutoApprove the run's `autoApproveReadonly`
+ * @param pageBuilt a run a page drives now (see currentEnv)
  */
-export async function withEnv(current: CurrentSnapshot, tabId: number, readonlyAutoApprove: boolean): Promise<CurrentSnapshot> {
-    return { ...current, env: await currentEnv(tabId, readonlyAutoApprove) };
+export async function withEnv(current: CurrentSnapshot, tabId: number, readonlyAutoApprove: boolean, pageBuilt = false): Promise<CurrentSnapshot> {
+    return { ...current, env: await currentEnv(tabId, readonlyAutoApprove, pageBuilt) };
 }
 
 defineState({
