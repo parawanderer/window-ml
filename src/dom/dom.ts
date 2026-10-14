@@ -513,7 +513,9 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
             }
         } else {
             const sel = clickSelector(el);
+            const src = frameSrcUrl(el as HTMLIFrameElement);
             out += "\n" + indent + "  #document (CROSS-ORIGIN iframe) — a different origin, so selectors CANNOT reach inside (SOP). " +
+                (src ? `To READ its text, fetch its page: ${src}. ` : "") +
                 (canLocate === false
                     ? "You have no `locate` tool — say you can't interact with it rather than guessing a selector."
                     : `Reach a control visually: locate({ description: "<how it looks>", selector: "${sel}" }) → click the @pt (needs "reserved-element clicking" enabled for the debugger/CDP click).`);
@@ -621,16 +623,30 @@ export const shadowRootStats = (root: ParentNode = document): { open: number; cl
 
 /** Count iframes for ORIENTATION: `same` = SAME-ORIGIN frames the DOM tools CROSS (via `>>>`, recursive);
  *  `cross` = CROSS-ORIGIN frames the SOP walls off (selector-unreachable → locate/@pt + reserved-element/CDP). */
-export const iframeStats = (root: ParentNode = document): { same: number; cross: number } => {
+export const iframeStats = (root: ParentNode = document): { same: number; cross: number; crossSrc: string[] } => {
     let same = 0, cross = 0;
+    const crossSrc: string[] = [];
     const visit = (r: ParentNode): void => {
         for (const el of r.querySelectorAll("iframe")) {
             const doc = sameOriginFrameDoc(el as Element);
-            if (doc) { same++; visit(doc); } else cross++;
+            if (doc) { same++; visit(doc); continue; }
+            cross++;
+            const src = frameSrcUrl(el as HTMLIFrameElement);
+            if (src && crossSrc.length < 3) crossSrc.push(src);
         }
     };
     visit(root);
-    return { same, cross };
+    return { same, cross, crossSrc };
+};
+
+/** A cross-origin frame's document URL when it is one a fetch can read (http/https), else null. Its TEXT is readable
+ *  that way even though no selector reaches inside: every model that read a cross-origin widget in the shadowcut
+ *  sweep did it by fetching the frame's src, and every one that tried only `locate` gave up. */
+export const frameSrcUrl = (el: HTMLIFrameElement): string | null => {
+    try {
+        const u = new URL(el.getAttribute("src") || "", location.href);
+        return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+    } catch { return null; }
 };
 
 /** The HOST selectors of UNREACHABLE closed-root Web Components — the ones a selector scan can't enter EVEN

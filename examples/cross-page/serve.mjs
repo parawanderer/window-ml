@@ -250,7 +250,7 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
                     return res.end(`<!doctype html><meta charset=utf-8><title>Order status</title><body><h1>Your order</h1>`
                         + `<h2>Checkout widget</h2><iframe id="checkout" src="/frames-checkout" width="420" height="120"></iframe>`
-                        + `<h2>Partner widget</h2><iframe id="partner" src="${crossOrigin}/" width="420" height="320"></iframe>`);
+                        + `<h2>Partner widget</h2><iframe id="partner" src="${crossOrigin}/" width="560" height="700"></iframe>`);
                 }
                 if (p === "/frames-checkout") {
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
