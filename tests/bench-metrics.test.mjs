@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
     stepsOf, authoredTexts, capturedOutputs, sharesRun, reEmission, pointerRefs, pointerUse,
-    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse, isRateLimit,
+    recovery, execWorld, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse, isRateLimit,
 } from "../tests/e2e/bench/metrics.mjs";
 import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream, runConfig } from "../tests/e2e/bench/cells.mjs";
 
@@ -490,3 +490,25 @@ test("isRateLimit: a provider's rate limit however it arrives (Open WebUI passes
     assert.ok(!isRateLimit(null));
 });
 
+
+// --- exec's world: a page global missing, and the retry in the page's world ---
+
+test("execWorld: a missing page global retried with world \"page\" counts once; a retry in the same world does not", () => {
+    const ev = [
+        start(),
+        ...step(1, "exec", { js: "store.getState()" }, "ReferenceError: store is not defined"),
+        ...step(2, "exec", { js: "store.getState()", world: "page" }, "{\"refunds\":[]}"),
+        ...step(3, "exec", { js: "window.__APP__.cart.total" }, "TypeError: Cannot read properties of undefined (reading 'cart')"),
+        ...step(4, "exec", { js: "window.__APP__?.cart" }, "undefined"),
+        end("done"),
+    ];
+    assert.deepEqual(execWorld(ev), { calls: 4, misses: 2, pageRetries: 1 });
+});
+
+test("execWorld: a run with no exec is blank, not zero, so a report averages over the runs that used it", () => {
+    const ev = [start(), ...step(1, "findByText", { text: "x" }, "found"), end("done")];
+    assert.deepEqual(execWorld(ev), { calls: null, misses: null, pageRetries: null });
+    const m = measureRun({ events: ev });
+    assert.equal(COLUMNS.find((c) => c.key === "pageRetries").get(m), null);
+    assert.equal(COLUMNS.find((c) => c.key === "execCalls").get({}), null, "a measurement stored before the metric existed reads blank");
+});
