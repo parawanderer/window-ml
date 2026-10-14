@@ -130,7 +130,8 @@ export function tableSpecs(tables: unknown): { name: string; src: string | Eleme
             // A reserved name would shadow a preloaded global, so it is refused. A key that is merely not an identifier
             // (models key the map by the URL itself) loads under a name derived from it, and the key stays reachable as
             // tables["<key>"]: the result names the variable it loaded.
-            if (nameErr && /reserved/.test(nameErr)) throw new Error(`pythonExec tables: ${nameErr}`);
+            // A LIST is no map: its indices are names nobody wrote (`[[url]]` unwraps to `[url]`, key "0"), so it is refused.
+            if (nameErr && (/reserved/.test(nameErr) || Array.isArray(tableArg))) throw new Error(`pythonExec tables: ${nameErr}`);
             if (nameErr) specs.push({ name: derivedTableName(name, new Set(specs.map((s) => s.name))), src, alias: name });
             else specs.push({ name, src });
         }
