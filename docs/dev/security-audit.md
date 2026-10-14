@@ -124,7 +124,7 @@ the worker, and the page answers geometry only):
       null-prototype collector in all three paths (main world, strict-CSP CDP, isolated): the page's own lines stay
       out, its console is never replaced, the collector's methods are defined (a page accessor on its console gets
       nothing), and the members it does not collect forward to the page's console with the page's console as `this`.
-      The model reads a main-world exec's console as `console (page-writable):`. Every wrapper function a page function
+      The model reads every main-world exec result (console, `value:` and error alike) under a first line `page-writable (ran in page world):`; an isolated exec and a read-only survey carry none. Every wrapper function a page function
       can reach while the code runs (`.caller`, a stack frame's `getFunction()`) is one-shot, so the page cannot run code
       of its own beside the collector, `state` and `ml`, or run the approved script again (eval closure, async body,
       both CDP wrapper functions). `ml.dereference` hands the collector only to the extension's own method, never to a

@@ -274,6 +274,7 @@ test("on a site that is not approved, even a plain approved exec runs isolated; 
     const iso = await isoRun(["document.title = 'x'; return document.title"], { approved: false, us: true });
     assert.equal(iso.toPage.length, 0);
     assert.match(iso.results[0], /isolated world because this site is not approved/);
+    assert.doesNotMatch(iso.results[0], /page-writable/, "an isolated exec's result is not labelled page-writable");
     const none = await isoRun(["document.title = 'x'; return 1"], { approved: false, us: "off" });
     assert.equal(none.toPage.length, 0, "refused: not sent to the page");
     assert.equal(none.injected.length, 0);

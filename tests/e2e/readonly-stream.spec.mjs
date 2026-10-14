@@ -142,10 +142,11 @@ test("past the model's character limit, a read-only survey streams every line an
     }
     expect(ro.after.done[0].approval).toBe("readonly");
     expect(ro.whileHeld.deltas).toEqual(approved.whileHeld.deltas);
-    // The model is sent the same console lines both ways; only the approved exec's heading says the page could write
-    // into them (MAIN_CONSOLE_HEAD), the survey's console being the dialect's own.
+    // The model is sent the same console lines both ways; only the approved exec's result opens with the line saying the
+    // page could have written into it (PAGE_WORLD_HEAD), the survey being the dialect's own.
     const lines = (r) => r.after.done[0].result.split("\n\nvalue:")[0].split("\n");
     expect(lines(ro)[0]).toBe("console:");
-    expect(lines(approved)[0]).toBe("console (page-writable):");
-    expect(lines(ro).slice(1)).toEqual(lines(approved).slice(1));
+    expect(lines(approved)[0]).toBe("page-writable (ran in page world):");
+    expect(lines(approved)[1]).toBe("console:");
+    expect(lines(ro).slice(1)).toEqual(lines(approved).slice(2));
 });

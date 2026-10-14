@@ -303,7 +303,7 @@ test.describe("exec", () => {
     test("__mlCdpStream is gone from the page's global once the strict-page exec ends", async () => {
         const row = await scenario("exec-strict-stream-after", { path: "/?csp=strict", req: { stream: true }, script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
         // The wrapper deletes the global in its finally (Runtime.removeBinding leaves it). The page can still call it while
-        // the exec runs, from the context the listener trusts: the model reads that console as page-writable.
+        // the exec runs, from the context the listener trusts: the model reads that whole result as page-writable.
         expect(row.load.final.mlCdpStream).toBe(false);
         expect(row.load.final.globalsAdded).not.toContain("__mlCdpStream");
     });
