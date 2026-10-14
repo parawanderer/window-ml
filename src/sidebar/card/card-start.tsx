@@ -81,6 +81,7 @@ export function SiteQuote({ label, text }: { label: string; text: string }) {
 /**
  * The scrolling part of the card: who asks, the site's task quoted, and the site's instructions behind a disclosure.
  * @group card
+ * @gallery {"ask": {"requestId": "r", "kind": "start", "origin": "https://forum.example", "task": "Summarise the thread on this page.", "instructions": "Answer in French.", "lines": [{"text": "Read this page"}, {"text": "Run code on this page", "isNew": true}], "model": "qwen3:8b", "budget": 10, "pageTurns": 10, "since": 0, "expiresMs": 180000}}
  */
 export function StartAskBody({ ask }: { ask: StartAsk }) {
     const [showIns, setShowIns] = useState(false);
@@ -131,6 +132,7 @@ export function uncoveredNow(el: Element | null): Promise<boolean> {
  * The fixed part of the card: what the agent can do, the model, the budgets, and the buttons. Outside the scrolling
  * area, so a long quote cannot push it off the card.
  * @group card
+ * @gallery {"ask": {"requestId": "r", "kind": "start", "origin": "https://forum.example", "task": "Summarise the thread on this page.", "instructions": "Answer in French.", "lines": [{"text": "Read this page"}, {"text": "Run code on this page", "isNew": true}], "model": "qwen3:8b", "budget": 10, "pageTurns": 10, "since": 0, "expiresMs": 180000}}
  */
 export function StartAskFoot({ ask }: { ask: StartAsk }) {
     const host = hostOf(ask.origin);
@@ -191,7 +193,8 @@ export function StartAskFoot({ ask }: { ask: StartAsk }) {
     );
 }
 
-/** The expired card (1.1, "The card's other states"). */
+/** The expired card (1.1, "The card's other states").
+ *  @group card */
 export function StartAskExpired() {
     return <div class="start-dim start-expired">This request expired, and nothing ran. The site can ask again.</div>;
 }
@@ -215,7 +218,9 @@ export function StartAskCard({ s }: { s: Session }) {
     );
 }
 
-/** The site's prompt over the reply box when it ended its turn waiting for the person (Q2b). */
+/** The site's prompt over the reply box when it ended its turn waiting for the person (Q2b).
+ *  @group card
+ *  @gallery {"s": {"siteWait": {"prompt": "Which thread should I summarise next?", "site": "https://forum.example", "ts": 0}}} */
 export function SiteWaitPrompt({ s }: { s: Session }) {
     if (!s.siteWait) return null;
     return (

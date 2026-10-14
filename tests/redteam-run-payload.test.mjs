@@ -197,7 +197,7 @@ function twoTabWorker() {
         openTabs: [{ id: 7, url: RUN_SITE, title: "Site" }, { id: 8, url: OTHER_SITE, title: "Site too" }],
         onFetch: async (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
-            if (call.body.messages?.some((m) => m.content === HELD_TASK)) await held;
+            if (call.body.messages?.some((m) => String(m.content).endsWith(HELD_TASK))) await held;   // marked as the page's (SITE_ACCESS_SLICE3.md, Q2a)
             return jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_t, msg) => (msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined),
