@@ -286,8 +286,11 @@ still take hours: loops nested over large collections, an array doubled forty ti
 | --- | --- | --- |
 | `STEP_BUDGET` | 3,000,000 steps | Every node evaluated and every element iterated costs one. About a second of main thread when exhausted (measured at 3.2M steps/s); a filter-and-map survey over 20,000 table rows uses 207k. Deterministic. |
 | `MAX_COLLECTION` | 1,000,000 | The largest array, `Set` or `Map` one step may produce, checked before `Array(n)`, `new Array(n)` and `Array.from({ length })` run and after every host call. |
-| `MAX_STRING` | 10,000,000 chars | The longest string one step may produce: checked before `repeat`, `padStart`, `padEnd` and `join`, and after `+`, templates and host calls. |
-| `riskyRegex` | pattern check | A repeated group that contains a quantifier or an alternation (`(a+)+`, `(\w+\s?)*`, `(a\|a)+`) can backtrack exponentially inside one host call, where no budget reaches. Refused before it runs, for regex literals, `new RegExp`, string patterns given to `match`, `matchAll` and `search`, every pattern `ml.pipe`'s `grep`/`sed` stages are about to compile, and every `ml.jsonPath` `match()`/`search()` pattern. |
+| `MAX_STRING` | 10,000,000 chars | The longest string one step may produce: checked before `repeat`, `padStart`, `padEnd` and `join` (on a String object too: `new String(…)` and `ml.dereference`'s text are not primitives), and after `+`, templates and host calls. |
+| `riskyRegex` | pattern check | A repeated group that contains a quantifier or an alternation (`(a+)+`, `(\w+\s?)*`, `(a\|a)+`) can backtrack exponentially inside one host call, where no budget reaches. Refused before it runs, for regex literals, `new RegExp`, string patterns given to `match`, `matchAll` and `search` (a String object's too), every RegExp a host call is handed as receiver or argument whoever built it (on the page realm a page value's property can be one), every pattern `ml.pipe`'s `grep`/`sed` stages are about to compile, and every `ml.jsonPath` `match()`/`search()` pattern. |
+| `HOST_CHARS_PER_STEP` | 64 chars | A step is a fair unit only if no step does unbounded work, and `s.toLowerCase()` on a 10-million-character string is one step of milliseconds: a loop of them ran for hours inside the budget. A scanning string method is charged its receiver and its string arguments, and comparing two strings its shorter one. A fixed-slice read (`charAt`, `at`, `slice`, `substring`, `startsWith`) is not charged. |
+| `HOST_ELEMENTS_PER_STEP` | 64 elements | The same for arrays: `indexOf`, `includes`, `concat`, `reverse`, `fill`, `shift`, `unshift` and `splice` are charged the receiver's length, every NEW array a host call returns (`slice`, `split`, `map`, `ml.range`) its length, and destructuring a string, `Set` or `Map` its size. |
+| `MAX_EXPANDED`, `EXPANDED_PARTS_PER_STEP` | 5,000,000 parts, 16 a step | An array that SHARES its parts expands to far more than it holds: forty lines of `d = [d, d]` are 2^40 leaves, and `String(d)` at depth 24 took 3 s in one host call, doubling per level. So whatever is about to expand a value walks it first, counting a part each time a walk would visit it, charges it, and refuses it past the cap: the arguments of a host call (except where it only stores them, `push`, `set`, `add`, compares them by identity, an array's `includes`, or prints a string, and an `ml` member's, which reads its arguments as data and charges its own work), the receiver of `join`, `toString`, a default `sort`, `flat` and `flatMap`, every coercion of an object (`+`, `<`, `-`, unary `-`/`+`, a template, a computed key, a callable root, a safe constructor), and the value the survey returns, which every caller serialises outside any budget. The walk reads an object's members as data, never running a getter, and does not follow a cycle. |
 | `PIPE_CHARS_PER_STEP` | 64 chars | `ml.pipe` is one host call doing work proportional to its input, which the step count never sees: a pipe inside a `.map` would cost one step per call. So each stage is charged its input and its output at this rate. Calibrated on the slowest stage (`sort`, ~200M chars/s) so a budget spent on pipes is about a second, like everything else. |
 | `ml.jsonPath` | 1 step per node | One query is one host call whose work the step count never sees, and `$..[?@..x]` is quadratic in depth. Every node a descent visits, every member a selector or filter reads, every step of a `==` comparison and every key of a printed Normalized Path is charged to `STEP_BUDGET`. Each `match()`/`search()` pattern passes `riskyRegex` after translation from I-Regexp. Only a sanitized `{ paths }` is forwarded. Data is read as DATA: a getter (on a member or an array index), a `Map` or a DOM node is an error, not a walk, and a cycle under `..` is an error (`tests/readonly-jsonpath.test.mjs`). |
 | `OUTPUT_CEILING` | 32,000,000 chars | The console output one survey KEEPS (output-clip.ts, shared with every tool). `MAX_STRING` bounds one string, not how many are printed: 200 prints of a 9 MB string were 1.8 GB held and then `Invalid string length` when joined. Past it a line is counted, not kept and not streamed. |
@@ -314,6 +317,14 @@ script-owned objects and `Set`/`Map` mutators arrived, and `for (const x of a) a
 invalidated an argument made for an earlier one, and nothing re-checked it. Regex literals (also 2026-08-29) brought
 catastrophic backtracking, and making `ml.answer` free (2026-09-01) broke "a failed attempt leaves nothing behind".
 All four are fixed, and each has tests that fail on the old code.
+
+It was lost a second way, found on 2026-10-14 by a review from outside the codebase (`tests/readonly-soundness.test.mjs`).
+The budget priced every step as one unit of work, and four routes made one step cost minutes or more: a String OBJECT
+skipped the size and pattern checks (they asked `typeof obj === "string"`), so `ml.dereference(…).match("(a+)+$")`
+hung the WORKER; a RegExp the script did not build (a page value's property) skipped the pattern check; an array that
+shares its parts expanded exponentially inside `JSON.stringify`, `flat`, `join`, any coercion, and the caller's own
+serialisation of the result; and a loop of O(n) host calls on a 10-million-character string or a million-element array
+ran for hours at a few steps an iteration. The last two are the cost rows above.
 
 ## Working on fetched tables
 
@@ -529,11 +540,120 @@ The rule is in AGENTS.md. Every new construct, method or facade member needs, in
 Tests for anything that could loop run in a worker with a timeout (see `inWorker` in the test file), so a regression
 fails in seconds instead of hanging the runner.
 
+## Threat questions answered
+
+A review on 2026-10-14 from a session in another project, which had read `sw-cdp.ts` and `sw-isolated-exec.ts` and none
+of the dialect, asked six questions and described the design in four claims. The answers, with where each is pinned.
+
+**The design, corrected.**
+
+- *"A Pratt parser and a custom evaluator; no `eval` on the read-only path."* Right: no string is ever compiled.
+- *"The evaluator runs in an isolated world."* Wrong. It runs in the service worker (`realm: "worker"`, tried first for a
+  run the worker hosts) or in the page's MAIN world: a page-hosted run's loop lives there, and a worker-hosted survey that
+  reads the page is posted there (`PAGE_TOOL_RUN`, `run-delegation.ts`). No survey runs in an isolated world. Isolated
+  worlds (`chrome.userScripts` or CDP) are for APPROVED execs of a worker-built run whose script names `ml.current` or a
+  pointer, or whose page is not approved (`exec-routing.ts`). In the main world the page can replace every built-in the
+  evaluator calls (`Array.prototype.map`, `Object.create`, `WeakSet.prototype.has`) and take over the page leg, its result
+  and its lines. That is accepted: the page leg is given nothing of the run's (pointer reads are refused there, and
+  `ml.current` is a refusal on the page realm), so what the page can do to it is misreport its own content, which it can do
+  through its DOM anyway (`docs/dev/site-access.md`, "What the page can forge").
+- *"A failed check, a non-read-only operation, the step budget or a heuristic falls through to plain `eval`, which always
+  needs approval."* Half right. A REFUSAL (`NotInDialect`/`Denied`: a shape outside the grammar, a denied property, a
+  method not allowed for its receiver, a write to something the script did not build, a budget or size cap, a risky
+  pattern) goes to the approval gate. A RUNTIME error (a missing method, a script's own throw) is reported to the model
+  with nobody asked ("A missing method is not a refusal"). Approval is a person approving that one call's code on its card;
+  an unattended run refuses instead. The approved script then runs from the start as real JavaScript: `eval` in the page's
+  main world, CDP `Runtime.evaluate` in the main world when the page's CSP forbids `eval` (a worker-built run with the CDP
+  setting on), or an isolated world as above, and nowhere when that world is needed and none is available.
+- *"Network access is mediated: a fetch needs approval for its domain."* The dialect has NO network access. `ml.fetch`
+  there answers only from a cache of URLs an approved call already fetched, in either realm, and refuses `fresh` and
+  credentialed modes; nothing else it can construct, call or read starts a request (`tests/e2e/readonly-loads.spec.mjs`).
+  Outside the dialect the authority is not a wrapper in some world but the worker (`fetchUrlFor`, `sw-fetch-url.ts`),
+  which judges each request by the sender the browser reports, and approval is per URL, with the origin-wide
+  auto-approvals `docs/dev/site-access.md` lists under "What an approval lets leave".
+
+**1. The main-world stream binding.** Real, already pinned as a `todo` in `tests/redteam-isolated.test.mjs`, and not
+fixed here. When it is live: only `cdpEval`, which runs only for an APPROVED exec of a worker-built run routed to the
+main world (a plain script on an approved page), after the page's CSP blocked the main-world `eval`, with the CDP setting
+on and streaming on. Never for a survey and never on an unapproved page. While it runs, the page's scripts (and, since
+`Runtime.addBinding` is given no context name, the main world of every frame the target holds, by the protocol's
+description, not measured) can call `__mlCdpStream`, and the listener checks neither context nor caller. What that adds
+over what the page already has is small: the exec runs in the page's world, where the page can call the console the
+wrapper has replaced (its lines then reach the model's RESULT, not only the stream), replace the `JSON.stringify` the
+wrapper uses, or change the DOM the script reads. What it does add: callers in other frames, which cannot reach the top
+frame's console; and a marker that outlives the call, since `Runtime.removeBinding` only unsubscribes the client and
+leaves the function on the global (CDP's documentation). The options, and what each buys:
+
+| Option | Buys |
+| --- | --- |
+| Accept only `executionContextId` equal to the context the exec was evaluated in | Removes every caller outside the top frame's main world: other frames, other worlds. Cheap. Nothing against the page itself. |
+| A per-call nonce in the payload | Nothing beyond the context check: the nonce is in main-world code, and the page reads it by replacing the binding's global or `JSON.stringify`, or from an `Error().stack` in a page function the script calls. |
+| A per-run unguessable binding name | Nothing against an active page, which enumerates `window` for a new function. |
+| Capture with `Runtime.consoleAPICalled` instead of patching the console and the binding, keeping only calls whose stack holds a frame of the evaluated script (`//# sourceURL=wml-exec-<nonce>`, with async stack depth on) | Removes the channel for spontaneous page code (timers, handlers, observers), by either route. Leaves page functions the script itself calls, and a page that learnt the source URL from such a call and can still create a script. Costs: arguments arrive as RemoteObjects, so output is formatted differently from the in-page `JSON.stringify`. |
+| Label main-world output in the result the model reads: produced in the page's own world, which can write into it | The only option that covers the DOM, which no mechanism can. Costs a line of tokens per main-world exec; the isolated route already adds a note of where it ran. |
+
+Proposed: the context check and the label; the console capture if streamed output from strict pages matters enough to
+pay for its formatting change.
+
+**2. Redirects past an approval.** Not a question for the dialect, which fetches nothing. For `fetch_url` and an approved
+exec's `ml.fetch`: real on the origin-wide auto-approved paths, `docs/dev/site-access.md`.
+
+**3. An approved domain is a write channel.** The dialect has no approved-domain path. The tools do:
+`docs/dev/site-access.md`, "What an approval lets leave".
+
+**4. One built-in call, unbounded.** Real, four ways, fixed here: the "How it was lost" paragraph and the cost rows under
+[Halting](#halting), each with a HALTING test in a worker with a timeout in `tests/readonly-soundness.test.mjs` that hung
+before the fix. Checked and bounded already: `repeat`, `padStart`/`padEnd`, `Array(n)`/`new Array(n)`, `Array.from({
+length })` (checked before they run); `fill` (cannot grow an array); a callback a host method calls (`sort`'s comparator,
+`map`, `forEach`) is the script's own arrow and is charged per node it evaluates, under the same budget and depth cap;
+`JSON.parse` is linear in its string, now charged. Bounded only by V8's own string limit (about a second of work, then a
+`RangeError`): `join` of very long strings, a `replace` whose replacement is long, and `JSON.stringify` with an indent
+over deep nesting (5,000 levels, 755 ms). Open: polynomial regex backtracking, and DOM query cost on the page realm
+(Known gaps).
+
+**5. Reads that run page code, or make the browser fetch.** On the page realm, yes, every one of the listed hooks runs the
+page's code: a getter, a `Proxy` trap, `valueOf`/`toString`/`Symbol.toPrimitive` in any coercion (the dialect checks no
+type before coercing, beyond the expansion walk), `toJSON` in `JSON.stringify`, `Symbol.iterator` in a spread or `for…of`
+over a page iterable, and a redefined prototype method, which is every built-in call. Accepted, as above: it is the page's
+world and the page leg holds nothing of the run's. `tests/readonly-soundness.test.mjs` pins that a getter runs and that
+the page realm has no `ml.current`. The worker realm reads only copies of data (`ml.current`, deep-copied; pointer values,
+strings and tables), and the expansion walk added here reads members as data, never running a getter. Network: none.
+In Chromium 151 a survey that reads computed style (background images, fonts, a `::before` URL), geometry (`offsetHeight`,
+`getBoundingClientRect`, `innerText`) and attributes of elements in a `display:none` subtree, on a `display:none` element
+and of a lazy image below the fold starts no request (`tests/e2e/readonly-loads.spec.mjs`, the dialect bundled into a real
+page). Settled by measurement, not by the specification, which does not say. A read that forces layout costs time, which
+is the page realm's DOM gap above.
+
+**6. The fallback.**
+
+- *Detected before it acts.* Yes, for everything the dialect itself does: the method gate (`methodAllowed`), the
+  ownership and iteration checks on a mutator, `preflight` on a host call and the ownership check on an assignment all run
+  before the call or the write. The one thing a survey changes outside itself, `ml.answer`, is restored on a refusal
+  (`checkpoint`). Pinned by the ADVERSARIAL and FAILURE tests in `tests/readonly-exec.test.mjs` and the other
+  `tests/readonly-*.test.mjs`. On the page realm a getter the survey reads may write; that is the page's code (item 5).
+- *Re-run after approval.* Yes: the approved script runs from the start, in a new realm, so its reads happen twice and the
+  page may have changed in between. The person approves the CODE, never the try's result: a refused try's streamed lines
+  are discarded before the gate opens ("It streams, and a refused try takes its lines back"). No request is repeated,
+  since the try makes none.
+- *State a later survey inherits.* Each survey builds a fresh evaluator, root scope and facade; nothing of the dialect's
+  persists between calls. What persists and a survey reads: the page (on the page realm, an approved main-world exec can
+  replace a built-in that a later page-leg survey calls, which the page itself can also do); and the two `ml.fetch`
+  caches, filled only by approved fetches and holding frozen copies. An isolated world's `state` (`__mlState`) is never
+  read by a survey. Approval state (grants, consents, the site lists) lives in the worker and is judged by `sender`, so no
+  approved script in any world can write it.
+
 ## Known gaps
 
 - The regex check is conservative and incomplete. It refuses `(?:x|y)+` along with the dangerous shapes, and it
-  does not catch polynomial backtracking from many adjacent overlapping quantifiers (`\s*\s*\s*x`). A linear-time
-  regex engine would close it and is not worth the weight today.
+  does not catch POLYNOMIAL backtracking, which needs only one quantifier: `/a+b/` on an unanchored search of
+  100,000 `a`s took 3.7 s in one host call (Node 22), so a million takes minutes and `MAX_STRING` hours; adjacent
+  overlapping quantifiers (`\s*\s*\s*x`) raise the degree. The input is often the page's or another site's text. A
+  `todo` HALTING test pins it (`tests/readonly-soundness.test.mjs`). Closing it needs a linear-time matcher for patterns
+  run on long inputs (V8's experimental linear engine is not on in Chrome), or a cap on the input length tied to the
+  pattern's unbounded quantifiers, which would refuse ordinary regex work over a long page text.
+- On the page realm, a DOM read is O(the DOM) and the step count does not see it: `querySelector` on a page built to
+  be huge, a selector whose descendant combinators backtrack over a deep tree, a read that forces layout. Only the
+  page's own main thread is held, which the page could do to itself anyway, so it is not charged.
 - The halting rules are conservative too: a callback that mutates the array its own `.map` is walking is refused,
   although array methods fix their length and would halt.
 - `join` on an array of very long strings can allocate up to V8's string limit before the result check refuses it.

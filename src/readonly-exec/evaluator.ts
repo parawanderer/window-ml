@@ -3,7 +3,7 @@
 
 import type { CurrentSnapshot } from "../agent/current-context";
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
-import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH } from "./limits";
+import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED } from "./limits";
 import { Node } from "./parser";
 import { isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
@@ -24,6 +24,32 @@ const METHOD_REF = function (): never { throw new NotInDialect("a method referen
 
 // An evaluation in progress: `yield` a value to have the driver await it.
 type Ev<T = unknown> = Generator<unknown, T, unknown>;
+
+// WHAT A HOST CALL IS CHARGED, beyond its one step (limits.ts, HOST_CHARS_PER_STEP and the rest). A step is a fair unit
+// only if no step does unbounded work, and a host method on a long string or a large array does work proportional to
+// it, so a loop of them outran the budget by hours.
+
+/** String methods that read a fixed slice, whatever the receiver's length: not charged for the receiver. */
+const FIXED_SLICE_STRING = new Set(["charAt", "charCodeAt", "codePointAt", "at", "slice", "substring", "substr", "startsWith", "endsWith"]);
+
+/** Methods that STORE their arguments or compare them by identity, never expand them: their arguments are not walked
+ *  (an accumulator handed to `push` would otherwise be walked whole on every call). `includes`/`indexOf`/`lastIndexOf`
+ *  on an array compare by SameValue, which never coerces. On a string they coerce, so a string receiver walks its
+ *  arguments regardless. */
+const STORES = new Set(["push", "unshift", "add", "set", "has", "get", "delete", "includes", "indexOf", "lastIndexOf", "fill", "splice", "then", "isArray", "item"]);
+
+/** Array methods that scan or copy the receiver's top level with no callback to tick per element. */
+const ARRAY_SCANS = new Set(["indexOf", "lastIndexOf", "includes", "concat", "reverse", "fill", "shift", "unshift", "splice"]);
+
+/** Array methods that EXPAND the receiver: they read it whole, every nested array included (`join` and a default
+ *  `sort` coerce each element, and coercing an array is `join` again). */
+const ARRAY_EXPANDS = new Set(["join", "toString", "sort", "flat", "flatMap"]);
+
+/** Marks, on the walk's stack, that the container below it is being left. */
+const LEAVE = Symbol("leave");
+
+/** A RegExp, of any realm, by its tag. A page object could claim the tag, but that only adds a check. */
+const isRegExp = (v: unknown): v is RegExp => v !== null && typeof v === "object" && Object.prototype.toString.call(v) === "[object RegExp]";
 
 /** The mediated evaluator: walks the parsed AST as a generator, gating every read, call, write and allocation. */
 /** The `ml.current` fields `adoptCurrent` treats specially; every other field is copied whole. */
@@ -61,6 +87,15 @@ export class Evaluator {
             throw new NotInDialect("a value too large to build without asking");
         return v;
     }
+    /** `Array.from` of an iterable a pattern destructures, charged its size first: a string's characters, a Set's or a
+     *  Map's members. Destructuring a 10-million-character string in a loop was one step an iteration. */
+    private copied(val: unknown): unknown[] {
+        const n = typeof val === "string" ? val.length / HOST_CHARS_PER_STEP
+            : (val instanceof Set || val instanceof Map) ? val.size / HOST_ELEMENTS_PER_STEP
+                : typeof (val as { length?: unknown }).length === "number" ? (val as { length: number }).length / HOST_ELEMENTS_PER_STEP : 0;
+        this.tick(Math.floor(n));
+        return Array.from(val as Iterable<unknown>);
+    }
     private hold(o: unknown): void { if (o !== null && typeof o === "object") this.iterating.set(o, (this.iterating.get(o) ?? 0) + 1); }
     private release(o: unknown): void {
         if (o === null || typeof o !== "object") return;
@@ -82,15 +117,83 @@ export class Evaluator {
         const risk = typeof p === "string" ? riskyRegex(p) : null;
         if (risk) throw new NotInDialect(`a regex that could backtrack without end (${risk})`);
     }
+    /** How many parts `v` expands to when walked whole, counting a part as often as a walk would visit it (so an array
+     *  that shares its parts counts at its expanded size), and how many characters its strings hold. Throws past
+     *  {@link MAX_EXPANDED}: that walk is what `JSON.stringify`, `flat` and every coercion of an array would do, and an
+     *  array built by `d = [d, d]` forty times expands to 2^40. A cycle is not followed (stringify throws on it, and
+     *  `join` prints it empty). Only arrays and plain objects are entered: anything else is one part. Iterative, so a
+     *  deep value cannot overflow the stack here. */
+    private expanded(v: unknown): { parts: number; chars: number } {
+        let parts = 0, chars = 0;
+        // Stop as soon as the walk alone would spend what is left of the budget: the refusal is the same either way.
+        const cap = Math.min(MAX_EXPANDED, Math.max(0, this.fuel) * EXPANDED_PARTS_PER_STEP);
+        const onPath = new Set<object>();
+        // A value, or LEAVE followed by the container being left (popped in that order).
+        const stack: unknown[] = [v];
+        while (stack.length) {
+            const x = stack.pop();
+            if (x === LEAVE) { onPath.delete(stack.pop() as object); continue; }
+            if (typeof x === "string") { chars += x.length; continue; }
+            if (x === null || typeof x !== "object" || isTable(x)) continue;
+            if (!(Array.isArray(x) || isWritableTarget(x))) {
+                // A String object (a pointer's text) is its characters; anything else is one part, read no further.
+                if (Object.prototype.toString.call(x) === "[object String]") chars += String(x).length;
+                continue;
+            }
+            if (onPath.has(x)) continue;
+            onPath.add(x);
+            stack.push(x, LEAVE);
+            // An object's members are read as DATA: a getter is not run by the walk (on the page it is the page's code).
+            const kids: unknown[] = Array.isArray(x) ? x : Object.keys(x).map((k) => Object.getOwnPropertyDescriptor(x, k)?.value);
+            parts += kids.length;
+            if (parts > cap) throw new NotInDialect(cap < MAX_EXPANDED
+                ? `too much work to run without asking: walking a value that expands to over ${cap.toLocaleString("en-US")} parts`
+                : `a value that expands to over ${MAX_EXPANDED.toLocaleString("en-US")} parts (an array holding the same array twice counts it twice), too much to walk without asking`);
+            for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+        }
+        return { parts, chars };
+    }
+    /** Charge the walk of `v` (see {@link expanded}) to the budget: what a host call or a coercion is about to do to it. */
+    private expands(v: unknown): void {
+        if (typeof v === "string") { this.tick(Math.floor(v.length / HOST_CHARS_PER_STEP)); return; }
+        if (v === null || typeof v !== "object") return;
+        const { parts, chars } = this.expanded(v);
+        this.tick(Math.floor(parts / EXPANDED_PARTS_PER_STEP) + Math.floor(chars / HOST_CHARS_PER_STEP));
+    }
+    /** Refuse a value that expands past {@link MAX_EXPANDED}, without charging: for what the caller serialises after the
+     *  survey has finished (the returned value). */
+    checkExpands(v: unknown): void { if (v !== null && typeof v === "object") this.expanded(v); }
+    /** A COERCION of an operand (`+`, `<`, a template, a computed key): an object becomes a string through its
+     *  `toString`, which for an array is `join`, so it is walked first. Two strings compared cost their shorter one. */
+    private coerces(...vs: unknown[]): void {
+        for (const v of vs) if (v !== null && typeof v === "object") this.expands(v);
+    }
+
     /** The host calls that do work proportional to an ARGUMENT, checked before they run: afterwards is too late. */
-    private preflight(obj: unknown, key: string, args: unknown[]): void {
+    private preflight(obj: unknown, key: string, args: unknown[], facade = false): void {
         const big = () => { throw new NotInDialect("a value too large to build without asking"); };
-        if (typeof obj === "string") {
-            if (key === "repeat" && obj.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
+        // A String OBJECT is a string here: `new String(…)` is a safe constructor and `ml.dereference` returns one
+        // (DerefText), and while this read only `typeof obj === "string"` a pointer's text took a backtracking pattern.
+        const str = typeof obj === "string" ? obj : kindOf(obj) === "string" ? String(obj) : null;
+        if (str !== null) {
+            if (key === "repeat" && str.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
             if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big();
             if (key === "match" || key === "matchAll" || key === "search") this.patternArg(args[0]);
+            if (!FIXED_SLICE_STRING.has(key)) this.tick(Math.floor(str.length / HOST_CHARS_PER_STEP));
         }
+        // A RegExp the script did not build (a page value's property, on the page realm) never passed the literal or
+        // `new RegExp` check, so every one a call is handed, as receiver or argument, is checked here.
+        for (const v of [obj, ...args]) if (isRegExp(v)) this.patternArg(String(v.source));
         if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big();
+        if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) this.expands(obj);
+        else if (Array.isArray(obj) && ARRAY_SCANS.has(key)) this.tick(Math.floor(obj.length / HOST_ELEMENTS_PER_STEP));
+        // The ARGUMENTS: a host method may coerce, copy or walk any of them, so each is charged its size and an array
+        // sharing its parts is refused before anything expands it. `Object.assign`'s target is written to, not read.
+        // The `ml` facade's members read their arguments as DATA and charge their own work (`pipe`, `jsonPath`).
+        // A string PRINTED is kept or counted, never scanned (output-clip.ts), so the console is charged only what it
+        // stringifies.
+        const printing = kindOf(obj) === "console";
+        if (!facade && (str !== null || !STORES.has(key))) args.forEach((a, i) => { if (!(key === "assign" && i === 0) && !(printing && typeof a === "string")) this.expands(a); });
         // `Array.from({ length: n })` walks n indices inside the host, with or without a mapper.
         const src = args[0] as { length?: unknown } | null;
         if (key === "from" && src !== null && typeof src === "object" && !Array.isArray(src)
@@ -246,6 +349,7 @@ export class Evaluator {
     }
 
     private guardKey(key: unknown): string {
+        this.coerces(key);   // a computed key is coerced with `String`, which walks an array whole
         const k = String(key);
         if (DENIED_PROPS.has(k)) throw new Denied(`access to '${k}' is not allowed`);
         return k;
@@ -298,7 +402,7 @@ export class Evaluator {
         const bind = (name: string, v: unknown): void => { scope[name] = v; if (isConst) this.markConst(scope, name); };
         if (pattern.type === "ArrayPattern") {
             const arr = Array.isArray(val) ? val
-                : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? this.sized(Array.from(val as Iterable<unknown>))
+                : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? this.sized(this.copied(val))
                     : (() => { throw new TypeError("cannot destructure a non-iterable value"); })();
             (pattern.elems as (string | null)[]).forEach((name, i) => { if (name) bind(name, this.prop(arr, String(i))); });
             if (pattern.rest) bind(pattern.rest as string, this.own(arr.slice((pattern.elems as unknown[]).length)));
@@ -311,6 +415,11 @@ export class Evaluator {
     /** Apply one binary operator. Shared by `a + b` and by `a += b`, so the compound form cannot quietly skip
      *  `sized` — which is the guard that stops a loop building an unbounded string one concatenation at a time. */
     private applyBinary(op: string, l: any, r: any): unknown {
+        // `===` and `!==` never coerce, nor does `==` between two objects or against null; every other operator may call
+        // an object operand's `toString`.
+        const loose = op === "==" || op === "!=";
+        if (op !== "===" && op !== "!==" && !(loose && (l == null || r == null || (typeof l === "object") === (typeof r === "object")))) this.coerces(l, r);
+        if (typeof l === "string" && typeof r === "string" && op !== "+") this.tick(Math.floor(Math.min(l.length, r.length) / HOST_CHARS_PER_STEP));
         switch (op) {
             case "===": return l === r; case "!==": return l !== r;
             case "==": return l == r; case "!=": return l != r;
@@ -480,7 +589,8 @@ export class Evaluator {
                 // stays restricted to plain objects/arrays — the Assign case re-checks isWritableTarget.)
                 const args = yield* this.evalArgs(node.args, scope);
                 this.allocation(node.ctor, args);
-                if (node.ctor === "RegExp") this.patternArg(args[0]);
+                if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
+                for (const a of args) this.expands(a);
                 const inst = new ctor(...args);
                 if (inst !== null && typeof inst === "object") this.owned.add(inst as object);
                 return this.sized(inst);
@@ -541,6 +651,7 @@ export class Evaluator {
             }
             case "Unary": {
                 const a = yield* this.eval(node.arg, scope);
+                if (node.op === "-" || node.op === "+") this.coerces(a);
                 if (node.op === "!") return !a;
                 if (node.op === "-") return -(a as number);
                 if (node.op === "+") return +(a as number);
@@ -563,7 +674,11 @@ export class Evaluator {
             case "Template": {
                 // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
                 let out = node.quasis[0];
-                for (let k = 0; k < node.exprs.length; k++) out = this.sized(out + String(yield* this.eval(node.exprs[k], scope)) + node.quasis[k + 1]);
+                for (let k = 0; k < node.exprs.length; k++) {
+                    const v = yield* this.eval(node.exprs[k], scope);
+                    this.coerces(v);
+                    out = this.sized(out + String(v) + node.quasis[k + 1]);
+                }
                 return out;
             }
             case "Try": {
@@ -689,7 +804,7 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
-            this.preflight(obj, key, args);
+            this.preflight(obj, key, args, onMl || onAnswer);
             // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
             // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
             // them and cannot grow them. (Array methods fix their length when they start and would halt anyway; the
@@ -699,6 +814,8 @@ export class Evaluator {
             for (const h of held) this.hold(h);
             let out: unknown;
             try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); }
+            // A NEW array is charged its length: what `slice`, `map` or `split` built is a copy proportional to it.
+            if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_ELEMENTS_PER_STEP));
             // Auto-await an ml call ONLY when it actually returns a promise (getModel/config/… round-trip),
             // so a forgotten `await` still reads the value. The SYNC ml reads (queryAll, range) return a plain
             // value — pass it straight through WITHOUT yielding, so they work inside a `.map`/`.filter` callback
@@ -722,6 +839,7 @@ export class Evaluator {
             const fn = scope[callee.name] as Function;
             const args = yield* this.evalArgs(node.args, scope);
             this.allocation(callee.name, args);
+            for (const a of args) this.expands(a);   // each coerces its argument (`String(d)` is `join` for an array)
             return this.sized(fn(...args));
         }
         // (arrow)(args) / immediately-invoked arrow (or function expression). Driven by OUR driver

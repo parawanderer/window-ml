@@ -64,7 +64,8 @@ test("onLog streams BEFORE the survey finishes: a line printed before an await a
 
 test("HALTING: a logging loop that trips the step budget is refused, and nothing streams after the refusal", async () => {
     const seen = [];
-    await assert.rejects(evalReadonly(`for (const i of ml.range(100000)) console.log("tick " + i)`, null,
+    // 5,000, not more: the array `ml.range` builds is charged its size, and the budget here is 500.
+    await assert.rejects(evalReadonly(`for (const i of ml.range(5000)) console.log("tick " + i)`, null,
         { range: (n) => Array.from({ length: n }, (_, i) => i) }, undefined, { stepBudget: 500, onLog: (l) => seen.push(l) }), outOfDialect);
     const n = seen.length;
     assert.ok(n > 0 && n < 500, `some lines streamed before the trip (${n})`);

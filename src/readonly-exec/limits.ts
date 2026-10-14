@@ -23,7 +23,10 @@ export class NeedsPage extends NotInDialect {}
 //      missing when script-created containers became mutable, and `for (const x of a) a.push(x)` ran forever.
 //   B. BOUNDED COST, a resource policy. A script that halts can still take very long. The step budget and the size
 //      caps below send it to the human gate instead of freezing the page's main thread, and a regex that could
-//      backtrack catastrophically (one host call, unbounded) is refused before it runs.
+//      backtrack catastrophically (one host call, unbounded) is refused before it runs. A step is only a fair unit if
+//      no single step does unbounded work, so a host call is also charged for the size of what it scans or expands
+//      (HOST_CHARS_PER_STEP, HOST_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP), and a value that would expand past
+//      MAX_EXPANDED parts is refused before anything expands it.
 
 /** Evaluation steps one survey may take: every AST node evaluated and every element iterated costs one. Measured at
  *  about 3.2 million steps a second (M-series laptop), so a runaway holds the page's main thread for under a second,
@@ -52,6 +55,28 @@ export const MAX_CALL_DEPTH = 256;
  *  At ~3.2M steps/s that makes 64 chars a step for the slowest, so a whole budget spent on pipes is about a second of
  *  sorting, the same bound the budget sets on everything else, and every faster stage is charged MORE than it costs. */
 export const PIPE_CHARS_PER_STEP = 64;
+
+/** Characters a host call SCANS that cost one step. A step was priced as if every one cost about the same, and a host
+ *  method on a 10-million-character string (`toLowerCase`, `split`, `indexOf`, a regex) does milliseconds of work in
+ *  one: a loop of them ran for hours inside the budget. So a scanning string method is charged its receiver and its
+ *  string arguments, and a comparison of two strings its shorter one, at the pipe's rate, which was measured on the
+ *  slowest string work. A method that reads a fixed slice (`charAt`, `slice`, `startsWith`) is not charged. */
+export const HOST_CHARS_PER_STEP = 64;
+
+/** Array elements a host call SCANS or copies that cost one step (`indexOf`, `concat`, `splice`, `Array.from`). Measured
+ *  (Node 22): `slice` of a million elements is 6 ms, about 52 elements per step at 3.2M steps a second. */
+export const HOST_ELEMENTS_PER_STEP = 64;
+
+/** Parts (array elements, object members) a value EXPANDS to that cost one step when a host call or a coercion walks
+ *  it whole: `JSON.stringify`, `flat`, `join`, a default `sort`, and every coercion of an array to a string (which is
+ *  `join` again). Charged at a quarter of the scanning rate, since the dialect walks the value itself to count it. */
+export const EXPANDED_PARTS_PER_STEP = 16;
+
+/** The most parts one value may expand to. An array that SHARES its parts expands to far more than it holds: forty
+ *  lines of `d = [d, d]` build 2^40 leaves out of forty arrays, and `String(d)` at depth 24 took 3 s in one host call,
+ *  doubling per level. So before anything expands a value, the dialect walks it counting each part as often as it would
+ *  be visited, and over this the survey goes to the person. Five million is a 200,000-row table twenty-five wide. */
+export const MAX_EXPANDED = 5_000_000;
 
 /** A regex that can backtrack exponentially: a REPEATED group that itself contains a quantifier or an alternation
  *  (`(a+)+`, `(\w+\s?)*`, `(a|a)+`). V8 has no match timeout, so one `.test()` of such a pattern on a 40-character

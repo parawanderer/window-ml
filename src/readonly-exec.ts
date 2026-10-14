@@ -135,6 +135,9 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     printable = (v, swaps, where) => ev.printable(v, swaps, where);
     try {
         const value = await runAsync(ev.eval(ast, top));
+        // Every caller serialises the value (formatReadonlyExec, a watch, the console), outside any budget: one that would
+        // expand without bound is refused here, once, for all of them.
+        ev.checkExpands(value);
         return { value: ev.printable(value, prints.value, "the returned value"), logs, dropped: capture.dropped, reused, prints };
     } catch (e) {
         restore?.();

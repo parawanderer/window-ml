@@ -401,6 +401,43 @@ sent with its in-flight call. Where each survey went
 is in the execution log (`routing`, `readonly-worker`/`readonly-page`). `docs/dev/readonly-exec.md`, "Where it is
 called".
 
+## What an approval lets leave
+
+The read-only dialect has no network path: its `ml.fetch` answers only from caches of earlier approved fetches, and
+nothing else in it starts a request (`docs/dev/readonly-exec.md`, "Threat questions answered"). Everything below is
+the tools' and an approved exec's.
+
+Approval is per URL (`fetchConsent`, `runFetchConsented`: the exact URL a person approved, re-fetched without asking for
+the rest of the session), except for these, which are ORIGIN-wide and auto-approved with no prompt:
+
+- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin and every origin a
+  `navigate` was approved to (`consentedOrigins`, `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). A `rendered` read is
+  included, an incognito tab that runs the target's scripts.
+- `navigate` within the site or to a consented origin, in the person's own tab, with their cookies.
+- `ml.fetch` of the sender page's own origin (`sameOriginAsSender`, `fetchUrlFor`), uncredentialed, and credentialed too
+  with `autoApproveSameOriginAuth`; an approved exec may compute that URL at run time.
+- The agent's own repository with `autoApproveSelfSource`.
+
+**What a URL or origin approval does not control is what the request carries.** Data the run has read (another site's
+content, a pointer's value, the page) can be written into the path or query of a URL on any of those origins with nobody
+asked: a search URL (a `navigate` is credentialed, so the query lands in the person's account history), an endpoint whose
+GET changes state, an analytics or logging endpoint, a URL shortener. That is the gap between approving destinations and
+information-flow control (CaMeL, FIDES: label what the run read, and ask before a request whose URL carries labelled
+data), which is not built.
+
+**Redirects.** Every fetch follows them (`redirect: "follow"`, `sw-fetch.ts`). A per-URL-consented or same-origin fetch
+that ends on an origin nobody consented to has its body withheld (`fetchUrlFor`), but the request to the redirect target
+has already gone, carrying what the first URL carried. For a URL a person approved, they saw that URL whole. On the
+origin-wide paths above, an open redirect on a consented origin delivers a URL the model composed to any host, with
+nobody asked. An approved exec's literal URLs (`execOpen`) trust their redirects outright. Not fixed: a worker sees an
+opaque response under `redirect: "manual"`, never the `Location`, so approving each hop is not possible from `fetch`
+alone. The proposal is `redirect: "error"` on the origin-wide auto-approved paths, turning a redirect into a prompt for
+the URL; a `rendered` read follows redirects as a navigation and needs its own answer.
+
+**What a request carries besides its URL.** `GET`, no body; `Accept`, `Accept-Language` and `User-Agent`; cookies only
+in the as-you mode, which a person approves per URL each time (or same-origin with `autoApproveSameOriginAuth`). The
+request is the worker's, so a `Referer`, if Chrome sends one, names the extension and never the page (not measured).
+
 ## Adding a tool, a member or a message
 
 The red-team pass AGENTS.md requires. Run it as its own agent, told to find where a property does not hold rather
