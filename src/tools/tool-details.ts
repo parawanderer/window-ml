@@ -8,6 +8,38 @@
 
 import type { MlTool } from "../contract/contract-agent";
 
+declare const __ML_PROMPT_VARIANT__: string | undefined;
+
+/** The `pycut` experiment (docs/spec/PROMPT_BUDGET.md, round 3): `python_exec`'s `tables`, `cast` and `mode` texts cut
+ *  to their triggers, the full texts served by `agent_api_docs`. Off unless the build defines the variant. */
+export const PY_CUT = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "pycut";
+
+/** `python_exec`'s `cast` and `mode` texts, and its `tables` text without the part that depends on the page (that part
+ *  stays in python-tool.ts). The schema carries these unless {@link PY_CUT}; under it, {@link TOOL_DETAILS} does. */
+export const PYTHON_FULL = {
+    tables: "A SINGLE source string (a CSS selector for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url " +
+        "already read, or an `@tool:` pointer to a table such as a fetch_url of a CSV/Parquet/Arrow file) → loaded as " +
+        "`df`. OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
+        "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
+        "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +
+        "the extension (credentialed) — you do NOT need mode:'full' for it; keep mode:'readonly' (an external Sheet " +
+        "just asks once to approve, then loads as a normal df). " +
+        "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
+    cast: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Compute it in your INPUT IMAGE's pixel space — casting AUTO-projects it to on-screen VIEWPORT coordinates (dpr + crop offset), so the returned @pt/@box is the correct click point, NOT displaced. Omit for a raw text result.",
+    mode: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs — including Google Sheets (the extension fetches those for you, so 'full' is NOT needed). Only pick 'full' to fetch some OTHER arbitrary URL yourself.",
+};
+
+/** The same three under {@link PY_CUT}: round 2's short texts, as its runs recorded them. */
+export const PYTHON_SHORT: typeof PYTHON_FULL = {
+    tables: "Table(s) to load, ALREADY parsed (never re-read them): one source → `df`, or { name: source } → each under " +
+        "its name. A source: a page <table> selector, a Google Sheets URL, a URL fetch_url read, or an `@tool:` " +
+        "pointer to a table.",
+    cast: "'pt' or 'box': the return is a clickable point ([x,y]) or box ([x1,y1,x2,y2]) in the input image's pixels, " +
+        "placed on the page for you.",
+    mode: "'readonly' (default): no network, may run without asking, Google Sheets included. 'full': network, always " +
+        "asks; only to fetch some other URL yourself.",
+};
+
 /** `exec`'s short form: what to reach for and when; the mechanics are {@link TOOL_DETAILS}.exec. */
 export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "Escape hatch: run JS in the page, like one console cell. You get back what it console.logs AND its final " +
@@ -172,6 +204,7 @@ export const TOOL_DETAILS: Readonly<Record<string, string>> = {
         "user-facing pages.",
     ].join("\n\n"),
     locate: [LOCATE_FULL.description, ...Object.entries(LOCATE_FULL.params).map(([k, v]) => `\`${k}\`: ${v}`)].join("\n\n"),
+    ...(PY_CUT ? { python_exec: Object.entries(PYTHON_FULL).map(([k, v]) => `\`${k}\`: ${v}`).join("\n\n") } : {}),
 };
 
 /**
