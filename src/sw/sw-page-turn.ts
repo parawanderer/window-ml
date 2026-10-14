@@ -16,9 +16,10 @@ import { approvalFor, stopForPerson, gatePageTurn } from "./sw-start-approval";
  * the page's to say. A wait for the person (Q2b) stops the run and shows the site's prompt, labelled, over the reply box.
  * @param p the page's payload
  * @param sender the browser's facts about the page
+ * @param claimed the router already spent the person's turn for this message (the navigation rule)
  * @returns `{ data: true }` when it was taken, `{ data: false }` when the run is not live here, or the refusal
  */
-export async function pageInject(p: InjectMessagePayload, sender: chrome.runtime.MessageSender): Promise<{ data: boolean } | { error: string }> {
+export async function pageInject(p: InjectMessagePayload, sender: chrome.runtime.MessageSender, claimed = false): Promise<{ data: boolean } | { error: string }> {
     const tabId = sender.tab?.id;
     const g = grantableOrigin({ origin: sender.origin, url: sender.url ?? sender.tab?.url, frameId: sender.frameId });
     if (tabId == null || !("origin" in g) || !p || typeof p.runId !== "string") return { data: false };
@@ -39,7 +40,7 @@ export async function pageInject(p: InjectMessagePayload, sender: chrome.runtime
     const payload = stored?.p ?? turnByRun.get(p.runId)?.().payload;
     if (!payload) return { data: false };
     const cfg = await getConfig();
-    const verdict = await gatePageTurn({ type: "INJECT_MESSAGE", runId: p.runId, tabId, origin, text: p.text, p: payload, model: payload.model || cfg.model || null, pageHistory: false, known: true });
+    const verdict = await gatePageTurn({ type: "INJECT_MESSAGE", runId: p.runId, tabId, origin, text: p.text, p: payload, model: payload.model || cfg.model || null, pageHistory: false, known: true, personClaimed: claimed });
     if ("error" in verdict) return { error: verdict.error };
     const inbox = runInboxes.get(p.runId);
     if (!inbox || inbox.tabId !== tabId) return { data: false };

@@ -500,6 +500,7 @@ export interface StartAsk {
     modelNew?: boolean;
     /** Steps a turn. */
     budget: number;
+    budgetNew?: boolean;
     /** The page turn budget this ask grants. */
     pageTurns: number;
     /** For `more`: the page turns used so far, of the `allowed` before, and how many this ask is for. */

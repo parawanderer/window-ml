@@ -13,7 +13,7 @@
 // - The person's own turns (`notePersonTurn`): what the person sent through the extension for a run a page built, so
 //   the page's relay of it is the person's turn and not one of the page's (Q2).
 
-import { type StartBinding, PAGE_TURN_BUDGET, DEFAULT_TURN_STEPS, START_ASKS_MAX, START_ASK_TIMEOUT_MS, START_DENIALS_QUIET, START_REFUSED, bindingOf, cardToolLines, widening, OPENED_BY_AGENT_NOTE, CANCELLED_NO_LEVEL } from "../agent-start";
+import { type StartBinding, PAGE_TURN_BUDGET, DEFAULT_TURN_STEPS, START_ASKS_MAX, START_ASK_TIMEOUT_MS, START_DENIALS_QUIET, START_REFUSED, bindingOf, cardToolLines, toolTexts, widening, OPENED_BY_AGENT_NOTE, CANCELLED_NO_LEVEL } from "../agent-start";
 import { siteInstructions, textDigest } from "../agent/site-instructions";
 import type { StartRunPayload } from "../contract/contract-messages";
 import type { StartAsk } from "../contract/contract-agent";
@@ -27,6 +27,9 @@ export const APPROVALS_KEY = "ml_start_approved";
 
 /** The session-storage key of the denial counts. */
 export const DENIALS_KEY = "ml_start_denials";
+
+/** The session-storage key of the documents a running agent opened (Q17), so the rule outlives an eviction. */
+export const OPENED_KEY = "ml_agent_opened";
 
 /** One approval: a run a site started, on one tab, and what the person allowed it. */
 export interface StartApproval {
@@ -67,10 +70,21 @@ let writes: Promise<unknown> = Promise.resolve();   // state: plumbing
 
 const none = (): Record<string, unknown> => ({});
 
+/** The top-frame documents each tab committed while a run was live on it, each with the run that opened it. */
+const agentOpened = new Map<number, Map<string, string>>();   // state: declared below (site.agentOpened)
+
 /** Load what an earlier life of this worker stored, then drop what a revoke made while it was gone left behind. */
 export const approvalsReady: Promise<void> = (async () => {
-    const got = await (chrome.storage.session?.get([APPROVALS_KEY, DENIALS_KEY]) ?? Promise.resolve({})).catch(none) as Record<string, unknown>;
-    const a = got[APPROVALS_KEY], d = got[DENIALS_KEY];
+    const got = await (chrome.storage.session?.get([APPROVALS_KEY, DENIALS_KEY, OPENED_KEY]) ?? Promise.resolve({})).catch(none) as Record<string, unknown>;
+    const a = got[APPROVALS_KEY], d = got[DENIALS_KEY], o = got[OPENED_KEY];
+    if (o && typeof o === "object") for (const [tab, docs] of Object.entries(o as Record<string, Record<string, unknown>>)) {
+        if (!docs || typeof docs !== "object") continue;
+        const m = new Map<string, string>();
+        for (const [doc, run] of Object.entries(docs)) if (typeof run === "string") m.set(doc, run);
+        // Merged under what this worker already saw, which is newer.
+        const had = agentOpened.get(Number(tab));
+        agentOpened.set(Number(tab), had ? new Map([...m, ...had]) : m);
+    }
     if (a && typeof a === "object") for (const [k, v] of Object.entries(a as Record<string, StartApproval>)) if (isApproval(v) && v.runId === k) approvals.set(k, v);
     if (d && typeof d === "object") for (const [k, v] of Object.entries(d as Record<string, { count: number; level: string }>)) if (v && typeof v.count === "number") denials.set(k, { count: v.count, level: String(v.level) });
     await dropRevoked().catch(() => { /* the next change tries again */ });
@@ -81,13 +95,14 @@ function isApproval(v: unknown): v is StartApproval {
     const a = v as StartApproval | null;
     return !!a && typeof a.runId === "string" && typeof a.tabId === "number" && typeof a.origin === "string"
         && (a.scope === "agent" || a.scope === "always") && !!a.pageTurns && typeof a.pageTurns.allowed === "number"
-        && typeof a.pageTurns.used === "number" && !!a.bound && Array.isArray(a.bound.gated);
+        && typeof a.pageTurns.used === "number" && !!a.bound && Array.isArray(a.bound.gated) && !!a.bound.tools && typeof a.bound.tools === "object";
 }
 
 /** Store both maps as they are now. */
 function save(): Promise<void> {
     const run = writes.catch(() => undefined).then(() => chrome.storage.session?.set({
         [APPROVALS_KEY]: Object.fromEntries(approvals), [DENIALS_KEY]: Object.fromEntries(denials),
+        [OPENED_KEY]: Object.fromEntries([...agentOpened].map(([tab, docs]) => [String(tab), Object.fromEntries(docs)])),
     }));
     writes = run.catch(() => undefined);
     return run.then(() => undefined, () => undefined);
@@ -118,8 +133,6 @@ export function configureStartApproval(hooks: { cancelRun: (runId: string) => vo
 /** The document each live run started on, for telling the page it started on from one it reached. */
 const startDocs = new Map<string, { tabId: number; documentId?: string }>();   // state: plumbing (live runs only)
 
-/** The top-frame documents each tab committed while a run was live on it, each with the run that opened it. */
-const agentOpened = new Map<number, Map<string, string>>();   // state: declared below (site.agentOpened)
 
 /** The starts the navigation rule refused, for the badge (PR 3): newest last, at most 50. */
 const notStarted: { tabId: number; origin: string; runId: string; ts: number }[] = [];   // state: declared below (site.notStarted)
@@ -150,11 +163,11 @@ function onCommit(d: { tabId: number; frameId: number; documentId?: string }): v
     if (!docs) { docs = new Map(); agentOpened.set(d.tabId, docs); }
     docs.set(d.documentId, live[0]);
     if (docs.size > 64) docs.delete(docs.keys().next().value as string);
+    void save();
 }
 chrome.webNavigation?.onCommitted?.addListener?.(onCommit);
 chrome.tabs?.onRemoved?.addListener?.((tabId: number) => {
-    agentOpened.delete(tabId);
-    let dropped = false;
+    let dropped = agentOpened.delete(tabId);
     for (const [k, v] of approvals) if (v.tabId === tabId) { approvals.delete(k); dropped = true; }
     if (dropped) void save();
 });
@@ -208,7 +221,7 @@ export function stopForPerson(runId: string): void {
 // --- the person's own turns ---
 
 /** What the person sent through the extension for a run a page built, waiting for the page to relay it. */
-const personTurns = new Map<string, { text: string; ts: number }[]>();   // state: declared below (run.personTurn)
+const personTurns = new Map<string, { text: string; images: string; ts: number }[]>();   // state: declared below (run.personTurn)
 
 /** How long a person's message waits for the page to relay it. */
 const PERSON_TURN_TTL_MS = 120_000;
@@ -218,12 +231,45 @@ const PERSON_TURN_TTL_MS = 120_000;
  * relay of exactly this text is the person's turn: unlabelled, and not drawn from the page turn budget.
  * @param runId the run
  * @param text the text the page will relay, as the page frames it
+ * @param images the images the person attached, which the page relays with it
  */
-export function notePersonTurn(runId: string, text: string): void {
+export function notePersonTurn(runId: string, text: string, images: readonly unknown[] = []): void {
     const now = Date.now();
     const list = (personTurns.get(runId) ?? []).filter((t) => now - t.ts < PERSON_TURN_TTL_MS).slice(-4);
-    list.push({ text, ts: now });
+    list.push({ text, images: imagesDigest(images), ts: now });
     personTurns.set(runId, list);
+}
+
+/**
+ * One digest of a turn's images, so the person's turn is theirs only with the pictures they attached.
+ * @param images the images (data URLs)
+ * @returns the digest, empty for none
+ */
+export function imagesDigest(images: readonly unknown[] | undefined): string {
+    return images?.length ? textDigest(images.map((x) => String(x)).join("\n")) : "";
+}
+
+/** Messages whose person's turn the router spent (the navigation rule), so the run host takes them as the person's. */
+const claimedMessages = new WeakSet<object>();   // state: plumbing (one message's life)
+
+/**
+ * At the router: spend the person's turn this message relays, once, and remember the message as theirs. A page that sends
+ * the same text twice gets one person's turn and one refusal.
+ * @param message the page's message
+ * @returns true when it carried the person's turn
+ */
+export function claimPersonTurn(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown; images?: unknown } }): boolean {
+    const p = message.payload;
+    const text = message.type === "INJECT_MESSAGE" ? p?.text : p?.task;
+    if (typeof p?.runId !== "string" || typeof text !== "string") return false;
+    if (!takePersonTurn(p.runId, text, imagesDigest(Array.isArray(p.images) ? p.images : undefined))) return false;
+    claimedMessages.add(message as object);
+    return true;
+}
+
+/** Whether the router already spent the person's turn for this message. */
+export function personClaimed(message: object): boolean {
+    return claimedMessages.has(message);
 }
 
 /**
@@ -243,12 +289,13 @@ export function personTurnWaiting(runId: unknown, text: unknown): boolean {
  * Spend the person's turn that matches what a page sent, if there is one.
  * @param runId the run
  * @param text what the page sent
+ * @param images the digest of the images it sent with it (`imagesDigest`)
  * @returns true when this is the person's turn
  */
-export function takePersonTurn(runId: string, text: string): boolean {
+export function takePersonTurn(runId: string, text: string, images = ""): boolean {
     const now = Date.now();
     const list = (personTurns.get(runId) ?? []).filter((t) => now - t.ts < PERSON_TURN_TTL_MS);
-    const i = list.findIndex((t) => t.text === text);
+    const i = list.findIndex((t) => t.text === text && t.images === images);
     if (i < 0) { personTurns.set(runId, list); return false; }
     list.splice(i, 1);
     if (list.length) personTurns.set(runId, list); else personTurns.delete(runId);
@@ -281,6 +328,10 @@ export interface PageTurn {
     pageHistory: boolean;
     /** The worker holds this run's history (it ran a turn of it before). */
     known: boolean;
+    /** A digest of the images the turn attaches, empty for none: the person's turn is theirs only with their own. */
+    images?: string;
+    /** The router already spent the person's turn for this very message (`claimPersonTurn`). */
+    personClaimed?: boolean;
 }
 
 /** What the gate decided for a turn: refused, or allowed, and whether it is the person's (unlabelled, not counted). */
@@ -305,20 +356,27 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
     if (rec && rec.tabId !== t.tabId) return { error: `Run "${t.runId}" belongs to another tab.` };
     const first = t.type === "START_RUN" && !rec && !t.known;
     if (first && t.pageHistory) return { error: START_REFUSED.firstTurnHistory };
-    const person = !first && takePersonTurn(t.runId, t.text);
+    const person = !first && (!!t.personClaimed || takePersonTurn(t.runId, t.text, t.images ?? ""));
     const names = t.p.tools.map((x) => x.name);
-    const bound = t.type === "START_RUN" ? bindingOf(t.p.tools, t.model, textDigest(siteInstructions(t.p.systemPrompt, names))) : rec?.bound ?? bindingOf(t.p.tools, t.model, textDigest(siteInstructions(t.p.systemPrompt, names)));
     const budget = typeof t.p.maxSteps === "number" ? t.p.maxSteps : DEFAULT_TURN_STEPS;
+    const facts = { instructions: textDigest(siteInstructions(t.p.systemPrompt, names)), tools: toolTexts(t.p.tools, textDigest), crossOrigin: !!t.p.crossOrigin, budget };
+    // A START_RUN is a whole new payload; a RESUME_RUN or a steer carries only a step budget of its own.
+    const bound = t.type === "START_RUN" || !rec ? bindingOf(t.p.tools, t.model, facts) : { ...rec.bound, budget };
+    // The person's own turn may set its own step budget (Continue +N); only the site's turns are held to the approved one.
+    const compared = person && rec ? { ...bound, budget: Math.min(bound.budget, rec.bound.budget ?? bound.budget) } : bound;
     const pageTurn = !first && !person;
     if (level === "always") {
+        // An approval the person made on a card covers only what the card showed: a widening that rides on "always"
+        // makes it one that rode on "always", so a site turned back to "ask" is asked again for it.
+        const scope = rec && rec.scope === "agent" && widening(rec.bound, compared) ? "always" : rec?.scope ?? "always";
         approvals.set(t.runId, rec
-            ? { ...rec, bound, budget, pageTurns: { ...rec.pageTurns, used: rec.pageTurns.used + (pageTurn ? 1 : 0) } }
+            ? { ...rec, scope, bound, budget, pageTurns: { ...rec.pageTurns, used: rec.pageTurns.used + (pageTurn ? 1 : 0) } }
             : { runId: t.runId, tabId: t.tabId, origin: t.origin, scope: "always", budget, pageTurns: { allowed: PAGE_TURN_BUDGET, used: 0 }, bound, ts: Date.now() });
         await save();
         return { person, first };
     }
     // "ask"
-    const widened = rec && t.type === "START_RUN" ? widening(rec.bound, bound) : null;
+    const widened = rec ? widening(rec.bound, compared) : null;
     const kind: StartAsk["kind"] | null = !rec || rec.scope === "always" ? "start"
         : widened ? "change"
         : pageTurn && rec.pageTurns.used >= rec.pageTurns.allowed ? "more" : null;
@@ -332,8 +390,8 @@ export async function gatePageTurn(t: PageTurn): Promise<TurnVerdict> {
     const ask: StartAsk = {
         requestId: crypto.randomUUID(), kind, origin: t.origin, task: t.text,
         ...((): Partial<StartAsk> => { const ins = siteInstructions(t.p.systemPrompt, names); return ins ? { instructions: ins, ...(widened?.instructions ? { instructionsNew: true } : {}) } : {}; })(),
-        lines: cardToolLines(t.p.tools, { crossOrigin: !!t.p.crossOrigin }, widened ? { gated: widened.gated, server: widened.server } : {}),
-        model: t.model, ...(widened?.model ? { modelNew: true } : {}), budget, pageTurns: PAGE_TURN_BUDGET,
+        lines: cardToolLines(t.p.tools, { crossOrigin: !!t.p.crossOrigin }, widened ? { gated: [...widened.gated, ...(widened.crossOrigin ? ["navigate"] : [])], server: widened.server } : {}),
+        model: t.model, ...(widened?.model ? { modelNew: true } : {}), ...(widened?.budget ? { budgetNew: true } : {}), budget, pageTurns: PAGE_TURN_BUDGET,
         ...(kind === "more" && rec ? { used: rec.pageTurns.used, allowed: rec.pageTurns.allowed, asks: 1 } : {}),
         since: Date.now(), expiresMs: START_ASK_TIMEOUT_MS,
     };
@@ -463,7 +521,7 @@ defineState({
 });
 
 defineState({
-    id: "site.agentOpened", scope: "tab", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    id: "site.agentOpened", scope: "tab", realm: "worker", audience: "human", lostOn: ["browser-restart"],
     describe: "The pages a running agent opened in this tab; none of them may start an agent.",
     read: ({ tabId }) => { const m = tabId != null ? agentOpened.get(tabId) : undefined; return m?.size ? m.size : undefined; },
 });

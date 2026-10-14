@@ -69,30 +69,39 @@ export interface StartBinding {
     model: string | null;
     /** A digest of the site's own instructions (`siteInstructions`), empty when there are none. */
     instructions: string;
+    /** Each tool's name with a digest of its description and parameters: text the model reads that the card never shows. */
+    tools: Record<string, string>;
+    /** `navigate` may cross to other sites. */
+    crossOrigin: boolean;
+    /** Steps a turn. */
+    budget: number;
 }
 
 /** A tool descriptor as a START_RUN carries it: the fields these rules read. */
-export interface ToolLike { name: string; remote?: { toolId: string; fn: string } }
+export interface ToolLike { name: string; remote?: { toolId: string; fn: string }; description?: string; parameters?: unknown }
+
+/** What else of a turn its approval is bound to, beyond its tools and model. */
+export interface BindingFacts { instructions: string; tools: Record<string, string>; crossOrigin: boolean; budget: number }
 
 /**
  * The binding of one turn.
  * @param tools the turn's tool descriptors
  * @param model the model the worker resolved for the turn
- * @param instructions the digest of the site's instructions
+ * @param facts the digests of the site's instructions and tool texts, `crossOrigin`, and the steps a turn
  * @returns the binding
  */
-export function bindingOf(tools: readonly ToolLike[], model: string | null, instructions: string): StartBinding {
+export function bindingOf(tools: readonly ToolLike[], model: string | null, facts: BindingFacts): StartBinding {
     const gated = new Set<string>(), server = new Set<string>();
     for (const t of tools) {
         if (!t || typeof t.name !== "string") continue;
         if (t.remote && typeof t.remote.toolId === "string" && typeof t.remote.fn === "string") server.add(`${t.remote.toolId}.${t.remote.fn}`);
         else if (GATED_BUILTINS.has(t.name)) gated.add(t.name);
     }
-    return { gated: [...gated].sort(), server: [...server].sort(), model, instructions };
+    return { gated: [...gated].sort(), server: [...server].sort(), model, ...facts };
 }
 
 /** What a turn changes against its approval: each field true when it widens or changes. Null when it rides. */
-export interface Widening { gated: string[]; server: string[]; model: boolean; instructions: boolean }
+export interface Widening { gated: string[]; server: string[]; model: boolean; instructions: boolean; crossOrigin: boolean; budget: boolean }
 
 /**
  * Whether a turn asks for more than its approval allowed (Q3).
@@ -104,8 +113,14 @@ export function widening(approved: StartBinding, next: StartBinding): Widening |
     const gated = next.gated.filter((n) => !approved.gated.includes(n));
     const server = next.server.filter((n) => !approved.server.includes(n));
     const model = next.model !== approved.model;
-    const instructions = next.instructions !== approved.instructions;
-    return gated.length || server.length || model || instructions ? { gated, server, model, instructions } : null;
+    // A tool's description is instructions the model reads, as the system prompt is.
+    // A tool the approval did not have, or one whose text changed, is new text the model reads. One left out rides.
+    const was = approved.tools ?? {};
+    const toolText = Object.entries(next.tools ?? {}).some(([name, d]) => was[name] !== d);
+    const instructions = next.instructions !== approved.instructions || toolText;
+    const crossOrigin = next.crossOrigin && !approved.crossOrigin;
+    const budget = next.budget > approved.budget;
+    return gated.length || server.length || model || instructions || crossOrigin || budget ? { gated, server, model, instructions, crossOrigin, budget } : null;
 }
 
 /** One line under "It can:", and whether it is new on a widening turn. */
@@ -140,6 +155,23 @@ export function cardToolLines(tools: readonly ToolLike[], facts: { crossOrigin?:
     if (server.length) lines.push({ text: `Use server tools: ${[...new Set(server)].join(", ")}. Their arguments leave this machine`, ...(added.server?.length ? { isNew: true } : {}) });
     if (site) lines.push({ text: site === 1 ? "Use 1 tool the site defined. It runs as the site's own code" : `Use ${site} tools the site defined. They run as the site's own code` });
     return lines;
+}
+
+/**
+ * The text of each of a turn's tools the model reads (its description and parameters), digested by `digest`, by name.
+ * @param tools the turn's tool descriptors
+ * @param digest the digest to apply
+ * @returns name → digest
+ */
+export function toolTexts(tools: readonly ToolLike[], digest: (s: string) => string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const t of tools) {
+        if (!t || typeof t.name !== "string") continue;
+        let text: string;
+        try { text = JSON.stringify([t.description ?? null, t.parameters ?? null]); } catch { text = String(Math.random()); }
+        out[t.name] = digest(text);
+    }
+    return out;
 }
 
 /** Bidi controls and zero-width characters, which can make a quote read other than it is. */

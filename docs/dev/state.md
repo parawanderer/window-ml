@@ -76,6 +76,7 @@ page-hosted one. Several stores exist once per host.
 | A site's agent the person allowed on its start card: the run's tab, origin, step budget, page turns used, and what it is bound to | `ml_start_approved` (session storage); declared `run.startApproval` (`sw-start-approval.ts`). Dropped when the site or its level is revoked, and when the tab closes | the browser session |
 | A start card waiting for the person | `pending` (`sw-start-approval.ts`); declared `run.startAsk`. An eviction loses it, which refuses the start | until answered, or 3 minutes |
 | A site's declined or unanswered starts, which quiet it at three | `ml_start_denials` (session storage); declared `site.startDenials` | the browser session, or until its level changes |
+| The pages a running agent opened, each with the run that opened it (Q17) | `ml_agent_opened` (session storage); declared `site.agentOpened` (`sw-start-approval.ts`) | the browser session, or until the tab closes |
 | A message the person sent a page-built run, waiting for the page to relay it as the person's turn | `personTurns` (`sw-start-approval.ts`); declared `run.personTurn` | two minutes, or one use (memory) |
 | Approving its own actions (implies window.ml and agents `always`) | `ml_site_selfapprove` (local, origins), read by `selfApproves` (`levelsFor`): `senderTrust`, `pageApprovalAllowed`, the gate. Migrated once from the old sync `pageApprovalDomains` (`ml_site_schema: 2`) | persistent |
 | Auto-approve settings | `MlConfig` (sync) | persistent |

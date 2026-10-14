@@ -108,7 +108,8 @@ export const incognitoEnableSteps = (info?: BrowserInfo, extId?: string): string
  * current date/time + locale/timezone. ml.agent injects this by default (so the
  * model is oriented — knows what "today" is, and that amazon.nl implies Dutch),
  * and the pageInfo tool exposes it on demand. Guarded so it degrades when a global
- * is missing (e.g. in tests).
+ * is missing (e.g. in tests). A line added or reworded here is a line the start card takes for the site's
+ * instructions until `CONTEXT_LINES` (agent/site-instructions.ts) knows its shape.
  */
 export const pageContext = (hasTool?: (name: string) => boolean): string => {
     const parts = [];

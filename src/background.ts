@@ -45,7 +45,7 @@ import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { pageInject } from "./sw/sw-page-turn";
-import { configureStartApproval, dropRevoked, openedByRun, personTurnWaiting, recordNotStarted, resolveStart } from "./sw/sw-start-approval";
+import { approvalsReady, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart } from "./sw/sw-start-approval";
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
@@ -230,7 +230,7 @@ function dropPrintDoc(key: string): void {
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
     if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
-    void pageRefusal(message.type, sender).then(async (refusal) => refusal ?? (AGENT_LEVEL_TYPES.has(message.type) ? navigationRefusal(message, sender) ?? await agentRefusal(message.type, sender) : null)).then((refusal) => {
+    void pageRefusal(message.type, sender).then(async (refusal) => refusal ?? (AGENT_LEVEL_TYPES.has(message.type) ? await navigationRefusal(message, sender) ?? await agentRefusal(message.type, sender) : null)).then((refusal) => {
         if (refusal) { sendResponse({ error: refusal }); return; }
         // Every answer to a page goes through `forPage`: an error's text never carries the server's URL, the key or the
         // model filter (sw-scrub.ts). The person's own surfaces are extension pages and take the branch above.
@@ -253,15 +253,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
  * @param sender the browser's facts about who sent it
  * @returns the refusal, or null
  */
-function navigationRefusal(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown } }, sender: chrome.runtime.MessageSender): string | null {
+async function navigationRefusal(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown; images?: unknown } }, sender: chrome.runtime.MessageSender): Promise<string | null> {
     const tabId = sender.tab?.id;
     if (tabId == null) return null;
+    // What a run opened before an eviction is read back first: a message that wakes the worker is judged on it.
+    await approvalsReady;
     // The person's own message for a run, relayed by the page that run opened (the run's handle lives in the page): theirs,
     // not the page's. Only exactly the text the person sent through the extension (sw-start-approval.ts `notePersonTurn`).
     const p = message.payload;
-    if (personTurnWaiting(p?.runId, message.type === "INJECT_MESSAGE" ? p?.text : p?.task)) return null;
     const runId = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined, p?.runId);
     if (runId == null) return null;
+    // Spent here, once: a page that sends the person's text twice gets one person's turn and one refusal.
+    if (claimPersonTurn(message)) return null;
     if (message.type === "START_RUN") recordNotStarted(tabId, runId, originOf(sender.origin ?? sender.url ?? sender.tab?.url) ?? "");
     return START_REFUSED.openedByAgent;
 }
@@ -568,7 +571,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const p = message.payload as InjectMessagePayload;
         // A page's steer, or its wait for the person, is a turn of the site's own (sw-page-turn.ts `pageInject`): gated by
         // the start card's rules, shown with the site's name, and never stamped as typed on an extension surface.
-        if (sender.tab?.id != null && !isExtensionSender(sender)) { pageInject(p, sender).then(sendResponse, () => sendResponse({ data: false })); return true; }
+        if (sender.tab?.id != null && !isExtensionSender(sender)) { pageInject(p, sender, personClaimed(message)).then(sendResponse, () => sendResponse({ data: false })); return true; }
         const inbox = runInboxes.get(p.runId);
         const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
         if (injected) inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) });

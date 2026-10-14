@@ -166,7 +166,7 @@ export function StartAskFoot({ ask }: { ask: StartAsk }) {
             </ul>
             {ask.lines.length ? <div class="start-dim">{PAGE_TOOLS_NOTE}</div> : null}
             <div class="start-line">Model: <code>{ask.model ?? ""}</code>{ask.modelNew ? <NewChip /> : null}</div>
-            <div class="start-line">Up to {ask.budget} steps a turn</div>
+            <div class="start-line">Up to {ask.budget} steps a turn{ask.budgetNew ? <NewChip /> : null}</div>
             <div class="start-line">The site may send up to {m} more messages to this agent before it asks again</div>
             <div class="start-dim">Allowing covers this conversation: the site's follow-up messages to this agent do not ask again until it has sent {m} of them.</div>
             <div class="start-dim">Actions that need your approval still ask you, one at a time.</div>

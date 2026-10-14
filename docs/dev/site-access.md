@@ -256,12 +256,16 @@ reads the level again and decides each turn a page sends:
 
 - `always`: the turn rides. A record is still kept (scope `always`), so a later turn knows the run's site and tab, and
   a site turned back to "ask" is asked again for it.
-- `ask`: a card when the run has no approval (or one that rode on "always"); a `change` card when a START_RUN adds a
-  gated builtin or a server tool, changes the model, or changes the site's instructions (Q3, `widening`); a `more` card
+- `ask`: a card when the run has no approval (or one that rode on "always"); a `change` card when a turn adds a gated
+  builtin or a server tool, changes the model, changes the site's instructions or the text of a tool (its description
+  and parameters, which the model reads and the card never shows; a tool the approval did not have counts), turns
+  `crossOrigin` on, or raises the step budget (Q3, `widening`; the person's own Continue may raise it); a `more` card
   when a page-sent turn would pass the page turn budget (`PAGE_TURN_BUDGET`, 10). Otherwise the turn rides and a
-  page-sent one is counted.
+  page-sent one is counted. A widening that rode on "always" turns a card-made approval into one that rode on
+  "always", so a site set back to "ask" is asked again.
 - An approval (`ml_start_approved`, session storage) is written before the turn runs, bound to the run id, its tab, its
-  origin, the gated builtins, the server tools, the resolved model and a digest of the site's instructions. Another
+  origin, the gated builtins, the server tools, the resolved model, digests of the site's instructions and of each
+  tool's text, `crossOrigin` and the step budget. Another
   tab, or another origin on the same tab, is refused. A revoke of the site or its level drops every approval of that
   origin at the `storage.onChanged` event and again at worker start (`dropRevoked`), and re-approving does not bring
   them back.
@@ -280,16 +284,16 @@ reads the level again and decides each turn a page sends:
 **What the card shows** is the worker's snapshot (`StartAsk`): the origin from `sender`, the task verbatim, the site's
 own instructions (`siteInstructions`: what is left of the page-built system prompt once the extension's preamble,
 every clause `composeSystemPrompt` can add for the toolset, the notes marker and a page context block made only of
-`pageContext()`'s lines are removed), the tool lines from the registry's `cardLine` (a site tool that takes a builtin's
+lines shaped exactly as `pageContext()` writes them (`CONTEXT_LINES`) are removed), the tool lines from the registry's `cardLine` (a site tool that takes a builtin's
 name gets the builtin's line; the site's own tools are counted), the model the worker resolves, and the budgets.
 
 **Whose turn it is (Q2, Q2a).** A turn the page sent reaches the model as "Message from the page ({origin}): ...", the
 first task included, and the transcript shows it with the site's name (`agent-site-say`, never `agent-say`). The page's
 own `agent-say` for a run the worker hosts is no longer admitted (`pageMayWrite`), so it cannot draw its message as the
 person's. A message the PERSON sends through the extension for a page-built run is relayed by the page, as its handle
-lives there: `userRunAction` notes it first (`notePersonTurn`), and the page's copy of exactly that text is the
-person's turn, unmarked and not counted (`takePersonTurn`, once per note, two minutes). A page that swaps the text gets
-a page turn. INJECT_MESSAGE's `origin` (where a message was typed) is never read from a page.
+lives there: `userRunAction` notes it first (`notePersonTurn`), and the page's copy of exactly that text, with exactly the
+images the person attached, is the person's turn, unmarked and not counted (`takePersonTurn`, once per note, two
+minutes). A page that swaps the text or adds a picture gets a page turn. A page turn of pictures alone is marked too. INJECT_MESSAGE's `origin` (where a message was typed) is never read from a page.
 
 **Waiting for the person (Q2b).** `handle.waitForPerson(prompt)` sends INJECT_MESSAGE with `waitForPerson`: for a run
 this site's approval covers, the worker stops the run and fans `agent-wait`, and the reply box opens under the prompt,
@@ -300,7 +304,9 @@ the tab, any document other than the one it started on (a run this worker did no
 eviction, has no start page at all) may not start, continue or steer an agent. After it ends, a document the tab
 committed while it was live still starts no new agent; only that run's own next turn is taken from it, and its approval
 decides it like any page turn (a page-built run that navigated within its site is continued from the page it is on).
-The person's own message, relayed by such a page (`personTurnWaiting`), is let through. A refused page's START_RUN is
+The person's own message, relayed by such a page, is let through, spent at the router (`claimPersonTurn`) so a copy
+sent twice is refused the second time. What a run opened is kept in session storage (`ml_agent_opened`), so the rule
+outlives an eviction, and the router reads it back before judging a message that woke the worker. A refused page's START_RUN is
 recorded (`site.notStarted`, for the badge) and drawn as one quiet `agent-note` line in the driving run's steps, with no
 card and no model call; nothing is added to the driving run's messages.
 

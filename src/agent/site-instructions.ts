@@ -8,19 +8,29 @@ const NOTES_MARKER = "\n\nTask-specific notes:\n";
 /** The marker `withPageContext` writes before the page's own context lines. */
 const CONTEXT_MARKER = "\n\nCurrent page context:\n";
 
-/** The labels `pageContext()` (util.ts) starts its lines with. A context block holding any other line is the site's
- *  writing, not the page's description of itself. */
-const CONTEXT_LABELS = /^(URL|Title|Page language|Now|Locale|Browser|Shadow DOM|Markdown|Iframes): /;
-
-/** The longest context line `pageContext()` writes (a long URL), with room to spare; a longer one is the site's. */
-const CONTEXT_LINE_MAX = 2200;
+/** The exact shapes of the lines `pageContext()` (util.ts) writes. A context block holding any other line, or one of these
+ *  with words of the site's in it, is the site's writing, not the page's description of itself. Only the URL and the title
+ *  are free text, and the title is cut at 80 characters there: page data the model reads, as it reads the page. Change
+ *  these with `pageContext()`. */
+const CONTEXT_LINES: readonly RegExp[] = [
+    /^URL: \S{1,2100}$/,
+    /^Title: [^\n]{0,81}$/,
+    /^Page language: [\w-]{1,40}$/,
+    /^Now: [^\n—]{1,60} — ISO \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    /^Locale: [\w-]{1,40}$/,
+    /^Browser: [A-Za-z][A-Za-z ]{0,30}( [\d.]{1,20})?$/,
+    /^Shadow DOM: \d+ open\/captured shadow roots?( \(the DOM tools pierce these — reference with `host >>> inner`\))?((; |, )~\d+ custom elements? expose no light DOM \(mostly EMPTY — unopened menus\/outlets; a few may seal content — reach any visible one with locate\/@pt\))?\.$/,
+    /^Markdown: this page declares a Markdown version at \S{1,2100}( — fetch_url it \(same-origin, so no approval\) rather than surveying the DOM)?\.$/,
+    /^Markdown: not declared, but the page offers a copy-as-Markdown control — fetch_url on this URL may still return one\.$/,
+    /^Iframes: (\d+ same-origin \(the DOM tools cross these — references look like `iframe >>> inner`\))?(; )?(\d+ cross-origin \(walled off by SOP — reach a control visually via locate\/@pt \+ reserved-element clicking\))?\.$/,
+];
 
 /**
  * The text a page-built run's system prompt carries that the extension did not write: what a site passed as `system`
  * or `systemAppend`, or wrote into the prompt by hand. The page assembles a run's prompt itself and sends it whole, so
  * the worker cannot take the site's word for which part is its own. It removes what it can recognise as the
  * extension's (the stock preamble, every clause `assembleRun` adds for this toolset, the notes marker, and a page
- * context block made only of the lines `pageContext()` writes), and whatever is left is the site's.
+ * context block made only of lines shaped as `pageContext()` writes them), and whatever is left is the site's.
  * @param systemPrompt the system prompt the page sent
  * @param toolNames the run's tool names (the shadow clause names them)
  * @returns the site's text, trimmed; empty when the prompt is the extension's alone
@@ -31,7 +41,7 @@ export function siteInstructions(systemPrompt: unknown, toolNames: readonly stri
     const at = rest.lastIndexOf(CONTEXT_MARKER);
     if (at >= 0) {
         const lines = rest.slice(at + CONTEXT_MARKER.length).split("\n");
-        if (lines.every((l) => CONTEXT_LABELS.test(l) && l.length <= CONTEXT_LINE_MAX)) rest = rest.slice(0, at);
+        if (lines.every((l) => CONTEXT_LINES.some((re) => re.test(l)))) rest = rest.slice(0, at);
     }
     const clauses = [
         CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause(true), tooltokensClause(false), DEREF_CLAUSE,

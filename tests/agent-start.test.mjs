@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { bindingOf, widening, cardToolLines, visibleControls, pageTurnText, hostOf, START_REFUSED } = await import("../src/agent-start.ts");
+const { bindingOf, widening, toolTexts, cardToolLines, visibleControls, pageTurnText, hostOf, START_REFUSED } = await import("../src/agent-start.ts");
 const { siteInstructions, textDigest } = await import("../src/agent/site-instructions.ts");
 const { composeSystemPrompt, withPageContext } = await import("../src/agent/run-assembly.ts");
 const { builtinTools, GATED_BUILTINS } = await import("../src/tools/tool-registry.ts");
@@ -25,7 +25,7 @@ function* compositions(names) {
 const TOOLSETS = [[], ["findByText", "exec"], ["findByText", "click", "type", "exec", "python_exec", "agent_api_docs", "navigate", "fetch_url"], ["describeElement", "look", "locate", "answer"], builtinTools().map((d) => d.name)];
 
 test("the extension's own prompt holds no site instructions, for every composition and with the page's context", () => {
-    const ctx = "URL: https://site.example/p\nTitle: A page\nPage language: en\nNow: 14/10/2026 (Europe/Brussels) — ISO 2026-10-14T00:00:00Z\nLocale: en-GB\nBrowser: Chrome 130";
+    const ctx = "URL: https://site.example/p\nTitle: A page\nPage language: en\nNow: 14/10/2026 (Europe/Brussels) — ISO 2026-10-14T00:00:00.000Z\nLocale: en-GB\nBrowser: Chrome 130";
     let n = 0;
     for (const names of TOOLSETS) for (const f of compositions(names)) {
         const p = composeSystemPrompt(f);
@@ -55,20 +55,33 @@ test("a digest tells a changed instruction apart and is stable", () => {
 
 // --- what an approval is bound to (Q3) ---
 
+/** The binding's other facts, defaulted. */
+const F = (o = {}) => ({ instructions: "d", tools: {}, crossOrigin: false, budget: 10, ...o });
+
 test("a binding holds the gated builtins (a site tool named like one included) and the server tools; the others are not bound", () => {
-    const b = bindingOf([t("findByText"), t("exec"), t("myTool"), t("click"), t("srv", { toolId: "web", fn: "search" })], "m", "d");
-    assert.deepEqual(b, { gated: ["click", "exec"], server: ["web.search"], model: "m", instructions: "d" });
-    for (const name of GATED_BUILTINS) assert.deepEqual(bindingOf([t(name)], null, "").gated, [name], name);
+    const b = bindingOf([t("findByText"), t("exec"), t("myTool"), t("click"), t("srv", { toolId: "web", fn: "search" })], "m", F());
+    assert.deepEqual(b, { gated: ["click", "exec"], server: ["web.search"], model: "m", instructions: "d", tools: {}, crossOrigin: false, budget: 10 });
+    for (const name of GATED_BUILTINS) assert.deepEqual(bindingOf([t(name)], null, F()).gated, [name], name);
 });
 
-test("widening: an added gated tool, server tool, another model or other instructions ask again; a smaller toolset rides", () => {
-    const a = bindingOf([t("exec"), t("click")], "m", "d");
-    assert.equal(widening(a, bindingOf([t("exec")], "m", "d")), null);
-    assert.equal(widening(a, bindingOf([t("exec"), t("click"), t("findByText")], "m", "d")), null, "a tool that is not gated rides");
-    assert.deepEqual(widening(a, bindingOf([t("exec"), t("python_exec")], "m", "d"))?.gated, ["python_exec"]);
-    assert.deepEqual(widening(a, bindingOf([t("x", { toolId: "a", fn: "b" })], "m", "d"))?.server, ["a.b"]);
-    assert.equal(widening(a, bindingOf([t("exec")], "other", "d"))?.model, true);
-    assert.equal(widening(a, bindingOf([t("exec")], "m", "e"))?.instructions, true);
+test("widening: an added gated tool, server tool, another model, other instructions or tool texts, crossOrigin turned on, or a bigger step budget ask again; a smaller toolset or budget rides", () => {
+    const a = bindingOf([t("exec"), t("click")], "m", F());
+    assert.equal(widening(a, bindingOf([t("exec")], "m", F())), null);
+    assert.equal(widening(a, bindingOf([t("exec"), t("click"), t("findByText")], "m", F())), null, "a tool that is not gated, with no text of its own, rides");
+    assert.equal(widening(a, bindingOf([t("exec")], "m", F({ budget: 4 }))), null, "a smaller budget rides");
+    assert.deepEqual(widening(a, bindingOf([t("exec"), t("python_exec")], "m", F()))?.gated, ["python_exec"]);
+    assert.deepEqual(widening(a, bindingOf([t("x", { toolId: "a", fn: "b" })], "m", F()))?.server, ["a.b"]);
+    assert.equal(widening(a, bindingOf([t("exec")], "other", F()))?.model, true);
+    assert.equal(widening(a, bindingOf([t("exec")], "m", F({ instructions: "e" })))?.instructions, true);
+    const withTexts = bindingOf([t("exec")], "m", F({ tools: { exec: "1", find: "2" } }));
+    assert.equal(widening(withTexts, bindingOf([t("exec")], "m", F({ tools: { exec: "9" } })))?.instructions, true, "a tool's changed description is instructions");
+    assert.equal(widening(withTexts, bindingOf([t("exec")], "m", F({ tools: { exec: "1", helper: "3" } })))?.instructions, true, "a tool the approval did not have is new text");
+    assert.equal(widening(withTexts, bindingOf([t("exec")], "m", F({ tools: { exec: "1" } }))), null, "a tool left out rides");
+    assert.equal(widening(a, bindingOf([t("exec")], "m", F({ crossOrigin: true })))?.crossOrigin, true);
+    assert.equal(widening(bindingOf([], "m", F({ crossOrigin: true })), bindingOf([], "m", F())), null, "crossOrigin turned off rides");
+    assert.equal(widening(a, bindingOf([t("exec")], "m", F({ budget: 11 })))?.budget, true);
+    const id = (x) => x;
+    assert.notEqual(toolTexts([{ name: "a", description: "x" }], id).a, toolTexts([{ name: "a", description: "y" }], id).a);
 });
 
 // --- the card's lines ---

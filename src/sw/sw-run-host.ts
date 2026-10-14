@@ -63,7 +63,7 @@ import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerV
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { hostAsks, stepAsks } from "./sw-asks";
-import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart } from "./sw-start-approval";
+import { approvalFor, cancelReasons, gatePageTurn, imagesDigest, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
@@ -187,8 +187,10 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             const stored = typeof rp.runId === "string" ? bgRuns.get(rp.runId) : undefined;
             if (!stored) { hostRun(message, tabId, sendResponse); return; }   // hostRun answers "no resumable run"
             return getConfig().then(async (cfg) => {
+                // The step budget this turn asks for: a raise is a widening, unless the person asked for it (Continue +N).
+                const p = { ...stored.p, maxSteps: stepBudget(rp.maxSteps) ?? stored.p.maxSteps };
                 const verdict = await gatePageTurn({ type: "RESUME_RUN", runId: rp.runId, tabId, origin, text: typeof rp.task === "string" ? rp.task : "",
-                    p: stored.p, model: stored.p.model || cfg.model || null, pageHistory: false, known: true });
+                    p, model: stored.p.model || cfg.model || null, pageHistory: false, known: true, personClaimed: personClaimed(message) });
                 if ("error" in verdict) { sendResponse({ error: verdict.error }); return; }
                 // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile.
                 if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
@@ -209,7 +211,8 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             if (!origin || !p || typeof p !== "object" || typeof p.runId !== "string" || !Array.isArray(p.tools)) { hostRun({ ...message, payload: p }, tabId, sendResponse); return; }
             const stored = bgRuns.get(p.runId);
             const verdict = await gatePageTurn({ type: "START_RUN", runId: p.runId, tabId, origin, text: typeof p.task === "string" ? p.task : "", p,
-                model: p.model || cfg.model || null, pageHistory: Array.isArray(p.resumeMessages) && p.resumeMessages.length > 0, known: !!stored || !!approvalFor(p.runId) });
+                model: p.model || cfg.model || null, pageHistory: Array.isArray(p.resumeMessages) && p.resumeMessages.length > 0, known: !!stored || !!approvalFor(p.runId),
+                images: imagesDigest(p.images), personClaimed: personClaimed(message) });
             if ("error" in verdict) { sendResponse({ error: verdict.error }); return; }
             // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile.
             if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
@@ -331,7 +334,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // A turn a site sent reaches the model marked as the site's, never as the person's (Q2a); the transcript shows the
     // site's words with its name instead. A turn the person sent through the extension, which the page only relayed, is
     // theirs (`site.person`).
-    const modelTask = site && !site.person && p.task ? pageTurnText(site.origin, p.task) : p.task;
+    // A turn of images alone is the page's too: its marker is what tells the model whose pictures they are.
+    const modelTask = site && !site.person && (p.task || p.images?.length) ? pageTurnText(site.origin, p.task || "") : p.task;
     // A run switched to another model (`session.model`) keeps it, whoever starts its next turn: a handle sends the
     // model it was built with, and a stored snapshot may predate the switch.
     const switched = runModelFor(runId);
