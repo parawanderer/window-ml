@@ -33,8 +33,10 @@ message). The handlers enforce nothing per-call.
    bypassable loop.
 
 `FETCH_LLM` (page can only pick a validated/filtered model; url/key come from
-storage) and `FETCH_IMAGE_B64` (**uncredentialed** → public cross-origin bytes,
-never the user's authenticated data) are *safe by construction* and out of scope.
+storage) is *safe by construction* and out of scope. `FETCH_IMAGE_B64` was assumed
+uncredentialed here, which was wrong: a worker fetch's default credentials mode sent
+the cookies of every host the extension reaches. It names `credentials:"omit"` since
+(`src/sw/sw-image-fetch.ts`, §2a).
 
 ## Root cause + why a blanket block won't do
 
@@ -83,7 +85,8 @@ whitelisted origin`).
 
 Not approval-gated (it's a free, high-frequency core op — `window.ml` serialises
 page images through it), so it can't use the grant model. But it's `fetch(url)` at
-the extension origin: **uncredentialed** (so never the user's authenticated data —
+the extension origin: **uncredentialed** (`credentials:"omit"`, stated, since the
+default is NOT uncredentialed in a worker: so never the user's authenticated data —
 the important bound), yet still a "read any URL's bytes" primitive → **SSRF to
 internal hosts** and CORS-bypassing reads of public resources. Fence it structurally,
 like `FETCH_SHEET`'s host-lock but as a **denylist**:
@@ -91,10 +94,11 @@ like `FETCH_SHEET`'s host-lock but as a **denylist**:
 - **Refuse private / loopback / link-local / metadata targets** — `127.0.0.0/8`,
   `10/8`, `172.16/12`, `192.168/16`, `169.254/16` (+ `::1`, `fc00::/7`, `fe80::/10`),
   `localhost`, and non-`http(s)` schemes. Kills the internal-network probe/read.
-- Keep it **uncredentialed** (already true — assert `credentials` stays default).
-- Optional: require the response `content-type` to be `image/*` (it's an *image*
-  tool) so it can't be repurposed to read arbitrary public text/JSON. Weigh against
-  servers that mislabel images.
+- Keep it **uncredentialed**: `credentials:"omit"`, no referrer, `cache:"no-store"`
+  (asserted in `tests/redteam-image-fetch.test.mjs`).
+- Image only: the bytes must be a raster image by their magic, and the content type
+  `image/*` (not SVG) or a generic octet-stream; capped at 16 MB; a redirect's final
+  URL is held to the denylist; one failure text for every outcome after the request.
 
 Residual after this: "read *public* internet bytes, uncredentialed" — acceptable
 (public data, no auth, no internal reach).
@@ -178,7 +182,7 @@ approval. `requiresApproval` stays pure UX consent; the *boundary* is here. See
 - `FETCH_SHEET` — one-time `sheet` grant (§1–2).
 - `PYTHON_EXEC` full — one-time `pyfull` grant keyed by `hash(args)` (§1–2).
 - `FETCH_SHEET_TITLE` — internal-only, refuse `sender.tab != null` (§2).
-- `FETCH_IMAGE_B64` — SSRF denylist + uncredentialed + optional image-only (§2a).
+- `FETCH_IMAGE_B64` — SSRF denylist + `credentials:"omit"` + image-only (§2a).
 
 ## Accepted (out of scope)
 

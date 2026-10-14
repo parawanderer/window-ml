@@ -51,6 +51,7 @@ import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
+import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -187,24 +188,6 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onReplaced) {
         moveTabKey([fetchConsent, credFetchGrants, debugBuffer] as Array<Map<number, unknown>>, removedTabId, addedTabId);
         sessionServer.pageGone(removedTabId, { closed: true });
     });
-}
-
-/** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
- *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
- *  through the extension's `<all_urls>` reach. */
-function isBlockedFetchTarget(rawUrl: string): boolean {
-    let u: URL;
-    try { u = new URL(rawUrl); } catch { return true; }
-    if (u.protocol !== "http:" && u.protocol !== "https:") return true;
-    const h = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (h === "localhost" || h.endsWith(".localhost") || h === "::1") return true;
-    if (h.startsWith("fe80") || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("::ffff:127.")) return true;   // IPv6 link-local / ULA / mapped-loopback
-    const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    if (m) {
-        const a = +m[1], b = +m[2];
-        if (a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) return true;
-    }
-    return false;
 }
 
 // PDF-export docs awaiting their print.html tab (key → rendered HTML + its TTL timer). Kept out of the URL
@@ -994,32 +977,15 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         return true;
 
     } else if (message.type === "FETCH_IMAGE_B64") {
-        // Uncredentialed (no auth-data leak), but a "read any URL's bytes" primitive at the extension
-        // origin — so an SSRF denylist keeps a page from probing/reading the user's internal network.
-        if (isBlockedFetchTarget(message.payload?.url || "")) {
-            sendResponse({ error: "Refused: cannot fetch a private / loopback / link-local / metadata address." });
-            return true;
-        }
-        fetch(message.payload.url)
-            .then(response => {
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                return response.blob();
-            })
-            .then(blob => {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    // Returns "data:image/jpeg;base64,..."
-                    sendResponse({ data: reader.result });
-                };
-                reader.readAsDataURL(blob);
-            })
-            .catch(err => sendResponse({ error: err.message }));
+        // A public image's bytes for a page whose canvas would taint: no cookies, a public host only (the first URL
+        // and the one a redirect ends on), image bytes only, capped, one failure text (sw-image-fetch.ts).
+        void fetchImageDataUrl(String(message.payload?.url ?? "")).then(sendResponse);
         return true;
 
     } else if (message.type === "CAPTURE_TAB") {
         // Screenshot the visible viewport so the page can crop it to an element.
         // Privileged: pages can't capture pixels, and a cross-origin canvas would
-        // taint — same escalation the FETCH_IMAGE_B64 fetch already grants. A page's
+        // taint (FETCH_IMAGE_B64 reads a public image's bytes for the same reason). A page's
         // capture is of its OWN tab only (sw-capture.ts): captureVisibleTab shoots
         // whatever its window shows, which for a tab in the background is another site.
         const doCapture = () => sender.tab

@@ -97,3 +97,27 @@ export function binaryKind(bytes: Uint8Array): string | null {
     if (named === "a PDF document") return named;
     return head.includes(0) ? (named ?? "unrecognised binary data") : null;
 }
+
+/**
+ * The media type of a RASTER image these bytes start with, or null when they are not one. Decided by magic bytes alone,
+ * never by a header: PNG, JPEG, GIF, WebP, BMP, ICO and AVIF/HEIF. SVG is text and is not here.
+ *
+ * Exists so the worker's image read for a page (sw-image-fetch.ts) hands back only an image, whatever the server says
+ * the body is: an HTML page or a JSON answer served as `image/png` is refused.
+ */
+export function imageMime(b: Uint8Array): string | null {
+    const at = (off: number, sig: number[]) => b.length >= off + sig.length && sig.every((x, i) => b[off + i] === x);
+    const ascii = (off: number, s: string) => at(off, [...s].map((c) => c.charCodeAt(0)));
+    if (at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+    if (at(0, [0xff, 0xd8, 0xff])) return "image/jpeg";
+    if (ascii(0, "GIF87a") || ascii(0, "GIF89a")) return "image/gif";
+    if (ascii(0, "RIFF") && ascii(8, "WEBP")) return "image/webp";
+    if (ascii(0, "BM") && at(6, [0, 0, 0, 0])) return "image/bmp";            // two reserved zero words after the size
+    if (at(0, [0, 0, 1, 0]) && b.length >= 6 && b[4] + b[5] > 0) return "image/x-icon";
+    if (ascii(4, "ftyp")) {
+        const brand = String.fromCharCode(...b.subarray(8, 12));
+        if (brand === "avif" || brand === "avis") return "image/avif";
+        if (["heic", "heix", "mif1", "msf1"].includes(brand)) return "image/heif";
+    }
+    return null;
+}

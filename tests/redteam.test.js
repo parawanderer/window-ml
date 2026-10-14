@@ -122,6 +122,7 @@ test("GAIN blocked — read a private sheet AS THE USER: an unapproved page gets
 // (a) read any URL AS THE USER (cookies)      → background.test.js "SECURITY (FETCH_URL credentialed): ... without a grant"
 // (b) CORS/SOP-bypass cross-origin & localhost → background.test.js "SECURITY (FETCH_URL): an untrusted page with NO consent is refused"
 // (b) SSRF probe of the internal network       → background.test.js "SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata"
+// (a/b) read any URL's bytes AS THE USER       → redteam-image-fetch.test.mjs (no cookies, image bytes only, uniform errors)
 // (b/d) networked, CORS-bypassing python fetch → background.test.js "SECURITY (PYTHON_EXEC): ... must NOT get FULL (unhardened) mode"
 // (e) a page-provided approve()/confirm can't self-approve (page loop) → agent.test.js "[HOLE→design-A] a hostile CALLER's approve:()=>true can NOT self-approve"
 

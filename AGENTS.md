@@ -403,5 +403,5 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
   directly. `FETCH_SHEET` fetches `credentials:"include"` (the user's cookies),
   so it's hard-locked to the `docs.google.com/.../export?` shape (`SHEET_URL_OK`)
   — without it, it's a cookie-authenticated "read any URL" exfil primitive.
-  (`FETCH_IMAGE_B64` is *uncredentialed* — default `same-origin` — so it can read
-  cross-origin public bytes but not the user's authenticated data.)
+  `FETCH_IMAGE_B64` names `credentials:"omit"`: a worker fetch's default sends the cookies of every host the
+  extension reaches. It reads only a public host's raster image (`sw-image-fetch.ts`).

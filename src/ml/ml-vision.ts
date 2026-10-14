@@ -564,14 +564,14 @@ export const _imageToDataUrl = async function(this: MlApi, image: string | HTMLI
     }
 
     // Case C: Standard HTTP/HTTPS (External Images)
-    // The Page Context will likely fail (CORS).
-    // The Background Script will SUCCEED (Extension Permissions).
-    // We delegate the fetch to the background.
+    // The Page Context will likely fail (CORS), so the background reads it: without cookies, from a public host
+    // only, and only if the bytes are an image (sw-image-fetch.ts). An image only a signed-in session can read fails.
     return this._fetchImageBase64(url);
 };
 
 /**
- * Fetch an external image as base64 via the background worker (for CORS).
+ * Fetch an external image as base64 via the background worker (for CORS). Without the person's cookies, from a
+ * public host only, and only a raster image of at most 16 MB (sw-image-fetch.ts); every failure rejects with one text.
  *
  * @param {string} url The image URL to fetch.
  * @returns {Promise<string>} The image as a base64 data URL.
