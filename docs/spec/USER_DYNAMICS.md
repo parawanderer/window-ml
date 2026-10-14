@@ -2,10 +2,10 @@
 
 **Status: research topic** (opened 2026-10-14; no code is wired into window.ml). Lives under
 `src/lab/user-dynamics/` (`@lab`, reviewed for the maths, not as product). The actuator it plays
-onto is already built and deterministic — `src/input-dispatch.ts` gives every CDP or synthetic event
-the W3C envelope a hardware mouse/keyboard produces. What that module deliberately does **not**
-choose is *when* an event fires, *where along a path* it lands, or *how hard/long* a key is held.
-Those are policy. This topic is the policy.
+onto is the W3C input dispatch layer (PR #655): every CDP or synthetic event gets the envelope a
+hardware mouse/keyboard produces. What that layer deliberately does **not** choose is *when* an
+event fires, *where along a path* it lands, or *how hard/long* a key is held. Those are policy.
+This topic is the policy.
 
 ## The question
 
@@ -43,7 +43,7 @@ for whatever was being typed or aimed at around them.
 
 ## What is learned
 
-Not "how to solve captchas". A factored policy over the fields `input-dispatch.ts` leaves free:
+Not "how to solve captchas". A factored policy over the fields the input dispatch layer leaves free:
 
 | Factor | Support | A cheap sufficient statistic |
 | --- | --- | --- |
@@ -52,10 +52,10 @@ Not "how to solve captchas". A factored policy over the fields `input-dispatch.t
 | Click placement `ε` | offset from the target's centre, in target-local units | 2D Gaussian; people are biased (a little high-left of true centre is common) |
 | Trajectory `γ: [0,1] → R²` | move between targets | minimum-jerk quintic plus a low-frequency wander term; the wander is the signature |
 | Move duration `T` | per hop | lognormal in distance: `log T ~ N(α + β log d, σ²)` |
-| Pressure / button timing | fixed by W3C for a mouse (`0.5` down); for a stylus, a dwell curve | see `input-dispatch.ts` |
+| Pressure / button timing | fixed by W3C for a mouse (`0.5` down); for a stylus, a dwell curve | fixed by the dispatch layer |
 
 `π_θ` is the product of these conditionals, fit by maximum likelihood on `D`. At act time it
-*samples*, then the sampled schedule is expressed as an `input-dispatch` plan (the envelope) and
+*samples*, then the sampled schedule is expressed as an input-dispatch plan (the envelope) and
 fired through the existing CDP/synthetic path. Nothing about the transport changes.
 
 ## The escalation policy is a stopping rule, not a feature
@@ -89,7 +89,7 @@ design:
 
 ## Why this is a lab topic, not window.ml product
 
-The transport is done (`input-dispatch.ts`). The policy is research: which statistics of a person's
+The transport is done (the W3C input dispatch layer). The policy is research: which statistics of a person's
 input are stable enough to learn from a handful of short trajectories, how fast a per-class
 lognormal outgrows its prior, whether the wander term is who they are or just noise, and what
 `λ` people actually choose when they see the trade-off. None of that is settled here, so none of it
