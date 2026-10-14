@@ -2,7 +2,7 @@
 // model-facing text and the sidebar's python-in / python-out descriptors. Moved out of builtin-tools.ts; the sandbox
 // itself is `ml.pythonExec` (injected.ts) → the offscreen document → python-worker.ts.
 import { type MlApi } from "../contract";
-import { PY_CUT, PYTHON_FULL, PYTHON_SHORT } from "../tools/tool-details";
+import { PYTHON } from "../tools/tool-details";
 import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
@@ -61,15 +61,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         : singleTable ? " THIS PAGE HAS ONE TABLE — pass `tables:'current'` to load it as `df`." : "";
     const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
         : singleTable ? " Or `'current'` for the one table on this page." : "";
-    const tablesDesc = PY_CUT ? "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON_SHORT.tables + currentClause : "Spreadsheet/table data → pandas DataFrame(s). A SINGLE source string (a CSS selector " +
-        "for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url already read, or an `@tool:` pointer to a table " +
-        "such as a fetch_url of a CSV/Parquet/Arrow file) → loaded as `df`." + currentClause +
-        " OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
-        "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
-        "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +
-        "the extension (credentialed) — you do NOT need mode:'full' for it; keep mode:'readonly' (an external Sheet " +
-        "just asks once to approve, then loads as a normal df). " +
-        "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.";
+    const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON.tables + currentClause;
     return ml.defineTool({
         name: "python_exec",
         summary: "Runs sandboxed Python (numpy/pandas/Pillow) for data & math.",
@@ -90,8 +82,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             properties: {
                 code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return` OR a bare trailing expression (Jupyter-style: a last line `df` is the result). print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
-                cast: { type: "string", enum: ["pt", "box"], description: (PY_CUT ? PYTHON_SHORT : PYTHON_FULL).cast },
-                mode: { type: "string", enum: ["readonly", "full"], description: (PY_CUT ? PYTHON_SHORT : PYTHON_FULL).mode },
+                cast: { type: "string", enum: ["pt", "box"], description: PYTHON.cast },
+                mode: { type: "string", enum: ["readonly", "full"], description: PYTHON.mode },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
                 tables: {
                     oneOf: [

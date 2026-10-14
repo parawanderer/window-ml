@@ -1,9 +1,9 @@
 # Prompt budget: trimming the system prompt and tool schemas, and measuring it
 
 Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450), `answer` left
-the default kit (#464), and the tool-output-tokens cut and the `exec`/`fetch_url` split shipped measured (below); the
-shadow/iframe, pipe-example and `locate`/`python_exec` parameter cuts are still open.**
-Started 2026-10-08, updated 2026-10-10.
+the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
+3) `python_exec`'s option texts shipped measured (below); the shadow/iframe and pipe-example cuts are still open.**
+Started 2026-10-08, updated 2026-10-14.
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -143,6 +143,29 @@ it). glm-4.7-flash on csv-total, 16 runs each, current prompt (sweeps `tool-use`
 The last two failures: a fetch with `credentials: true` (never cached, by design; the error now says so) and a
 malformed tool call. So the `python_exec` cut is worth measuring again on top of these fixes: the regression it was
 blamed for was mostly this.
+
+## Step 3 result, round 3: `python_exec`'s option texts (2026-10-14)
+
+`python_exec` keeps the triggers of `tables`, `cast` and `mode` in the schema (`PYTHON` in
+`src/tools/tool-details.ts`) and serves their full texts from `agent_api_docs({ tool: "python_exec" })`
+(`TOOL_DETAILS.python_exec`): about 1,470 characters down to 560 on every call that carries the tool. The short text
+is round 2's, as its runs recorded it, plus the key rule ("a Python variable name, e.g. { sales: … }"). Round 2's
+notebook says a sentence was added for MiniMax; the schemas its runs recorded show none, so none is assumed here.
+
+Measured on csv-total and table-north-q3 with the variant `pycut`, on top of #650:
+
+- **First sweep** (`prompt-budget-pycut`, 5 models x 2 tasks x 2 prompts x 8): DeepSeek Flash, Gemini Flash and
+  MiniMax M3 unchanged (46/48 both); qwen3.6 16 → 15 (it typed the table in from a screenshot); glm-4.7-flash 14 → 12.
+  One of glm's was the cut's: it keyed the map by the URL and looped on "isn't a valid Python variable name", because
+  the short text no longer said the keys are names.
+- **The fix**: such a key now loads under a name derived from it (`derivedTableName`), aliased by the key itself; a
+  reserved name, and a list's index, are still refused (the `[[sheetUrl]]` red-team test in `run-start.test.mjs` caught
+  a first version that took a list's "0"). The short text names the key rule.
+- **Recheck** (`prompt-budget-pycut-b`, glm-4.7-flash and qwen3.6 x 16): glm 27/32 → 26/32, qwen 32/32 both. glm's
+  failures are the same kinds under both prompts (no `python_exec` call, one of the two North rows read, giving up on
+  the fetch); the name loop is gone. Shipped on Shane's call, as round 2 shipped `locate` with a one-run gap.
+- **Not a measurement**: `prompt-budget-pycut-b-misbuilt` holds cells a resume re-ran after the variant was deleted
+  (both labels built the cut); its README says so, and it is never synced.
 
 ## Step 3 result, round 2: `locate`'s option texts (2026-10-10)
 
