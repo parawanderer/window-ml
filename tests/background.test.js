@@ -790,6 +790,7 @@ async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approved
     let toolResult = null, n = 0, bg;
     bg = loadBackground({
         config: baseConfig({ cdp }),
+        openTabs: [{ id: 8, url: "https://page.test/", title: "Page" }],   // a top-frame document the exec is pinned to
         debuggerPermission,
         // Simulate the page running cdpEval's console-capture WRAPPER: it patches console, runs the source,
         // and returns { __mlWrapped, v, logs } by value — so console output survives the CDP round-trip.
@@ -871,6 +872,7 @@ test("CDP exec: TWO execs in one run share ONE debugger attachment (attach once,
     let n = 0, bg;
     bg = loadBackground({
         config: baseConfig({ cdp: true }),
+        openTabs: [{ id: 8, url: "https://page.test/", title: "Page" }],
         onDebuggerCommand: (method) => (method === "Runtime.evaluate" ? { result: { value: { __mlWrapped: true, v: "OK", logs: [] } } } : undefined),
         onFetch: () => {
             n++;

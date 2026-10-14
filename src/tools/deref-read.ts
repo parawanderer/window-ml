@@ -9,9 +9,18 @@ import { jsonShape, jsonValue } from "../dom/dom";
 import { type StoredColumnReader, asTable, tableShape } from "../table/table-data";
 import { currentHasTool } from "./tool-exec";
 
-/** Where `ml.dereference` sends a read's advisory instead of the page's console: an option key only module code holds, so
- *  an exec, whose `console` is a parameter bound to its collector (tools.ts), still shows the model the advisory. */
+/** Where `ml.dereference` sends a read's advisory instead of the page's console, so an exec, whose `console` is a
+ *  parameter bound to its collector (tools.ts), still shows the model the advisory. The page can read this key off any
+ *  options object handed to a function of its own, so it is only ever passed to {@link derefImpl}, the extension's own
+ *  method, never to `window.ml.dereference`, which the page can replace. */
 export const DEREF_WARN: unique symbol = Symbol("deref-warn");
+
+/** The extension's own `ml.dereference`, kept as injected.js defined it before any page script could replace it. */
+let derefFn: ((ref: unknown, options?: unknown) => Promise<unknown>) | null = null;   // state: plumbing — set once by injected.ts at load
+/** Keep `fn` as the extension's own `ml.dereference` (injected.ts, as it defines `window.ml`). */
+export const setDerefImpl = (fn: (ref: unknown, options?: unknown) => Promise<unknown>): void => { derefFn = fn; };
+/** The extension's own `ml.dereference`, or null where injected.js did not run (a test world, the isolated kit). */
+export const derefImpl = (): ((ref: unknown, options?: unknown) => Promise<unknown>) | null => derefFn;
 
 /**
  * The object `ml.dereference` resolves to: the pointer's text, with what the loop knows about it attached.

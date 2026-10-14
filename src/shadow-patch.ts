@@ -8,11 +8,14 @@
 // behave identically; only our WeakMap holds the reference.
 //
 // The WeakMap lives in this script's CLOSURE: no global, nothing the page can write. The DOM tools (injected.js, a
-// separate script loaded later) get a READER for it once, by dispatching CLOSED_ROOTS_EVENT on window: this script's
-// listener, registered before any page script, answers into the event's detail and stops it, so no page listener sees
-// it. A page can dispatch the same event and read its own closed roots, which it authored; it cannot put a root behind
-// a host. A page that wraps `dispatchEvent` before injected.js loads can hand the tools a reader of its own, as it can
-// wrap any builtin the main-world tools call (docs/dev/detection-surface.md, row 4).
+// separate script loaded later) ask for a READER for it as injected.js starts, by dispatching CLOSED_ROOTS_EVENT on
+// window. This script's capture listener, registered before any page script, answers the FIRST ask into its detail,
+// stops it, and removes itself, so it answers once. Injected.js loads after the page's own scripts, so a page can ask
+// first: it then reads its own closed roots (which it authored) and the tools get no reader, which turns piercing off
+// (fails closed). A page cannot put a root behind a host through the map. A page can still answer the tools' ask
+// itself, by wrapping `dispatchEvent` or `CustomEvent`, or by `document.open()`, which removes this listener, before
+// injected.js starts: as with any builtin the main-world tools call (docs/dev/detection-surface.md, row 4), the page
+// decides what the tools see in its own document.
 //
 // Why a SEPARATE document_start script and not injected.js: injected.js is appended by the content script
 // at document_idle — far too late; by then components have already attached their roots and the race is
@@ -36,6 +39,7 @@ import { CLOSED_ROOTS_EVENT } from "./ids";
     const apply = Reflect.apply;
     const wmGet = WeakMap.prototype.get, wmSet = WeakMap.prototype.set;
     const stop = Event.prototype.stopImmediatePropagation;
+    const removeListener = window.removeEventListener;
     const read = (el: Element): ShadowRoot | null => { try { return (apply(wmGet, roots, [el]) as ShadowRoot | undefined) ?? null; } catch { return null; } };
     const patched = function (this: Element, init: ShadowRootInit): ShadowRoot {
         const root = apply(original, this, [init]) as ShadowRoot;
@@ -47,9 +51,11 @@ import { CLOSED_ROOTS_EVENT } from "./ids";
     try {
         Object.defineProperty(proto, "attachShadow", { value: patched, configurable: true, writable: true });
     } catch { return; /* prototype frozen by the page → leave the native method; capture is simply unavailable */ }
-    window.addEventListener(CLOSED_ROOTS_EVENT, (e: Event) => {
+    const answer = (e: Event): void => {
         apply(stop, e, []);
+        apply(removeListener, window, [CLOSED_ROOTS_EVENT, answer, true]);
         const d = (e as CustomEvent<{ read?: unknown } | null>).detail;
         if (d && typeof d === "object") d.read = read;
-    }, true);
+    };
+    window.addEventListener(CLOSED_ROOTS_EVENT, answer, true);
 })();

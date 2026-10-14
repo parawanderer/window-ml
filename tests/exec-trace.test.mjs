@@ -7,12 +7,11 @@
 // tool is broken rather than that the number was.
 import { test } from "node:test";
 import assert from "node:assert";
-import { rawEvalLine, evalLineOffset, execErrorLine } from "../src/tools/exec-trace.ts";
+import { rawEvalLine, evalLineOffset, execErrorLine, evalWrapper, asyncWrapper } from "../src/tools/exec-trace.ts";
 
-const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-// The two wrappers exactly as tools.ts builds them.
-const runEval = (src, params = ["state"]) => new Function(...params, "src", "return eval(src);")(...params.map(() => undefined), src);
-const runAsync = (src, params = ["state"]) => new AsyncFunction(...params, src)(...params.map(() => undefined));
+// The two wrappers tools.ts builds, the same functions.
+const runEval = (src, params = ["state"]) => evalWrapper(params)(...params.map(() => undefined)).run(src);
+const runAsync = (src, params = ["state"]) => asyncWrapper(params, src)(...params.map(() => undefined));
 
 test("the LAST <anonymous> on a frame is the one that locates the code", () => {
     // A V8 eval frame names <anonymous> twice — the outer one is where the eval was CALLED from.

@@ -36,16 +36,16 @@ export function answerMediaShape(els: Element[], show?: "inline" | "highlight"):
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "../dom/dom";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
-import { execErrorLine, evalWrapper } from "./exec-trace";       // a stack frame → the model's own line number
+import { execErrorLine, evalWrapper, asyncWrapper } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "../pointers/text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
 import { DEREF_TOOL, type DerefRead } from "../pointers/token-pipe";
-import { DerefText, DEREF_WARN } from "./deref-read";
+import { DerefText, DEREF_WARN, derefImpl } from "./deref-read";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "../dom/a11y";
 import { pageContext, agentState } from "../util";
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead, boundedLines, ceilingNote, MAIN_CONSOLE_HEAD } from "../agent/output-clip";
+import { clipHeadTail, panelHead, boundedLines, ceilingNote, MAIN_CONSOLE_HEAD, CONSOLE_FORWARDS } from "../agent/output-clip";
 import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
 
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
@@ -494,12 +494,18 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const methods = ["log", "info", "warn", "error", "debug"] as const;
                 const pageConsole = console;
                 let collecting = true;
-                const execConsole = Object.create(pageConsole) as Console;
-                // Defined, not assigned: an assignment would run a setter the page put on its console (handing it the
-                // collector) and leave its getter to answer the script's `console.log`.
+                // NULL-prototype, its members defined rather than assigned: inheriting from the page's console let a
+                // method the page put there run with the collector as `this`, and an assignment would run a setter the
+                // page put on its console (handing it the collector). The five methods collect; the rest forward to the
+                // page's console, with the page's console as `this`.
+                const execConsole = Object.create(null) as Console;
+                for (const k of CONSOLE_FORWARDS) {
+                    Object.defineProperty(execConsole, k, { configurable: true, enumerable: true, writable: true,
+                        value: (...a: unknown[]) => Reflect.apply((pageConsole as unknown as Record<string, (...x: unknown[]) => unknown>)[k], pageConsole, a) });
+                }
                 for (const m of methods) {
                     Object.defineProperty(execConsole, m, { configurable: true, enumerable: true, writable: true, value: (...a: unknown[]) => {
-                        if (!collecting) { pageConsole[m](...a); return; }
+                        if (!collecting) { Reflect.apply(pageConsole[m], pageConsole, a); return; }
                         const line = a.map(x => {
                             if (typeof x === "string") return x;
                             try { return JSON.stringify(x); } catch { return String(x); }
@@ -531,7 +537,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                                 // running the dialect locally over the text we already hold would return the
                                 // right string and silently skip the mint, leaving the model unable to cite
                                 // what it just built.
-                                if (!hit || options !== undefined) return (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, { ...(options && typeof options === "object" ? options : {}), [DEREF_WARN]: warnHere });
+                                // The extension's own `dereference` (deref-read.ts `derefImpl`), never the page's `ml.dereference`, which
+                                // the page can replace: the collector rides in its options, and a page method would be handed it.
+                                if (!hit || options !== undefined) {
+                                    const impl = derefImpl();
+                                    return impl ? impl(ref, { ...(options && typeof options === "object" ? options : {}), [DEREF_WARN]: warnHere })
+                                        : (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, options);
+                                }
                                 if (hit.error) throw new Error(hit.error);
                                 // Constructed once per handle and CACHED, so the macro and the longhand call it
                                 // expands to return the same object and `===` holds between them. Lazily, so a read the
@@ -550,6 +562,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // actually used (see exec-trace.ts) — recorded here because only this code knows which it
                 // took, and the `src` parameter is the eval wrapper's own, not part of the shape.
                 let wrapKind: "eval" | "async" = "eval";
+                let evaluator: { run: (src: string) => unknown; ran: () => boolean } | undefined;
                 const wrapParams = mlSync ? ["state", "ml", "console"] : ["state", "console"];
                 const wrapArgs: unknown[] = mlSync ? [agentState, mlSync, execConsole] : [agentState, execConsole];
                 try {
@@ -562,16 +575,19 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // substitute. Passing it unconditionally would SHADOW the page's real `ml` with
                         // whatever we resolved — including `undefined` when the lookup failed — and break
                         // every other `ml.*` call in exec for no reason.
-                        result = evalWrapper(wrapParams)(...wrapArgs)(js);
+                        evaluator = evalWrapper(wrapParams)(...wrapArgs);
+                        result = evaluator.run(js);
                     } catch (e) {
                         // eval rejects top-level `await`/`return` with a SyntaxError,
                         // thrown at parse time before anything runs — so retry the
                         // source as an async function body (both now work). The model
                         // must `return` its value here (no last-expression auto-return).
                         // A genuine syntax error re-throws from this attempt and is reported.
-                        if (e instanceof SyntaxError) {
+                        // Only one the source threw BEFORE it started: a SyntaxError thrown while it ran (a
+                        // `JSON.parse`, or a page function the code calls) is its error, and running it again
+                        // would repeat everything it did first.
+                        if (e instanceof SyntaxError && !evaluator?.ran()) {
                             wrapKind = "async";
-                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (...args: string[]): (...a: unknown[]) => Promise<unknown> };
                             // eval threw away the completion value when it rejected top-level
                             // await/return. Re-run as an async body — but first preserve the REPL
                             // trailing-expression convention (the fast-path eval and python_exec
@@ -581,8 +597,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                             // back to the plain body (there the model must `return` explicitly).
                             const expr = js.trim().replace(/;\s*$/, "");
                             let fn: (...a: unknown[]) => Promise<unknown>;
-                            try { fn = new AsyncFunction(...wrapParams, `return (${expr})`); }
-                            catch { fn = new AsyncFunction(...wrapParams, js); }
+                            try { fn = asyncWrapper(wrapParams, `return (${expr})`); }
+                            catch { fn = asyncWrapper(wrapParams, js); }
                             result = fn(...wrapArgs);
                         } else throw e;
                     }

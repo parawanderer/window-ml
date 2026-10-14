@@ -90,6 +90,7 @@ function cdpPage({ contexts = [{ id: 1, auxData: { isDefault: true, frameId: "F1
     const fire = (params) => [...listeners].forEach((fn) => fn({ tabId: 7 }, "Runtime.bindingCalled", params));
     globalThis.chrome = {
         permissions: { contains: async () => true },
+        webNavigation: { getFrame: async () => ({ documentId: "doc-7", frameId: 0 }) },   // the document the exec is pinned to
         debugger: {
             attach: async () => {}, detach: async () => {},
             onDetach: { addListener: () => {} },
@@ -128,7 +129,7 @@ test("a strict-page exec keeps the page's lines out of its result, and a page th
         }, 10);
     `);
     const live = [];
-    const r = await cdpEval(7, "console.log('first'); await new Promise((res) => setTimeout(res, 40)); console.log('second'); return 1", (text) => live.push(text));
+    const r = await cdpEval(7, "doc-7", "console.log('first'); await new Promise((res) => setTimeout(res, 40)); console.log('second'); return 1", (text) => live.push(text));
     assert.ok("ok" in r, JSON.stringify(r));
     assert.deepEqual(r.logs, ["first", "second"], "positive control: both of the script's lines were collected");
     assert.deepEqual(live, ["first\n", "second\n"], "both streamed through the binding the wrapper took at its start");
@@ -140,30 +141,32 @@ test("a strict-page exec keeps the page's lines out of its result, and a page th
 test("the binding is off the page's global after a strict-page exec that throws, and after one that never parsed", T, async () => {
     for (const [src, what] of [["throw new Error('boom')", /boom/], ["return )(", /SyntaxError/]]) {
         const p = cdpPage();
-        const r = await cdpEval(7, src, () => {});
+        const r = await cdpEval(7, "doc-7", src, () => {});
         assert.match(String(r.error ?? ""), what, `positive control: the exec failed as expected: ${JSON.stringify(r)}`);
-        assert.ok(p.calls.some(([m, a]) => m === "Runtime.addBinding" && a.name === "__mlCdpStream"), "positive control: the binding was installed");
-        assert.equal(p.run("'__mlCdpStream' in globalThis"), false, `the binding outlived ${JSON.stringify(src)}`);
+        assert.ok(p.calls.some(([m, a]) => m === "Runtime.addBinding" && a.name.startsWith("__mlCdpStream")), "positive control: the binding was installed");
+        assert.equal(p.run("Object.getOwnPropertyNames(globalThis).some((k) => k.startsWith('__mlCdpStream'))"), false, `the binding outlived ${JSON.stringify(src)}`);
     }
 });
 
-test("a tab that reports no main-world context for its top frame installs no binding: no stream rather than an unchecked one", T, async () => {
+test("a tab that reports no main-world context for its top frame runs nothing: no exec and no binding, rather than an unpinned one", T, async () => {
     const p = cdpPage({ contexts: [{ id: 3, auxData: { isDefault: true, frameId: "F2" } }, { id: 11, auxData: { isDefault: false, frameId: "F1" } }] });
     const live = [];
-    const r = await cdpEval(7, "console.log('kept'); return 1", (t) => live.push(t));
-    assert.deepEqual(r.logs, ["kept"], "positive control: the exec ran and collected");
+    const r = await cdpEval(7, "doc-7", "console.log('kept'); return 1", (t) => live.push(t));
+    assert.match(String(r.error ?? ""), /main world could not be found/, JSON.stringify(r));
+    assert.ok(!p.calls.some(([m]) => m === "Runtime.evaluate"), "the script was evaluated with no context to pin it to");
     assert.ok(!p.calls.some(([m]) => m === "Runtime.addBinding"), "a binding was installed with no context to check its calls against");
     assert.deepEqual(live, []);
-    assert.equal(p.run("'__mlCdpStream' in globalThis"), false);
+    assert.equal(p.run("Object.getOwnPropertyNames(globalThis).some((k) => k.startsWith('__mlCdpStream'))"), false);
 });
 
 // --- an approved exec runs once ---
 
-// OPEN, and it predates the console change: tools.ts takes any SyntaxError from the eval fast path as a parse error and
-// re-runs the source as an async body, so the side effects before the throw happen twice. An honest `JSON.parse` does
-// it, and so can the page, by throwing a SyntaxError from a builtin it patched (a click). Fix: fall back only when
-// nothing ran (a marker the evaluated source sets before its first statement, or a parse check before running it).
-test("a main-world exec whose expression throws a SyntaxError while it RUNS is not run a second time", { ...T, todo: "OPEN, predates step 1, a follow-up: tools.ts falls back to the async body on ANY SyntaxError from the eval fast path, including one thrown while the code runs" }, async () => {
+// Predated the console change (#652 review, gap A): tools.ts took any SyntaxError from the eval fast path as a parse
+// error and re-ran the source as an async body, so the side effects before the throw happened twice. An honest
+// `JSON.parse` did it, and so could the page, by throwing a SyntaxError from a builtin it patched. The evaluated source
+// now sets a marker before its first statement (exec-trace.ts evalWrapper `ran`), and only a source that never started
+// is retried.
+test("a main-world exec whose expression throws a SyntaxError while it RUNS is not run a second time", T, async () => {
     const p = page();
     p.pageRun("globalThis.__n = 0");
     const r = await p.exec("(globalThis.__n++, JSON.parse('{'))");
@@ -171,19 +174,18 @@ test("a main-world exec whose expression throws a SyntaxError while it RUNS is n
     assert.equal(p.pageRun("__n"), 1, "the approved script ran twice");
 });
 
-// OPEN, and it predates the console change: cdpEval re-runs the source as a body whenever the exception's description
-// matches /SyntaxError/, which a runtime JSON.parse error does, and any page function the script calls can throw an error
-// whose MESSAGE says it. The re-run's wrapper also finds __mlCdpStream already deleted by the first run's finally, so it
-// streams nothing. Fix: catch inside the wrapper (as isolatedWrapper does, returning `threw`), so an exceptionDetails
-// left over means the wrapper never parsed.
-test("a strict-page exec that throws while it RUNS is not run a second time, whatever its error says", { ...T, todo: "OPEN, predates step 1, a follow-up: cdpEval re-runs as a body whenever an exception's description matches /SyntaxError/; the wrapper should catch and return `threw`, as isolatedWrapper does" }, async () => {
+// Predated the console change (#652 review, gap A): cdpEval re-ran the source as a body whenever the exception's
+// description matched /SyntaxError/, which a runtime JSON.parse error does, and any page function the script calls can
+// throw an error whose MESSAGE says it. The wrapper now catches and returns `threw`, so an exception the evaluate reports
+// means the wrapper never parsed, the only case the body form is tried for.
+test("a strict-page exec that throws while it RUNS is not run a second time, whatever its error says", T, async () => {
     for (const [setup, src] of [
         ["", "(globalThis.__n++, JSON.parse('{'))"],
         ["globalThis.pageFn = () => { throw new Error('not a SyntaxError at all'); }", "(globalThis.__n++, pageFn())"],
     ]) {
         const p = cdpPage();
         p.run(`globalThis.__n = 0; ${setup}`);
-        const r = await cdpEval(7, src);
+        const r = await cdpEval(7, "doc-7", src);
         assert.ok(r.error, `positive control: the exec failed: ${JSON.stringify(r)}`);
         assert.equal(p.run("__n"), 1, `the approved script ran twice: ${src}`);
     }
@@ -290,4 +292,123 @@ test("an unapproved page cannot tell window.ml is installed by asking for the cl
     const p = page();
     const d = p.pageRun(`(() => { const d = {}; window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: d })); return typeof d.read; })()`);
     assert.equal(d, "undefined", "the page received a reader, which only this extension hands out");
+});
+
+// --- the #652 review: one-shot wrappers, the collector's prototype, the dereference key, the reader's one answer ---
+
+/** Page code that, called by the exec, tries every function it can reach (its `.caller`, and each frame's
+ *  `getFunction()` through Error.prepareStackTrace) with arguments of its own, and records what ran. */
+const REACH = `
+    globalThis.__reached = [];
+    globalThis.reach = function reach() {
+        const fns = new Set();
+        try { if (reach.caller) fns.add(reach.caller); } catch {}
+        const prev = Error.prepareStackTrace;
+        Error.prepareStackTrace = (e, cs) => cs.map((c) => { try { return c.getFunction(); } catch { return undefined; } });
+        try { for (const f of new Error().stack) if (typeof f === "function") fns.add(f); } catch {}
+        Error.prepareStackTrace = prev;
+        const forged = { log() { __reached.push("collector-replaced"); }, info() {}, warn() {}, error() {}, debug() {} };
+        for (const f of fns) {
+            if (f === reach) continue;
+            for (const args of [["console.log('FORGED BY THE PAGE'); state.planted = 1"], [{ planted: 1 }, forged], [{ planted: 1 }, undefined, forged]]) {
+                try { const v = f(...args); __reached.push("called"); if (v && typeof v.then === "function") v.then(() => __reached.push("resolved"), () => {}); } catch { /* spent, or not callable so */ }
+            }
+        }
+        return 1;
+    };`;
+
+test("a page function the exec calls cannot run code of its own beside the collector, state and ml, through .caller or a stack frame's getFunction()", T, async () => {
+    for (const js of [
+        "globalThis.__runs = (globalThis.__runs || 0) + 1; console.log('own'); reach()",                       // the eval fast path
+        "globalThis.__runs = (globalThis.__runs || 0) + 1; console.log('own'); await 0; return reach()",        // the async path
+    ]) {
+        const p = page();
+        p.pageRun(REACH);
+        const r = await p.exec(js);
+        await sleep(20);
+        assert.match(r.content, /own/, `positive control: ${r.content}`);
+        assert.doesNotMatch(r.content, /FORGED BY THE PAGE/, `the page wrote into the result through a reachable wrapper: ${r.content}`);
+        assert.equal(p.pageRun("globalThis.__runs"), 1, `the page ran the approved script again: ${js}`);
+        const state = await p.exec("state.planted ?? 'none'");
+        assert.match(state.content, /none/, `the page planted state through a reachable wrapper: ${state.content}`);
+        assert.ok(!plain(p.pageRun("__reached")).includes("resolved"), `a reachable wrapper ran to completion for the page: ${JSON.stringify(plain(p.pageRun("__reached")))}`);
+    }
+});
+
+test("a page function a strict-page exec calls cannot run the approved script again through a stack frame's getFunction()", T, async () => {
+    const p = cdpPage();
+    p.run(REACH.replace("globalThis.__reached", "globalThis.__reached"));
+    const live = [];
+    const r = await cdpEval(7, "doc-7", "globalThis.__runs = (globalThis.__runs || 0) + 1; console.log('own'); return reach()", (t) => live.push(t));
+    await sleep(20);
+    assert.ok("ok" in r, JSON.stringify(r));
+    assert.deepEqual(r.logs, ["own"], "the page wrote into the collected lines");
+    assert.equal(p.run("globalThis.__runs"), 1, "the page ran the approved script again");
+    assert.ok(live.every((l) => !/FORGED/.test(l)), JSON.stringify(live));
+});
+
+test("a method the page put on its console runs with the page's console as `this`, never the collector", T, async () => {
+    const p = page();
+    p.pageRun("console.table = function () { if (this && typeof this.log === 'function') this.log('FORGED VIA THIS'); }; console.dir = function () { return this === console; };");
+    const r = await p.exec("console.table([1]); console.log('own'); console.dir({})");
+    assert.match(r.content, /own/, "positive control");
+    assert.doesNotMatch(r.content, /FORGED VIA THIS/, r.content);
+    assert.match(r.content, /value: true/, "a forwarded method was not called on the page's console");
+    const c = cdpPage();
+    c.run("console.table = function () { if (this && typeof this.log === 'function') this.log('FORGED VIA THIS'); };");
+    const s = await cdpEval(7, "doc-7", "console.table([1]); console.log('own'); return 1");
+    assert.deepEqual(s.logs, ["own"], JSON.stringify(s));
+});
+
+test("a page that replaces ml.dereference is never handed the exec's collector through its options", T, async () => {
+    const p = page();
+    p.pageRun("globalThis.__opts = []; window.ml.dereference = function (ref, o) { __opts.push(o === undefined ? 'none' : Object.getOwnPropertySymbols(Object(o)).length); return Promise.resolve('PAGE VALUE'); };");
+    const r = await p.exec("const id = '@tool:' + 'abc1234'; try { await ml.dereference(id); } catch (e) {} try { await ml.dereference(id, { pipe: 'head 1' }); } catch (e) {} return 1");
+    assert.match(r.content, /1/, `positive control: ${r.content}`);
+    assert.deepEqual(plain(p.pageRun("__opts")), [], "the page's dereference was called from the exec's own ml");
+});
+
+test("a script that declares its own `const console` runs on the async path as it did before the parameter", T, async () => {
+    const r = await page().exec("const console = { log() {} }; await 0; return 5");
+    assert.match(r.content, /^5$|value: 5|^5\b/, r.content);
+    assert.doesNotMatch(r.content, /already been declared/, r.content);
+    const c = cdpPage();
+    const s = await cdpEval(7, "doc-7", "const console = { log() {} }; await 0; return 5");
+    assert.equal(s.value, "5", JSON.stringify(s));
+});
+
+test("the closed-root reader is handed out once: a page that asks after injected.js started gets nothing, and a page that asked first leaves the tools without one (fails closed)", T, () => {
+    const late = sealedPage();
+    const asked = late.pageRun(`(() => { const d = {}; window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: d })); return typeof d.read; })()`);
+    assert.equal(asked, "undefined", "a page asking after injected.js started received the reader");
+    late.pierce(true);
+    assert.match(late.desc("sealed-widget >>> button.secret"), /real/, "positive control: the tools hold the reader");
+    // A page script that runs before injected.js (it loads at document_idle) and asks first.
+    const w = loadDomWorld("<sealed-widget></sealed-widget>", { beforeInjected: `globalThis.__first = (() => { const d = {}; window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: d })); return typeof d.read; })();` });
+    w.document.querySelector("sealed-widget").attachShadow({ mode: "closed" }).innerHTML = '<button class="secret">real</button>';
+    w.ml._adoptRun("pierce", { toolNames: [], pierceClosed: true, builtBy: "worker" });
+    assert.equal(vm.runInContext("__first", w.context), "function", "positive control: the page asked first and got the reader");
+    const d = String(w.ml.domTools.find((t) => t.name === "describeElement").run({ selector: "sealed-widget >>> button.secret" }).content);
+    assert.doesNotMatch(d, /real/, `the tools pierced with a reader the page asked for first: ${d}`);
+});
+
+test("a page that answers the closed-root ask itself after document.open() removed the patch's listener feeds the tools its own reader", { ...T, todo: "Inherent in the main world: before injected.js starts the page can remove shadow-patch's listener (document.open()) or wrap dispatchEvent/CustomEvent and answer the ask itself; the tools cannot tell its reader from the patch's. The page decides what the tools see in its own document anyway (el.shadowRoot, querySelector), detection-surface.md row 4." }, () => {
+    const w = loadDomWorld("<sealed-widget></sealed-widget><other-widget></other-widget>", { beforeInjected: `
+        const decoyHost = document.createElement("div"); const decoy = decoyHost.attachShadow({ mode: "open" });
+        decoy.innerHTML = '<button class="secret">DECOY</button>';
+        const d = window.dispatchEvent;
+        window.dispatchEvent = function (e) { if (e.type === "wml-closed-roots" && e.detail) { e.detail.read = (el) => (el.tagName === "OTHER-WIDGET" ? decoy : null); return true; } return d.call(this, e); };` });
+    w.ml._adoptRun("pierce", { toolNames: [], pierceClosed: true, builtBy: "worker" });
+    const d = String(w.ml.domTools.find((t) => t.name === "describeElement").run({ selector: "other-widget >>> button.secret" }).content);
+    assert.doesNotMatch(d, /DECOY/, d);
+});
+
+test("a page that defines an accessor under the binding's name beforehand gets none of a strict-page exec's stream", T, async () => {
+    const p = cdpPage();
+    p.run(`globalThis.__stolen = []; Object.defineProperty(globalThis, "__mlCdpStream", { configurable: false, set(v) { __stolen.push("binding"); }, get() { return (x) => __stolen.push(String(x)); } });`);
+    const live = [];
+    const r = await cdpEval(7, "doc-7", "console.log('own'); return 1", (t) => live.push(t));
+    assert.ok("ok" in r, JSON.stringify(r));
+    assert.deepEqual(live, ["own\n"], "positive control: the line streamed through the exec's own binding");
+    assert.deepEqual(plain(p.run("__stolen")), [], "the page's accessor took the binding or a line");
 });

@@ -262,7 +262,9 @@ async function cdpMainExec(script, { main = 1, during, logs = ["real"] } = {}) {
     });
     return { ...r, evals: r.bg.debuggerCalls.filter((c) => c[2] === "Runtime.evaluate").map((c) => c[3]) };
 }
-const bindingCall = (bg, executionContextId, text) => bg.emitDebuggerEvent({ tabId: 7 }, "Runtime.bindingCalled", { name: "__mlCdpStream", executionContextId, payload: JSON.stringify({ text }) });
+/** The binding the exec installed: its name is random per exec. */
+const boundName = (bg) => bg.debuggerCalls.filter((c) => c[2] === "Runtime.addBinding").at(-1)?.[3]?.name;
+const bindingCall = (bg, executionContextId, text) => bg.emitDebuggerEvent({ tabId: 7 }, "Runtime.bindingCalled", { name: boundName(bg), executionContextId, payload: JSON.stringify({ text }) });
 
 test("a MAIN-world CDP exec takes __mlCdpStream calls only from the context it evaluated in: another frame's or world's context is refused", T, async () => {
     const SCRIPT = "document.title = 'x'; console.log('real'); return 1";
@@ -272,12 +274,12 @@ test("a MAIN-world CDP exec takes __mlCdpStream calls only from the context it e
             // The binding lands on every context of the tab: a same-process frame (3), an isolated world (11), none.
             bindingCall(bg, 3, "FORGED FROM A FRAME\n");
             bindingCall(bg, 11, "FORGED FROM A WORLD\n");
-            bg.emitDebuggerEvent({ tabId: 7 }, "Runtime.bindingCalled", { name: "__mlCdpStream", payload: JSON.stringify({ text: "FORGED NO CONTEXT\n" }) });
+            bg.emitDebuggerEvent({ tabId: 7 }, "Runtime.bindingCalled", { name: boundName(bg), payload: JSON.stringify({ text: "FORGED NO CONTEXT\n" }) });
             await new Promise((res) => setTimeout(res, 120));
             bindingCall(bg, 1, "real\n");
         },
     });
-    assert.ok(r.bg.debuggerCalls.some((c) => c[2] === "Runtime.addBinding" && c[3]?.name === "__mlCdpStream"), "positive control: the exec bound its stream");
+    assert.match(boundName(r.bg) ?? "", /^__mlCdpStream[0-9a-f]{16}$/, "positive control: the exec bound its stream, under a name of its own");
     const wrapper = r.evals.find((e) => /__mlWrapped/.test(e.expression));
     assert.equal(wrapper?.contextId, 1, "the wrapper is evaluated in the context the listener trusts");
     assert.ok(r.live.some((o) => o.includes("real")), `positive control: its line streamed: ${JSON.stringify(r.live)}`);
@@ -292,11 +294,11 @@ test("a MAIN-world CDP exec's wrapper deletes __mlCdpStream from the page's glob
     const page = world();
     const pageConsole = page.console;
     const lines = [];
-    vm.runInContext("globalThis.__mlCdpStream = (p) => __sent.push(p)", Object.assign(page, { __sent: lines }));
+    vm.runInContext(`globalThis.${boundName(r.bg)} = (p) => __sent.push(p)`, Object.assign(page, { __sent: lines }));
     const out = await vm.runInContext(wrapper, page);
     assert.deepEqual(JSON.parse(JSON.stringify(out.logs)), ["real"], "positive control: the script's own line was collected");
     assert.equal(lines.length, 1, "positive control: and streamed through the binding");
-    assert.equal(vm.runInContext("'__mlCdpStream' in globalThis", page), false, "the binding is still on the page's global after the exec");
+    assert.equal(vm.runInContext("Object.getOwnPropertyNames(globalThis).some((k) => k.startsWith('__mlCdpStream'))", page), false, "the binding is still on the page's global after the exec");
     assert.equal(page.console, pageConsole, "the page's console object was replaced");
 });
 
@@ -307,7 +309,7 @@ test("the model reads a MAIN-world exec's console as one the page can write into
     assert.match(iso.results[1], /^console:\nreal/, JSON.stringify(iso.results));
 });
 
-test("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream", { ...T, todo: "Inherent while the exec runs in the page's world: the page's own scripts run in the very context the listener trusts and can call the binding (or take it before the wrapper starts, or rewrite the builtins the collector calls), and nothing in a bindingCalled event tells them apart. A nonce or a per-run name buys nothing (docs/spec/SITE_PRESENCE.md). What holds instead: other contexts are refused, the global is deleted after the exec, and the model is told the console is page-writable (the tests above)" }, async () => {
+test("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream", { ...T, todo: "Inherent while the exec runs in the page's world: the page's own scripts run in the very context the listener trusts and can call the binding (or take it before the wrapper starts, or rewrite the builtins the collector calls), and nothing in a bindingCalled event tells them apart. The binding's random per-exec name stops only a page that defines an accessor under it beforehand: the page enumerates the global while the exec runs. What holds instead: other contexts are refused, the global is deleted after the exec, and the model is told the console is page-writable (the tests above)" }, async () => {
     const r = await cdpMainExec("document.title = 'x'; console.log('real'); return 1", {
         main: 1,
         during: async (bg) => {
@@ -407,7 +409,7 @@ test("an isolated exec stopped by a navigation is never run a second time on the
     assert.match(r.results[0], /stopped before it finished|navigat/i, r.results[0]);
 });
 
-test("a strict-page exec the page hands to CDP runs only on the document it was approved on, not one the page navigated to", { ...T, todo: "OPEN, predates step 1, a follow-up: sw-run-host.ts runs cdpEval with no document check; pass the routed documentId, probe the context, check stillOn, and evaluate with that contextId" }, async () => {
+test("a strict-page exec the page hands to CDP runs only on the document it was approved on, not one the page navigated to", T, async () => {
     // The page answers a main-world exec with `cdpExec` (it shares the world, and can forge PAGE_TOOL_RESULT besides), then
     // navigates the tab before the worker evaluates the approved source through the debugger.
     const SCRIPT = "document.title = 'x'; console.log('real'); return 1";
@@ -421,13 +423,15 @@ test("a strict-page exec the page hands to CDP runs only on the document it was 
                 if (navigate) { tab.url = EVIL_URL; bg.commit(7, { documentId: "doc-evil", url: EVIL_URL }); await flush(); }
                 return { result: "Error: this page blocks eval (CSP)", cdpExec: { source: SCRIPT } };
             },
-            onDebuggerCommand: async (method, params) => (method === "Runtime.evaluate" && /__mlWrapped/.test(params.expression) ? { result: { value: { __mlWrapped: true, v: "1", logs: ["real"], dropped: 0 } } } : {}),
+            onDebuggerCommand: async (method, params) => (method === "Runtime.evaluate" && /__mlWrapped/.test(params.expression) ? { result: { value: { __mlWrapped: true, v: "1", logs: ["real"], dropped: 0 } } } : undefined),
         });
     };
     const calm = await run(false);
     assert.equal(wrappers(calm).length, 1, "positive control: with no navigation the approved source ran through CDP");
     const raced = await run(true);
+    assert.ok(wrappers(calm).every((c) => c[3].contextId === 1), "positive control: pinned to the page's main-world context");
     assert.deepEqual(wrappers(raced).map((c) => c[3].expression.slice(0, 40)), [], `the approved source ran on the document the page navigated to: ${raced.results[0]}`);
+    assert.match(raced.results[0], /navigated before it started/, raced.results[0]);
 });
 
 // --- 4. the values spliced into the wrapper's source ---

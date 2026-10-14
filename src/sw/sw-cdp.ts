@@ -5,7 +5,7 @@
 // Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
 import { clipOut } from "../dom/dom";
 import { isOwnUiId } from "../ids";
-import { OUTPUT_CEILING, ceilingNote, MAIN_CONSOLE_HEAD } from "../agent/output-clip";
+import { OUTPUT_CEILING, ceilingNote, MAIN_CONSOLE_HEAD, CONSOLE_FORWARDS } from "../agent/output-clip";
 import { noteRunMechanic } from "./sw-runs";
 
 /** Is the `debugger` permission held? It's declared at INSTALL time (in `permissions`, not optional) —
@@ -101,106 +101,129 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
     }
 }
 
+/** A fresh random hex string of `n` bytes. */
+const randomHex = (n: number): string => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("");
+
+/**
+ * The execution context of the tab's top-frame main world: what `Runtime.evaluate` with no `contextId` runs in, named
+ * here so every evaluate of an exec is pinned to it. Runtime reports every live context only on the enable that turns it
+ * on, so it is turned off and on. Measured in Chromium 151: a disable on the extension's one session for the tab keeps
+ * its bindings, its isolated worlds, its remote objects and its pending awaited evaluates, so a concurrent
+ * `runInCdpWorld` or `cdpShadowResolve` on the same tab is unaffected.
+ * @param tabId the tab, already attached
+ * @returns the context id, or undefined when the tab reported none for its top frame
+ */
+export async function mainWorldContext(tabId: number): Promise<number | undefined> {
+    const target: chrome.debugger.Debuggee = { tabId };
+    const tree = await chrome.debugger.sendCommand(target, "Page.getFrameTree") as { frameTree?: { frame?: { id?: string } } };
+    const top = tree?.frameTree?.frame?.id;
+    if (!top) return undefined;
+    let id: number | undefined;
+    const onContext = (src: chrome.debugger.Debuggee, method: string, params?: object) => {
+        if (src.tabId !== tabId || method !== "Runtime.executionContextCreated") return;
+        const c = (params as { context?: { id?: number; auxData?: { isDefault?: boolean; frameId?: string } } } | undefined)?.context;
+        if (c && typeof c.id === "number" && c.auxData?.isDefault === true && c.auxData.frameId === top) id = c.id;
+    };
+    chrome.debugger.onEvent.addListener(onContext);
+    try {
+        await chrome.debugger.sendCommand(target, "Runtime.disable").catch(() => {});
+        await chrome.debugger.sendCommand(target, "Runtime.enable");
+        if (id === undefined) await new Promise((r) => setTimeout(r, 50));   // events ride the same channel; a late one gets a moment
+    } finally { chrome.debugger.onEvent.removeListener(onContext); }
+    return id;
+}
+
 /** Run `source` via CDP `Runtime.evaluate` in the tab's MAIN world — the ONLY way to execute imperative JS on
  *  a page whose CSP omits 'unsafe-eval' or enforces Trusted Types (the debugger is exempt). `source` is the
  *  ALREADY-APPROVED exec code (main-world eval was blocked at COMPILE → nothing ran). window.ml, page globals,
- *  and the live DOM are all reachable (it runs in the page's own main world). Attaches the debugger (its
- *  banner is the honest "the browser is being driven" signal), evaluates, ALWAYS detaches. Two shapes, like
- *  the main-world exec: a trailing-expression first (REPL value), then a statement body (the model `return`s).
- *  See docs/spec/EXEC_STRICT_CSP.md. */
-export async function cdpEval(tabId: number, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; dropped: number; text: string } | { error: string; needsPermission?: true }> {
+ *  and the live DOM are all reachable (it runs in the page's own main world). Two shapes, like the main-world exec: a
+ *  trailing-expression first (REPL value), then a statement body (the model `return`s); the body form runs only when
+ *  the expression form did not PARSE, never after a script that ran and threw. Pinned to `documentId`: the top frame's
+ *  main-world context is resolved, the document checked after, and every evaluate names that context, so a navigation
+ *  (the page can force this path, then navigate) never runs the approved code on another document. See
+ *  docs/spec/EXEC_STRICT_CSP.md. */
+export async function cdpEval(tabId: number, documentId: string, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; dropped: number; text: string } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attach/detach is the dominant per-exec cost on a strict page
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    type WrapVal = { __mlWrapped: true; v: string; logs: string[]; dropped?: number };
+    type WrapVal = { __mlWrapped: true; v?: string; threw?: string; logs: string[]; dropped?: number };
     type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
-    /** The execution context the wrapper runs in, when streaming: the binding's events are taken from it only. */
+    /** The context the wrapper runs in and the binding's calls are taken from. */
     let contextId: number | undefined;
+    try { contextId = await mainWorldContext(tabId); } catch { contextId = undefined; }
+    if (contextId === undefined) { touchDebugger(tabId); return { error: "The exec did not run: the page's main world could not be found." }; }
+    // Resolved on whatever document the frame held; checked AFTER, so a context on any later document is refused (a
+    // context dies with its document, and every evaluate below names this one).
+    if (!(await stillOn(tabId, documentId))) { touchDebugger(tabId); return { error: "The exec did not run: the page navigated before it started." }; }
     const evaluate = (expression: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
-        { expression, awaitPromise: true, returnByValue: true, userGesture: true, ...(contextId !== undefined ? { contextId } : {}) }) as Promise<EvalResult>;
+        { expression, contextId, awaitPromise: true, returnByValue: true, userGesture: true }) as Promise<EvalResult>;
     const syntaxErr = (r: EvalResult) => /SyntaxError/.test(r?.exceptionDetails?.exception?.description || r?.exceptionDetails?.text || "");
-    // Capture console output the SAME way the main-world exec path does — the model can't see the page's real
-    // console, and a `Runtime.evaluate` that only returns the completion value silently drops every console.log
-    // (the reported "logs got lost in CDP"). Patch console INSIDE the page (via the wrapper), collect the lines,
-    // stringify the completion value there too (so returnByValue always gets a clean string[]+string), restore.
-    // LIVE output (the generic `ctx.stream` capability, gated by the run's `streaming` flag). Runtime.evaluate
-    // returns ONCE, so the lines have to leave the page while it is still running. `Runtime.consoleAPICalled`
-    // is the obvious hook but it can't work here: our wrapper REPLACES console.* with a collector that never
-    // calls through, so no console event is ever emitted. `Runtime.addBinding` is the purpose-built page →
-    // debugger-client channel instead — it puts a function on the page's global that raises
-    // `Runtime.bindingCalled` on our client — so the already-patched console pushes each line straight out.
-    // No RemoteObject serialization (we already stringify in-page) and no console pollution.
-    // The page is the EXECUTOR here, so it stamps `ts` itself (same contract as python stamping in the worker).
+    // LIVE output (the generic `ctx.stream` capability, gated by the run's `streaming` flag). Runtime.evaluate returns
+    // ONCE, so the lines leave the page through `Runtime.addBinding`, which puts a function on the page's global that
+    // raises `Runtime.bindingCalled` on our client; the page is the EXECUTOR, so it stamps `ts` itself.
     //
     // The binding lands on EVERY context of the tab (frames, other worlds), and in the main world the page shares it:
-    // the listener takes a call only from the context the wrapper evaluates in, and the wrapper deletes the global in
-    // its finally (`Runtime.removeBinding` leaves it). The page's own scripts run in that same context, so they can
-    // still call it while the exec runs: the model is told its console section is page-writable (MAIN_CONSOLE_HEAD).
-    // A nonce or a per-run name would buy nothing, since the page reads or enumerates either (docs/spec/SITE_PRESENCE.md).
-    const BINDING = "__mlCdpStream";
+    // the listener takes a call only from the context the wrapper evaluates in, and the wrapper deletes the global in its
+    // finally (`Runtime.removeBinding` leaves it). Its name is random per exec, so a page cannot define an accessor under
+    // it beforehand and take the binding as it is installed; the page's own scripts can still find and call it while the
+    // exec runs, so the model is told its console section is page-writable (MAIN_CONSOLE_HEAD).
+    const BINDING = `__mlCdpStream${randomHex(8)}`;
     let bound = false;
     const onEvent = (src: chrome.debugger.Debuggee, method: string, params?: object) => {
         if (src.tabId !== tabId || method !== "Runtime.bindingCalled") return;
         const p = params as { name?: string; payload?: string; executionContextId?: number } | undefined;
-        if (!p || p.name !== BINDING || contextId === undefined || p.executionContextId !== contextId) return;
+        if (!p || p.name !== BINDING || p.executionContextId !== contextId) return;
         try { const m = JSON.parse(p.payload || "{}") as { text?: string; ts?: number }; if (m.text) onStream!(m.text, m.ts); } catch { /* a malformed payload is not worth failing the exec over */ }
     };
     if (onStream) {
         try {
-            // Which context an evaluate with no contextId runs in: the top frame's default (main-world) context. Enabling
-            // Runtime reports every live context, but only on the enable that turns it on, so it is turned off first;
-            // every evaluate below names the context, so the one the listener trusts is the one the wrapper runs in.
-            const tree = await chrome.debugger.sendCommand(target, "Page.getFrameTree") as { frameTree?: { frame?: { id?: string } } };
-            const top = tree?.frameTree?.frame?.id;
-            let id: number | undefined;
-            const onContext = (src: chrome.debugger.Debuggee, method: string, params?: object) => {
-                if (src.tabId !== tabId || method !== "Runtime.executionContextCreated") return;
-                const c = (params as { context?: { id?: number; auxData?: { isDefault?: boolean; frameId?: string } } } | undefined)?.context;
-                if (c && typeof c.id === "number" && c.auxData?.isDefault === true && top && c.auxData.frameId === top) id = c.id;
-            };
-            chrome.debugger.onEvent.addListener(onContext);
-            try {
-                await chrome.debugger.sendCommand(target, "Runtime.disable").catch(() => {});
-                await chrome.debugger.sendCommand(target, "Runtime.enable");
-                if (id === undefined) await new Promise((r) => setTimeout(r, 50));   // events ride the same channel; a late one gets a moment
-            } finally { chrome.debugger.onEvent.removeListener(onContext); }
-            if (typeof id === "number") {
-                contextId = id;
-                await chrome.debugger.sendCommand(target, "Runtime.addBinding", { name: BINDING });
-                chrome.debugger.onEvent.addListener(onEvent);
-                bound = true;
-            }
-        } catch { bound = false; contextId = undefined; }   // streaming is a nicety — never fail the exec because the binding didn't take
+            await chrome.debugger.sendCommand(target, "Runtime.addBinding", { name: BINDING });
+            chrome.debugger.onEvent.addListener(onEvent);
+            bound = true;
+        } catch { bound = false; }   // streaming is a nicety — never fail the exec because the binding didn't take
     }
     // Emit each console line the instant it happens, in ADDITION to collecting it (the collected array is
     // still what the model is shown, so a failed binding degrades to exactly the old behaviour).
     const tee = bound ? `try { __b(JSON.stringify({ text: __s + '\\n', ts: Date.now() })); } catch (e) {}` : "";
-    // `console` is a PARAMETER of the script, bound to the collector `__C`; the page's console is never replaced, so its
-    // own lines stay out of the result and it reads the same before, during and after (tools.ts, the main-world path).
-    // `__b` is the binding as it was when the wrapper started, so replacing the global later does not reroute the lines.
-    const wrap = (inner: string) => `(async (__N) => {
-        const __logs = [], __M = ['log','info','warn','error','debug'], __C = Object.create(__N);
+    // `console` is a PARAMETER of the script, bound to the collector `__C` (null-prototype: its five methods collect, the
+    // rest forward to the page's console with the page's console as `this`); the page's console is never replaced
+    // (tools.ts, the main-world path). `__b` is the binding as it was when the wrapper started. Both functions a page
+    // could reach while the script runs (a page function's `.caller`, or a stack trace's `getFunction()`) are ONE-SHOT,
+    // so the page cannot run the approved script again with arguments of its own. The script sits in a block of its own,
+    // so a `const console` in it does not collide with the parameter. A throw is caught and returned, so an exception the
+    // evaluate reports means the wrapper never parsed, which is the only case the body form is tried for.
+    const wrap = (inner: string) => `(() => { let __s0 = false; return async (__N) => {
+        if (__s0) throw new TypeError("spent"); __s0 = true;
+        const __logs = [], __M = ['log','info','warn','error','debug'], __F = ${JSON.stringify(CONSOLE_FORWARDS)}, __C = Object.create(null);
         let __c = 0, __d = 0, __on = true;   // characters kept, and dropped past the ceiling (output-clip.ts boundedLines, inlined)
         ${bound ? `const __b = globalThis.${BINDING};` : ""}
-        for (const m of __M) Object.defineProperty(__C, m, { configurable: true, enumerable: true, writable: true, value: (...a) => { if (!__on) { __N[m](...a); return; } const __s = a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' '); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${tee} } });
+        for (const m of __M) Object.defineProperty(__C, m, { configurable: true, enumerable: true, writable: true, value: (...a) => { if (!__on) { Reflect.apply(__N[m], __N, a); return; } const __s = a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' '); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${tee} } });
+        for (const k of __F) Object.defineProperty(__C, k, { configurable: true, enumerable: true, writable: true, value: (...a) => Reflect.apply(__N[k], __N, a) });
+        let __s1 = false;
         try {
-            const __v = await (async (console) => ${inner})(__C);
+            // Called inline, so its frame has no name a page function's stack would show.
+            const __v = await (async (console) => { if (__s1) throw new TypeError("spent"); __s1 = true; {
+${inner}
+            } })(__C);
             const __vs = __v === undefined ? '(undefined)' : typeof __v === 'string' ? __v : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
             return { __mlWrapped: true, v: __vs, logs: __logs, dropped: __d };
+        } catch (e) {
+            return { __mlWrapped: true, threw: String((e && e.stack) || e), logs: __logs, dropped: __d };
         } finally { __on = false; ${bound ? `try { delete globalThis.${BINDING}; } catch (e) {}` : ""} }
-    })(console)`;
+    }; })()(console)`;
     let wrapperRan = false;   // its finally deleted the global; a script that never parsed leaves it to the cleanup below
     try {
         const CAP = 500;   // match exec's default per-slot output cap (the tool's resolveOutputCap default)
         const expr = source.trim().replace(/;\s*$/, "");
         // Trailing-expression form first (REPL value, like the main-world fast path); a statement body isn't a
-        // valid parenthesised expression → SyntaxError → retry as a body where the model `return`s its value.
-        let r = await evaluate(wrap(`(${expr})`));
-        if (syntaxErr(r)) r = await evaluate(wrap(`(async () => { ${source} })()`));
-        wrapperRan = !syntaxErr(r);
+        // valid parenthesised expression → SyntaxError at PARSE → retry as a body where the model `return`s its value.
+        let r = await evaluate(wrap(`return (${expr});`));
+        if (r?.exceptionDetails && syntaxErr(r)) r = await evaluate(wrap(source));
+        wrapperRan = !r?.exceptionDetails;
         if (r?.exceptionDetails) return { error: `The exec threw (via CDP): ${r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error"}` };
         const out = r?.result?.value as WrapVal | undefined;
-        const value = out && out.__mlWrapped ? out.v : "(undefined)";
+        if (out && out.__mlWrapped && typeof out.threw === "string") return { error: `The exec threw (via CDP): ${out.threw}` };
+        const value = out && out.__mlWrapped ? (out.v ?? "(undefined)") : "(undefined)";
         const logs = out && Array.isArray(out.logs) ? out.logs : [];
         const dropped = out && typeof out.dropped === "number" ? out.dropped : 0;
         // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`; past the ceiling
@@ -217,7 +240,7 @@ export async function cdpEval(tabId: number, source: string, onStream?: (text: s
             // Leave Runtime enabled (harmless, and the attachment is shared across a run's execs); just drop
             // the binding so a later page script can't call into a listener that is gone.
             await chrome.debugger.sendCommand(target, "Runtime.removeBinding", { name: BINDING }).catch(() => {});
-            if (!wrapperRan) await chrome.debugger.sendCommand(target, "Runtime.evaluate", { expression: `delete globalThis.${BINDING}`, silent: true, ...(contextId !== undefined ? { contextId } : {}) }).catch(() => {});
+            if (!wrapperRan) await chrome.debugger.sendCommand(target, "Runtime.evaluate", { expression: `delete globalThis.${BINDING}`, silent: true, contextId }).catch(() => {});
         }
         touchDebugger(tabId);   // keep the attachment for the next exec; the run's finally (or the idle timer) detaches
     }
@@ -394,4 +417,10 @@ export async function cdpKeyType(tabId: number, text: string, submit = false): P
     } finally {
         touchDebugger(tabId);
     }
+}
+
+/** Whether the tab's top frame still holds `documentId` (the browser's answer; unknown reads as no). */
+export async function stillOn(tabId: number, documentId: string): Promise<boolean> {
+    const f = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
+    return f?.documentId === documentId;
 }

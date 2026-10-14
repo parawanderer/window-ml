@@ -239,7 +239,8 @@ test.describe("exec", () => {
         expect(row.during.consoleSwapped).toEqual([]);
         expect(row.after.final.consoleSwapped).toEqual([]);
         // observed today: a page function the exec calls sees eval'd code under chrome-extension://<id>/injected.js.
-        expect(row.during.pageCallCaller[0]).toMatch(/^at eval \(eval at run \(chrome-extension:\/\/<id>\/injected\.js:\d+:\d+\), <anonymous>:\d+:\d+\)$/);
+        // (EXEC_JS awaits, so it runs on the async path: the frame names that wrapper.)
+        expect(row.during.pageCallCaller[0]).toMatch(/^at eval \(eval at (run|asyncWrapper) \(chrome-extension:\/\/<id>\/injected\.js:\d+:\d+\), <anonymous>:\d+:\d+\)$/);
         expect(row.during.caughtStack.join("\n")).toContain("chrome-extension://<id>/injected.js");
         // What the PAGE logs while the exec runs stays in the page's console, out of the model's tool result.
         expect(row.results[0]).not.toContain("page says during exec");
@@ -272,7 +273,7 @@ test.describe("exec", () => {
 
     test("strict-CSP page (main world through CDP): no console swap, no injected.js stack", async () => {
         const row = await scenario("exec-strict", { path: "/?csp=strict", script: () => [{ tool: "exec", args: { js: EXEC_JS } }] });
-        expect(row.cdp).toEqual(["(attach)", "Runtime.evaluate", "Runtime.evaluate", "(detach)"]);
+        expect(row.cdp).toEqual(["(attach)", "Page.getFrameTree", "Runtime.disable", "Runtime.enable", "Runtime.evaluate", "Runtime.evaluate", "(detach)"]);
         expect(row.during.consoleSwapped).toEqual([]);
         expect(row.results[0]).not.toContain("page says during exec");
         // observed today: Runtime.evaluate code has no URL, so the stack is bare <anonymous> frames (no sourceURL marker).

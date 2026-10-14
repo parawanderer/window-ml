@@ -307,8 +307,8 @@ const selectorWithin = (target: Element, scope: Document | ShadowRoot): string =
 
 // --- Closed-shadow-root piercing (`pierceClosedShadow`, on by default) ------------------------------
 // The document_start patch (shadow-patch.ts, main world) stashes every CLOSED shadow root in a WeakMap in its own
-// closure as it's created, and hands this module a READER for it once (CLOSED_ROOTS_EVENT). We CONSULT it only when
-// the user turned the flag on —
+// closure as it's created, and answers ONE ask for a READER for it (CLOSED_ROOTS_EVENT), which injected.ts makes as it
+// starts (claimClosedRootReader). We CONSULT it only when the user turned the flag on —
 // injected.ts calls setPierceClosedShadow() with the run's config before the DOM tools execute. Off →
 // capturedClosedRoot always returns null and every closed root stays unreachable. This is the single seam; all traversal (deepQueryAll, `>>>` resolution, describeSkeleton, the
 // stats/host scans) reads closed roots through traversableRoot/capturedClosedRoot so the feature is on or
@@ -319,17 +319,21 @@ let pierceClosed = false;   // state: plumbing — set per run from config by ml
 /** Enable/disable closed-shadow-root piercing for subsequent DOM-tool calls (set per agent run from config). */
 export const setPierceClosedShadow = (on: boolean): void => { pierceClosed = on; };
 
-/** The reader shadow-patch.ts handed over: undefined until asked, null when the patch is absent (it never answered). */
+/** The reader shadow-patch.ts handed over: undefined until asked, null when it was not handed over. */
 let patchReader: ((el: Element) => ShadowRoot | null) | null | undefined;   // state: cache — asked once per document
-/** The closed-root reader of the document_start patch, asked for once: shadow-patch.ts answers CLOSED_ROOTS_EVENT on
- *  window with it. null when the patch did not run in this document. */
-const closedRootPatchReader = (): ((el: Element) => ShadowRoot | null) | null => {
-    if (patchReader !== undefined) return patchReader;
+/**
+ * Ask the document_start patch for its closed-root reader, ONCE, as injected.js starts (eagerly, not at the first
+ * pierced read, so the page has as little time as possible to be first). The patch answers one ask only: if the page
+ * asked first, or the patch did not run, the reader is null and closed roots stay unreachable (fails closed).
+ * @returns whether a reader was handed over
+ */
+export const claimClosedRootReader = (): boolean => {
+    if (patchReader !== undefined) return patchReader !== null;
     // Null-prototype, so an accessor the page put on Object.prototype neither takes the reader nor answers for it.
     const detail = Object.create(null) as { read?: unknown };
     try { window.dispatchEvent(new CustomEvent(CLOSED_ROOTS_EVENT, { detail })); } catch { /* no window/CustomEvent in this realm */ }
     patchReader = typeof detail.read === "function" ? detail.read as (el: Element) => ShadowRoot | null : null;
-    return patchReader;
+    return patchReader !== null;
 };
 
 /** How a CLOSED root is read in a world that has a better way than the main world's load-time capture: the content
@@ -345,7 +349,8 @@ export const setClosedRootReader = (fn: (el: Element) => ShadowRoot | null): voi
 export const capturedClosedRoot = (el: Element): ShadowRoot | null => {
     if (closedRootReader) return closedRootReader(el);
     if (!pierceClosed) return null;
-    return closedRootPatchReader()?.(el) ?? null;
+    if (patchReader === undefined) claimClosedRootReader();   // a world that never claimed it (injected.ts claims it at start)
+    return patchReader?.(el) ?? null;
 };
 
 /** The shadow root the DOM tools should TRAVERSE for `el`: its OPEN root, or — when piercing is on — a

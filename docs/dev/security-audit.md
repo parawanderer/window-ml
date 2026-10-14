@@ -120,28 +120,33 @@ the worker, and the page answers geometry only):
       starting `fc`/`fd`; and answers every failure after the request with one text (redteam-image-fetch.test.mjs):
       #646.
 - [x] A page wrote into a main-world exec's result and named the extension through its globals (detection-surface.md
-      rows 9-11, findings 4-6; SITE_PRESENCE.md step 1). `console` is a parameter of the exec's code bound to the
-      collector in all three paths (main world, strict-CSP CDP, isolated), so the page's own lines stay out and its
-      console is never replaced, and the model reads a main-world exec's console as `console (page-writable):`. The eval
-      wrapper is a closure taking only the source, so a page function reads nothing else through `Function.caller`, and
-      the collector's methods are defined, not assigned, so a page accessor on its console gets nothing.
-      `__mlCdpStream` is taken only from the context the wrapper runs in and deleted in its finally. `__mlClosedRoots` and
-      `__mlPierceClosed` are gone: the map is in shadow-patch's closure behind builtins taken at document_start, handed
-      to the DOM tools as a reader, and the flag is a module variable (redteam-exec-console.test.mjs,
+      rows 9-11, findings 4-6; SITE_PRESENCE.md step 1). `console` is a parameter of the exec's code bound to a
+      null-prototype collector in all three paths (main world, strict-CSP CDP, isolated): the page's own lines stay
+      out, its console is never replaced, the collector's methods are defined (a page accessor on its console gets
+      nothing), and the members it does not collect forward to the page's console with the page's console as `this`.
+      The model reads a main-world exec's console as `console (page-writable):`. Every wrapper function a page function
+      can reach while the code runs (`.caller`, a stack frame's `getFunction()`) is one-shot, so the page cannot run code
+      of its own beside the collector, `state` and `ml`, or run the approved script again (eval closure, async body,
+      both CDP wrapper functions). `ml.dereference` hands the collector only to the extension's own method, never to a
+      page's replacement. `__mlCdpStream` has a random name per exec, is taken only from the context the wrapper runs in
+      and is deleted in its finally. `__mlClosedRoots` and `__mlPierceClosed` are gone: the map is in shadow-patch's
+      closure behind builtins taken at document_start, its reader is handed out once, to injected.js's eager ask (a page
+      that asks first leaves piercing off), and the flag is a module variable (redteam-exec-console.test.mjs,
       redteam-exec-shared-world.test.mjs, redteam-isolated.test.mjs): #652.
+- [x] An exec that threw a SyntaxError while it RAN was run a second time: tools.ts fell back to the async body on any
+      SyntaxError from the eval fast path, and cdpEval on any exception whose description matched `/SyntaxError/` (a page
+      function can throw one). The eval form now marks that it started, and the CDP wrapper catches and returns the
+      throw, so only a source that never parsed is retried (redteam-exec-shared-world.test.mjs): #652.
+- [x] A strict-page exec the page handed to CDP ran on whatever document the tab held when the worker evaluated it, with
+      a user gesture, including one the page navigated to on an unapproved origin (the page can force the CDP path by
+      breaking its own `Function`). `cdpEval` takes the routed document, resolves the top frame's main-world context,
+      checks the document after, and names that context in every evaluate (redteam-isolated.test.mjs): #652.
 
 ## In progress
 
 (none)
 
 ## Known open
-
-- [ ] An exec that throws a SyntaxError while it RUNS is run a second time: tools.ts falls back to the async body on any
-      SyntaxError from the eval fast path, and cdpEval on any exception whose description matches `/SyntaxError/`
-      (a page function can throw one). `todo`s in redteam-exec-shared-world.test.mjs.
-- [ ] A strict-page exec the page hands to CDP runs on whatever document the tab holds when the worker evaluates it,
-      including one the page navigated to on an unapproved origin: sw-run-host.ts checks no document before `cdpEval`.
-      `todo` in redteam-isolated.test.mjs.
 
 - [ ] `FETCH_IMAGE_B64` judges a host by its NAME: a public name that resolves to a private address (DNS rebinding,
       `*.nip.io`) is fetched, and a redirect's intermediate hops are requested before the final URL is judged (a worker

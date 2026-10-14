@@ -10,10 +10,13 @@ import assert from "node:assert";
 function mockChrome({ onEval, permission = true } = {}) {
     const calls = [];
     const listeners = new Set();
-    // A binding call comes from the page's main world (context 1, which the probe reports) unless a test names another.
-    const fire = (method, params, tabId = 7) => [...listeners].forEach(fn => fn({ tabId }, method, { executionContextId: 1, ...params }));
+    // A binding call comes from the page's main world (context 1) unless a test names another. The binding's name is
+    // random per exec: a test names it "__mlCdpStream", which stands for the one the exec installed.
+    let bound = null;
+    const fire = (method, params, tabId = 7) => [...listeners].forEach(fn => fn({ tabId }, method, { executionContextId: 1, ...params, ...(params.name === "__mlCdpStream" && bound ? { name: bound } : {}) }));
     globalThis.chrome = {
         permissions: { contains: async () => permission },
+        webNavigation: { getFrame: async () => ({ documentId: "doc-7", frameId: 0 }) },   // the document the exec is pinned to
         debugger: {
             attach: async () => { calls.push(["attach"]); },
             detach: async () => { calls.push(["detach"]); },
@@ -21,6 +24,7 @@ function mockChrome({ onEval, permission = true } = {}) {
             onEvent: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
             sendCommand: async (target, method, params) => {
                 calls.push([method, params]);
+                if (method === "Runtime.addBinding") bound = params.name;
                 // The top frame F1, whose main world is context 1: reported as Runtime is enabled, as Chrome does.
                 if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "F1" } } };
                 if (method === "Runtime.enable") { [...listeners].forEach(fn => fn({ tabId: 7 }, "Runtime.executionContextCreated", { context: { id: 1, auxData: { isDefault: true, frameId: "F1" } } })); return undefined; }
@@ -45,7 +49,7 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
         },
     });
     const { cdpEval } = await import("../src/sw/sw-cdp.ts");
-    const r = await cdpEval(7, "console.log('alpha')", (text, ts) => seen.push([text, ts]));
+    const r = await cdpEval(7, "doc-7", "console.log('alpha')", (text, ts) => seen.push([text, ts]));
 
     assert.deepEqual(seen, [["alpha\n", 1000], ["beta\n", 1200]], "both lines arrived live, with the PAGE's stamps");
     const methods = calls.map(c => c[0]);
@@ -53,7 +57,7 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
     assert.ok(methods.includes("Runtime.addBinding"), "the page → client binding is installed");
     // The wrapper must tee through the binding IN ADDITION to collecting, so the model still gets everything.
     const expr = calls.find(c => c[0] === "Runtime.evaluate")[1].expression;
-    assert.match(expr, /const __b = globalThis\.__mlCdpStream;/, "the wrapper takes the binding as it starts");
+    assert.match(expr, /const __b = globalThis\.__mlCdpStream[0-9a-f]{16};/, "the wrapper takes the binding, named at random for this exec, as it starts");
     assert.match(expr, /__b\(JSON\.stringify/, "the collector calls the binding");
     assert.match(expr, /__logs\.push\(__s\)/, "…and still collects the line for the model-facing result");
     assert.match(expr, /ts: Date\.now\(\)/, "the PAGE stamps each line (it is the executor), not the SW");
@@ -70,11 +74,12 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
 test("CDP exec without streaming installs no binding (and the wrapper carries no tee)", async () => {
     const { calls, listeners } = mockChrome({ onEval: () => ["only"] });
     const { cdpEval } = await import("../src/sw/sw-cdp.ts");
-    const r = await cdpEval(7, "console.log('only')");
+    const r = await cdpEval(7, "doc-7", "console.log('only')");
 
     const methods = calls.map(c => c[0]);
     assert.ok(!methods.includes("Runtime.addBinding"), "a non-streaming run touches no binding");
-    assert.ok(!methods.includes("Runtime.enable"), "…and doesn't enable the Runtime domain either");
+    assert.ok(methods.includes("Runtime.enable"), "Runtime is enabled all the same, to find the context the exec is pinned to");
+    assert.ok(calls.filter(c => c[0] === "Runtime.evaluate").every(c => c[1].contextId === 1), "every evaluate names the page's main world");
     assert.equal(listeners.size, 0);
     const expr = calls.find(c => c[0] === "Runtime.evaluate")[1].expression;
     assert.ok(!/__mlCdpStream/.test(expr), "no dead binding call is compiled into the page wrapper");
@@ -90,7 +95,7 @@ test("CDP exec survives a binding that won't install (streaming is a nicety, nev
         return realSend(target, method, params);
     };
     const { cdpEval } = await import("../src/sw/sw-cdp.ts");
-    const r = await cdpEval(7, "console.log('kept')", (t) => seen.push(t));
+    const r = await cdpEval(7, "doc-7", "console.log('kept')", (t) => seen.push(t));
 
     assert.ok("ok" in r, "the exec ran anyway");
     assert.deepEqual(r.logs, ["kept"], "output still captured for the model");
@@ -112,6 +117,6 @@ test("bindingCalled from ANOTHER tab or another binding is ignored", async () =>
         },
     });
     const { cdpEval } = await import("../src/sw/sw-cdp.ts");
-    await cdpEval(7, "console.log('mine')", (text, ts) => seen.push([text, ts]));
+    await cdpEval(7, "doc-7", "console.log('mine')", (text, ts) => seen.push([text, ts]));
     assert.deepEqual(seen, [["mine\n", 5]], "only this tab's own binding, and a malformed payload is dropped");
 });

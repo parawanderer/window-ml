@@ -27,18 +27,35 @@ export function rawEvalLine(stack: string | undefined): number | null {
 
 /**
  * The fast path's wrapper: `new Function(...params, …)` returning a CLOSURE that direct-evals the source, so the code
- * sees the parameters in scope while a page function it calls reads only `src` through `fn.caller.arguments` (the
- * wrapper is sloppy, so a direct `.caller` chain is open): never the console collector, `state` or `ml`.
+ * sees the parameters in scope. The closure is reachable by a page function the code calls (its `.caller`, or a stack
+ * trace's `getFunction()`, the wrapper being sloppy), so it is ONE-SHOT: called again, it throws, and the page cannot
+ * evaluate code of its own beside the collector, `state` and `ml`. Its `.caller.arguments` is only `src`, which
+ * PAGE_TOOL_RUN already shows the page. `ran()` says whether the source started, so a SyntaxError it throws while it
+ * runs is told from one it threw at parse time (only the second may be retried as an async body).
  * @param params the names the source sees (`state`, `ml`, `console`)
- * @returns a function taking their values, which returns the evaluator of one source
+ * @returns a function taking their values, which returns the one-shot evaluator and its `ran`
  */
-export function evalWrapper(params: string[]): (...values: unknown[]) => (src: string) => unknown {
-    return new Function(...params, "return function (src) { return eval(src); };") as (...values: unknown[]) => (src: string) => unknown;
+export function evalWrapper(params: string[]): (...values: unknown[]) => { run: (src: string) => unknown; ran: () => boolean } {
+    const make = new Function(...params, `let __mlSpent = false, __mlRan = false;
+return { run: function (src) { if (__mlSpent) throw new TypeError("spent"); __mlSpent = true; return eval("void (__mlRan = true);" + src); }, ran: () => __mlRan };`) as (...values: unknown[]) => { run: (src: string) => unknown; ran: () => boolean };
+    return make;
 }
 
-/** The AsyncFunction constructor — not a global, only reachable through an async function's prototype. */
-const AsyncFunction = Object.getPrototypeOf(async () => { /* probe */ }).constructor as
-    { new (...a: string[]): (...a: unknown[]) => Promise<unknown> };
+/**
+ * The async path's wrapper, for a source with top-level `await` or `return`: an async function whose body is the source
+ * in a block of its own (so a `const console` in it does not collide with the parameter), made ONE-SHOT by a guard it
+ * calls first, since a page function the code calls reaches it through `.caller` or `getFunction()`.
+ * @param params the names the source sees
+ * @param body the function body
+ * @returns the async function, callable once
+ */
+export function asyncWrapper(params: string[], body: string): (...values: unknown[]) => Promise<unknown> {
+    let spent = false;
+    const guard = (): void => { if (spent) throw new TypeError("spent"); spent = true; };
+    return (new Function("__mlGuard", `return async function (${params.join(", ")}) { __mlGuard(); {
+${body}
+} };`) as (g: () => void) => (...values: unknown[]) => Promise<unknown>)(guard);
+}
 
 // Memoised per (kind, parameter count): it is a property of the engine and the wrapper shape, never of the
 // source, so it is measured once and reused for every later failure.
@@ -59,10 +76,9 @@ export async function evalLineOffset(kind: "eval" | "async", params: string[]): 
     let measured = 0;
     try {
         if (kind === "eval") {
-            evalWrapper(params)(...params.map(() => undefined))(PROBE);
+            evalWrapper(params)(...params.map(() => undefined)).run(PROBE);
         } else {
-            const fn = new AsyncFunction(...params, PROBE);
-            await fn(...params.map(() => undefined));
+            await asyncWrapper(params, PROBE)(...params.map(() => undefined));
         }
     } catch (e) {
         const at = rawEvalLine((e as Error)?.stack);

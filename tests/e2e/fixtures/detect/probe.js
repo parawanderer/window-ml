@@ -59,7 +59,7 @@
     const savedConsole = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
     const tick = () => {
         watch("globalsAdded", () => Object.getOwnPropertyNames(window).filter((k) => !initialGlobals.has(k) && !/^__probe|^\d+$/.test(k)).sort());
-        watch("mlCdpStream", () => "__mlCdpStream" in window);
+        watch("mlCdpStream", () => Object.getOwnPropertyNames(window).some((k) => k.startsWith("__mlCdpStream")));
         watch("mlIsoStream", () => "__mlIsoStream" in window);
         watch("windowMl", () => ("ml" in window ? Object.keys(window.ml || {}).length : "absent"));
         watch("consoleSwapped", () => Object.keys(savedConsole).filter((m) => console[m] !== savedConsole[m]));

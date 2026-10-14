@@ -61,6 +61,10 @@ export const ceilingNote = (dropped: number): string =>
  *  the lines may not all be the script's own. An isolated world's exec keeps the plain `console:`. */
 export const MAIN_CONSOLE_HEAD = "console (page-writable):";
 
+/** The `console` members an exec's collector FORWARDS to the page's console (everything but the five it collects), called
+ *  with the page's console as `this`, never the collector. */
+export const CONSOLE_FORWARDS = ["table", "dir", "dirxml", "trace", "group", "groupCollapsed", "groupEnd", "assert", "count", "countReset", "time", "timeLog", "timeEnd", "timeStamp", "clear", "profile", "profileEnd"] as const;
+
 /**
  * A capture of printed lines bounded by {@link OUTPUT_CEILING}: whole lines are kept until the next would pass it, and
  * from then on every line is only counted, so a script printing in a loop costs a counter, not memory. `add` returns

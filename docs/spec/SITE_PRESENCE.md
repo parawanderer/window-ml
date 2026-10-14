@@ -76,8 +76,9 @@ runs it was not given, not that it sees nothing:
   strict-CSP pages wraps the source as `((console) => { ... })(collector)`. The isolated world uses the same pattern.
 - **`__mlCdpStream`** (strict-CSP pages with streaming only): the listener accepts only `bindingCalled` from the
   execution context it evaluated in, the wrapper deletes the global in its `finally`, and the model's view of a
-  main-world exec's output says the page could write into it. A nonce or a per-run name buys nothing (the page reads
-  or enumerates either).
+  main-world exec's output says the page could write into it. A nonce or a per-run name buys nothing against a page
+  that reads or enumerates either while the exec runs; the name is random per exec all the same (built in step 1), which
+  stops a page that defines an accessor under a fixed name beforehand and takes the binding as it is installed.
 - **`__mlClosedRoots` and `__mlPierceClosed`** move into closures.
 
 ## Redirects on auto-approved fetches
