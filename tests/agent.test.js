@@ -334,7 +334,7 @@ test("the shadow-DOM paragraph says once what the run pierces: open and closed b
     const on = shadowClause(["findByText"]), off = shadowClause(["findByText"], false);
     assert.match(on, /pierce shadow roots automatically, open and closed/);
     assert.doesNotMatch(on, /pierce OPEN|ALSO pierced/, "no sentence that reads as a limit, then one that lifts it");
-    assert.match(on, /A few closed roots can't be captured/);
+    assert.doesNotMatch(on, /can't be captured|CROSS-ORIGIN/, "the edge cases are flagged by the tools where a model meets them, not in the prompt");
     assert.match(off, /pierce OPEN shadow roots/);
     assert.match(off, /A CLOSED shadow root is unreachable by ANY selector/);
 });
