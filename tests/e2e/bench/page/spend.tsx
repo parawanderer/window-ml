@@ -7,6 +7,7 @@ import type { EnergyForecast, EnergyForecastTally, EnergyTally, ForecastTally, S
 import { fmtMoney } from "./format";
 import { IconWarn } from "../../../../src/sidebar/icons";
 import { BASIS_WORDS } from "../electricity.mjs";
+import { estimateLine } from "../estimate-line.mjs";
 
 /** What one tally covers, said in full: the tip of every spend figure. */
 export function spendTip(t: SpendTally, currency: string, whose: string): string {
@@ -44,10 +45,19 @@ export function forecastTip(f: ForecastTally, currency: string, prices: string |
     ].filter(Boolean).join(" ");
 }
 
-/** The estimate beside a spend figure, while there is something left to estimate. */
-function Estimate({ f, currency, prices, whose }: { f?: ForecastTally | null; currency: string; prices: string | null; whose: string }) {
-    if (!f || !f.left || f.remaining + f.spent === 0 && f.local + f.unknown === f.left) return null;
-    return <><Sep /><span class="est tt" data-tip={forecastTip(f, currency, prices, whose)}><span>est. <b>{fmtMoney(f.total, currency)}</b>{f.unknown ? "+" : ""}</span></span></>;
+/**
+ * How an estimate reads: "est. ≥ X" when some runs left have no estimate, so the figure leaves them out and the end
+ * will be more; "est. X" when every run left is in it.
+ */
+const estWords = (unknown: number) => (unknown ? "est. ≥ " : "est. ");
+
+/** An estimate's tip under the whole sweep's estimate in one line (`estimateLine`), when the badge has one to lead with. */
+const withLead = (lead: string | null | undefined, tip: string) => (lead ? `**${lead[0].toUpperCase()}${lead.slice(1)}.** ${tip}` : tip);
+
+/** The estimate beside a spend figure, while some run left HAS an estimate: one of none would only repeat the spend. */
+function Estimate({ f, currency, prices, whose, lead }: { f?: ForecastTally | null; currency: string; prices: string | null; whose: string; lead?: string | null }) {
+    if (!f || !f.left || !(f.remaining > 0)) return null;
+    return <><Sep /><span class="est tt" data-tip={withLead(lead, forecastTip(f, currency, prices, whose))}><span>{estWords(f.unknown)}<b>{fmtMoney(f.total, currency)}</b></span></span></>;
 }
 
 /** What an energy tally covers, said in full: the tip of every electricity figure. */
@@ -86,21 +96,21 @@ function Power({ t, whose }: { t: EnergyTally; whose: string }) {
         {t.unpriced ? <span class="warn-price tt" data-tip={tip}><IconWarn /></span> : null}</>;
 }
 
-/** The electricity estimate beside the figure, while runs are left. */
-function PowerEstimate({ f, ef, whose }: { f?: EnergyForecastTally | null; ef?: EnergyForecast | null; whose: string }) {
-    if (!f || !f.left || !(f.totalWh > 0)) return null;
-    return <><Sep /><span class="est tt" data-tip={energyForecastTip(f, ef?.currency ?? null, ef?.perKwh ?? null, whose)}><span>est. <b>{f.totalWh.toFixed(2)} Wh</b>{f.unknown ? "+" : ""}</span></span></>;
+/** The electricity estimate beside the figure, while some run left has one. */
+function PowerEstimate({ f, ef, whose, lead }: { f?: EnergyForecastTally | null; ef?: EnergyForecast | null; whose: string; lead?: string | null }) {
+    if (!f || !f.left || !(f.remainingWh > 0)) return null;
+    return <><Sep /><span class="est tt" data-tip={withLead(lead, energyForecastTip(f, ef?.currency ?? null, ef?.perKwh ?? null, whose))}><span>{estWords(f.unknown)}<b>{f.totalWh.toFixed(2)} Wh</b></span></span></>;
 }
 
 /**
  * One spend figure: what the calls cost in tokens and what the box's electricity cost, each with its estimate. A tally
  * whose every call was local has no token figure at all, only electricity; one with both shows them joined by "+".
  */
-function SpendParts({ t, cur, e, f, fc, ef, efAll, whose }: { t?: SpendTally | null; cur: string; e?: EnergyTally | null; f?: ForecastTally | null; fc?: SpendForecast | null; ef?: EnergyForecastTally | null; efAll?: EnergyForecast | null; whose: string }) {
+function SpendParts({ t, cur, e, f, fc, ef, efAll, whose, lead = null }: { t?: SpendTally | null; cur: string; e?: EnergyTally | null; f?: ForecastTally | null; fc?: SpendForecast | null; ef?: EnergyForecastTally | null; efAll?: EnergyForecast | null; whose: string; lead?: string | null }) {
     const allLocal = !!t && t.calls > 0 && t.local === t.calls;
     const money = t && !(allLocal && e) ? <span class="tt" data-tip={spendTip(t, cur, whose)}><span>{figure(t, cur)}</span></span> : null;
-    const est = fc && !allLocal ? <Estimate f={f} currency={fc.currency} prices={fc.prices} whose={whose} /> : null;
-    return <>{money}{est}{e ? <>{money ? <Sep plus /> : null}<Power t={e} whose={whose} /></> : null}<PowerEstimate f={ef} ef={efAll} whose={whose} /></>;
+    const est = fc && !allLocal ? <Estimate f={f} currency={fc.currency} prices={fc.prices} whose={whose} lead={lead} /> : null;
+    return <>{money}{est}{e ? <>{money ? <Sep plus /> : null}<Power t={e} whose={whose} /></> : null}<PowerEstimate f={ef} ef={efAll} whose={whose} lead={lead} /></>;
 }
 
 /**
@@ -113,8 +123,10 @@ export function SpendBadge({ spend, forecast, energy, energyForecast }: { spend?
     if (!spend && !forecast?.left && !energy && !energyForecast?.left) return null;
     const t = spend?.total;
     const partial = t && (t.unpriced || t.pending) ? " partial" : "";
+    // The whole estimate in one line, cloud and local apart, heads the badge's tip: what status.md and the terminal say.
+    const whole = estimateLine(forecast?.left ? forecast : null, energyForecast?.left ? energyForecast : null);
     return <span class={`badge spend${partial}`}><span class="rk">spent</span><SpendParts t={t} cur={spend?.currency ?? forecast?.currency ?? ""} e={energy?.total} f={forecast}
-        fc={forecast} ef={energyForecast} efAll={energyForecast} whose="this sweep" /></span>;
+        fc={forecast} ef={energyForecast} efAll={energyForecast} whose="this sweep" lead={whole} /></span>;
 }
 
 /**

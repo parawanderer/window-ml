@@ -5,11 +5,12 @@
 // service's /latest as a book, and the page's badge and pills with the estimate, a page without one unchanged.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSDOM } from "jsdom";
 import { pastRuns, repriced, predictCells, forecast, forecastText, estimateCheck, latestPrices, newestLoggedPrices, openPool, RECENT, predictEnergy, energyForecast, energyForecastText, priceFromSettings } from "../tests/e2e/bench/spend-predict.mjs";
+import { estimateLine } from "../tests/e2e/bench/estimate-line.mjs";
 import { openScores } from "../tests/e2e/bench/scores.mjs";
 import { logCalls, logSnapshot } from "../tests/e2e/bench/spend.mjs";
 import { statusText } from "../tests/e2e/bench/status.mjs";
@@ -46,6 +47,51 @@ test("past runs come from every log given, a run in two counted once, a turn log
     assert.deepEqual(runs.map((r) => r.run).sort(), ["r1", "r2"]);
     const r1 = runs.find((r) => r.run === "r1");
     assert.deepEqual(r1.calls.map((c) => [c.model, c.usage.promptTokens]), [[EXT, 1000], ["vis", 10]], "the local log's copy; the sub call keeps its own (unknown) model");
+});
+
+test("UPGRADE: a run logged before its calls were (#555) counts by its token totals, as one driver call, only where no run with its calls is", async () => {
+    const db = await tmpDb();
+    for (const [id, at, p, c] of [["old1", "2026-09-01", 1000, 100], ["old2", "2026-09-02", 3000, 300]]) {
+        logRun(db, { run: id, at, task: "t", taskHash: "h", model: EXT });
+        db.prepare("UPDATE runs SET prompt_tokens = ?, completion_tokens = ? WHERE run = ?").run(p, c, id);
+    }
+    const hist = pastRuns([db]);
+    assert.deepEqual(hist.map((r) => [r.run, r.approx, r.calls.map((x) => [x.model, x.usage.promptTokens, x.usage.completionTokens])]).sort(),
+        [["old1", true, [[EXT, 1000, 100]]], ["old2", true, [[EXT, 3000, 300]]]]);
+    const [only] = predictCells([{ model: EXT, task: "t", taskHash: "h" }], hist, priceOf);
+    near(only.cost, (0.0012 + 0.0036) / 2);
+    assert.equal(only.n, 2, "a fresh clone with only old runs still has an estimate");
+    logRun(db, { run: "new1", at: "2026-10-01", task: "t", taskHash: "h", model: EXT });
+    logCalls(db, callRows("new1", [call(2000, 200)]));
+    const [mixed] = predictCells([{ model: EXT, task: "t", taskHash: "h" }], pastRuns([db]), priceOf);
+    assert.deepEqual([mixed.n, mixed.basis], [1, "item"], "a run with its calls is preferred over the totals");
+    near(mixed.cost, 0.0024);
+});
+
+test("UPGRADE: an old run's calls are backfilled from its run.json, cached tokens and all; a seeded run and a missing file are counted, not guessed", async () => {
+    const { backfillCalls } = await import("../tests/e2e/bench/spend.mjs");
+    const db = await tmpDb();
+    const root = mkdtempSync(path.join(os.tmpdir(), "bench-backfill-")), dir = path.join(root, "old-sweep");
+    const cell = (rel, hash, extra = {}) => {
+        mkdirSync(path.join(dir, rel), { recursive: true });
+        writeFileSync(path.join(dir, rel, "cell.json"), JSON.stringify({ hash, key: rel, taskId: "t", models: { driver: EXT }, measurement: { ok: true }, ...extra }));
+        logRun(db, { run: hash, at: "2026-10-09", task: "t", taskHash: "h", model: EXT });
+    };
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "sweeps.jsonl"), "{}\n");
+    cell("t/a/r0", "h1");
+    writeFileSync(path.join(dir, "t/a/r0", "run.json"), JSON.stringify({ session: { hash: "h1", steps: [
+        { seq: 1, step: 1, usage: { promptTokens: 1000, completionTokens: 100, cachedTokens: 800 } },
+        { seq: 2, step: 2, usage: { promptTokens: 1200, completionTokens: 50, cachedTokens: 1000 }, subUsage: { calls_: [{ model: "vis", prompt: 10, completion: 2, ts: 1 }] } },
+    ] } }));
+    cell("t/b/r0", "h2");                                          // its run.json is gone
+    cell("t/c/r0", "h3", { measurement: { ok: true, seeded: true } });
+    writeFileSync(path.join(dir, "t/c/r0", "run.json"), JSON.stringify({ session: { hash: "h3", steps: [{ seq: 1, step: 1, usage: { promptTokens: 5, completionTokens: 5 } }] } }));
+    assert.deepEqual(await backfillCalls(db, [dir]), { runs: 1, calls: 3, seeded: 1, noFile: 1 });
+    const h1 = pastRuns([db]).find((r) => r.run === "h1");
+    assert.deepEqual(h1.calls.map((c) => [c.model, c.usage.promptTokens, c.usage.cachedTokens ?? null]), [[EXT, 1000, 800], [EXT, 1200, 1000], ["vis", 10, null]]);
+    assert.equal(h1.approx, false);
+    assert.deepEqual(await backfillCalls(db, [dir]), { runs: 0, calls: 0, seeded: 1, noFile: 1 }, "again: nothing added, the ones it cannot do still counted");
 });
 
 test("a past run re-priced at today's rates: its tokens, a local call free of money, an unpriced call making the run's cost unknown", () => {
@@ -233,7 +279,7 @@ test("the header badge and the model's pill carry the estimate with its tip; a p
     const w = await page({ ...base, spend, forecast: f });
     t.after(() => w.close());
     const badge = w.document.querySelector(".badge.spend");
-    assert.match(badge.textContent, /^spent0\.0040 USD·est\. 0\.0300 USD\+$/);
+    assert.match(badge.textContent, /^spent0\.0040 USD·est\. ≥ 0\.0300 USD$/, "some runs with no estimate: a lower bound, said before the figure");
     const tip = badge.querySelector(".est").getAttribute("data-tip");
     assert.match(tip, /5 runs left/);
     assert.match(tip, /the snapshot of 2026-10-10 12:07 UTC/);
@@ -245,4 +291,20 @@ test("the header badge and the model's pill carry the estimate with its tip; a p
     t.after(() => old.close());
     assert.equal(old.document.querySelector(".badge.spend .est"), null);
     assert.match(old.document.querySelector(".badge.spend").textContent, /^spent0\.0040 USD$/);
+});
+
+// --- the whole estimate, in one line ---
+
+test("one line says what the runs left will cost, cloud and local apart, counting what neither estimate covers", () => {
+    const f = (o) => ({ currency: "USD", prices: null, spent: 0, remaining: 0.62, total: 0.62, left: 10, local: 4, unknown: 0, why: null, basis: { item: 6, task: 0, model: 0 }, models: {}, ...o });
+    const ef = (o) => ({ currency: "EUR", perKwh: 0.25, spentWh: 0, remainingWh: 41.5, totalWh: 41.5, left: 10, unknown: 0, remainingCost: 0.0104, basis: { item: 4, task: 0, model: 0, none: 6 }, models: {}, ...o });
+    assert.equal(estimateLine(f(), ef()), "estimate for the 10 runs left: cloud about 0.62 USD over 6 runs; local about 41.5 Wh, 0.01 EUR");
+    assert.equal(estimateLine(f({ unknown: 2, remaining: 0.4 }), ef({ unknown: 1, remainingCost: null })),
+        "estimate for the 10 runs left: cloud about 0.40 USD over 4 runs (+2 runs with no estimate); local about 41.5 Wh (no electricity price set) (+1 run with no energy on record)");
+    assert.equal(estimateLine(f({ unknown: 6, remaining: 0 }), ef()), "estimate for the 10 runs left: cloud: no estimate for its 6 runs; local about 41.5 Wh, 0.01 EUR", "a fresh clone's empty history says so, never 0");
+    assert.equal(estimateLine(f({ local: 0 }), null), "estimate for the 10 runs left: cloud about 0.62 USD over 10 runs", "all cloud");
+    assert.equal(estimateLine(f(), null), "estimate for the 10 runs left: cloud about 0.62 USD over 6 runs; local: 4 runs, no energy on record");
+    assert.equal(estimateLine(null, ef()), "estimate for the 10 runs left: local about 41.5 Wh, 0.01 EUR", "no price data: the cloud unsaid");
+    assert.equal(estimateLine(f({ left: 0 }), ef({ left: 0 })), null, "nothing left");
+    assert.equal(estimateLine(null, null), null);
 });

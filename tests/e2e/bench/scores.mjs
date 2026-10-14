@@ -4,6 +4,7 @@
 //
 //   node tests/e2e/bench/scores.mjs                 print the scoreboard; write scores.md, scores.json and scores.html
 //   node tests/e2e/bench/scores.mjs --db <file>     another log
+//   node tests/e2e/bench/scores.mjs --backfill-calls   log the calls of runs from before calls were, from their run.json
 //
 // Why our own: public indexes score full-precision models, and a bench runs 4-bit local copies beside cloud models.
 // The log is the truth and the files are views of it (docs/dev/bench-design.md): a row is inserted once and never
@@ -369,6 +370,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const file = i > 0 ? path.resolve(process.argv[i + 1]) : SCORES_DB;
     const db = await openScores(file);
     if (!db) { console.error("this Node has no node:sqlite (22.13 or later has it)"); process.exit(2); }
+    if (process.argv.includes("--backfill-calls")) {
+        const { readdirSync } = await import("node:fs");
+        const { backfillCalls } = await import("./spend.mjs");
+        const root = path.dirname(file);
+        const dirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(path.join(root, d.name, "sweeps.jsonl"))).map((d) => path.join(root, d.name));
+        const got = await backfillCalls(db, dirs);
+        console.log(`backfill: ${got.calls} call(s) of ${got.runs} run(s) logged from their run.json; ${got.seeded} seeded run(s) skipped; ${got.noFile} with no run.json here`);
+        db.close();
+        process.exit(0);
+    }
     const board = await writeScoreFiles(db, { dir: path.dirname(file), dbFile: file });
     process.stdout.write(scoresText(board));
     console.log(`\n  ${path.relative(ROOT, path.dirname(file))}/\n    scores.md    this table\n    scores.json  the same, as JSON\n    scores.html  the same, for a person (opens from disk)\n    ${path.basename(file).padEnd(12)} the raw log (SQLite, table runs)\n`);

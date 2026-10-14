@@ -18,13 +18,14 @@
 // merge and prints how to keep it: `--keep-bench` moves its sweeps into the main clone's bench directory and merges its
 // scoreboard rows into the main clone's (rows are keyed by run, so nothing is counted twice); uncommitted files are
 // committed or stashed by hand; `--discard` merges anyway, moving nothing (what is there goes when the worktree is
-// removed). On EVERY merge, with or without either flag, a page server or a held run a linked worktree left running is
-// stopped, since the worktree is about to go; each stopped server prints the `serve.mjs` line that serves its sweep
+// removed). On EVERY merge, with or without either flag, every page server (its server.json's and each the memory ledger
+// lists for it) and held run a linked worktree left running is stopped, since the worktree is about to go; each stopped server prints the `serve.mjs` line that serves its sweep
 // again. The main clone is only reminded: nothing removes it. A checkout on the branch also keeps its LOCAL branch, and
 // only the remote one is deleted.
 
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -168,7 +169,7 @@ function checkoutsOf(branch) {
 }
 
 /** What lives only on this checkout's disk: bench sweeps and the scoreboard (git-ignored), and uncommitted files. */
-export function diskOnly(dir, status = sh("git", ["status", "--porcelain"], dir)) {
+export function diskOnly(dir, status = sh("git", ["status", "--porcelain"], dir), { ledger = LEDGER_FILE } = {}) {
     const bench = path.join(dir, "tests/e2e/artifacts/bench");
     const sweeps = [], scoreDbs = [];
     if (existsSync(bench)) for (const name of readdirSync(bench)) {
@@ -178,7 +179,7 @@ export function diskOnly(dir, status = sh("git", ["status", "--porcelain"], dir)
             sweeps.push(name);
     }
     const files = status.split("\n").filter(Boolean);
-    return { sweeps, scoreDbs, files, server: liveServer(path.join(bench, "server.json")), held: liveHeld(path.join(bench, "held.json")) };
+    return { sweeps, scoreDbs, files, servers: liveServers(dir, path.join(bench, "server.json"), ledger), held: liveHeld(path.join(bench, "held.json")) };
 }
 
 /** The bench runs a sweep left HELD open for someone to keep talking to (`held.json`, a list written by the bench
@@ -190,14 +191,30 @@ function liveHeld(file) {
     } catch { return []; }
 }
 
-/** The detached bench page server a finished sweep left running from this checkout (`server.json`, written by
- *  tests/e2e/bench/serve.mjs only while it is alive), or null. A worktree removed under it leaves it serving nothing. */
-function liveServer(file) {
+/** The bench's memory ledger (tests/e2e/bench/memory-budget.mjs `LEDGER_FILE`): every bench process on this machine, page servers included. */
+const LEDGER_FILE = process.env.BENCH_LEDGER_FILE || path.join(os.homedir(), ".cache", "window-ml-bench", "ledger.json");
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+/**
+ * Every bench page server still running from this checkout: the one in `server.json` (written by
+ * tests/e2e/bench/serve.mjs while it lives, but ONE file per checkout, which each `--serve` overwrites), and every
+ * `page` entry the memory ledger holds for this checkout, so a second or third sweep's server is not missed. A
+ * worktree removed under one leaves it serving nothing, and holding memory the budget counts.
+ */
+function liveServers(dir, file, ledger) {
+    const out = new Map();
     try {
         const s = JSON.parse(readFileSync(file, "utf8"));
-        process.kill(s.pid, 0);   // throws when no such process
-        return s;
-    } catch { return null; }
+        if (alive(s.pid)) out.set(s.pid, s);
+    } catch { /* none, or unreadable */ }
+    try {
+        for (const e of JSON.parse(readFileSync(ledger, "utf8"))) {
+            if (e.kind === "page" && e.repo && path.resolve(e.repo) === path.resolve(dir) && !out.has(e.pid) && alive(e.pid))
+                out.set(e.pid, { pid: e.pid, url: null, dir: path.join(dir, BENCH, e.sweep ?? "") });
+        }
+    } catch { /* no ledger */ }
+    return [...out.values()];
 }
 
 const BENCH = "tests/e2e/artifacts/bench";
@@ -252,14 +269,14 @@ export async function leftovers(branch, { keep, discard }) {
             found = diskOnly(dir);
         }
         const { sweeps, scoreDbs, files } = found;
-        if (!sweeps.length && !scoreDbs.length && !files.length && !found.server && !found.held.length) continue;
+        if (!sweeps.length && !scoreDbs.length && !files.length && !found.servers.length && !found.held.length) continue;
         const stop = linked && !discard;
         blocked ||= stop;
         console.log(`\n${stop ? "✖" : "⚠"} ${dir} (${linked ? "a worktree" : "the main clone"} on ${branch}) holds work that is in no commit:`);
         for (const n of sweeps) console.log(`    bench sweep:  ${BENCH}/${n}/`);
         for (const n of scoreDbs) console.log(`    scoreboard:   ${BENCH}/${n}`);
         for (const c of clashes) console.log(`    not moved:    ${c}`);
-        if (found.server) console.log(`    page server:  pid ${found.server.pid} at ${found.server.url}, serving ${found.server.dir}`);
+        for (const s of found.servers) console.log(`    page server:  pid ${s.pid}${s.url ? ` at ${s.url}` : ""}, serving ${s.dir}`);
         for (const h of found.held) console.log(`    held run:     pid ${h.pid}, ${h.cell} of ${h.sweep}, attach: ${h.attach}`);
         for (const f of files.slice(0, 20)) console.log(`    git:          ${f}`);
         if (files.length > 20) console.log(`    git:          …and ${files.length - 20} more`);
@@ -270,7 +287,7 @@ export async function leftovers(branch, { keep, discard }) {
         console.log("  To merge without keeping them (they stay in the worktree, and go with it), run again with --discard.");
     }
     const linked = checkouts.filter((c) => c.linked).map((c) => diskOnly(c.dir));
-    return { blocked, held: checkouts.length > 0, servers: linked.map((d) => d.server).filter(Boolean), heldRuns: linked.flatMap((d) => d.held) };
+    return { blocked, held: checkouts.length > 0, servers: linked.flatMap((d) => d.servers), heldRuns: linked.flatMap((d) => d.held) };
 }
 
 /** Stop the page servers linked worktrees left running: the PR is merged, and a worktree removed under one leaves it
