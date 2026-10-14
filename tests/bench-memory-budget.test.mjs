@@ -139,6 +139,25 @@ test("converse.mjs and observe.mjs each join the ledger (converse not in --attac
     assert.ok(c.indexOf("joinLedger({") > c.indexOf('process.argv[2] === "--attach"'), "after the --attach branch has exited");
 });
 
+// --- the finished sweep's page server ---
+
+test("a finished sweep's page server is in the ledger from its spawn; one that never comes up is stopped and dropped, not left unseen", async () => {
+    const { handOffPage } = await import("../tests/e2e/bench/serve.mjs");
+    const calls = [];
+    const deps = (served) => ({ repo: "/r", waitMs: 300, spawnServer: async () => 4242, served,
+        register: (e) => calls.push(["register", e.kind, e.pid, e.sweep, e.repo]), unregister: (pid) => calls.push(["unregister", pid]), kill: (pid) => calls.push(["kill", pid]) });
+    let up = false;
+    const pending = handOffPage("/r/tests/e2e/artifacts/bench/s1", 7000, deps(() => (up ? { pid: 4242, url: "http://127.0.0.1:7000" } : null)));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(calls, [["register", "page", 4242, "s1", "/r"]], "counted before it is up: a runner killed now leaves it findable");
+    up = true;
+    assert.equal(await pending, "http://127.0.0.1:7000");
+    assert.deepEqual(calls.map((c) => c[0]), ["register"], "up: kept");
+    calls.length = 0;
+    assert.equal(await handOffPage("/r/tests/e2e/artifacts/bench/s2", 7001, deps(() => null)), null);
+    assert.deepEqual(calls, [["register", "page", 4242, "s2", "/r"], ["kill", 4242], ["unregister", 4242]], "never up: stopped and dropped");
+});
+
 // --- the budget ---
 
 test("the budget's room is whichever runs out first: the limit, or the free memory less the quarter kept free", () => {
