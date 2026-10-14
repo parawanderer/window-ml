@@ -167,7 +167,9 @@ test("HALTING: a query inside a long .map spends the same budget, so it ends at 
 test("HALTING: a path is never copied per node, and materialising Normalized Paths is charged by depth", async () => {
     // 100,000 deep: copying the path per child is 5 billion key copies for a walk charged 100,000 nodes, and printing
     // every match's path from the root is the same again.
-    const plain = await inWorker(`ml.jsonPath(${DEEP_ARR(100000)}, "$..*")`);
+    // `.length`: the matches nest inside each other, so the array itself expands to 5 billion parts, which the dialect
+    // refuses to hand back for serialising (readonly-soundness.test.mjs).
+    const plain = await inWorker(`ml.jsonPath(${DEEP_ARR(100000)}, "$..*").length`);
     assert.ok(!plain.hung, "a walk of 100,000-deep JSON is linear");
     assert.equal(plain.value, 99999);
     const r = await fallsBack(`ml.jsonPath(${DEEP_ARR(100000)}, "$..*", { paths: true })`, "100,000 paths, each 100,000 deep");
