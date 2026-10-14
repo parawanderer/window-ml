@@ -128,7 +128,7 @@ the worker, and the page answers geometry only):
       `__mlCdpStream` is taken only from the context the wrapper runs in and deleted in its finally. `__mlClosedRoots` and
       `__mlPierceClosed` are gone: the map is in shadow-patch's closure behind builtins taken at document_start, handed
       to the DOM tools as a reader, and the flag is a module variable (redteam-exec-console.test.mjs,
-      redteam-exec-shared-world.test.mjs, redteam-isolated.test.mjs): #PR.
+      redteam-exec-shared-world.test.mjs, redteam-isolated.test.mjs): #652.
 
 ## In progress
 
