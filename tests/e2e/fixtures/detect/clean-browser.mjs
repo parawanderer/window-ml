@@ -51,6 +51,8 @@ export async function launchClean({ dist = path.resolve("dist"), args = [], exte
         // browser UI to draw (and so no resize to measure).
         ...(process.env.DETECT_HEADFUL === "1" ? [] : ["--headless=new"]), "--remote-debugging-port=0", `--user-data-dir=${userDataDir}`, "--no-first-run", "--no-default-browser-check",
         "--window-size=1280,900",
+        // As Playwright does on Linux (its chromiumSandbox defaults off): Ubuntu 24.04's AppArmor kills the namespace sandbox.
+        ...(process.platform === "linux" ? ["--no-sandbox"] : []),
         ...(extension ? [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`] : []),
         ...args, "about:blank",
     ];
