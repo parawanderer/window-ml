@@ -88,6 +88,12 @@ the worker, and the page answers geometry only):
       (`selfApproves`), so plain http, another port, a subdomain or a sub-frame of a whitelisted host no longer gets the
       https site's self-approval, and the gate no longer implies approval for another port. Tested as a table over sender
       shapes x readers, with the upgrade from a stored list of hosts (self-approval-origin.test.js): #628.
+- [x] Site access slice 3, PR 1: the self-approval list is stored by origin in local storage (`ml_site_selfapprove`),
+      migrated once from the sync hosts under `ml_site_schema: 2`, and the popup no longer edits it; every site gets
+      an agent level in storage (`ml_site_agents`, an install's allowed origins at "ask"), which no page-started type
+      can write (`SITE_ACCESS` stays extension-only, red-team (f)). The upgrade is a fixture against the bundle
+      (site-access-upgrade.test.mjs); http://host of an old whitelisted host stays untrusted for `CDP_CLICK` and
+      `pageApprovalAllowed`. The level is not enforced yet (PR 2).
 - [x] A page's answer to a delegated call is held to the caps the worker applies to page data it reads itself (owner
       decision 2026-10-13: `PAGE_TABLE_CAPS`, one constant with `pageRead`), for every run whose loop is in the worker
       (`capPageAnswer` in `toPage`): a table is cut to fit with its source's row count kept, a text or picture over 16M
@@ -136,8 +142,8 @@ the worker, and the page answers geometry only):
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
 - [ ] Error text that reaches the page outside `forPage`: `VALUE_COLUMNS` errors and the `PYTHON_STREAM` and
       `SERVER_TOOL_STREAM` frames (content.ts). None is built from the config today.
-- [ ] Site access slice 3 (`requestAccess`, the agent level and its start card, the self-approval list by origin;
-      decided 2026-10-13, built in the PRs of [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md)), slice 4.
+- [ ] Site access slice 3 (`requestAccess`, the agent level and its start card; decided 2026-10-13, built in the PRs of
+      [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md)), slice 4.
 
 ## The plan to get to "thoroughly investigated"
 

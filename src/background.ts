@@ -36,7 +36,7 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
-import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteDecision } from "./sw/sw-site-access";
+import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -157,6 +157,9 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
 // worker's from here, as when it navigates onto a site that may not use window.ml (nav-handover.ts). Every path that
 // changes the lists or the whitelist writes storage, so this one listener hears the popup, DevTools Settings, a denial,
 // another surface and a sync alike; `SITE_ACCESS` also decides before it answers.
+// The site lists in this build's layout before anything reads them: the self-approval whitelist moved from sync hosts to
+// local origins, and the agent level, in slice 3 (sw-site-access.ts `migrateSiteAccess`). Every reader waits for it too.
+void siteSchemaReady();
 if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) void handOverOnRevoke(); });
     // And once at startup, for a change this worker never heard: made while it was evicted, its runs then restored.
@@ -519,21 +522,25 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // A run the USER started from the HUD Commander or right-click menu, sent by the content-script shell on behalf of
     // the extension's own frame (the card or overlay app). Assembled here, never by the page (sw-run-start.ts). The
     // page cannot send this: the content script's page relay forwards only its HANDLE_MAP types.
-    // The approved and denied sites, for DevTools Settings and the toolbar popup. Extension pages only: a page could
-    // otherwise approve itself. `edit` changes the lists; `origin` asks what they say about one origin.
+    // The site lists, for DevTools Settings and the toolbar popup. Extension pages only: a page could otherwise approve
+    // itself, or raise its own agent level. `edit` changes the lists; `origin` asks what they say about one origin, as
+    // its three levels; `dismissUpgradeNotice` drops the one-time notice about the whitelist's move to origins.
     if (message.type === "SITE_ACCESS") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
-        const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string };
+        const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string; dismissUpgradeNotice?: boolean };
         (async () => {
+            if (p.dismissUpgradeNotice) await dismissUpgradeNotice();
             const lists = p.edit ? await editSiteAccess(p.edit) : await readSiteLists();
             // A revoke is decided before the editor hears it is done: a page-built run on a site it took away is the
             // worker's by then (nav-handover.ts).
             if (p.edit) await handOverOnRevoke().catch(() => []);
+            const notice = await upgradeNotice();
             const origin = originOf(p.origin);
-            const decision = origin ? await siteDecision(origin) : undefined;
-            // An approval no list holds comes from the self-approval whitelist: revoking it here would change nothing.
+            const levels = origin ? await siteLevels(origin) : undefined;
+            const decision = levels?.use;
+            // An approval no list holds comes from the self-approval list: revoking it here would change nothing.
             const implied = !!origin && decision === "always" && !lists.always.includes(origin);
-            sendResponse({ data: { lists, ...(origin ? { origin, decision, ...(implied ? { implied: true } : {}) } : {}) } });
+            sendResponse({ data: { lists, ...(notice ? { upgradeNotice: true, upgradeDropped: notice.dropped } : {}), ...(origin ? { origin, decision, levels, ...(implied ? { implied: true } : {}) } : {}) } });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
@@ -625,7 +632,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             if (await senderTrust(sender) === "untrusted") {
                 const key = serverToolKey(toolId, name, args);
                 if (!(sender.tab?.id != null && tabGrants(sender.tab.id)?.serverTools.has(key))) {
-                    sendResponse({ error: "Refused: running a server-side tool needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." });
+                    sendResponse({ error: "Refused: running a server-side tool needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." });
                     return;
                 }
             }
@@ -665,7 +672,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             if (await senderTrust(sender) === "untrusted") {
                 const id = googleSheetId(url);
                 if (!(id && sender.tab?.id != null && tabGrants(sender.tab.id)?.sheets.has(id))) {
-                    sendResponse({ error: "Refused: this sheet hasn't been approved for this page — run it through an agent and approve it, or add this site to the approval whitelist." });
+                    sendResponse({ error: "Refused: this sheet has not been approved for this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." });
                     return;
                 }
             }
@@ -815,7 +822,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // Non-secret config the page may read (model/OCR model/format). The URL
         // and API key are deliberately withheld — see the security invariants.
         getConfig()
-            // Whether THIS page's origin is on the page-approval whitelist is computed from the trusted `sender` (its
+            // Whether THIS page's origin is on the self-approval list is computed from the trusted `sender` (its
             // origin, frame and URL, as the browser stamps them), NOT anything the page sends, and only that boolean crosses.
             .then(async config => sendResponse({ data: publicConfig(config, sender.tab != null && await senderSelfApproves(selfApprovalFacts(sender))) }))
             .catch(err => sendResponse({ error: err.message }));

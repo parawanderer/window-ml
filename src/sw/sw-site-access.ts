@@ -1,47 +1,172 @@
 // sw-site-access.ts — the background's half of "sites get window.ml only when someone said yes": the lists in
 // storage, and the gate the router puts in front of every message a page starts.
 //
-// docs/spec/SITE_ACCESS.md, slice 1. The rules are pure (site-access.ts); this module reads the lists from storage on
+// docs/spec/SITE_ACCESS.md, slice 1, and slice 3's levels (docs/spec/SITE_ACCESS_SLICE3.md, PR 1). The rules are pure (site-access.ts); this module reads the lists from storage on
 // every call (so a revoke takes effect on the next message, with no reload) and answers one question for the router:
 // may this sender start this message? The sender's origin comes from `sender`, which the browser sets. Nothing the
 // page says is read.
 
-import { type SenderFacts, type SiteEdit, type SiteLists, SITE_ACCESS_KEYS, applyEdit, decide, grantableOrigin, selfApproves } from "../site-access";
+import { type AgentLevel, type SenderFacts, type SiteEdit, type SiteLevels, type SiteLists, SITE_ACCESS_KEYS, SITE_SCHEMA, SITE_SCHEMA_KEY, applyEdit, grantableOrigin, levelsFor, migrateSiteLists, originOf, selfApproves } from "../site-access";
 import { PAGE_STARTED_TYPES } from "../page-relay";
-import { getConfig } from "./sw-llm";
+import { defineState } from "../state-registry";
 
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const asLevels = (v: unknown): Record<string, AgentLevel> => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter((e): e is [string, AgentLevel] => e[1] === "ask" || e[1] === "always" || e[1] === "denied"));
+};
+const none = (): Record<string, unknown> => ({});
 
-/** The three lists, as stored now. A storage area that cannot be read counts as empty: refusing is the safe side. */
-export async function readSiteLists(): Promise<SiteLists> {
+/** The lists as stored, without waiting for the migration: what the migration itself reads. */
+async function readStored(): Promise<SiteLists> {
+    const K = SITE_ACCESS_KEYS;
     const [local, session] = await Promise.all([
-        chrome.storage.local.get([SITE_ACCESS_KEYS.always, SITE_ACCESS_KEYS.denied]).catch(() => ({} as Record<string, unknown>)),
-        (chrome.storage.session?.get(SITE_ACCESS_KEYS.session) ?? Promise.resolve({})).catch(() => ({} as Record<string, unknown>)),
+        chrome.storage.local.get([K.always, K.denied, K.agents, K.selfApprove]).catch(none),
+        (chrome.storage.session?.get([K.session, K.agents]) ?? Promise.resolve({})).catch(none),
     ]);
+    const s = session as Record<string, unknown>;
     return {
-        always: asList(local[SITE_ACCESS_KEYS.always]),
-        denied: asList(local[SITE_ACCESS_KEYS.denied]),
-        session: asList((session as Record<string, unknown>)[SITE_ACCESS_KEYS.session]),
+        always: asList(local[K.always]),
+        denied: asList(local[K.denied]),
+        session: asList(s[K.session]),
+        // The session half is for origins allowed only this session; read over the local half.
+        agents: { ...asLevels(local[K.agents]), ...asLevels(s[K.agents]) },
+        selfApprove: asList(local[K.selfApprove]),
     };
 }
 
 /**
+ * The agent levels split by where each is kept: an origin allowed only for this session keeps its level in session
+ * storage, so the level goes with the approval at a browser restart; every other origin's is local.
+ * @param lists the lists
+ * @returns the two halves
+ */
+function agentHalves(lists: SiteLists): { local: Record<string, AgentLevel>; session: Record<string, AgentLevel> } {
+    const local: Record<string, AgentLevel> = {}, session: Record<string, AgentLevel> = {};
+    for (const [o, lv] of Object.entries(lists.agents)) (lists.session.includes(o) && !lists.always.includes(o) ? session : local)[o] = lv;
+    return { local, session };
+}
+
+/** Every write to the site keys, one after another: an edit, and the migration's read and write. Two edits sent at
+ *  once each read the lists the other wrote, so neither (a denial included) is lost to the other. */
+let siteWrites: Promise<unknown> = Promise.resolve();   // state: plumbing
+
+/**
+ * Run `fn` after every write already queued, and before any queued after it.
+ * @param fn the read-modify-write
+ * @returns what `fn` returns
+ */
+function serially<T>(fn: () => Promise<T>): Promise<T> {
+    const run = siteWrites.catch(() => undefined).then(fn);
+    siteWrites = run.catch(() => undefined);
+    return run;
+}
+
+/**
+ * Move an install's site lists to the slice 3 layout, once: the sync whitelist of hosts (`pageApprovalDomains`) becomes
+ * local origins, and every origin allowed before gets the agent level "ask" (`migrateSiteLists`). Marked done by
+ * `ml_site_schema: 2`, written in the same local write as the levels, so a worker that dies midway migrates again from
+ * the same input. The sync setting is read and left in place, so another machine on an older build keeps working. The
+ * gate's own three lists are not rewritten. A migration that moved a non-empty whitelist leaves the one-time notice
+ * set, with the entries it could not carry over, so the person is told which they were even when none was carried.
+ * Runs in the write chain, so no edit interleaves with it.
+ * @returns whether this call migrated (false when the marker was already set)
+ */
+export function migrateSiteAccess(): Promise<boolean> {
+    return serially(async () => {
+        const marker = await chrome.storage.local.get(SITE_SCHEMA_KEY);
+        if (typeof marker[SITE_SCHEMA_KEY] === "number" && (marker[SITE_SCHEMA_KEY] as number) >= SITE_SCHEMA) return false;
+        const [stored, sync] = await Promise.all([readStored(), chrome.storage.sync.get({ pageApprovalDomains: [] }).catch(none)]);
+        const syncHosts = (sync as Record<string, unknown>).pageApprovalDomains;
+        const next = migrateSiteLists(stored, syncHosts);
+        const halves = agentHalves(next);
+        await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.agents]: halves.session });
+        const moved = Array.isArray(syncHosts) && syncHosts.length > 0;
+        await chrome.storage.local.set({
+            [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
+            ...(moved ? { [SITE_ACCESS_KEYS.upgradeNotice]: { dropped: next.dropped } } : {}), [SITE_SCHEMA_KEY]: SITE_SCHEMA,
+        });
+        return true;
+    });
+}
+
+/** The migration of this worker's life, started by the first reader (and by background.ts at start). */
+let schemaReady: Promise<boolean> | null = null;   // state: plumbing
+
+/** Wait for the lists to be in this build's layout; true once they are. A failed migration answers false and is tried
+ *  again by the next reader; meanwhile the lists read as stored, which holds no self-approval and no agent level: the
+ *  refusing side. */
+export function siteSchemaReady(): Promise<boolean> {
+    schemaReady ??= migrateSiteAccess().then(() => true, () => { schemaReady = null; return false; });
+    return schemaReady;
+}
+
+/** The lists, as stored now, in this build's layout. A storage area that cannot be read counts as empty: refusing is
+ *  the safe side. */
+export async function readSiteLists(): Promise<SiteLists> {
+    await siteSchemaReady();
+    return readStored();
+}
+
+/**
  * Change the lists. Only the extension's own pages call this (the router checks), so a page can never approve itself.
+ * An edit that names something other than an origin, as the browser writes one, is refused, and so is any edit while
+ * the lists could not be moved to this build's layout: applied to the old layout, a later migration would undo it.
+ * Edits run one at a time (`serially`).
  * @param edit the change
  * @returns the lists after it
  */
 export async function editSiteAccess(edit: SiteEdit): Promise<SiteLists> {
-    const next = applyEdit(await readSiteLists(), edit);
-    await chrome.storage.local.set({ [SITE_ACCESS_KEYS.always]: next.always, [SITE_ACCESS_KEYS.denied]: next.denied });
-    await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.session]: next.session });
-    return next;
+    if (!edit || typeof edit.origin !== "string" || originOf(edit.origin) !== edit.origin) throw new Error("not a site's origin");
+    if (!await siteSchemaReady()) throw new Error("the site lists could not be upgraded; try again");
+    return serially(async () => {
+        const next = applyEdit(await readStored(), edit);
+        const halves = agentHalves(next);
+        await chrome.storage.local.set({
+            [SITE_ACCESS_KEYS.always]: next.always, [SITE_ACCESS_KEYS.denied]: next.denied,
+            [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
+        });
+        await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.session]: next.session, [SITE_ACCESS_KEYS.agents]: halves.session });
+        return next;
+    });
 }
 
-/** What the lists say about one origin, with the `pageApprovalDomains` implication applied. */
-export async function siteDecision(origin: string): Promise<ReturnType<typeof decide>> {
-    const [lists, cfg] = await Promise.all([readSiteLists(), getConfig()]);
-    return decide(lists, origin, cfg.pageApprovalDomains || []);
+/**
+ * The one-time upgrade notice, if it is still up: the whitelist entries the migration could not carry over.
+ * @returns null when there is no notice
+ */
+export async function upgradeNotice(): Promise<{ dropped: string[] } | null> {
+    const v = (await chrome.storage.local.get(SITE_ACCESS_KEYS.upgradeNotice).catch(none))[SITE_ACCESS_KEYS.upgradeNotice] as { dropped?: unknown } | true | undefined;
+    if (!v) return null;
+    return { dropped: v === true ? [] : asList(v.dropped) };
 }
+
+/** Dismiss the one-time upgrade notice. */
+export function dismissUpgradeNotice(): Promise<void> {
+    return serially(() => chrome.storage.local.remove(SITE_ACCESS_KEYS.upgradeNotice));
+}
+
+/** What the lists say about one origin: its three levels. */
+export async function siteLevels(origin: string): Promise<SiteLevels> {
+    return levelsFor(await readSiteLists(), origin);
+}
+
+/** What the lists say about one origin for window.ml (`levelsFor(...).use`), the self-approval list included. */
+export async function siteDecision(origin: string): Promise<SiteLevels["use"]> {
+    return (await siteLevels(origin)).use;
+}
+
+defineState({
+    id: "site.levels", scope: "browser", realm: "worker", audience: "human", lostOn: ["browser-restart"],
+    describe: "What the site in the run's tab may do: use window.ml (always, this session, denied), start agents, approve its own actions. Only a session approval and its agent level end with the browser; the rest persists.",
+    read: async ({ tabId }) => {
+        if (tabId == null) return undefined;
+        const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { url?: unknown } | null;
+        const url = typeof frame?.url === "string" ? frame.url : (await Promise.resolve(chrome.tabs?.get?.(tabId)).catch(() => null))?.url;
+        const origin = originOf(url);
+        return origin ? { origin, ...levelsFor(await readSiteLists(), origin) } : undefined;
+    },
+});
 
 /**
  * The facts about a message's sender that the site gate and the self-approval whitelist read: the browser-stamped
@@ -65,15 +190,14 @@ export function selfApprovalFacts(sender: chrome.runtime.MessageSender): SenderF
 }
 
 /**
- * Whether a sender may act as a site on the self-approval whitelist (`pageApprovalDomains`): `selfApproves` over the
- * lists and the setting as stored now. Every reader of the whitelist asks this: `senderTrust` for the privileged
+ * Whether a sender may act as a site on the self-approval list (`ml_site_selfapprove`): `selfApproves` over the lists
+ * as stored now. Every reader of the whitelist asks this: `senderTrust` for the privileged
  * handlers, and `pageApprovalAllowed` in the config a page or a run reads.
  * @param facts the sender's facts (`senderFacts`), or `{ url }` for a tab's top frame
  * @returns true when the sender self-approves
  */
 export async function senderSelfApproves(facts: SenderFacts): Promise<boolean> {
-    const [lists, cfg] = await Promise.all([readSiteLists(), getConfig()]);
-    return selfApproves(lists, facts, cfg.pageApprovalDomains || []);
+    return selfApproves(await readSiteLists(), facts);
 }
 
 /**

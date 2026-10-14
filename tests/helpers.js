@@ -683,7 +683,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -764,7 +764,9 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 else if (type === "PRICE_CALLS") cb(priceCalls ? { data: priceCalls(msg.payload.calls) } : { data: null });
                 else if (type === "DUMP_HOUSEKEEPING") { hkCalls.push(msg.payload); cb({ data: hkEvents }); }
                 else if (type === "PYTHON_EXEC") { pyCalls.push(msg.payload); cb({ data: typeof pythonExec === "function" ? pythonExec(msg.payload) : (pythonExec || { ok: true, value: 42, stdout: "" }) }); }   // background wraps: { data: PyResult }
-                // The site gate's lists, as the worker's SITE_ACCESS answers a read: `siteLists` plays the stored lists.
+                // The site lists. `siteAccess(payload)` plays the worker (a real bundle's SITE_ACCESS, edits included);
+                // `siteLists` only answers a read with fixed lists.
+                else if (type === "SITE_ACCESS" && siteAccess) Promise.resolve(siteAccess(msg.payload || {})).then((r) => cb(JSON.parse(JSON.stringify(r ?? null))));
                 else if (type === "SITE_ACCESS" && siteLists) cb({ data: { lists: siteLists } });
                 else cb({ data: null });
             },

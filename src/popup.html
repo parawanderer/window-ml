@@ -109,7 +109,7 @@
     /* min-width:0 lets the flex item shrink below its content; overflow-wrap breaks a long unbreakable
        model id (e.g. gemma4:31b) instead of forcing the whole popup wider. */
     .free-row .hint { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-    /* Self-approval domain whitelist (mirrors Settings → Permissions). */
+    /* The rule between the Permissions block's grants. */
     .perm-sep { border-top: 1px solid var(--border); margin: 12px 0 2px; }
     /* A row's name inside the Manage panel, in the body colour so each row reads as its own item. */
     .manage-k { color: var(--fg); font-weight: 600; }
@@ -198,17 +198,6 @@
          the related origins too. Collapsible like the connection block — collapsed once granted. -->
     <details class="conn" id="perms">
         <summary><span id="permsStatus"></span></summary>
-
-        <label for="permDomain">Trusted domains (self-approval)</label>
-        <div class="hint">Sites allowed to supply their own <code>ml.agent</code> approval gate. Every other site routes a privileged tool call through the extension's approval card, so a page can't self-approve.</div>
-        <div class="row">
-            <input id="permDomain" type="text" placeholder="example.com, or http://host:port">
-            <button id="permAdd">Add</button>
-        </div>
-        <div id="permList" class="perm-list"></div>
-        <div id="permUncovered"></div>
-
-        <div class="perm-sep"></div>
 
         <label>Google Sheets access</label>
         <div class="free-row">
@@ -300,6 +289,7 @@
         <hr class="site-rule">
         <label>This site</label>
         <div class="hint"><code id="siteOrigin"></code> <span id="siteState"></span></div>
+        <div class="hint" id="siteAgents" hidden></div>
         <div class="row" id="siteButtons">
             <button id="siteAllowSession" title="Allowed until the browser restarts">Allow this session</button>
             <button id="siteAllowAlways">Always allow</button>

@@ -1,5 +1,6 @@
-// tests/self-approval-origin.test.js — the self-approval whitelist (`pageApprovalDomains`) trusts one ORIGIN per entry,
-// the same one the site gate approves, at every reader, against the real bundle.
+// tests/self-approval-origin.test.js — the self-approval list trusts one ORIGIN per entry, the same one the site gate
+// approves, at every reader, against the real bundle. The tests seed the old sync whitelist (`pageApprovalDomains`), which
+// the worker migrates at start into the local list of origins (`ml_site_selfapprove`), so they also hold across the upgrade.
 //
 // A bare host on the whitelist means `https://host` on the default port. Every check that consults the whitelist
 // (`senderTrust` for the privileged handlers, `publicConfig`'s `pageApprovalAllowed`, the site gate's implied approval)
@@ -165,11 +166,11 @@ test("the whitelist is read only through the one rule: no other source file matc
     const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.tsx?$/.test(e.name) && !/\.gen\.ts$/.test(e.name)) files.push(p); } };
     walk(root);
     const readers = files.filter((f) => /pageApprovalDomains/.test(fs.readFileSync(f, "utf8"))).map((f) => path.relative(root, f).split(path.sep).join("/")).sort();
-    // site-access.ts holds the rule; sw-site-access.ts reads the setting for it. The rest only declare, edit or watch it:
-    // the config type and default, the two settings editors, and the change detector that re-decides runs on an edit.
-    assert.deepEqual(readers, ["contract/contract-config.ts", "popup.ts", "sidebar/settings/settings.tsx", "site-access.ts", "sw/nav-handover.ts", "sw/sw-site-access.ts"]);
-    // Pinned to the LINE as well, so a new reader inside one of those files fails here too: a whitelist read anywhere
-    // but `siteDecision` and `senderSelfApproves` must go through `selfApproves`. Comments are left out.
+    // Since slice 3 the sync setting is read ONCE, by the migration (sw-site-access.ts) into the local list of origins,
+    // through site-access.ts's rule. The config type and default only declare it; no editor or watcher names it.
+    assert.deepEqual(readers, ["contract/contract-config.ts", "site-access.ts", "sw/sw-site-access.ts"]);
+    // Pinned to the LINE as well, so a new reader inside one of those files fails here too: the sync setting is read by
+    // the migration and nowhere else. Comments are left out.
     const uses = [];
     for (const f of files) {
         const rel = path.relative(root, f).split(path.sep).join("/");
@@ -183,18 +184,8 @@ test("the whitelist is read only through the one rule: no other source file matc
     assert.deepEqual(uses.sort(), [
         "contract/contract-config.ts: pageApprovalDomains: [],",
         "contract/contract-config.ts: pageApprovalDomains: string[];",
-        "popup.ts: await chrome.storage.sync.set({ pageApprovalDomains: next });",
-        "popup.ts: const next = fn(pageApprovalDomains as string[]);",
-        "popup.ts: const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });",
-        "popup.ts: const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });",
-        "popup.ts: renderPermList(pageApprovalDomains as string[]);",
-        "popup.ts: renderUncovered(pageApprovalDomains as string[]);",
-        "sidebar/settings/settings.tsx: chrome.storage.sync.set({ pageApprovalDomains: list });",
-        "sidebar/settings/settings.tsx: config.value = { ...config.value, pageApprovalDomains: list };",
-        "sidebar/settings/settings.tsx: const domains = c.pageApprovalDomains || [];",
-        "sw/nav-handover.ts: if (area === \"sync\") return \"pageApprovalDomains\" in changes;",
-        "sw/sw-site-access.ts: return decide(lists, origin, cfg.pageApprovalDomains || []);",
-        "sw/sw-site-access.ts: return selfApproves(lists, facts, cfg.pageApprovalDomains || []);",
+        "sw/sw-site-access.ts: const [stored, sync] = await Promise.all([readStored(), chrome.storage.sync.get({ pageApprovalDomains: [] }).catch(none)]);",
+        "sw/sw-site-access.ts: const syncHosts = (sync as Record<string, unknown>).pageApprovalDomains;",
     ].sort(), "a new read of the whitelist: route it through selfApproves (site-access.ts), then add its line here");
     const config = fs.readFileSync(path.join(root, "contract/contract-config.ts"), "utf8");
     assert.doesNotMatch(config.replace(/\/\*\*[\s\S]*?\*\//g, ""), /\.pageApprovalDomains/, "contract-config.ts matches against the whitelist itself");

@@ -1,8 +1,9 @@
 # Site access: which pages may use `window.ml`
 
 The design and its reasons are `docs/spec/SITE_ACCESS.md`. This is how the built parts work and where to change them.
-Slice 3 (`requestAccess`, the badge and popup, the self-approval list by origin, the agent level and its start card) is not
-built yet; its implementation reference is [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md).
+Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md):
+its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below; `requestAccess`,
+the badge, and the agent level's enforcement and start card are not built yet.
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 
 ## The gate
@@ -18,8 +19,8 @@ that answers asynchronously keeps the channel; one that never answers gets `send
 script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate as a `FETCH_LLM`.
 
 `pageRefusal` reads only `sender` (`origin`, `url`, `frameId`, `tab`), which the browser sets: the sender must be
-grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved (`decide`), or on the
-self-approval whitelist (`pageApprovalDomains`) by origin ("The self-approval whitelist", below). A tab hosting a run gets nothing more (part 5). Until then it was lent what the
+grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin allowed (`levelsFor(...).use`), which an
+origin on the self-approval list also is ("The self-approval list", below). A tab hosting a run gets nothing more (part 5). Until then it was lent what the
 run's in-page tools sent (`RUN_TAB_TYPES`: a vision tool's model call and screenshot, `fetch_url`, `python_exec`, a
 sheet, a server tool, a shadow resolve, the config); every one of those tools now runs in the worker, or asks the page
 only for plain data about itself (below), so a run's page sends nothing for it. A run on a local `file:` page needs
@@ -105,9 +106,8 @@ execution-log record (`routing`, `handed-to-worker`, reason `navigated-to-unappr
 
 **A page-built run whose site is revoked while it runs is the worker's from the revoke** (owner's decision 2026-10-12),
 with no navigation. Every path that takes a site off the approved set writes storage: the popup and DevTools Settings
-(`SITE_ACCESS`: revoke, deny, an approval for the session revoked), another surface or a sync writing the lists
-(`chrome.storage.onChanged`, local or session area), and a host removed from the self-approval whitelist
-(`pageApprovalDomains`, sync area). `background.ts` listens to `onChanged` for those keys (`changesSiteAccess`) and calls
+(`SITE_ACCESS`: revoke, deny, an approval for the session revoked, an origin removed from the self-approval list), and
+another surface writing the lists (`chrome.storage.onChanged`, local or session area). `background.ts` listens to `onChanged` for those keys (`changesSiteAccess`) and calls
 `handOverOnRevoke`, which decides every tab holding a page-built run from the URL its top frame shows now
 (`webNavigation.getFrame`) and hands the runs on a tab that may no longer use window.ml to the worker (reason
 `site-revoked`). `SITE_ACCESS` awaits the same decision before it answers the editor, and a worker that starts decides
@@ -152,50 +152,79 @@ that wakes the worker is judged against the restored runs, not the empty maps th
 
 ## The lists
 
-`site-access.ts` is pure: `originOf`, `grantableOrigin`, `decide` (a denial beats an approval), `applyEdit`,
-`originFromInput`, and the whitelist's `selfApprovalOrigin` / `selfApproves`. `sw-site-access.ts` keeps them in storage, under `SITE_ACCESS_KEYS`: `always` and `denied` in
-`chrome.storage.local`, `session` in `chrome.storage.session`. Read on EVERY gated message, so a revoke applies to the
-next call with no reload.
+`site-access.ts` is pure: `originOf`, `grantableOrigin`, `levelsFor`, `applyEdit`, `migrateSiteLists`, `originFromInput`,
+`selfApprovalOrigin`, `selfApproves` and `uncoveredApprovals`. `sw-site-access.ts` keeps the lists in storage, under
+`SITE_ACCESS_KEYS`, read on EVERY gated message, so a change applies to the next call with no reload:
 
-Edits arrive as `SITE_ACCESS` messages, answered for extension pages only (`isExtensionSender`). Two editors:
-DevTools Settings → Permissions → "Sites that may use window.ml" (`SiteApprovals`, the full list) and the toolbar
-popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set). An approval
-that only the self-approval whitelist implies is reported `implied`, and the popup offers no Revoke for it: the
-whitelist is edited in Settings.
+| Key | Area | Holds |
+| --- | --- | --- |
+| `ml_site_always`, `ml_site_denied` | local | origins allowed always; origins denied |
+| `ml_site_session` | session | origins allowed until the browser restarts |
+| `ml_site_agents` | local, and session | origin → agent level (`ask`, `always`, `denied`; absent is `off`). An origin allowed only for the session keeps its level in the session area, so it goes with that approval |
+| `ml_site_selfapprove` | local | the origins that approve their own actions |
+| `ml_site_schema` | local | `2` once the slice 3 migration ran |
+| `ml_site_upgrade_notice` | local | set by a migration that moved a whitelist, with the entries it could not carry over, until Settings' notice is dismissed |
 
-### The self-approval whitelist
+`levelsFor(lists, origin)` answers `{ use, agents, selfApprove }`: `use` is `always`, `session`, `denied` or
+`unknown`; a denial wins over everything; an origin on the self-approval list is `use: always` and `agents: always`
+(slice 3, Q6); an origin that may not use window.ml has agents `off`. `applyEdit` takes `allow` (a site allowed fresh
+starts at agents `off`; one already allowed keeps its level when its scope changes), `deny` and `revoke` (both take
+every grant away: the approvals, the agent level and the self-approval, so neither a revoke nor a later "Stop denying"
+leaves self-approval behind), `undeny`, `agents` (only for an origin that may use window.ml) and `selfApprove` (add or remove; a denial
+still wins). An edit the rules do not know changes nothing, and the worker refuses one that does not name an origin as
+the browser writes it. Edits and the migration's writes run one at a time (`serially` in `sw-site-access.ts`), so two
+editors writing at once cannot lose either change, and an edit is refused while the migration cannot complete.
 
-`pageApprovalDomains` (sync) lists sites trusted to answer their own approval prompts. It is still stored as bare
-hosts (slice 3 moves it to origins), but it is READ by origin, through one rule in `site-access.ts`:
-`selfApprovalOrigin` turns an entry into the one origin it trusts (a bare host is `https://host` on the default port;
-an entry written as an origin, as the e2e specs write `http://127.0.0.1:<port>`, is that origin; a bare host with a
-port or a path trusts nothing), and `selfApproves(lists, sender, hosts)` holds only when the sender's origin, read as
-the gate reads it (`grantableOrigin`), is on the whitelist (`onSelfApprovalList`) and the gate approves it, always or
-for the session (a denial wins). Plain http, another port, a subdomain, a sub-frame or an opaque origin of a
-whitelisted host is never trusted as the https site.
+Nothing enforces the agent level yet: it is stored, shown and edited, and the start card (PR 2 of the slice 3
+reference) is what will read it.
 
-A bare entry means `https://host` on the default port for loopback too (`localhost`, `127.0.0.1`): before #628 a bare
-host self-approved by host over any scheme and port, so an install whose local dev server or LAN UI is plain http on a
-port stopped self-approving there. Nothing is migrated (the old code never recorded which origins were in use, and
-inferring them would trust http without the person choosing it). Instead Settings and the popup list each origin
-allowed to use window.ml that a bare entry stopped covering (`uncoveredApprovals`), loopback included, with an Add that
-stores the exact origin, and both editors accept an origin typed into the whitelist (`whitelistEntryFromInput`: https
-on the default port is stored as its bare host, anything else as its origin).
+Edits arrive as `SITE_ACCESS` messages, answered for extension pages only (`isExtensionSender`), with the lists, and for
+an `origin` its `decision` (`use`), its `levels`, and `implied` when only the self-approval list allows it. Two editors:
+DevTools Settings → Permissions, "Sites that may use window.ml" (`SiteApprovals`: one row per allowed origin with its
+scope, its agent level and a revoke) and "Sites that approve their own actions" (`SelfApprovalList`), and the toolbar
+popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set), which shows
+the agent level on a line of its own. Its Revoke, like every Settings row's, also removes a self-approval. The popup
+does not add to the self-approval list (slice 3, Q14).
+
+### The upgrade (`migrateSiteAccess`)
+
+The worker migrates once, at start and before any reader (`siteSchemaReady`, which `readSiteLists` awaits, so a
+message that wakes the worker is judged on the migrated lists): each entry of the old sync whitelist
+(`pageApprovalDomains`) becomes the one origin it trusted (`selfApprovalOrigin`: a bare host is `https://host` on the
+default port, loopback included; an entry stored as an origin is that origin; a host with a port, a path or a
+non-string, a wildcard or a Unicode host trusted nothing and is dropped, and named in the notice; a trailing dot is
+dropped from the host), and every origin allowed before gets agents `ask` (#578). It writes the
+agent levels, the self-approval list and `ml_site_schema: 2` in one local write, and never rewrites the gate's three
+lists, so an edit racing it is not lost. The sync setting is read once and left in place, for another machine on an
+older build; nothing reads it after. A failed migration is tried again by the next reader, and until then the lists
+read with no self-approval and no agent level. `tests/site-access-upgrade.test.mjs` is the fixture: storage as the old
+build wrote it, read by the new bundle.
+
+### The self-approval list
+
+The origins trusted to answer their own approval prompts, `ml_site_selfapprove` in local storage, one origin per entry
+(#628 then slice 3; Q19: no loopback special case). `selfApproves(lists, sender)` holds only when the sender's origin,
+read as the gate reads it (`grantableOrigin`), self-approves by `levelsFor` (on the list and not denied). Plain http,
+another port, a subdomain, a sub-frame or an opaque origin of a listed origin is never trusted as it. Settings takes
+what is typed with `originFromInput` (a bare host is https; `http://` or a port must be written out), and lists each
+allowed origin whose host self-approves over https on the default port but which is not itself on the list
+(`uncoveredApprovals`), with an Add that stores that exact origin.
 
 Every reader goes through it, so none can disagree with the gate:
 
 | Reader | What it decides |
 | --- | --- |
-| `decide` (`siteDecision`: `pageRefusal`, `SITE_ACCESS`'s `implied`, `sw-run-start.ts` resume, `sw-isolated-exec.ts` `pageApproved`) | the whitelist implies approval for window.ml |
+| `levelsFor` (`siteDecision`: `pageRefusal`, `SITE_ACCESS`'s `implied`, `sw-run-start.ts` resume, `sw-isolated-exec.ts` `pageApproved`) | the list implies approval for window.ml |
 | `senderTrust` (`sw-consent.ts`) via `senderSelfApproves(selfApprovalFacts(sender))` | `whitelisted`: `CDP_CLICK`, `SERVER_TOOL_EXEC`, `FETCH_SHEET`, full-mode `PYTHON_EXEC`, `FETCH_URL` without a per-call grant; a worker-built run's `fetch_url`, sheet tables and Python, judged by its tab's URL |
 | `pageApprovalAllowed` (`publicConfig`, which takes the decision as an argument) | `GET_CONFIG`, `workerMl`, a worker run's `agent_api_docs` config: whether a page-hosted `ml.agent` honours the page's own `approve()` |
 
 One of the extension's own frames inside a tab (the overlay sidebar's bench) is judged by its tab's top-frame URL
-(`selfApprovalFacts`), as before. `nav-handover.ts` `changesSiteAccess` only watches the key. The table over sender
-shapes x readers, and the upgrade from a stored list of hosts: `tests/self-approval-origin.test.js`, with the pure
-rule in `tests/site-access.test.mjs`; the Settings and popup editors and their notice in `tests/sidebar-settings.test.js`
-and `tests/popup-whitelist.test.js`. That test also pins every line of `src/` that names the setting, so a new reader
-fails there until it goes through `selfApproves`.
+(`selfApprovalFacts`), as before. `nav-handover.ts` `changesSiteAccess` watches the keys above in the local and session
+areas, and no longer the sync area. The table over sender shapes x readers is `tests/self-approval-origin.test.js`
+(seeded through the migration), with the pure rule in `tests/site-access.test.mjs`; the Settings rows, the list and its
+notice in `tests/sidebar-settings.test.js`, drawn from the real bundle's answers; the popup in
+`tests/popup-whitelist.test.js`. That first test also pins every line of `src/` that names the old setting, so a new
+reader of it fails there.
 
 ## The page's cancel
 
@@ -393,7 +422,9 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 
 ## Tests
 
-- `tests/site-access.test.mjs`: the pure rules.
+- `tests/site-access.test.mjs`: the pure rules, `levelsFor` and `applyEdit` over every (use x agents x selfApprove)
+  state, and the migration enumerated.
+- `tests/site-access-upgrade.test.mjs`: the upgrade from the old lists and sync whitelist, against the bundle.
 - `tests/event-admission.test.mjs`: `pageMayWrite` over every event kind the contract defines, for each claim.
 - `tests/run-start.test.mjs`, section "what a page may add to a run the worker built": the worker's half, against the
   bundle.
@@ -401,7 +432,8 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
   its log, against the bundle.
 - `tests/redteam.test.js`, section "(f)": every page-started type refused from an unapproved origin with nothing
   reaching the backend, a tab or the screen; a sender that can never be granted refused even when its host is
-  approved; revoke and deny without reload; a page cannot edit the lists; the stream port. Section "(g)", part 5: the
+  approved; revoke and deny without reload; a page cannot edit the lists, nor write an agent level or the
+  self-approval list through any page-started type; http://host of an old whitelisted host stays untrusted; the stream port. Section "(g)", part 5: the
   same on a tab hosting a run; the former run-tab types, by name, from a page that knows the run's id in the middle of
   its tool call; the page a page-built run navigates onto cannot stop the hand-over, nor can a revoked page flooding
   sends and re-adopts; and the upgrade (an old in-flight

@@ -211,14 +211,11 @@ export interface MlConfig {
      *  fallback, so there is nothing to protect a stock backend from. Read it through `protoMode()`, never
      *  raw: storage may still hold the boolean this replaced. */
     protoStream: ProtoMode;
-    /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
-     *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
-     *  privileged tool calls route through the unforgeable background gate + trusted surface,
-     *  so a hostile page can't self-approve. Managed only in the trusted Settings/popup UI; the
-     *  page never sees this list — GET_CONFIG returns only a computed `pageApprovalAllowed` for
-     *  the requesting tab's own origin. A bare hostname (e.g. "docs.google.com") means its https origin on the default
-     *  port only, loopback included; an entry written as an origin means that origin (site-access.ts
-     *  `selfApprovalOrigin`). */
+    /** The self-approval whitelist as builds before slice 3 stored it: hostnames (a bare host meant its https origin on
+     *  the default port; an entry written as an origin meant that origin, site-access.ts `selfApprovalOrigin`). No
+     *  longer read for any decision: the worker's one-time migration (sw-site-access.ts `migrateSiteAccess`) copies it
+     *  into the local self-approval list of origins (`ml_site_selfapprove`), which DevTools Settings edits, and leaves it
+     *  here so another machine on an older build keeps working. The page never sees either list. */
     pageApprovalDomains: string[];
     /** Optional visual-grounding model for ml.agent's `locate` tool (coordinate
      *  output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in. */

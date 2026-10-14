@@ -126,7 +126,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     if (wantsFull && await caller.untrusted()) {
         const code = String(payload?.code ?? "");
         const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : caller.tabId != null && !!tabGrants(caller.tabId)?.pyCode.has(code);
-        if (!approved) return { error: "Refused: network-enabled (full) Python needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." };
+        if (!approved) return { error: "Refused: network-enabled (full) Python needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
     }
     // LIVE stdout streaming (opt-in): record where this run's chunks go.
     const streamId: string | undefined = payload?.stream ? requestId : undefined;
