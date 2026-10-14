@@ -15,7 +15,7 @@ import type { CurrentSnapshot } from "../agent/current-context";
 import type { ToolMeta } from "../agent/agent-loop";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
+import { clipHeadTail, panelHead, ceilingNote, pageWorldResult } from "../agent/output-clip";
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
 import { grantableOrigin, originOf } from "../site-access";
@@ -974,7 +974,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 return { result: r.text, renderIn: env.renderIn,
                                     renderOut: { type: "exec-out", stdout: clipHeadTail(stdout, UI_OUT_CAP, panelHead(CDP_EXEC_CAP)), ...(stdout.length > UI_OUT_CAP ? { capture: clipOut(stdout, UI_OUT_CAP) } : {}), seen, value: r.value } };
                             }
-                            return { result: `${env.result || ""}\n\n${r.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            // An error the page's world shaped (the script threw in it) carries the page-world heading like a result does.
+                            const failure = `${env.result || ""}\n\n${r.error}`;
+                            return { result: "pageShaped" in r && r.pageShaped ? pageWorldResult(failure) : failure, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
                         // The verify of a click/type/wait in a run whose vision is the worker's: the page asked for it as data, and
                         // the worker takes it, pinned to the document the action ran in. A request the model did not ask for is

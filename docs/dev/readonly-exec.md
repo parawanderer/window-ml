@@ -599,7 +599,7 @@ leaves the function on the global (CDP's documentation). The options, and what e
 Proposed: the context check and the label; the console capture if streamed output from strict pages matters enough to
 pay for its formatting change. Built in SITE_PRESENCE.md step 1: the context check (turning Runtime off and on reports every
 live context, and every evaluate names the top frame's main world), the global deleted in the wrapper's finally, `console` as a parameter instead of a patch, and
-the label (`console (page-writable):` on a main-world exec's console section). The page itself can still call the
+the label (a first line, `page-writable (ran in page world):`, on a main-world exec's whole result). The page itself can still call the
 binding during the exec: the `todo` in `tests/redteam-isolated.test.mjs`.
 
 **2. Redirects past an approval.** Not a question for the dialect, which fetches nothing. For `fetch_url` and an approved

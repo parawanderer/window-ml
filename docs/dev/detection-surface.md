@@ -118,9 +118,12 @@ Ranked; each also in the table.
    each is one-shot, so the page cannot evaluate code of its own beside the collector, `state` and `ml`, nor run the
    approved script again (#652 review). What remains is inherent to sharing the world: the page can rewrite the builtins
    the collector and the value's serialisation call (`Array.prototype.map`, `JSON.stringify`), throw an error with a
-   stack of its choosing, and read the delegated path's `PAGE_TOOL_RESULT` off its window (row 6). The model reads a
-   main-world exec's console as `console (page-writable):`; the `value:` line is as page-writable and is not marked. The
-   open vectors are `todo`s in `tests/redteam-exec-shared-world.test.mjs`.
+   stack of its choosing, and read the delegated path's `PAGE_TOOL_RESULT` off its window (row 6). The model reads every
+   main-world exec result under a first line `page-writable (ran in page world):` (`PAGE_WORLD_HEAD`, output-clip.ts): the
+   console, the `value:` (the page's own `JSON.stringify`) and an error the script threw. The console section is the plain
+   `console:`. An isolated-world exec and a read-only survey carry no heading, and that absence is what tells the model
+   they are not page-writable. Not labelled: a refusal or note the extension wrote itself (a CSP-blocked eval, CDP off).
+   The sidebar's `toolFailed` skips the heading line. The open vectors are `todo`s in `tests/redteam-exec-shared-world.test.mjs`.
 5. **`__mlCdpStream` outlived the exec** (row 11). Fixed: the wrapper deletes it in its finally, its name is random per
    exec (a page cannot define an accessor under it beforehand), and the listener takes `Runtime.bindingCalled` only from
    the context the wrapper evaluated in: the top frame's main world, learnt by turning Runtime off and on so it reports

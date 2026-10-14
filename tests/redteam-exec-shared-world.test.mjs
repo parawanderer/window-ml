@@ -237,7 +237,7 @@ test("a page that rewrites Array.prototype.map neither reads the exec's lines no
     assert.match(r.content, /secret/, r.content);
 });
 
-test("the VALUE of a main-world exec is the script's own: a page cannot rewrite it while only the console section is marked page-writable", { ...T, todo: `${SHARED} The value is exactly as page-writable as the console (tools.ts serialises it with the page's JSON.stringify; the CDP wrapper too), yet MAIN_CONSOLE_HEAD marks only the console section, which tells the model the \`value:\` line is the script's.` }, async () => {
+test("the VALUE of a main-world exec is the script's own: a page cannot rewrite it (the result is labelled page-writable, but the value is still the page's to change)", { ...T, todo: `${SHARED} The value is exactly as page-writable as the console (tools.ts serialises it with the page's JSON.stringify; the CDP wrapper too). The model is told so by PAGE_WORLD_HEAD on the whole result; the page can still change it.` }, async () => {
     const p = page();
     p.pageRun(`
         const s = JSON.stringify;
@@ -370,7 +370,7 @@ test("a page that replaces ml.dereference is never handed the exec's collector t
 
 test("a script that declares its own `const console` runs on the async path as it did before the parameter", T, async () => {
     const r = await page().exec("const console = { log() {} }; await 0; return 5");
-    assert.match(r.content, /^5$|value: 5|^5\b/, r.content);
+    assert.match(r.content, /^page-writable \(ran in page world\):\n5$/, r.content);
     assert.doesNotMatch(r.content, /already been declared/, r.content);
     const c = cdpPage();
     const s = await cdpEval(7, "doc-7", "const console = { log() {} }; await 0; return 5");

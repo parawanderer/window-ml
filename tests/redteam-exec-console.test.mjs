@@ -69,9 +69,9 @@ test("console reached through window or globalThis is the page's, not the collec
     assert.deepEqual(JSON.parse(JSON.stringify(p.pageRun("__pageLines"))), ["via globalThis", "late"]);
 });
 
-test("the model's view of a main-world exec marks its console section as one the page can write into", T, async () => {
+test("the model's view of a main-world exec opens with the page-writable heading, and its console section is the plain `console:`", T, async () => {
     const r = await page().exec("console.log('own'); 1");
-    assert.match(r.content, /^console \(page-writable\):\nown\n\nvalue: 1$/, r.content);
+    assert.match(r.content, /^page-writable \(ran in page world\):\nconsole:\nown\n\nvalue: 1$/, r.content);
 });
 
 // --- the closed-root capture: in closures, nothing on window ---

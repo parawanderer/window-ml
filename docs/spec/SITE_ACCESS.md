@@ -539,7 +539,7 @@ Recorded as each slice lands, with the reason.
     `documentIds`, a CDP world checked against it after it is made). An isolated exec with no known document does not
     run. Still open, and older than part 4: a main-world CDP exec's live output can be written by the page
     (`__mlCdpStream`), which shares that world. Since SITE_PRESENCE.md step 1 only from that context, and the model
-    reads that console as page-writable.
+    reads the whole result of a main-world exec as page-writable (it opens with `page-writable (ran in page world):`).
   - Untested against a real browser: how `userScripts.execute` reports a script that does not parse (handled as
     "no result": a probe of a start marker decides whether to try the body form, so a script is never run twice).
     The e2e browser has no "Allow User Scripts" toggle set, so only the vm tests cover that path.

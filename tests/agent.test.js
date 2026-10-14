@@ -196,9 +196,14 @@ test("defineTool carries capability tags (default empty)", () => {
 const run = (ml, name, args) => ml.domTools.find(t => t.name === name).run(args);
 // `exec` returns a ToolResult (its model-facing `content` PLUS a rendered Out descriptor). These assertions
 // want the text the model actually read, so unwrap it; tests about the render/elements read the object.
-const execText = async (ml, args) => {
+const execRaw = async (ml, args) => {
     const r = await run(ml, "exec", args);
     return (r && typeof r === "object" && typeof r.content === "string") ? r.content : r;
+};
+/** An exec result without the page-writable heading every main-world result opens with (output-clip.ts): the body. */
+const execText = async (ml, args) => {
+    const t = await execRaw(ml, args);
+    return typeof t === "string" && t.startsWith("page-writable (ran in page world):\n") ? t.slice("page-writable (ran in page world):\n".length) : t;
 };
 
 test("agent_api_docs ships the generated window.ml reference in the default registry", async () => {
@@ -826,8 +831,8 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     // Multi-line console output keeps its newlines — separate console.log calls
     // join with \n, and the length cap must NOT collapse whitespace (regression:
     // exec used dom.ts `truncate`, whose \s+→" " flattened every line into spaces).
-    const multi = await execText(ml, { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
-    assert.match(multi, /^console \(page-writable\):\nline 1\nline 2\nline 3\n\nvalue: /);
+    const multi = await execRaw(ml, { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
+    assert.match(multi, /^page-writable \(ran in page world\):\nconsole:\nline 1\nline 2\nline 3\n\nvalue: /);
     // The #1 exec mistake: .map on a raw NodeList → steer to Array.from/spread.
     const nodelist = await execText(ml, { js: "document.querySelectorAll('li').map(x => x.tagName)" });
     assert.match(nodelist, /is not a function/);
@@ -948,8 +953,8 @@ test("scroll tool errors clearly for a missing element target", async () => {
 
 test("exec captures console output and returns it with the value", async () => {
     const { ml } = loadDomWorld();
-    const res = await execText(ml, { js: "console.log('hello', 42); 'done'" });
-    assert.match(res, /console \(page-writable\):\nhello 42/);
+    const res = await execRaw(ml, { js: "console.log('hello', 42); 'done'" });
+    assert.match(res, /page-writable \(ran in page world\):\nconsole:\nhello 42/);
     assert.match(res, /value: done/);
 });
 
@@ -977,10 +982,10 @@ test("exec: a STRING rejection (a failed ml.* call) surfaces the real message, n
 test("exec hands back DOM nodes as hoverable elements", async () => {
     const { ml } = loadDomWorld("<li></li><li></li>");
     const one = await run(ml, "exec", { js: "document.querySelector('li')" });
-    assert.equal(one.content, "body > li");            // elPath of the node
+    assert.equal(one.content, "page-writable (ran in page world):\nbody > li");            // elPath of the node
     assert.equal(one.elements[0].tagName, "LI");
     const many = await run(ml, "exec", { js: "document.querySelectorAll('li')" });
-    assert.equal(many.content, "2 element(s)");
+    assert.equal(many.content, "page-writable (ran in page world):\n2 element(s)");
     assert.equal(many.elements.length, 2);
 });
 
@@ -3933,7 +3938,7 @@ test("exec Out (raw): the model-facing result still carries the full console out
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const out = await exec.run({ js: "console.log('a'); console.log('b'); 7" }, {});
-    assert.match(out.content, /^console \(page-writable\):\n/, "the console block leads");
+    assert.match(out.content, /^page-writable \(ran in page world\):\nconsole:\n/, "the console block leads");
     assert.match(out.content, /a\nb/, "every logged line is present");
     assert.match(out.content, /\n\nvalue: 7$/, "then the returned value — the exact text the model reads");
 });
@@ -3964,7 +3969,7 @@ test("exec Out: nothing logged → no console section, value only (both views)",
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const out = await exec.run({ js: "1 + 1" }, {});
-    assert.equal(out.content, "2", "raw is just the value when nothing was logged");
+    assert.equal(out.content, "page-writable (ran in page world):\n2", "raw is the heading and the value when nothing was logged");
     assert.equal(out.render.stdout, undefined, "no empty console section");
     assert.equal(out.render.value, "2");
 });
@@ -4005,7 +4010,7 @@ test("exec past the output ceiling: whole lines up to it, the rest counted, and 
     const exec = ml.domTools.find(t => t.name === "exec");
     const streamed = [];
     const out = await exec.run({ js: "const s = 'x'.repeat(9000000); for (let i = 0; i < 10; i++) console.log(s); 1" }, { stream: (t) => streamed.push(t.length) });
-    assert.match(out.content, /^console \(page-writable\):\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less: filter, count or aggregate in the script\.\]\n\nvalue: 1$/);
+    assert.match(out.content, /^page-writable \(ran in page world\):\nconsole:\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less: filter, count or aggregate in the script\.\]\n\nvalue: 1$/);
     assert.match(out.render.stdout, /\[output stopped at the 32000000-char limit[^\]]*\]$/, "the panel's last line");
     assert.equal(out.render.seen, 500);
     assert.equal(streamed.length, 3, "a line past the ceiling is not streamed either");

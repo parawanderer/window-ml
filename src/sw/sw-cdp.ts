@@ -5,7 +5,7 @@
 // Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
 import { clipOut } from "../dom/dom";
 import { isOwnUiId } from "../ids";
-import { OUTPUT_CEILING, ceilingNote, MAIN_CONSOLE_HEAD, CONSOLE_FORWARDS } from "../agent/output-clip";
+import { OUTPUT_CEILING, ceilingNote, pageWorldResult, CONSOLE_FORWARDS } from "../agent/output-clip";
 import { noteRunMechanic } from "./sw-runs";
 import { cdpClickPlan, cdpTypePlan } from "../input-dispatch";
 
@@ -143,7 +143,7 @@ export async function mainWorldContext(tabId: number): Promise<number | undefine
  *  main-world context is resolved, the document checked after, and every evaluate names that context, so a navigation
  *  (the page can force this path, then navigate) never runs the approved code on another document. See
  *  docs/spec/EXEC_STRICT_CSP.md. */
-export async function cdpEval(tabId: number, documentId: string, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; dropped: number; text: string } | { error: string; needsPermission?: true }> {
+export async function cdpEval(tabId: number, documentId: string, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; dropped: number; text: string } | { error: string; needsPermission?: true; pageShaped?: true }> {
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attach/detach is the dominant per-exec cost on a strict page
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
@@ -167,7 +167,7 @@ export async function cdpEval(tabId: number, documentId: string, source: string,
     // the listener takes a call only from the context the wrapper evaluates in, and the wrapper deletes the global in its
     // finally (`Runtime.removeBinding` leaves it). Its name is random per exec, so a page cannot define an accessor under
     // it beforehand and take the binding as it is installed; the page's own scripts can still find and call it while the
-    // exec runs, so the model is told its console section is page-writable (MAIN_CONSOLE_HEAD).
+    // exec runs, so the model is told the whole result is page-writable (PAGE_WORLD_HEAD).
     const BINDING = `__mlCdpStream${randomHex(8)}`;
     let bound = false;
     const onEvent = (src: chrome.debugger.Debuggee, method: string, params?: object) => {
@@ -223,13 +223,13 @@ ${inner}
         wrapperRan = !r?.exceptionDetails;
         if (r?.exceptionDetails) return { error: `The exec threw (via CDP): ${r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error"}` };
         const out = r?.result?.value as WrapVal | undefined;
-        if (out && out.__mlWrapped && typeof out.threw === "string") return { error: `The exec threw (via CDP): ${out.threw}` };
+        if (out && out.__mlWrapped && typeof out.threw === "string") return { error: `The exec threw (via CDP): ${out.threw}`, pageShaped: true as const };
         const value = out && out.__mlWrapped ? (out.v ?? "(undefined)") : "(undefined)";
         const logs = out && Array.isArray(out.logs) ? out.logs : [];
         const dropped = out && typeof out.dropped === "number" ? out.dropped : 0;
         // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`; past the ceiling
         // the model is told after its clip.
-        const combined = logs.length ? `${MAIN_CONSOLE_HEAD}\n${clipOut(logs.join("\n"), CAP)}${dropped ? `\n${ceilingNote(dropped)}` : ""}\n\nvalue: ${value}` : value;
+        const combined = pageWorldResult(logs.length ? `console:\n${clipOut(logs.join("\n"), CAP)}${dropped ? `\n${ceilingNote(dropped)}` : ""}\n\nvalue: ${value}` : value);
         // `logs`/`value` come back structurally too, so the caller can build the same rendered Out cell the
         // main-world exec produces (console / value sections) instead of leaving the CSP-blocked error render.
         return { ok: true, value, logs, dropped, text: combined };

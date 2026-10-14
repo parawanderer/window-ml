@@ -45,7 +45,7 @@ import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, ha
 import { pageContext, agentState } from "../util";
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead, boundedLines, ceilingNote, MAIN_CONSOLE_HEAD, CONSOLE_FORWARDS } from "../agent/output-clip";
+import { clipHeadTail, panelHead, boundedLines, ceilingNote, pageWorldResult, CONSOLE_FORWARDS } from "../agent/output-clip";
 import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
 
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
@@ -612,9 +612,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // Prefix any captured console output onto the returned value.
                 // A call past the ceiling says so AFTER the clip, where the model reads it, and in the panel's last line.
                 const overNote = capture.dropped ? ceilingNote(capture.dropped) : "";
-                const logged = logs.length ? `${MAIN_CONSOLE_HEAD}\n${clipOut(logs.join("\n"), cap)}${overNote ? `\n${overNote}` : ""}` : "";
+                const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}${overNote ? `\n${overNote}` : ""}` : "";
                 const clampNote = clamped ? `\n\n(output limit clamped to ${cap} chars — the hard ceiling.)` : "";
                 const withLogs = (value: string) => (logged ? `${logged}\n\nvalue: ${value}` : value) + clampNote;
+                // The whole result of code that ran in the page's world carries the heading (output-clip.ts): the value went
+                // through the page's own JSON.stringify and an error's text is whatever the page threw.
+                const labelled = (value: string) => pageWorldResult(withLogs(value));
                 // `queuedMs` is the field's own meaning — "elapsed before evaluation began" — which is exactly
                 // what pointer resolution is here; python_exec reports its cold start the same way. Omitted
                 // when no pointer was resolved, so it never claims a phase that did not happen.
@@ -664,12 +667,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const hint = arrayish
                         ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
                         : "";
-                    return timed({ content: withLogs(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) });
+                    return timed({ content: labelled(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) });
                 }
 
                 // DOM node results come back hoverable (see the loop's envelope).
                 if (typeof Element !== "undefined" && result instanceof Element) {
-                    return timed({ content: withLogs(elPath(result)), elements: [result], render: execRender(elPath(result)) });
+                    return timed({ content: labelled(elPath(result)), elements: [result], render: execRender(elPath(result)) });
                 }
                 const isNodes = result && (
                     (typeof NodeList !== "undefined" && result instanceof NodeList) ||
@@ -678,7 +681,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         result.every((n: unknown) => typeof Element !== "undefined" && n instanceof Element))
                 );
                 if (isNodes) {
-                    return { content: withLogs(`${(result as NodeListOf<Node>).length} element(s)`), elements: [...(result as NodeListOf<Node>)].slice(0, 50), render: execRender(`${(result as NodeListOf<Node>).length} element(s)`) };
+                    return { content: labelled(`${(result as NodeListOf<Node>).length} element(s)`), elements: [...(result as NodeListOf<Node>)].slice(0, 50), render: execRender(`${(result as NodeListOf<Node>).length} element(s)`) };
                 }
 
                 let full: string;
@@ -689,7 +692,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 } else full = String(result);
                 // The panel keeps up to UI_OUT_CAP and marks where the model's copy (`cap`) ended.
                 const v = clipValue(full, cap, UI_OUT_CAP);
-                return timed({ content: withLogs(v.model), render: execRender(v.ui, undefined, undefined, v.seen) });
+                return timed({ content: labelled(v.model), render: execRender(v.ui, undefined, undefined, v.seen) });
             }
         }),
         T({

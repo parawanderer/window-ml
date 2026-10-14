@@ -16,6 +16,7 @@ import { js_beautify } from "js-beautify/js/lib/beautify.js";
 import katex from "katex";
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { Session, Status } from "./store";
+import { PAGE_WORLD_HEAD } from "../agent/output-clip";
 
 for (const [name, lang] of [
     ["json", json], ["javascript", javascript], ["typescript", typescript], ["python", python],
@@ -319,4 +320,4 @@ export function mdInline(src: string): string {
 
 /** Did this tool call FAIL, read off the model-facing result text. Biased toward "failed": a false
  *  positive withholds a citation token, a false negative would cite an ERROR as an answer. */
-export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
+export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result.startsWith(PAGE_WORLD_HEAD + "\n") ? result.slice(PAGE_WORLD_HEAD.length + 1) : result);

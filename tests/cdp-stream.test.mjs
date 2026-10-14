@@ -65,7 +65,7 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
     assert.ok("ok" in r, "the exec still succeeded");
     assert.deepEqual(r.logs, ["alpha", "beta"], "the structured console comes back for the Out render");
     assert.equal(r.value, "42");
-    assert.match(r.text, /console \(page-writable\):\nalpha\nbeta\n\nvalue: 42/, "the model-facing string, its console marked as one the page can write into");
+    assert.match(r.text, /page-writable \(ran in page world\):\nconsole:\nalpha\nbeta\n\nvalue: 42/, "the model-facing string, its console marked as one the page can write into");
     // Teardown: the binding is dropped and we stop listening, so a later page call can't reach a dead sink.
     assert.ok(methods.includes("Runtime.removeBinding"), "the binding is removed when the exec ends");
     assert.equal(listeners.size, 0, "the event listener is removed");

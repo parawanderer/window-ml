@@ -304,7 +304,7 @@ test("a MAIN-world CDP exec's wrapper deletes __mlCdpStream from the page's glob
 
 test("the model reads a MAIN-world exec's console as one the page can write into; an isolated exec's stays plain", T, async () => {
     const main = await cdpMainExec("console.log('real'); return 1");
-    assert.match(main.results[0], /^console \(page-writable\):\nreal\n\nvalue: 1/, main.results[0]);
+    assert.match(main.results[0], /^page-writable \(ran in page world\):\nconsole:\nreal\n\nvalue: 1/, main.results[0]);
     const iso = await rtRun([FIRST, "window.b = 1; console.log('real'); return @tool:exec.length"], { us: true });
     assert.match(iso.results[1], /^console:\nreal/, JSON.stringify(iso.results));
 });
