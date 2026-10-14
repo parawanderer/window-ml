@@ -193,9 +193,11 @@ const brandCheck = (proto: object, prop: string) => {
     return (o: unknown): boolean => { try { get?.call(o); return !!get; } catch { return false; } };
 };
 
-const isSet = brandCheck(Set.prototype, "size");
+/** A real Set, of any realm. */
+export const isSet = brandCheck(Set.prototype, "size");
 
-const isMap = brandCheck(Map.prototype, "size");
+/** A real Map, of any realm. */
+export const isMap = brandCheck(Map.prototype, "size");
 
 /** Is this a real Date, from any realm? Its own getter cannot be faked: `Date.prototype.getTime` throws on anything
  *  else, whatever it claims to be. */

@@ -3,9 +3,9 @@
 
 import type { CurrentSnapshot } from "../agent/current-context";
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
-import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED } from "./limits";
+import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
-import { isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS } from "./policy";
+import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -29,21 +29,57 @@ type Ev<T = unknown> = Generator<unknown, T, unknown>;
 // only if no step does unbounded work, and a host method on a long string or a large array does work proportional to
 // it, so a loop of them outran the budget by hours.
 
-/** String methods that read a fixed slice, whatever the receiver's length: not charged for the receiver. */
+/** String methods that read a fixed slice, whatever the receiver's length: free up to FIXED_SLICE_FREE_CHARS. */
 const FIXED_SLICE_STRING = new Set(["charAt", "charCodeAt", "codePointAt", "at", "slice", "substring", "substr", "startsWith", "endsWith"]);
+
+/** String methods that only scan, hash or compare (HOST_SCAN_CHARS_PER_STEP); every other one builds (HOST_CHARS_PER_STEP). */
+const SCANNING_STRING = new Set(["includes", "indexOf", "lastIndexOf", "search", "localeCompare", "normalize", "trim", "trimStart", "trimEnd", "test"]);
 
 /** Methods that STORE their arguments or compare them by identity, never expand them: their arguments are not walked
  *  (an accumulator handed to `push` would otherwise be walked whole on every call). `includes`/`indexOf`/`lastIndexOf`
  *  on an array compare by SameValue, which never coerces. On a string they coerce, so a string receiver walks its
- *  arguments regardless. */
+ *  arguments regardless. A string argument of a KEYED one is hashed, which is charged (KEYED). */
 const STORES = new Set(["push", "unshift", "add", "set", "has", "get", "delete", "includes", "indexOf", "lastIndexOf", "fill", "splice", "then", "isArray", "item"]);
 
-/** Array methods that scan or copy the receiver's top level with no callback to tick per element. */
-const ARRAY_SCANS = new Set(["indexOf", "lastIndexOf", "includes", "concat", "reverse", "fill", "shift", "unshift", "splice"]);
+/** The stores that hash a key: a long string key is charged its length. */
+const KEYED = new Set(["add", "set", "has", "get", "delete"]);
+
+/** Calls that read their arguments ONE level deep and coerce nothing: `Object.keys(o)` lists o's own keys,
+ *  `Array.from(x)`/`new Set(x)` iterate x, `concat` spreads an array argument once, `Promise.all` awaits each element.
+ *  None calls `toString` on what it finds, so a shared-part array inside costs nothing here: it is walked when something
+ *  expands it. Their arguments are charged their top level (HOST_COPY_ELEMENTS_PER_STEP), not walked whole.
+ *  `Object.fromEntries` is NOT one: it coerces every key. */
+const ONE_LEVEL = new Set(["keys", "values", "entries", "assign", "from", "of", "concat", "all", "allSettled"]);
+
+/** Constructors that store or iterate their arguments one level; the rest (`Date`, `String`, `Error`…) coerce them. */
+const ONE_LEVEL_CTORS = new Set(["Set", "Map", "WeakSet", "WeakMap", "Array", "Object"]);
+
+/** Array methods that scan the receiver's top level with no callback to tick per element. */
+const ARRAY_SCANS = new Set(["indexOf", "lastIndexOf", "includes"]);
+
+/** Array methods that move or overwrite the receiver in place. (`slice`/`concat` build a new array, charged by its size.) */
+const ARRAY_MOVES = new Set(["reverse", "fill", "shift", "unshift", "splice"]);
 
 /** Array methods that EXPAND the receiver: they read it whole, every nested array included (`join` and a default
  *  `sort` coerce each element, and coercing an array is `join` again). */
 const ARRAY_EXPANDS = new Set(["join", "toString", "sort", "flat", "flatMap"]);
+
+/** Host calls that COERCE what a script arrow they call returns: a comparator's result is ToNumber'd, a replacer's
+ *  ToString'd, a stringify replacer's serialised. A callback's return is walked for these, since the walk of the
+ *  arguments cannot see it. (`map`, `reduce`, `Array.from` store what a callback returns, which is walked where it is
+ *  later expanded.) */
+const COERCES_CALLBACK = new Set(["sort", "replace", "replaceAll", "stringify"]);
+
+/** `ml` members that read their arguments as DATA and charge their own work, so the dialect neither walks nor charges
+ *  them: `pipe` unwraps its source from own data properties and charges each stage per character, `jsonPath` reads
+ *  members as data, charges every node, and refuses a getter or a cycle. Every other member (`range`, `dereference`,
+ *  `schema`, `fetch`, `queryAll`, `a11y`, `capabilities`) may coerce or walk an argument, and the answer facade's
+ *  `add` coerces with `String`. */
+const DATA_MEMBERS = new Set(["pipe", "jsonPath"]);
+
+/** A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see through an
+ *  iterator without consuming it, and a Map's could carry a shared-part key into `Object.fromEntries`. */
+const MATERIALISED = new Set(["[object Map Iterator]", "[object Set Iterator]", "[object Array Iterator]"]);
 
 /** Marks, on the walk's stack, that the container below it is being left. */
 const LEAVE = Symbol("leave");
@@ -63,6 +99,8 @@ export class Evaluator {
     // while the bare wrapper a host method receives stays synchronous.
     private ourFns = new WeakMap<Function, { node: Node; scope: any }>();
     private depth = 0;
+    /** The call depth of a host call in progress that coerces what its callbacks return (COERCES_CALLBACK), or -1. */
+    coercingAt = -1;
     // What is left of the step budget. Spent by every node evaluated and every element iterated.
     /** The source line of the statement being evaluated — reported when a script throws. */
     line = 0;
@@ -90,9 +128,9 @@ export class Evaluator {
     /** `Array.from` of an iterable a pattern destructures, charged its size first: a string's characters, a Set's or a
      *  Map's members. Destructuring a 10-million-character string in a loop was one step an iteration. */
     private copied(val: unknown): unknown[] {
-        const n = typeof val === "string" ? val.length / HOST_CHARS_PER_STEP
-            : (val instanceof Set || val instanceof Map) ? val.size / HOST_ELEMENTS_PER_STEP
-                : typeof (val as { length?: unknown }).length === "number" ? (val as { length: number }).length / HOST_ELEMENTS_PER_STEP : 0;
+        const n = typeof val === "string" ? val.length / HOST_SCAN_CHARS_PER_STEP
+            : (isSet(val) || isMap(val)) ? (val as Set<unknown>).size / HOST_COPY_ELEMENTS_PER_STEP
+                : typeof (val as { length?: unknown }).length === "number" ? (val as { length: number }).length / HOST_COPY_ELEMENTS_PER_STEP : 0;
         this.tick(Math.floor(n));
         return Array.from(val as Iterable<unknown>);
     }
@@ -135,22 +173,32 @@ export class Evaluator {
             if (x === LEAVE) { onPath.delete(stack.pop() as object); continue; }
             if (typeof x === "string") { chars += x.length; continue; }
             if (x === null || typeof x !== "object" || isTable(x)) continue;
-            if (!(Array.isArray(x) || isWritableTarget(x))) {
+            const coll = !(Array.isArray(x) || isWritableTarget(x)) && (isSet(x) || isMap(x));
+            if (!(Array.isArray(x) || isWritableTarget(x)) && !coll) {
                 // A String object (a pointer's text) is its characters; anything else is one part, read no further.
                 if (Object.prototype.toString.call(x) === "[object String]") chars += String(x).length;
                 continue;
             }
             if (onPath.has(x)) continue;
+            // A toJSON the SCRIPT wrote (an arrow on an object or an array it built) is called by JSON.stringify, inside
+            // the dialect or in the caller's serialisation of the result, and what it returns is never walked.
+            if (!coll && typeof Object.getOwnPropertyDescriptor(x, "toJSON")?.value === "function")
+                throw new NotInDialect("a value with its own toJSON, which a serialisation would call: it needs approval");
             onPath.add(x);
             stack.push(x, LEAVE);
             // An object's members are read as DATA: a getter is not run by the walk (on the page it is the page's code).
-            const kids: unknown[] = Array.isArray(x) ? x : Object.keys(x).map((k) => Object.getOwnPropertyDescriptor(x, k)?.value);
+            // A Map's keys and values, and a Set's members, are walked too: `Object.fromEntries(map)` coerces each key.
+            const kids: unknown[] = Array.isArray(x) ? x
+                : coll ? (isMap(x) ? [...(x as Map<unknown, unknown>)].flat() : [...(x as Set<unknown>)])
+                    : Object.keys(x).map((k) => Object.getOwnPropertyDescriptor(x, k)?.value);
             parts += kids.length;
             if (parts > cap) throw new NotInDialect(cap < MAX_EXPANDED
                 ? `too much work to run without asking: walking a value that expands to over ${cap.toLocaleString("en-US")} parts`
                 : `a value that expands to over ${MAX_EXPANDED.toLocaleString("en-US")} parts (an array holding the same array twice counts it twice), too much to walk without asking`);
             for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+            if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`);
         }
+        if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`);
         return { parts, chars };
     }
     /** Charge the walk of `v` (see {@link expanded}) to the budget: what a host call or a coercion is about to do to it. */
@@ -159,6 +207,23 @@ export class Evaluator {
         if (v === null || typeof v !== "object") return;
         const { parts, chars } = this.expanded(v);
         this.tick(Math.floor(parts / EXPANDED_PARTS_PER_STEP) + Math.floor(chars / HOST_CHARS_PER_STEP));
+    }
+    /** Charge a ONE-LEVEL read of `v` (see ONE_LEVEL): its top-level length, and the strings at that level, which a
+     *  Set hashes. Nothing below the top is read, so nothing below it is walked. */
+    private shallow(v: unknown): void {
+        if (typeof v === "string") { this.tick(Math.floor(v.length / HOST_SCAN_CHARS_PER_STEP)); return; }
+        if (v === null || typeof v !== "object") return;
+        let n = 0, chars = 0;
+        if (Array.isArray(v)) { n = v.length; for (const x of v) if (typeof x === "string") chars += x.length; }
+        else if (isSet(v) || isMap(v)) n = (v as Set<unknown>).size;
+        else if (isWritableTarget(v)) n = Object.keys(v).length;
+        this.tick(Math.floor(n / HOST_COPY_ELEMENTS_PER_STEP) + Math.floor(chars / HOST_SCAN_CHARS_PER_STEP));
+    }
+    /** A string that is about to be hashed, compared, parsed as a number or flattened: charged its length. */
+    private scans(...vs: unknown[]): void {
+        let n = 0;
+        for (const v of vs) if (typeof v === "string") n += v.length;
+        if (n >= HOST_SCAN_CHARS_PER_STEP) this.tick(Math.floor(n / HOST_SCAN_CHARS_PER_STEP));
     }
     /** Refuse a value that expands past {@link MAX_EXPANDED}, without charging: for what the caller serialises after the
      *  survey has finished (the returned value). */
@@ -170,7 +235,7 @@ export class Evaluator {
     }
 
     /** The host calls that do work proportional to an ARGUMENT, checked before they run: afterwards is too late. */
-    private preflight(obj: unknown, key: string, args: unknown[], facade = false): void {
+    private preflight(obj: unknown, key: string, args: unknown[], member: "ml" | "answer" | null = null): void {
         const big = () => { throw new NotInDialect("a value too large to build without asking"); };
         // A String OBJECT is a string here: `new String(…)` is a safe constructor and `ml.dereference` returns one
         // (DerefText), and while this read only `typeof obj === "string"` a pointer's text took a backtracking pattern.
@@ -179,21 +244,29 @@ export class Evaluator {
             if (key === "repeat" && str.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
             if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big();
             if (key === "match" || key === "matchAll" || key === "search") this.patternArg(args[0]);
-            if (!FIXED_SLICE_STRING.has(key)) this.tick(Math.floor(str.length / HOST_CHARS_PER_STEP));
+            if (FIXED_SLICE_STRING.has(key)) { if (str.length > FIXED_SLICE_FREE_CHARS) this.scans(str); }
+            else if (SCANNING_STRING.has(key)) this.scans(str);
+            else this.tick(Math.floor(str.length / HOST_CHARS_PER_STEP));
         }
         // A RegExp the script did not build (a page value's property, on the page realm) never passed the literal or
         // `new RegExp` check, so every one a call is handed, as receiver or argument, is checked here.
         for (const v of [obj, ...args]) if (isRegExp(v)) this.patternArg(String(v.source));
         if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big();
         if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) this.expands(obj);
-        else if (Array.isArray(obj) && ARRAY_SCANS.has(key)) this.tick(Math.floor(obj.length / HOST_ELEMENTS_PER_STEP));
+        else if (Array.isArray(obj) && ARRAY_SCANS.has(key)) this.tick(Math.floor(obj.length / HOST_SCAN_ELEMENTS_PER_STEP));
+        else if (Array.isArray(obj) && ARRAY_MOVES.has(key)) this.tick(Math.floor(obj.length / HOST_COPY_ELEMENTS_PER_STEP));
         // The ARGUMENTS: a host method may coerce, copy or walk any of them, so each is charged its size and an array
         // sharing its parts is refused before anything expands it. `Object.assign`'s target is written to, not read.
-        // The `ml` facade's members read their arguments as DATA and charge their own work (`pipe`, `jsonPath`).
-        // A string PRINTED is kept or counted, never scanned (output-clip.ts), so the console is charged only what it
-        // stringifies.
+        // An `ml` member's arguments are walked whatever its name, except the two that read them as data (DATA_MEMBERS);
+        // the answer facade's `add` coerces. A one-level reader is charged its arguments' top level (ONE_LEVEL). A
+        // keyed store hashes a string key. A string PRINTED is kept or counted, never scanned (output-clip.ts), so the
+        // console is charged only what it stringifies.
         const printing = kindOf(obj) === "console";
-        if (!facade && (str !== null || !STORES.has(key))) args.forEach((a, i) => { if (!(key === "assign" && i === 0) && !(printing && typeof a === "string")) this.expands(a); });
+        if (member === "ml" && DATA_MEMBERS.has(key)) { /* reads as data, charges its own work */ }
+        else if (member !== null) args.forEach((a) => this.expands(a));
+        else if (str === null && STORES.has(key)) { if (KEYED.has(key)) this.scans(...args); }
+        else if (ONE_LEVEL.has(key) && str === null) args.forEach((a, i) => { if (!(key === "assign" && i === 0)) this.shallow(a); });
+        else args.forEach((a) => { if (!(printing && typeof a === "string")) this.expands(a); });
         // `Array.from({ length: n })` walks n indices inside the host, with or without a mapper.
         const src = args[0] as { length?: unknown } | null;
         if (key === "from" && src !== null && typeof src === "object" && !Array.isArray(src)
@@ -350,6 +423,7 @@ export class Evaluator {
 
     private guardKey(key: unknown): string {
         this.coerces(key);   // a computed key is coerced with `String`, which walks an array whole
+        this.scans(key);     // and a string key is hashed
         const k = String(key);
         if (DENIED_PROPS.has(k)) throw new Denied(`access to '${k}' is not allowed`);
         return k;
@@ -419,7 +493,10 @@ export class Evaluator {
         // an object operand's `toString`.
         const loose = op === "==" || op === "!=";
         if (op !== "===" && op !== "!==" && !(loose && (l == null || r == null || (typeof l === "object") === (typeof r === "object")))) this.coerces(l, r);
-        if (typeof l === "string" && typeof r === "string" && op !== "+") this.tick(Math.floor(Math.min(l.length, r.length) / HOST_CHARS_PER_STEP));
+        // A string operand of anything but `+` (a rope stays O(1) there) is flattened and compared or parsed: charged its
+        // length. `===` between strings of different lengths answers from the lengths alone.
+        if (op === "===" || op === "!==") { if (typeof l === "string" && typeof r === "string" && l.length === r.length) this.scans(l, r); }
+        else if (op !== "+") this.scans(l, r);
         switch (op) {
             case "===": return l === r; case "!==": return l !== r;
             case "==": return l == r; case "!=": return l != r;
@@ -576,7 +653,13 @@ export class Evaluator {
                 // The value form: a plain function, because this is what a host method gets handed
                 // (`arr.map(fn)`) and those invoke it SYNCHRONOUSLY. A direct call goes through
                 // ourFns/callArrow instead, so only the callback case is restricted.
-                const fn = function (...args: unknown[]) { return runSync(self.callArrow(node, scope, args)); };
+                const fn = function (...args: unknown[]) {
+                    // Called by a host method that COERCES what it returns (COERCES_CALLBACK): walked before the host gets it.
+                    const coerced = self.coercingAt === self.depth;
+                    const ret = runSync(self.callArrow(node, scope, args));
+                    if (coerced) self.expands(ret);
+                    return ret;
+                };
                 this.ourFns.set(fn, { node, scope });
                 return fn;
             }
@@ -590,7 +673,7 @@ export class Evaluator {
                 const args = yield* this.evalArgs(node.args, scope);
                 this.allocation(node.ctor, args);
                 if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
-                for (const a of args) this.expands(a);
+                for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
                 const inst = new ctor(...args);
                 if (inst !== null && typeof inst === "object") this.owned.add(inst as object);
                 return this.sized(inst);
@@ -651,7 +734,7 @@ export class Evaluator {
             }
             case "Unary": {
                 const a = yield* this.eval(node.arg, scope);
-                if (node.op === "-" || node.op === "+") this.coerces(a);
+                if (node.op === "-" || node.op === "+") { this.coerces(a); this.scans(a); }
                 if (node.op === "!") return !a;
                 if (node.op === "-") return -(a as number);
                 if (node.op === "+") return +(a as number);
@@ -804,7 +887,7 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
-            this.preflight(obj, key, args, onMl || onAnswer);
+            this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
             // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
             // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
             // them and cannot grow them. (Array methods fix their length when they start and would halt anyway; the
@@ -813,9 +896,12 @@ export class Evaluator {
                 ? [obj, key === "from" ? args[0] : undefined] : [];
             for (const h of held) this.hold(h);
             let out: unknown;
-            try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); }
+            const wasCoercing = this.coercingAt;
+            if (COERCES_CALLBACK.has(key)) this.coercingAt = this.depth;
+            try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; }
+            if (out !== null && typeof out === "object" && MATERIALISED.has(Object.prototype.toString.call(out))) out = Array.from(out as Iterable<unknown>);
             // A NEW array is charged its length: what `slice`, `map` or `split` built is a copy proportional to it.
-            if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_ELEMENTS_PER_STEP));
+            if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_COPY_ELEMENTS_PER_STEP));
             // Auto-await an ml call ONLY when it actually returns a promise (getModel/config/… round-trip),
             // so a forgotten `await` still reads the value. The SYNC ml reads (queryAll, range) return a plain
             // value — pass it straight through WITHOUT yielding, so they work inside a `.map`/`.filter` callback

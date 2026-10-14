@@ -142,6 +142,65 @@ test("an array that shares its parts in a SMALL way still stringifies, prints an
     assert.deepEqual(c, { value: "circular", logs: 0 });
 });
 
+// --- HALTING: what a script's own arrow hands back, what an `ml` member is handed, what a Map or Set holds ------------
+
+test("HALTING: an arrow the host calls cannot hand it an array that shares its parts to expand", async () => {
+    // The guard walked what went INTO a host call; a callback's RETURN goes to the host unwalked, and a comparator's
+    // result is ToNumber'd, a replacer's ToString'd, a toJSON's serialised.
+    for (const [src, why] of [
+        ["JSON.stringify({ toJSON: () => d }).length", "a script-written toJSON on an object"],
+        ["const a = [1]; a.toJSON = () => d; JSON.stringify(a).length", "a toJSON written onto the script's array"],
+        ["({ toJSON: () => d })", "a returned value with a toJSON the caller's serialisation would call"],
+        ["console.log({ toJSON: () => d }); 0", "a printed value with a toJSON"],
+        ["JSON.stringify({ x: 1 }, (k, v) => k === 'x' ? d : v).length", "a stringify replacer"],
+        ["[1, 2, 3].sort(() => d)", "a sort comparator (its result is ToNumber'd)"],
+        ["'a'.replace('a', () => d).length", "a replacer (its result is ToString'd)"],
+        ["'aa'.replaceAll('a', () => d).length", "replaceAll's replacer"],
+    ]) await fallsBack(`${DAG} ${src}`, why);
+});
+
+test("HALTING: an `ml` member's arguments are walked, except the two that read them as data", async () => {
+    // ml.range does Number(a), ml.answer.add String(x), ml.dereference String(ref): each joins an array argument.
+    for (const [setup, src, why] of [
+        ["{ ml: { range: (a, b) => { Number(b === undefined ? a : b); return []; } } }", "ml.range(d)", "ml.range"],
+        ["{ ml: { dereference: (r) => String(r) } }", "ml.dereference(d)", "ml.dereference"],
+        ["{ ml: { schema: (v) => JSON.stringify(v).length } }", "ml.schema(d)", "ml.schema"],
+    ]) await fallsBack(`${DAG} ${src}`, why, { setup });
+    // The answer facade is an `add` (in the list of methods that only store), and was walked by neither rule.
+    const doc = new JSDOM("<!doctype html><body></body>").window.document;
+    const facade = Object.assign(Object.create(null), { add: (x) => (typeof x === "string" ? 1 : String(x).length), remove() {}, clear() {}, dump: () => [] });
+    await assert.rejects(evalReadonly(`let d = [1]; for (const _ of Array(30).keys()) d = [d, d]; ml.answer.add(d)`, doc, { getModel: async () => "m" }, facade, { stepBudget: 200_000 }),
+        NotInDialect, "ml.answer.add of a shared-part array is refused before the facade coerces it");
+});
+
+test("HALTING: a Map or a Set does not hide an array that shares its parts", async () => {
+    for (const [src, why] of [
+        ["const m = new Map(); m.set(d, 1); Object.fromEntries(m)", "a Map key that fromEntries coerces"],
+        ["const m = new Map(); m.set(d, 1); Object.fromEntries(m.entries())", "the same through its entries iterator"],
+        ["const s = new Set(); s.add(d); s", "a returned Set"],
+        ["const m = new Map(); m.set(1, d); console.log(m); 0", "a printed Map"],
+        ["const s = new Set(); s.add(d); Array.from(s).join().length", "Array.from of a Set, then join"],
+        ["const s = new Set(); s.add(d); [...s.values()].join().length", "a Set's values iterator, spread"],
+    ]) await fallsBack(`${DAG} ${src}`, why);
+});
+
+// --- HALTING: a long string that is consumed where no charge was ---------------------------------------------------
+
+test("HALTING: a long string built by + is charged where it is hashed, compared, coerced or sliced", async () => {
+    // `s + i` is a rope, O(1) to build; a Set lookup, a property key, a loose comparison or a fixed-slice read flattens
+    // and hashes it: 8M characters, milliseconds, at the step cost of the 2-character version.
+    const S = "const s = 'ab'.repeat(4000000); let n = 0;";
+    for (const [src, why] of [
+        ["const set = new Set(); for (const i of Array(250000).keys()) { if (set.has(s + i)) n++; } n", "Set.has"],
+        ["const m = new Map(); for (const i of Array(250000).keys()) { if (m.get(s + i)) n++; } n", "Map.get"],
+        ["const o = {}; for (const i of Array(250000).keys()) { if (o[s + i]) n++; } n", "a computed property key"],
+        ["for (const i of Array(250000).keys()) { if ((s + i) == 5) n++; } n", "a loose comparison with a number"],
+        ["for (const i of Array(250000).keys()) { n += (s + i).charCodeAt(5); } n", "charCodeAt"],
+        ["for (const i of Array(250000).keys()) { n += (s + i).startsWith('ab') ? 1 : 0; } n", "startsWith"],
+        ["for (const i of Array(250000).keys()) { n += -(s + i) || 0; } n", "unary minus"],
+    ]) await fallsBack(`${S} ${src}`, why, { stepBudget: STEP_BUDGET, ms: 8000 });
+});
+
 // --- HALTING: a loop of O(n) host calls --------------------------------------------------------------------------------
 
 test("HALTING: a host call is charged for the size of what it walks, so a loop of them is bounded by the budget", async () => {
@@ -154,6 +213,19 @@ test("HALTING: a host call is charged for the size of what it walks, so a loop o
         ["const s = 'ab'.repeat(4000000); let n = 0; for (const _ of Array(100000).keys()) n += s.split('b').length; n", "split of 8M characters, in a loop"],
         ["const s = 'ab'.repeat(4000000); let n = 0; for (const _ of Array(100000).keys()) { const [c] = s; n++; } n", "destructuring 8M characters, in a loop"],
     ]) await fallsBack(src, why);
+});
+
+test("the charge leaves ordinary surveys alone: a needle list over a long text, a reduce that concatenates, keys per item", async () => {
+    for (const [src, want, why] of [
+        ["const t = 'lorem ipsum dolor sit amet '.repeat(7500); const names = Array.from({ length: 1000 }, (_, i) => 'product ' + i); names.filter(n => t.includes(n)).length", 0, "1,000 names checked with includes against 200,000 characters"],
+        ["const rows = Array.from({ length: 20000 }, (_, i) => ({ i })); rows.reduce((acc, r) => acc.concat([r]), []).length", 20000, "reduce with concat over 20,000 rows"],
+        ["const data = { items: Array.from({ length: 20000 }, (_, i) => ({ id: i, tags: ['a', 'b', 'c'], meta: { x: 1, y: 2 } })) }; data.items.slice(0, 200).map(it => Object.keys(data).length + it.id).length", 200, "Object.keys of a large value, per item"],
+        ["const g = {}; for (const i of Array(50000).keys()) (g['k' + (i % 50)] = g['k' + (i % 50)] || []).push({ i }); Object.entries(g).map(([k, v]) => k + ':' + v.length).length", 50, "Object.entries of groups"],
+        ["const t = 'x'.repeat(16000); let n = 0; for (const i of Array(16000).keys()) n += t.charCodeAt(i); n > 0", true, "charCodeAt by index over a 16,000-character string"],
+    ]) {
+        const r = await inWorker(src, { stepBudget: STEP_BUDGET });
+        assert.deepEqual(r, { value: want, logs: 0 }, why);
+    }
 });
 
 test("the charge leaves an ordinary survey alone: a filter-and-map over 20,000 rows still answers at the real budget", async () => {
