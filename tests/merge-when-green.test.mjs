@@ -86,12 +86,12 @@ test("a checkout's bench sweeps, scoreboard and uncommitted files are named; oth
     mkdirSync(path.join(bench, "not-a-sweep"), { recursive: true });
     writeFileSync(path.join(bench, "scores.sqlite"), "");
     const found = diskOnly(dir, "?? tests/e2e/panel/api-docs.json\n M src/x.ts\n");
-    assert.deepEqual(found, { sweeps: ["my-sweep"], scoreDbs: ["scores.sqlite"], files: ["?? tests/e2e/panel/api-docs.json", " M src/x.ts"], server: null, held: [] });
+    assert.deepEqual(found, { sweeps: ["my-sweep"], scoreDbs: ["scores.sqlite"], files: ["?? tests/e2e/panel/api-docs.json", " M src/x.ts"], servers: [], held: [] });
 });
 
 test("a clean checkout with no bench directory has nothing to remind about", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "mwg-"));
-    assert.deepEqual(diskOnly(dir, ""), { sweeps: [], scoreDbs: [], files: [], server: null, held: [] });
+    assert.deepEqual(diskOnly(dir, ""), { sweeps: [], scoreDbs: [], files: [], servers: [], held: [] });
 });
 
 test("a page server a finished sweep left running is found while it lives, and forgotten once its process is gone", () => {
@@ -99,9 +99,31 @@ test("a page server a finished sweep left running is found while it lives, and f
     const bench = path.join(dir, "tests/e2e/artifacts/bench");
     mkdirSync(bench, { recursive: true });
     writeFileSync(path.join(bench, "server.json"), JSON.stringify({ pid: process.pid, port: 7331, url: "http://127.0.0.1:7331", dir: "x" }));
-    assert.equal(diskOnly(dir, "").server.pid, process.pid, "this process stands in for a live server");
+    assert.deepEqual(diskOnly(dir, "").servers.map((x) => x.pid), [process.pid], "this process stands in for a live server");
     writeFileSync(path.join(bench, "server.json"), JSON.stringify({ pid: 2 ** 22 + 12345, port: 7331, url: "u", dir: "x" }));
-    assert.equal(diskOnly(dir, "").server, null, "a pid with no process is a stale file, not a server");
+    assert.deepEqual(diskOnly(dir, "").servers, [], "a pid with no process is a stale file, not a server");
+});
+
+test("every page server this checkout left is found, not only the last server.json: the memory ledger lists each sweep's", async () => {
+    const { spawn } = await import("node:child_process");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "mwg-"));
+    const bench = path.join(dir, "tests/e2e/artifacts/bench");
+    mkdirSync(bench, { recursive: true });
+    const sleeper = () => spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+    const [a, b, other] = [sleeper(), sleeper(), sleeper()];
+    try {
+        // Three sweeps served from this checkout, then one from another; server.json names only the newest.
+        writeFileSync(path.join(bench, "server.json"), JSON.stringify({ pid: b.pid, url: "http://127.0.0.1:2", dir: path.join(bench, "s2") }));
+        const ledger = path.join(dir, "ledger.json");
+        writeFileSync(ledger, JSON.stringify([
+            { kind: "page", pid: a.pid, sweep: "s1", repo: dir }, { kind: "page", pid: b.pid, sweep: "s2", repo: dir },
+            { kind: "page", pid: other.pid, sweep: "s9", repo: "/elsewhere" }, { kind: "runner", pid: process.pid, sweep: "s3", repo: dir },
+            { kind: "page", pid: 2 ** 22 + 12345, sweep: "gone", repo: dir },
+        ]));
+        const found = diskOnly(dir, "", { ledger }).servers;
+        assert.deepEqual(found.map((x) => x.pid).sort(), [a.pid, b.pid].sort(), "both servers, once each; not another checkout's, not a running sweep, not a dead pid");
+        assert.equal(found.find((x) => x.pid === a.pid).dir, path.join(bench, "s1"), "the ledger's says which sweep it served");
+    } finally { for (const p of [a, b, other]) p.kill(); }
 });
 
 test("a run the bench left held open is listed while it lives, and a dead or unreadable entry is not", () => {

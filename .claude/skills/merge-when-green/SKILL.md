@@ -42,8 +42,9 @@ merge takes them with it. Both have happened: a whole sweep's runs, and an inter
   has is left in place: rename one and run again.
 - Uncommitted files are yours to commit (a new branch from main, if this PR is done) or stash. They are never moved.
 - `--discard` merges anyway, when the results are not wanted: nothing is moved, and they go when the worktree is removed.
-- A page server a finished sweep left running from a linked worktree (`server.json`, from `serve.mjs`) is named, and
-  stopped once the merge goes ahead: a worktree removed under it leaves it serving a directory that is gone. The script
+- Every page server a sweep left running from a linked worktree is named, and stopped once the merge goes ahead: the
+  one in `server.json` (from `serve.mjs`, one file per checkout, so only the newest) and each `page` entry the bench's
+  memory ledger holds for that worktree (one per `--serve` sweep). One left running keeps memory the budget counts, and a worktree removed under it leaves it serving a directory that is gone. The script
   prints the `serve.mjs <sweep dir>` that serves the sweep again from wherever it now lives.
 - A run a sweep left HELD open (`held.json`, a list from the bench's `hold`) is named with its attach line, and
   released once the merge goes ahead, so it stops holding a browser and a model slot. Entries whose process is gone are
