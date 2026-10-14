@@ -1160,9 +1160,26 @@ export const googleSheetId = (url: string): string | null => {
  *  A table BY VALUE stops the walk: its cells may hold sheet URLs and are DATA the scan must not escalate.
  *  Pure; shared by the page loop and the (design-A) background auto-approve so both agree on "which
  *  sheets need consent". */
+/**
+ * A `tables` argument a model sent as a JSON STRING of the map form (`"{\"df\": \"https://…\"}"`), decoded to that map;
+ * null for anything else. The schema's `oneOf` string|object reads to some models as "a string", and they serialise the
+ * map into it (glm-4.7-flash did so in most of its failed table runs, 2026-10-10). No source starts with `{` (a selector,
+ * a URL, an `@tool:` pointer, 'current'), so the decoding is unambiguous. The loader (`tableSpecs`) and the consent
+ * check (`externalSheetIds`) both decode through here, or a sheet hidden in the string would load without its card.
+ */
+export const tablesMapFromJson = (v: unknown): Record<string, unknown> | null => {
+    if (typeof v !== "string" || !/^\s*\{/.test(v)) return null;
+    try {
+        const o: unknown = JSON.parse(v);
+        return o && typeof o === "object" && !Array.isArray(o) ? o as Record<string, unknown> : null;
+    } catch { return null; }
+};
+
 export const externalSheetIds = (args: unknown): string[] => {
     const out: string[] = [];
     const walk = (v: unknown, depth: number): void => {
+        const decoded = tablesMapFromJson(v);
+        if (decoded) { walk(decoded, depth + 1); return; }
         if (typeof v === "string") { if (v !== "current") { const id = googleSheetId(v); if (id) out.push(id); } return; }
         if (!v || typeof v !== "object" || depth > 8) return;   // depth: a model-written arg tree, not a data structure to explore
         const o = v as { columns?: unknown; rows?: unknown };

@@ -7,7 +7,7 @@
 // members are still on `window.ml`, so `this` inside them is still the API object.
 import { makeBackgroundTaskPromise } from "../bridge";
 import type { TableValue, TableSource, MlApi, TablePreview, ShotBox } from "../contract";
-import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "../dom/dom";
+import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable, tablesMapFromJson } from "../dom/dom";
 import { mlFetchCache } from "./ml-fetch-cache";
 import { pyVarNameError } from "../python/python-env";
 import { isTable } from "../table/table-brand";
@@ -99,7 +99,8 @@ export function tableSpecs(tables: unknown): { name: string; src: string | Eleme
     // which is the entire point of the map form, so say that — instead of letting Object.entries turn
     // the indices into "0"/"1" and reporting `"0" isn't a valid Python variable name`, a name the model
     // never wrote and could not act on (it retried the same call and looped).
-    let tableArg: unknown = tables;
+    // A map sent as a JSON string is the map (tablesMapFromJson says why, and why the consent check decodes it too).
+    let tableArg: unknown = tablesMapFromJson(tables) ?? tables;
     if (Array.isArray(tableArg)) {
         if (tableArg.length === 0) tableArg = null;
         else if (tableArg.length === 1) tableArg = tableArg[0];
@@ -149,6 +150,10 @@ export const _loadTable = async function(this: MlApi, name: string, src: string 
     // re-parse, and no `read_csv` in the sandbox (which has no network anyway). The cache is the gate:
     // a URL that was never fetched is refused rather than fetched, so this cannot become an egress that
     // skips the approval `fetch_url` went through.
+    // A path on this page's site ("/sales.csv", "./data.csv") is that URL: no selector starts with "/" or "./", and
+    // models pass the path the task named after fetch_url read it absolute. Only on a web page; the cache stays the gate.
+    if (typeof src === "string" && /^\.?\/(?!\/)/.test(src) && typeof location !== "undefined" && /^https?:$/.test(location.protocol))
+        src = new URL(src, location.href).href;
     if (typeof src === "string" && /^https?:\/\//i.test(src) && !googleSheetCsvUrl(src)) {
         const cached = mlFetchCache.get(src);
         if (cached?.table) {

@@ -7,7 +7,7 @@ import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import { type MlTool, type ToolResult } from "../contract/contract-agent";
 import { type RenderDescriptor } from "../contract/contract-render";
-import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom/dom";
+import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue, tablesMapFromJson } from "../dom/dom";
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
@@ -129,8 +129,9 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const addIfSelector = (name: string, src: unknown) => {
                 if (typeof src === "string" && src !== "current" && !googleSheetCsvUrl(src)) domSelectors.push([name, src]);
             };
-            if (typeof tables === "string") addIfSelector("df", tables);
-            else if (tables) for (const [name, src] of Object.entries(tables)) addIfSelector(name, src);
+            const tablesArg = tablesMapFromJson(tables) ?? tables;
+            if (typeof tablesArg === "string") addIfSelector("df", tablesArg);
+            else if (tablesArg) for (const [name, src] of Object.entries(tablesArg)) addIfSelector(name, src);
             let tableNote = "";
             for (const [name, sel] of domSelectors) {
                 try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — loaded the FIRST as \`${name}\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ }

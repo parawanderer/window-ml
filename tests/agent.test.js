@@ -2713,6 +2713,21 @@ test("tables: an external sheet wrapped in an array still escalates to approval"
     assert.equal(step.approval, "user");
 });
 
+test("tables: a map sent as a JSON STRING is the map (models serialise the oneOf's object form into its string form)", async () => {
+    const asString = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: '{"df": "current"}' } });
+    const asObject = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: { df: "current" } } });
+    assert.equal(String(asString.step.result), String(asObject.step.result), "the string does what the object does");
+    assert.doesNotMatch(String(asString.step.result), /not a valid CSS selector/, "never read as a selector");
+    assert.equal(asString.approvals, asObject.approvals, "same approval path");
+});
+
+// The same accommodation must not hide a sheet from the consent check: the loader decodes the string, so the check must.
+test("tables: an external sheet inside a JSON-STRING map still escalates to approval", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: '{"s": "https://docs.google.com/spreadsheets/d/JSON1/edit"}' } });
+    assert.equal(approvals, 1, "a sheet inside the string is still an external sheet");
+    assert.equal(step.approval, "user");
+});
+
 test("tables: a MULTI-element array names the real problem (no names) instead of failing on \"0\"", async () => {
     const { step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { tables: ["#a", "#b"] } });
     assert.doesNotMatch(String(step.result), /"0" isn't a valid Python variable name/, "the old message pointed at an index");
