@@ -9,6 +9,10 @@ import { jsonShape, jsonValue } from "../dom/dom";
 import { type StoredColumnReader, asTable, tableShape } from "../table/table-data";
 import { currentHasTool } from "./tool-exec";
 
+/** Where `ml.dereference` sends a read's advisory instead of the page's console: an option key only module code holds, so
+ *  an exec, whose `console` is a parameter bound to its collector (tools.ts), still shows the model the advisory. */
+export const DEREF_WARN: unique symbol = Symbol("deref-warn");
+
 /**
  * The object `ml.dereference` resolves to: the pointer's text, with what the loop knows about it attached.
  *

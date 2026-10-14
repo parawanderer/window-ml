@@ -19,3 +19,7 @@ export const SB_STYLE = "ml-sb-style";
  *  host with one, and a root holding a child with one ({@link SB_STYLE}): our roots are closed to the page, and no tool of
  *  the page's may open them. */
 export const isOwnUiId = (id: string): boolean => /^ml-(sb-|lightbox|highlight)/.test(id);
+
+/** The event the main-world DOM tools (dom.ts) dispatch on window to get the reader of the closed shadow roots that
+ *  shadow-patch.ts captured, which keeps them in its closure. */
+export const CLOSED_ROOTS_EVENT = "wml-closed-roots";

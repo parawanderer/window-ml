@@ -10,7 +10,8 @@ import assert from "node:assert";
 function mockChrome({ onEval, permission = true } = {}) {
     const calls = [];
     const listeners = new Set();
-    const fire = (method, params, tabId = 7) => [...listeners].forEach(fn => fn({ tabId }, method, params));
+    // A binding call comes from the page's main world (context 1, which the probe reports) unless a test names another.
+    const fire = (method, params, tabId = 7) => [...listeners].forEach(fn => fn({ tabId }, method, { executionContextId: 1, ...params }));
     globalThis.chrome = {
         permissions: { contains: async () => permission },
         debugger: {
@@ -20,6 +21,9 @@ function mockChrome({ onEval, permission = true } = {}) {
             onEvent: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
             sendCommand: async (target, method, params) => {
                 calls.push([method, params]);
+                // The top frame F1, whose main world is context 1: reported as Runtime is enabled, as Chrome does.
+                if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "F1" } } };
+                if (method === "Runtime.enable") { [...listeners].forEach(fn => fn({ tabId: 7 }, "Runtime.executionContextCreated", { context: { id: 1, auxData: { isDefault: true, frameId: "F1" } } })); return undefined; }
                 if (method !== "Runtime.evaluate") return undefined;
                 const logs = onEval ? (onEval(fire, params.expression) || []) : [];
                 return { result: { value: { __mlWrapped: true, v: "42", logs } } };
@@ -49,14 +53,15 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
     assert.ok(methods.includes("Runtime.addBinding"), "the page → client binding is installed");
     // The wrapper must tee through the binding IN ADDITION to collecting, so the model still gets everything.
     const expr = calls.find(c => c[0] === "Runtime.evaluate")[1].expression;
-    assert.match(expr, /__mlCdpStream\(JSON\.stringify/, "the patched console calls the binding");
+    assert.match(expr, /const __b = globalThis\.__mlCdpStream;/, "the wrapper takes the binding as it starts");
+    assert.match(expr, /__b\(JSON\.stringify/, "the collector calls the binding");
     assert.match(expr, /__logs\.push\(__s\)/, "…and still collects the line for the model-facing result");
     assert.match(expr, /ts: Date\.now\(\)/, "the PAGE stamps each line (it is the executor), not the SW");
 
     assert.ok("ok" in r, "the exec still succeeded");
     assert.deepEqual(r.logs, ["alpha", "beta"], "the structured console comes back for the Out render");
     assert.equal(r.value, "42");
-    assert.match(r.text, /console:\nalpha\nbeta\n\nvalue: 42/, "the model-facing string is unchanged");
+    assert.match(r.text, /console \(page-writable\):\nalpha\nbeta\n\nvalue: 42/, "the model-facing string, its console marked as one the page can write into");
     // Teardown: the binding is dropped and we stop listening, so a later page call can't reach a dead sink.
     assert.ok(methods.includes("Runtime.removeBinding"), "the binding is removed when the exec ends");
     assert.equal(listeners.size, 0, "the event listener is removed");

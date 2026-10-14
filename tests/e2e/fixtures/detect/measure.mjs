@@ -76,7 +76,7 @@ export function summarize(reports, since = 0) {
     const probe = rs.find((e) => e.kind === "ext-probe");
     return {
         webdriver: env.webdriver, headlessUa: /HeadlessChrome/.test(env.ua || ""), plugins: env.plugins, automationGlobals: env.automationGlobals,
-        attachShadowNative: env.attachShadowNative, attachShadowName: env.attachShadowName, mlClosedRootsAtLoad: env.mlClosedRoots,
+        attachShadowNative: env.attachShadowNative, attachShadowName: env.attachShadowName, mlClosedRootsAtLoad: env.mlClosedRoots, closedRootReaderAtLoad: env.closedRootReader,
         cdpConsoleGetter: uniq(states("cdpConsoleGetter").flat()).sort(),
         mlCdpStream: states("mlCdpStream").includes(true), mlIsoStream: states("mlIsoStream").includes(true),
         globalsAdded: uniq(states("globalsAdded").flat()).filter((k) => k !== "pageCall").sort(),

@@ -38,7 +38,10 @@
             outer: [window.outerWidth, window.outerHeight], inner: [window.innerWidth, window.innerHeight], screen: [screen.width, screen.height, screen.availWidth, screen.availHeight],
             screenXY: [window.screenX, window.screenY], dpr: window.devicePixelRatio, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
             hardwareConcurrency: n.hardwareConcurrency, webgl,
-            mlClosedRoots: "__mlClosedRoots" in window, attachShadowNative: isNative(Element.prototype.attachShadow),
+            mlClosedRoots: "__mlClosedRoots" in window,
+            // The ask that replaced that global: shadow-patch.js answers it with a reader (docs/dev/detection-surface.md, row 2).
+            closedRootReader: (() => { const d = {}; try { window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: d })); } catch { /* none */ } return typeof d.read === "function"; })(),
+            attachShadowNative: isNative(Element.prototype.attachShadow),
             attachShadowSrc: short(fnToString.call(Element.prototype.attachShadow), 120), attachShadowName: Element.prototype.attachShadow.name,
             mlAtLoad: "ml" in window, globalsAtLoad: keys.length,
             navType: (performance.getEntriesByType("navigation")[0] || {}).type || null, referrer: document.referrer, historyLength: history.length,

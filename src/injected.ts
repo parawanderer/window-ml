@@ -19,7 +19,7 @@ import { suspiciousChars } from "./agent/security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
 import { makeDomTools, answerMediaShape } from "./tools/tools";
 import { pipeStages } from "./pointers/token-pipe";
-import { DerefText } from "./tools/deref-read";
+import { DerefText, DEREF_WARN } from "./tools/deref-read";
 import { makeBackgroundTaskPromise } from "./bridge";
 import { makeDynamicTools } from "./ml/dynamic-tools";
 import type { DynamicToolNamespace } from "./ml/dynamic-tools";
@@ -120,7 +120,10 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
          * @returns The value, reduced by the pipe. Rejects with an actionable message when the pointer doesn't
          *          exist (a MemoryFault naming the nearest real pointers) or a pipe stage is wrong.
          */
-        dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<DerefValue> {
+        dereference: async function(ref: string, options: { pipe?: string | string[] | null } = {}): Promise<DerefValue> {
+            const pipe = options?.pipe ?? null;
+            // An exec's own `ml` passes its console collector under a key the page cannot name (deref-read.ts).
+            const warn = (options as { [DEREF_WARN]?: (s: string) => void } | undefined)?.[DEREF_WARN];
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
             // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
@@ -128,7 +131,7 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
             // The advisory goes to console, NOT into the return value — this result is about to be parsed,
             // split or piped by the calling script, and exec captures console output into the step's result
             // and its live stream, so the warning still reaches the model without touching the data.
-            if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+            if (read.warning) { try { (warn ?? console.warn)(read.warning); } catch { /* no console in this realm */ } }
             // A String subclass, so every previous spelling still works while `.type`/`.json`/`.table`
             // answer what the caller used to have to sniff out of the bytes. `.pipe()` re-reads the SAME
             // pointer with more stages rather than piping the text it already holds — the store keeps the
@@ -136,7 +139,7 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
             // Always a promise here: a `pipe` re-read cannot be pre-resolved (the stages are only known now),
             // so the sync path in `exec` deliberately falls through to this one. Wrapped so the type is the
             // promise it actually is rather than the union the declaration allows.
-            const again = (stages: string | string[]): Promise<DerefValue> => Promise.resolve(window.ml.dereference(ref, { pipe: stages }));
+            const again = (stages: string | string[]): Promise<DerefValue> => Promise.resolve(window.ml.dereference(ref, { pipe: stages, ...(warn ? { [DEREF_WARN]: warn } : {}) } as { pipe: string | string[] }));
             return new DerefText(read.value, read.meta, again, read.readColumns);
         },
         /**

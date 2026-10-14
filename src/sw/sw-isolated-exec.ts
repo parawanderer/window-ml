@@ -116,8 +116,8 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
                 : "ml.dereference(" + JSON.stringify(String(ref)) + ") was not named in the script, so its value was not sent with it. Write the pointer as a literal (@tool:<id>) and run it again.");
             const r = e.r;
             if (r.error !== undefined && r.error !== null) throw new Error(r.error);
-            if (r.warning) console.warn(r.warning);
-            return __mlIsoKit.isoValue(r, e.i, __chanAsk);
+            if (r.warning) __C.warn(r.warning);
+            return __mlIsoKit.isoValue(r, e.i, __chanAsk, (s) => __C.warn(s));
         },
     };
     const ml = new Proxy(Object.freeze(__t0), { get(t, k) {
@@ -126,16 +126,18 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
         return k in t ? t[k] : __no(k);
     }, set() { return false; } });
     const state = (globalThis.__mlState ??= {});
-    const __logs = [], __M = ["log", "info", "warn", "error", "debug"], __S = {};
-    let __c = 0, __d = 0;
-    for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => { const __s = a.map((x) => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch { return String(x); } }).join(" "); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${stream ? `try { const __t = __s + "\\n", __ts = Date.now(); ${stream}; } catch {}` : ""} }; }
+    // \`console\` is a parameter of the script bound to this collector, as in the main world (tools.ts): the world's own
+    // console is never replaced, and a line after the call returns goes to it.
+    const __logs = [], __M = ["log", "info", "warn", "error", "debug"], __N = console, __C = Object.create(__N);
+    let __c = 0, __d = 0, __on = true;
+    for (const m of __M) Object.defineProperty(__C, m, { configurable: true, enumerable: true, writable: true, value: (...a) => { if (!__on) { __N[m](...a); return; } const __s = a.map((x) => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch { return String(x); } }).join(" "); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${stream ? `try { const __t = __s + "\\n", __ts = Date.now(); ${stream}; } catch {}` : ""} } });
     try {
-        const __v = await (async (ml, state) => ${inner})(ml, state);
+        const __v = await (async (ml, state, console) => ${inner})(ml, state, __C);
         const __vs = __v === undefined ? "(undefined)" : (typeof __v === "string" || __v instanceof String) ? String(__v) : (typeof Element !== "undefined" && __v instanceof Element) ? __v.outerHTML.slice(0, 2000) : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
         return { __mlWrapped: true, v: __vs, logs: __logs, dropped: __d };
     } catch (e) {
         return { __mlWrapped: true, threw: (e && e.stack) || String(e), logs: __logs, dropped: __d };
-    } finally { for (const m of __M) console[m] = __S[m]; }
+    } finally { __on = false; }
 })()`;
 }
 

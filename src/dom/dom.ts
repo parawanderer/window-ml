@@ -4,6 +4,7 @@
 import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
 import { looksCsv } from "../table/table-data";           // the delimiter sniff behind the "csv" classification (table-data has no dom import → no cycle)
 import type { ElementContext } from "../contract/contract-run";
+import { CLOSED_ROOTS_EVENT } from "../ids";
 
 /**
  * Collapse whitespace, then truncate to a max length with a trailing ellipsis.
@@ -305,18 +306,30 @@ const selectorWithin = (target: Element, scope: Document | ShadowRoot): string =
 };
 
 // --- Closed-shadow-root piercing (`pierceClosedShadow`, on by default) ------------------------------
-// The document_start patch (shadow-patch.ts, main world) stashes every CLOSED shadow root in
-// window.__mlClosedRoots as it's created. We CONSULT that map only when the user turned the flag on —
+// The document_start patch (shadow-patch.ts, main world) stashes every CLOSED shadow root in a WeakMap in its own
+// closure as it's created, and hands this module a READER for it once (CLOSED_ROOTS_EVENT). We CONSULT it only when
+// the user turned the flag on —
 // injected.ts calls setPierceClosedShadow() with the run's config before the DOM tools execute. Off →
 // capturedClosedRoot always returns null and every closed root stays unreachable. This is the single seam; all traversal (deepQueryAll, `>>>` resolution, describeSkeleton, the
 // stats/host scans) reads closed roots through traversableRoot/capturedClosedRoot so the feature is on or
 // off uniformly.
-// The flag and the captured-roots map both live on `window` (the main world, where `window === globalThis`)
-// — the map because shadow-patch.js sets it there at document_start, the flag so the same lives beside it and
-// stays reachable from the one `window` both this module and the patch share.
+// Neither the flag nor the map is on `window`: a page global names the extension to any page, and a page-writable map
+// would let the page put a root of its choosing behind any host (docs/dev/detection-surface.md, rows 2 and 9).
+let pierceClosed = false;   // state: plumbing — set per run from config by ml-agent-run.ts / _adoptRun; the last run to start wins (docs/dev/state.md)
 /** Enable/disable closed-shadow-root piercing for subsequent DOM-tool calls (set per agent run from config). */
-export const setPierceClosedShadow = (on: boolean): void => {
-    (window as unknown as Record<string, unknown>).__mlPierceClosed = on;
+export const setPierceClosedShadow = (on: boolean): void => { pierceClosed = on; };
+
+/** The reader shadow-patch.ts handed over: undefined until asked, null when the patch is absent (it never answered). */
+let patchReader: ((el: Element) => ShadowRoot | null) | null | undefined;   // state: cache — asked once per document
+/** The closed-root reader of the document_start patch, asked for once: shadow-patch.ts answers CLOSED_ROOTS_EVENT on
+ *  window with it. null when the patch did not run in this document. */
+const closedRootPatchReader = (): ((el: Element) => ShadowRoot | null) | null => {
+    if (patchReader !== undefined) return patchReader;
+    // Null-prototype, so an accessor the page put on Object.prototype neither takes the reader nor answers for it.
+    const detail = Object.create(null) as { read?: unknown };
+    try { window.dispatchEvent(new CustomEvent(CLOSED_ROOTS_EVENT, { detail })); } catch { /* no window/CustomEvent in this realm */ }
+    patchReader = typeof detail.read === "function" ? detail.read as (el: Element) => ShadowRoot | null : null;
+    return patchReader;
 };
 
 /** How a CLOSED root is read in a world that has a better way than the main world's load-time capture: the content
@@ -331,9 +344,8 @@ export const setClosedRootReader = (fn: (el: Element) => ShadowRoot | null): voi
  *  can't see (a declarative `shadowrootmode="closed"` or native root). */
 export const capturedClosedRoot = (el: Element): ShadowRoot | null => {
     if (closedRootReader) return closedRootReader(el);
-    const w = window as unknown as { __mlPierceClosed?: boolean; __mlClosedRoots?: WeakMap<Element, ShadowRoot> };
-    if (!w.__mlPierceClosed) return null;
-    return w.__mlClosedRoots?.get(el) ?? null;
+    if (!pierceClosed) return null;
+    return closedRootPatchReader()?.(el) ?? null;
 };
 
 /** The shadow root the DOM tools should TRAVERSE for `el`: its OPEN root, or — when piercing is on — a

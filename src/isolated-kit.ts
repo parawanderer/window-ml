@@ -27,16 +27,17 @@ const NO_CHANNEL = {
  * @param read the read: its text and metadata
  * @param i which of the call's named reads it came from, the pointer a `.pipe()` re-reads
  * @param ask the call's channel, or undefined when it has none
+ * @param warn where a re-read's advisory goes: the exec's console collector (its `console` is a parameter)
  * @returns the page's pointer value
  */
-export function isoValue(read: { value?: string; meta?: DerefMeta }, i: number, ask?: IsoAsk): DerefValue {
+export function isoValue(read: { value?: string; meta?: DerefMeta }, i: number, ask?: IsoAsk, warn: (s: string) => void = (s) => console.warn(s)): DerefValue {
     // `.pipe()` re-reads the SAME pointer with new stages, as the page's `ml.dereference` does (injected.ts).
     const again = async (stages: string | string[]): Promise<DerefValue> => {
         if (!ask) throw new Error(NO_CHANNEL.pipe);
         // As the page's `pipeStages` reads a pipe: an array keeps its strings only, anything else not a string is no pipe.
         const r = await ask({ op: "pipe", i, stages: Array.isArray(stages) ? stages.filter((s) => typeof s === "string") : typeof stages === "string" ? stages : "" }) as { value?: string; warning?: string; meta?: DerefMeta };
-        if (r?.warning) { try { console.warn(r.warning); } catch { /* no console */ } }
-        return isoValue(r ?? {}, i, ask);
+        if (r?.warning) { try { warn(r.warning); } catch { /* no console */ } }
+        return isoValue(r ?? {}, i, ask, warn);
     };
     const key = read.meta?.table ? read.meta.value : undefined;
     const readColumns = key && ask

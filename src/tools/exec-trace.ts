@@ -25,6 +25,17 @@ export function rawEvalLine(stack: string | undefined): number | null {
     return null;
 }
 
+/**
+ * The fast path's wrapper: `new Function(...params, …)` returning a CLOSURE that direct-evals the source, so the code
+ * sees the parameters in scope while a page function it calls reads only `src` through `fn.caller.arguments` (the
+ * wrapper is sloppy, so a direct `.caller` chain is open): never the console collector, `state` or `ml`.
+ * @param params the names the source sees (`state`, `ml`, `console`)
+ * @returns a function taking their values, which returns the evaluator of one source
+ */
+export function evalWrapper(params: string[]): (...values: unknown[]) => (src: string) => unknown {
+    return new Function(...params, "return function (src) { return eval(src); };") as (...values: unknown[]) => (src: string) => unknown;
+}
+
 /** The AsyncFunction constructor — not a global, only reachable through an async function's prototype. */
 const AsyncFunction = Object.getPrototypeOf(async () => { /* probe */ }).constructor as
     { new (...a: string[]): (...a: unknown[]) => Promise<unknown> };
@@ -48,8 +59,7 @@ export async function evalLineOffset(kind: "eval" | "async", params: string[]): 
     let measured = 0;
     try {
         if (kind === "eval") {
-            const fn = new Function(...params, "src", "return eval(src);") as (...a: unknown[]) => unknown;
-            fn(...params.map(() => undefined), PROBE);
+            evalWrapper(params)(...params.map(() => undefined))(PROBE);
         } else {
             const fn = new AsyncFunction(...params, PROBE);
             await fn(...params.map(() => undefined));

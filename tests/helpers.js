@@ -654,6 +654,7 @@ function loadDomWorld(html = "", { url } = {}) {
         // "not a URL", which silently takes whichever branch a failed parse means.
         URL,
         Event: win.Event,
+        CustomEvent: win.CustomEvent,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).
         Element: win.Element,
@@ -664,8 +665,10 @@ function loadDomWorld(html = "", { url } = {}) {
         clearTimeout: win.clearTimeout.bind(win)
     };
     vm.createContext(context);
+    // The document_start patch first, as the browser runs it: it captures closed roots and answers the DOM tools' ask.
+    vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
-    return { ml: win.ml, window: win, document: win.document };
+    return { ml: win.ml, window: win, document: win.document, context };
 }
 
 // Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom
