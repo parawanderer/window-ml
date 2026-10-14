@@ -110,7 +110,7 @@ the worker, and the page answers geometry only):
       nothing and left them behind. A throw later in the setup now unwinds those registrations (`settle`), and a handler
       that throws still answers the page. A START_RUN/RESUME_RUN naming a live run is refused (a second turn replaced the
       controller the person's Stop reaches), and PAGE_CANCEL_RUN is bound to the run's tab (an approved page on another
-      tab stopped the run, or cancelled its open gate) (redteam-run-payload.test.mjs).
+      tab stopped the run, or cancelled its open gate) (redteam-run-payload.test.mjs): #642.
 
 ## In progress
 
