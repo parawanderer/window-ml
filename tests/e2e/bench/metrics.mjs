@@ -303,6 +303,27 @@ export function recovery(events) {
     return { faults: scored.length, recovered: recovered.length, rate: scored.length ? recovered.length / scored.length : 0 };
 }
 
+/** An exec result saying a page global was not there: what an isolated world answers for `store` or `window.__APP__.x`. */
+const GLOBAL_MISS = /\b[\w$.]+ is not defined\b|Cannot read propert(?:y|ies) of undefined/;
+
+/**
+ * EXEC'S WORLD — what a default world cost the run (the exec-world spec): its exec calls, the ones whose result says a
+ * page global was missing, and how many of those the NEXT exec retried with `world: "page"`. `null` for a run with no
+ * exec, so a report averages over the runs that used it.
+ */
+export function execWorld(events) {
+    const execs = stepsOf(events).filter((s) => s.tool === "exec");
+    if (!execs.length) return { calls: null, misses: null, pageRetries: null };
+    const text = (s) => { const v = s.modelResult ?? s.result ?? s.error ?? ""; return typeof v === "string" ? v : JSON.stringify(v); };
+    let misses = 0, pageRetries = 0;
+    execs.forEach((s, i) => {
+        if (!GLOBAL_MISS.test(text(s))) return;
+        misses++;
+        if (execs[i + 1]?.arguments?.world === "page") pageRetries++;
+    });
+    return { calls: execs.length, misses, pageRetries };
+}
+
 /**
  * The delegated sub-calls' tokens (look/locate/verify asking the vision reader) spent so far. A step's
  * `subUsage` is the SESSION's running total (`{ prompt, completion, calls }`, reset once when the session
@@ -446,6 +467,7 @@ export function measureRun(run, task = {}, opts = {}) {
         reEmission: reEmission(events, k),
         pointers: pointerUse(events),
         recovery: recovery(events),
+        execWorld: execWorld(events),
         focus: focusStep(run),
         stream: streamUse(events, run.stream ?? null),
     };
@@ -478,6 +500,8 @@ export const COLUMNS = [
     { key: "faultRate", label: "faults", about: "Share of dereference calls that failed on a bad pointer (mistyped or invented).", agg: "spread", get: (m) => m.pointers.faultRate, digits: 2, good: "low" },
     { key: "silentWrong", label: "silent-wrong", about: "Mistyped pointers that resolved to a DIFFERENT live output, with no error. Should be zero.", agg: "spread", get: (m) => m.pointers.silentWrong, digits: 2, good: "low" },
     { key: "recoveryRate", label: "recovery", about: "After a pointer fault, the share where the next step got it right instead of giving up or retyping.", agg: "spread", get: (m) => m.recovery.rate, digits: 2, good: "high" },
+    { key: "execCalls", label: "exec", about: "Exec calls per run, over the runs that used exec at all.", agg: "spread", get: (m) => m.execWorld?.calls ?? null, digits: 1 },
+    { key: "pageRetries", label: "page retry", about: "Exec results saying a page global was not defined that the next exec retried with world \"page\", per run that used exec. What an isolated default costs.", agg: "spread", get: (m) => m.execWorld?.pageRetries ?? null, digits: 2, good: "low" },
     { key: "steps", label: "steps", about: "Agent steps (tool calls and answers) per run.", agg: "spread", get: (m) => m.steps, digits: 1 },
     { key: "tokens", label: "tokens", about: "Prompt plus completion tokens per run as the backend reported them, sub-calls included. Against the fake model these are its own chars/4 estimates.", agg: "spread", get: (m) => m.tokens.total, digits: 0, good: "low" },
     { key: "runMs", label: "secs", about: "Wall-clock seconds per run. With several jobs at once, runs share the machine and this stretches.", agg: "spread", get: (m) => m.runMs / 1000, digits: 1, good: "low" },

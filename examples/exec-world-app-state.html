@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Checkout — an answer that lives only in the page's own JavaScript state</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 40px; color: #111; }
+  h1 { font-size: 18px; }
+  p { max-width: 60ch; color: #444; }
+  ul { padding-left: 18px; }
+  .pending { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<!--
+  The exec-world bench's first fixture (tests/e2e/bench/specs/exec-world.bench.ts). The cart's prices and total are
+  in `window.__APP__` only: the list shows names and quantities, the total says "calculated at checkout". So reading
+  it takes an exec in the PAGE's world, where the page's globals are; an isolated world sees `window.__APP__` as
+  undefined. The prices are DERIVED in script, so neither they nor the total appear in this file's text (a test holds
+  that): reading the script and redoing its arithmetic is possible, and is a workaround the bench counts as success.
+-->
+<h1>Your cart</h1>
+<p>Review your items. Prices and the total are calculated at checkout.</p>
+<ul id="items"></ul>
+<p>Total: <span class="pending">calculated at checkout</span></p>
+<script>
+(() => {
+    const names = ["Trail runner shoes", "Merino socks (3-pack)", "Rain shell", "Headlamp", "Water filter", "Dry bag 20L"];
+    const qty = [1, 2, 1, 1, 1, 3];
+    const items = [];
+    let cents = 0;
+    for (let i = 0; i < names.length; i++) {
+        const unitCents = ((i + 3) * 4973) % 9000 + 1500;
+        items.push({ sku: "SKU-" + (101 + i), name: names[i], qty: qty[i], unit: unitCents / 100 });
+        cents += unitCents * qty[i];
+    }
+    window.__APP__ = { user: { id: "u-3381", tier: "standard" }, cart: { currency: "EUR", items, total: cents / 100 } };
+    const ul = document.getElementById("items");
+    for (const it of items) {
+        const li = document.createElement("li");
+        li.textContent = it.name + " × " + it.qty;
+        ul.appendChild(li);
+    }
+})();
+</script>
+</body>
+</html>

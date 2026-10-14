@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Support desk — data reachable only through the page's store</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 40px; color: #111; }
+  h1 { font-size: 18px; }
+  p { max-width: 60ch; color: #444; }
+  .badge { font: 600 13px ui-monospace, monospace; padding: 3px 9px; border-radius: 999px; background: #eef; }
+</style>
+</head>
+<body>
+<!--
+  The exec-world bench's second fixture (tests/e2e/bench/specs/exec-world.bench.ts). The refunds are held in a
+  Redux-style store's CLOSURE, reachable only by calling `window.store.getState()`: no list is rendered, only a count.
+  Unlike the first fixture's plain global, this needs a page FUNCTION called in the page's world. Amounts are derived
+  in script and two refunds are reversed after being issued, so neither the amounts nor the total appear in this
+  file's text (a test holds that).
+-->
+<h1>Support desk</h1>
+<p>Signed in as <b>mira</b>. The refund list is loading…</p>
+<p>Active refunds this week: <span class="badge" id="count">…</span></p>
+<script>
+(() => {
+    function createStore(reducer, state) {
+        const subs = [];
+        return {
+            getState: () => state,
+            dispatch(action) { state = reducer(state, action); subs.forEach((f) => f()); return action; },
+            subscribe(f) { subs.push(f); return () => subs.splice(subs.indexOf(f), 1); },
+        };
+    }
+    function reducer(s, a) {
+        switch (a.type) {
+            case "refund/issued": return { ...s, refunds: [...s.refunds, { id: a.id, ticket: a.ticket, amount: a.amount }] };
+            case "refund/reversed": return { ...s, refunds: s.refunds.filter((r) => r.id !== a.id) };
+            default: return s;
+        }
+    }
+    const store = createStore(reducer, { agent: "mira", currency: "EUR", refunds: [] });
+    store.subscribe(() => { document.getElementById("count").textContent = String(store.getState().refunds.length); });
+    window.store = store;
+    for (let i = 1; i <= 14; i++) {
+        store.dispatch({ type: "refund/issued", id: "R-" + (200 + i), ticket: "T-" + (4100 + i * 3), amount: ((i * 7919) % 6000 + 400) / 100 });
+    }
+    store.dispatch({ type: "refund/reversed", id: "R-205" });
+    store.dispatch({ type: "refund/reversed", id: "R-211" });
+})();
+</script>
+</body>
+</html>
