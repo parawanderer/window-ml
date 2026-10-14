@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, withLedger, ledger, register, update, unregister, measureLedger,
+import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, parseSwapUsage, parseCompressed, ledgerOut, withLedger, ledger, register, update, unregister, measureLedger,
     budgetState, admits, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT, joinLedger, roomWarning, setLimit } from "../tests/e2e/bench/memory-budget.mjs";
 import { failureShape, groupHeld, groupCommands, freeingCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
 import { doneLine } from "../tests/e2e/bench/sinks.mjs";
@@ -45,6 +45,45 @@ test("a tree's resident memory is its own and its descendants', without another 
     assert.equal(treeRss(t, 10, new Set([20])), (1000 + 2000 + 3000) * 1024, "the held child is its own entry");
     assert.equal(treeRss(t, 20), 4500 * 1024);
     assert.equal(treeRss(t, 99), 0, "gone is 0");
+});
+
+// --- memory pressure: the machine's, its swap, and ours out of RAM ---
+
+test("swap in use reads from macOS's sysctl and Linux's meminfo; anything else is unknown, never 0", () => {
+    assert.equal(parseSwapUsage("total = 5120.00M  used = 4007.38M  free = 1112.62M  (encrypted)\n"), Math.round(4007.38 * MB));
+    assert.equal(parseSwapUsage("total = 0.00M  used = 0.00M  free = 0.00M\n"), 0, "no swap in use is 0, a real reading");
+    assert.equal(parseSwapUsage("MemTotal: 1 kB\nSwapTotal:  2048000 kB\nSwapFree:   1024000 kB\n"), 1024000 * 1024);
+    assert.equal(parseSwapUsage("something else"), null);
+    assert.equal(parseSwapUsage(null), null);
+});
+
+test("each process's memory out of RAM from top's CMPRS column, its units and its +/- trend marks", () => {
+    const top = "Processes: 600 total\nLoad Avg: 9.36\n\nPID    CMPRS\n37118  753M\n8047   636M+\n7754   12K-\n99     0B\n12     1.5G\n";
+    assert.deepEqual([...parseCompressed(top)], [[37118, 753 * MB], [8047, 636 * MB], [7754, 12 * 1024], [99, 0], [12, 1.5 * GB]]);
+});
+
+test("ours out of RAM: each ledger entry's tree, as resident memory counts it (a held browser is its own entry's, not the sweep's)", () => {
+    const table = processTable("1 0 10\n100 1 1000\n101 100 2000\n200 100 3000\n201 200 4000\n300 1 5000\n");
+    const cmprs = new Map([[100, 1 * MB], [101, 2 * MB], [200, 4 * MB], [201, 8 * MB], [300, 16 * MB]]);
+    const read = (pids) => { read.asked = pids; return cmprs; };
+    // 100 a sweep, 101 its in-process browser; 200 a held run it started (its own entry), 201 that run's browser.
+    assert.equal(ledgerOut([{ pid: 100 }, { pid: 200 }], table, read), 15 * MB, "every tree once, 300 (not ours) left out");
+    assert.deepEqual(read.asked.sort(), [100, 101, 200, 201]);
+    assert.equal(ledgerOut([{ pid: 100 }], table, () => null), null, "unreadable is unknown, not 0");
+});
+
+test("each reading carries the pressure: the machine in use, swap, and ours out of RAM, read only every 30 s", () => {
+    const f = tmpLedger();
+    let outs = 0;
+    const b = startBudget({ file: f, total: 64 * GB, avail: () => 40 * GB, everyMs: 60_000, measure: () => [{ kind: "runner", pid: process.pid, rss: 2 * GB }],
+        swap: () => 4 * GB, out: () => { outs++; return 300 * MB; }, outEveryMs: 60_000 });
+    b.refresh();
+    b.refresh();
+    assert.deepEqual(b.history().map((p) => p.pressure), [{ machine: 24 * GB, swap: 4 * GB, out: 300 * MB }, { machine: 24 * GB, swap: 4 * GB, out: 300 * MB }, { machine: 24 * GB, swap: 4 * GB, out: 300 * MB }]);
+    assert.equal(outs, 1, "the costly read once, carried between");
+    const blind = startBudget({ file: f, total: 64 * GB, avail: () => 40 * GB, everyMs: 60_000, measure: () => [], swap: () => null, out: () => { throw new Error("no top"); } });
+    assert.deepEqual(blind.history()[0].pressure, { machine: 24 * GB, swap: null, out: null }, "what cannot be read is null");
+    b.stop?.(); blind.stop?.();
 });
 
 // --- the ledger ---

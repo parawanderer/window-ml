@@ -24,6 +24,8 @@ export const PAUSED_EXIT = 75;
 export const RESERVE_FRAC = 0.25;
 /** The most readings a sweep's budget keeps for its chart before it thins them. */
 const HISTORY_MAX = 600;
+/** How often our processes' memory out of RAM is read (a `top` of every process): the rest of a reading is every 5 s. */
+const OUT_EVERY_MS = 30_000;
 /** What one browser is assumed to take before any was measured. */
 export const ASSUMED_BROWSER = 1024 ** 3;
 const GB = 1024 ** 3;
@@ -87,22 +89,86 @@ export function processTable(psOut = null) {
     return table;
 }
 
-/** The resident memory of `root` and every process under it, leaving out the subtrees of `exclude` (other ledger
- *  entries a process started: a sweep's held browsers are its children, and are counted as theirs). 0 when it is gone. */
-export function treeRss(table, root, exclude = new Set()) {
+/** `root` and every process under it, leaving out the subtrees of `exclude` (other ledger entries a process started:
+ *  a sweep's held browsers are its children, and are counted as theirs). Empty when it is gone. */
+export function treePids(table, root, exclude = new Set()) {
     const kids = new Map();
     for (const [pid, { ppid }] of table) (kids.get(ppid) ?? kids.set(ppid, []).get(ppid)).push(pid);
-    let sum = 0;
+    const out = [];
     const stack = [root];
     const seen = new Set();
     while (stack.length) {
         const pid = stack.pop();
         if (seen.has(pid)) continue;
         seen.add(pid);
-        sum += table.get(pid)?.rss ?? 0;
+        if (table.has(pid)) out.push(pid);
         for (const k of kids.get(pid) ?? []) if (!exclude.has(k)) stack.push(k);
     }
-    return sum;
+    return out;
+}
+
+/** The resident memory of `root`'s tree (`treePids`). 0 when it is gone. */
+export const treeRss = (table, root, exclude = new Set()) => treePids(table, root, exclude).reduce((a, pid) => a + (table.get(pid)?.rss ?? 0), 0);
+
+// --- memory pressure: the machine's, its swap, and how much of ours is out of RAM ---
+
+const UNIT = { B: 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
+
+/** Swap in use, in bytes: macOS's `sysctl -n vm.swapusage` ("total = 5120.00M  used = 4007.38M  free = …") or Linux's
+ *  /proc/meminfo (SwapTotal − SwapFree). Null when the text says neither. */
+export function parseSwapUsage(text) {
+    const mac = /used = ([\d.]+)([BKMGT])/.exec(text ?? "");
+    if (mac) return Math.round(Number(mac[1]) * UNIT[mac[2]]);
+    const kb = (k) => { const m = new RegExp(`^${k}:\\s+(\\d+) kB`, "m").exec(text ?? ""); return m ? Number(m[1]) * 1024 : null; };
+    const total = kb("SwapTotal"), free = kb("SwapFree");
+    return total != null && free != null ? total - free : null;
+}
+
+/** This machine's swap in use, in bytes, or null where it cannot be read. */
+export function swapUsed(platform = process.platform) {
+    try {
+        if (platform === "darwin") return parseSwapUsage(execFileSync("sysctl", ["-n", "vm.swapusage"], { encoding: "utf8" }));
+        if (platform === "linux") return parseSwapUsage(fs.readFileSync("/proc/meminfo", "utf8"));
+    } catch { /* unknown */ }
+    return null;
+}
+
+/**
+ * Each process's memory that is out of RAM proper, from macOS's `top -l 1 -stats pid,cmprs`: its pages in the
+ * compressor or swapped out to disk (macOS swaps compressed segments, and does not say per process which of the two a
+ * page is in). `Map<pid, bytes>`.
+ */
+export function parseCompressed(text) {
+    const out = new Map();
+    for (const line of (text ?? "").split("\n")) {
+        const m = /^\s*(\d+)\s+([\d.]+)([BKMGT])?[+-]?\s*$/.exec(line);
+        if (m) out.set(Number(m[1]), Math.round(Number(m[2]) * UNIT[m[3] ?? "B"]));
+    }
+    return out;
+}
+
+/** Each process's memory out of RAM (`parseCompressed`; on Linux its VmSwap), for the pids asked about. Null where it cannot be read. */
+export function compressedTable(pids, platform = process.platform) {
+    try {
+        if (platform === "darwin") return parseCompressed(execFileSync("top", ["-l", "1", "-stats", "pid,cmprs"], { encoding: "utf8", timeout: 10_000 }));
+        if (platform === "linux") {
+            const out = new Map();
+            for (const pid of pids) {
+                try { const m = /^VmSwap:\s+(\d+) kB/m.exec(fs.readFileSync(`/proc/${pid}/status`, "utf8")); if (m) out.set(pid, Number(m[1]) * 1024); } catch { /* gone */ }
+            }
+            return out;
+        }
+    } catch { /* unknown */ }
+    return null;
+}
+
+/** How much of the ledger's processes' memory is out of RAM (each entry's tree, as `measureLedger` counts it), or null when it cannot be read. */
+export function ledgerOut(entries, table = processTable(), read = compressedTable) {
+    const roots = new Set(entries.map((e) => e.pid));
+    const trees = entries.map((e) => treePids(table, e.pid, new Set([...roots].filter((p) => p !== e.pid))));
+    const cmprs = read(trees.flat());
+    if (!cmprs) return null;
+    return trees.flat().reduce((a, pid) => a + (cmprs.get(pid) ?? 0), 0);
 }
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
@@ -297,7 +363,7 @@ export const limitWhence = (l) => (l.source === "flag" ? "this sweep's --memory-
  * already counted, so the question is whether one more cell would still fit after it. `active` false (a fake-model sweep
  * that holds nothing) registers and measures, but never says no.
  */
-export function startBudget({ limit = null, reserveFrac = null, onLimit = () => {}, whenFull = "pause", db = null, active = true, sweep = null, repo = null, cmd = null, everyMs = 5000, file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
+export function startBudget({ limit = null, reserveFrac = null, onLimit = () => {}, whenFull = "pause", db = null, active = true, sweep = null, repo = null, cmd = null, everyMs = 5000, file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem(), swap = swapUsed, out = (entries) => ledgerOut(entries), outEveryMs = OUT_EVERY_MS } = {}) {
     register({ kind: "runner", pid: process.pid, sweep, repo, cmd, heap: process.memoryUsage().heapUsed }, file);
     let entries = measure(), available = avail();
     // The limit is read on every measurement: a person can raise or lower the machine-wide one while the sweep runs.
@@ -307,8 +373,18 @@ export function startBudget({ limit = null, reserveFrac = null, onLimit = () => 
     // Every reading, for the page's chart: what each kind held then, and the room. Halved (every other one dropped)
     // past HISTORY_MAX, so a sweep of hours stays a few hundred points.
     const history = [];
+    // The pressure beside each reading: the whole machine in use, swap in use, and how much of OUR memory is out of RAM
+    // (compressed or swapped). The last is a `top` of every process (about 0.4 s), so it is read every outEveryMs and
+    // carried between; resident memory alone shrinks exactly when we are swapped out, which reads as calm.
+    let outBytes = null, outAt = 0;
+    const pressure = (st) => {
+        if (Date.now() - outAt >= outEveryMs) { outAt = Date.now(); try { outBytes = out(entries); } catch { outBytes = null; } }
+        let sw = null;
+        try { sw = swap(); } catch { /* unknown */ }
+        return { machine: st.available != null ? Math.max(0, total - st.available) : null, swap: sw, out: outBytes };
+    };
     const record = (st) => {
-        history.push({ t: Date.now(), values: { ...st.byKind }, room: st.room });
+        history.push({ t: Date.now(), values: { ...st.byKind }, room: st.room, pressure: pressure(st) });
         if (history.length > HISTORY_MAX) for (let i = history.length - 2; i > 0; i -= 2) history.splice(i, 1);
     };
     const refresh = () => {
@@ -330,7 +406,7 @@ export function startBudget({ limit = null, reserveFrac = null, onLimit = () => 
         /** The limit in force now: `{ bytes, source, handSet, by?, at? }` (resolveLimit). */
         limit: () => cur,
         entries: () => entries,
-        /** The readings so far, oldest first: `{ t, values: { <kind>: bytes }, room }`. */
+        /** The readings so far, oldest first: `{ t, values: { <kind>: bytes }, room, pressure: { machine, swap, out } }` (a pressure figure null when unknown). */
         history: () => history,
         canStart: ask,
         canKeep: ask,
