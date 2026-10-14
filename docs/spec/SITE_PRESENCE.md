@@ -121,3 +121,6 @@ not, record that and choose between `declarativeNetRequest` rules and following 
 3. Tools in the isolated world on hidden pages, and `chrome.dom` for closed roots.
 4. The side panel for the card and the transcript, and the anonymised highlight.
 5. The redirect measurement, then the rule.
+
+After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules
+this spec forces on it: [WEBMCP_COMPAT.md](WEBMCP_COMPAT.md).
