@@ -51,7 +51,19 @@ test("locate keeps a trigger for every option, its full text is served as detail
     const short = LOCATE.description.length + Object.values(LOCATE.params).join("").length;
     assert.ok(short < full.length * 0.5, `${short} vs ${full.length}`);
     for (const t of [LOCATE.description, ...Object.values(LOCATE.params)]) assert.doesNotMatch(t, / {2}/);
-    assert.ok(!("python_exec" in TOOL_DETAILS), "python_exec's texts stay whole: cutting them cost glm-4.7-flash");
+});
+
+test("python_exec keeps a trigger for each of tables/cast/mode, its full texts are served as details, and nothing pads", async () => {
+    // Round 3 (PROMPT_BUDGET.md): the cut shipped once #650 and the derived-name fix removed what it had cost glm-4.7-flash.
+    const { PYTHON, PYTHON_FULL, TOOL_DETAILS } = await import("../src/tools/tool-details.ts");
+    for (const k of ["tables", "cast", "mode"]) {
+        assert.ok(PYTHON[k].length > 0 && PYTHON[k].length < PYTHON_FULL[k].length, k);
+        assert.ok(TOOL_DETAILS.python_exec.includes(PYTHON_FULL[k]), `${k}'s full text is served`);
+        assert.doesNotMatch(PYTHON[k], / {2}/, k);
+    }
+    assert.match(PYTHON.tables, /Python variable name/, "the key rule a model needs before it can look anything up");
+    const short = Object.values(PYTHON).join("").length, full = Object.values(PYTHON_FULL).join("").length;
+    assert.ok(short < full * 0.5, `${short} vs ${full}`);
 });
 
 test("a private rendered fetch with Incognito off leads with the retry that works", async () => {

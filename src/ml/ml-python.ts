@@ -67,7 +67,7 @@ export const pythonExec = async function(this: MlApi, code: string, { image = nu
     // bootMs/runMs come back from the WORKER (the executor): a cold start is charged to the call
     // that paid for it, so a first run does not report the runtime download as its own script time.
     const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
-        { code, image: img, hardened: mode !== "full", stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i].src === "string" ? specs[i].src as string : null })) },
+        { code, image: img, hardened: mode !== "full", stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i].alias ?? (typeof specs[i].src === "string" ? specs[i].src as string : null) })) },
         undefined, null,
         // LIVE stdout (opt-in): each PYTHON_STREAM chunk for this run → onStdout (the tool's ctx.stream).
         onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; table?: { columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number }; valueKey?: string; render?: "latex" | "img"; bootMs?: number; runMs?: number };
@@ -85,13 +85,29 @@ export const pythonExec = async function(this: MlApi, code: string, { image = nu
 };
 
 /**
+ * A Python variable name for a `tables` map key that is not one: a URL or path gives its file name without the
+ * extension (`…/sales.csv` → `sales`), anything else its characters with each non-word one as `_` and a leading digit
+ * prefixed (`2024 data` → `_2024_data`); a name already taken or reserved gets `_2`, `_3`, ….
+ * @param key the key the model wrote
+ * @param taken names already used in this call
+ * @returns a valid, unreserved, unused name
+ */
+export function derivedTableName(key: string, taken: ReadonlySet<string>): string {
+    const file = /[/:]/.test(key) ? /([^/?#]+?)(?:\.[A-Za-z0-9]{1,8})?(?:[?#].*)?$/.exec(key.replace(/[/?#]+$/, ""))?.[1] : undefined;
+    const base = (file ?? key).replace(/[^A-Za-z0-9_]/g, "_").replace(/^(?=\d)/, "_") || "df";
+    let name = base;
+    for (let i = 2; taken.has(name) || pyVarNameError(name); i++) name = `${base}_${i}`;
+    return name;
+}
+
+/**
  * The ordered `[name, source]` list a `tables` arg loads, by the one shape rule both the page and the worker apply: a
  * single source (→ `df`) or a map `{ name: source }`, each name a valid Python variable. Throws the error the model is
  * shown for any other shape. Each source then auto-dispatches by its own shape (a Sheets URL / 'current' → sheet, else
  * a DOM selector/Element), so one call can join a page table and a sheet.
  */
-export function tableSpecs(tables: unknown): { name: string; src: string | Element | TableValue }[] {
-    const specs: { name: string; src: string | Element | TableValue }[] = [];
+export function tableSpecs(tables: unknown): { name: string; src: string | Element | TableValue; alias?: string }[] {
+    const specs: { name: string; src: string | Element | TableValue; alias?: string }[] = [];
     // Args arrive off the wire as JSON, so `tables` can be any shape regardless of the declared type.
     // An ARRAY is neither documented form, but models write `tables: ["current"]` — the schema is a
     // `oneOf`, and wrapping a lone value in a list is an easy slip. A ONE-element array is unambiguous
@@ -111,8 +127,13 @@ export function tableSpecs(tables: unknown): { name: string; src: string | Eleme
         else if (typeof tableArg !== "object") throw new Error(`pythonExec tables: expected a source string or a {name: source} map, got ${typeof tableArg}.`);
         else for (const [name, src] of Object.entries(tableArg as Record<string, string | TableValue>)) {
             const nameErr = pyVarNameError(name);
-            if (nameErr) throw new Error(`pythonExec tables: ${nameErr}`);
-            specs.push({ name, src });
+            // A reserved name would shadow a preloaded global, so it is refused. A key that is merely not an identifier
+            // (models key the map by the URL itself) loads under a name derived from it, and the key stays reachable as
+            // tables["<key>"]: the result names the variable it loaded.
+            // A LIST is no map: its indices are names nobody wrote (`[[url]]` unwraps to `[url]`, key "0"), so it is refused.
+            if (nameErr && (/reserved/.test(nameErr) || Array.isArray(tableArg))) throw new Error(`pythonExec tables: ${nameErr}`);
+            if (nameErr) specs.push({ name: derivedTableName(name, new Set(specs.map((s) => s.name))), src, alias: name });
+            else specs.push({ name, src });
         }
     }
     return specs;

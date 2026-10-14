@@ -34,3 +34,22 @@ test("off a web page (an extension page) a path is not resolved against it", asy
     cacheCsv("chrome-extension://abcdef/sales.csv");
     await assert.rejects(_loadTable.call({ _queryAll: () => [] }, "df", "/sales.csv"), (e) => !/fetch cache/.test(e.message));
 });
+
+// --- a map key that is not a Python variable name ---
+
+test("a non-identifier key loads under a name derived from it, and stays reachable by the key itself", async () => {
+    const { derivedTableName, tableSpecs } = await import("../src/ml/ml-python.ts");
+    const none = new Set();
+    for (const [key, want] of [
+        ["http://site.test/sales.csv", "sales"],          // GLM keyed the map by the URL it fetched
+        ["/data/2024 report.csv?x=1", "_2024_report"],
+        ["2bad", "_2bad"],
+        ["my sales", "my_sales"],
+        ["http://site.test/img.csv", "img_2"],            // `img` is preloaded: never shadowed
+        ["???", "___"],
+    ]) assert.equal(derivedTableName(key, none), want, key);
+    assert.equal(derivedTableName("http://a/sales.csv", new Set(["sales"])), "sales_2", "a name taken in the same call");
+    const url = "http://site.test/sales.csv";
+    assert.deepEqual(tableSpecs({ [url]: url, ok: "#t" }), [{ name: "sales", src: url, alias: url }, { name: "ok", src: "#t" }]);
+    assert.throws(() => tableSpecs({ pd: "#t" }), /reserved/, "a reserved name is still refused");
+});
