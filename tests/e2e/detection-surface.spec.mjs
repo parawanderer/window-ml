@@ -124,8 +124,17 @@ function expectRunTrace(during) {
 /** No debugger-shaped trace: no console swap, no binding, no CDP command. */
 const NO_CDP = { cdpConsoleGetter: [], mlCdpStream: false, mlIsoStream: false };
 
-/** A trusted CDP click as the page sees it, at `xy`: the full press/release sequence, no move before it, pressure 0, width 1. */
-const cdpClickEvents = (target) => ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].map((type) => ({ type, isTrusted: true, target, activation: [true, true], ...(type.startsWith("pointer") || type === "click" ? { pointerType: "mouse", pressure: 0, size: [1, 1] } : {}) }));
+/** A trusted CDP click as the page sees it: Playwright's own sequence — move, then press/release — with a pressed
+ *  mouse's pressure (0.5 down, 0 up) and `code` on the keys. The move's `activation` is the page's before the press. */
+const cdpClickEvents = (target) => [
+    { type: "pointermove", isTrusted: true, target, pointerType: "mouse", pressure: 0, size: [1, 1] },
+    { type: "mousemove", isTrusted: true, target },
+    { type: "pointerdown", isTrusted: true, target, activation: [true, true], pointerType: "mouse", pressure: 0.5, size: [1, 1] },
+    { type: "mousedown", isTrusted: true, target, activation: [true, true] },
+    { type: "pointerup", isTrusted: true, target, activation: [true, true], pointerType: "mouse", pressure: 0, size: [1, 1] },
+    { type: "mouseup", isTrusted: true, target, activation: [true, true] },
+    { type: "click", isTrusted: true, target, activation: [true, true], pointerType: "mouse", pressure: 0, size: [1, 1] },
+];
 
 // --- baselines: the probe page with no extension, and Playwright acting "by hand" ---
 
@@ -313,10 +322,10 @@ test.describe("input", () => {
         expect(row.during.pointer).toEqual([expect.objectContaining({ type: "click", isTrusted: false, clientXY: [0, 0] })]);
     });
 
-    test("canvas click (CDP): trusted press/release, no move before it, pressure 0, the exact centre", async () => {
+    test("canvas click (CDP): trusted move/press/release with a pressed mouse's pressure, the exact centre", async () => {
         const row = await scenario("click-canvas-cdp", { script: () => [{ tool: "click", args: { selector: "#cv" } }] });
-        // observed today: attach, two Input events, detach (the run's end detaches; no Runtime, no Emulation).
-        expect(row.cdp).toEqual(["(attach)", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "(detach)"]);
+        // observed today: attach, move+press+release, detach (the run's end detaches; no Runtime, no Emulation).
+        expect(row.cdp).toEqual(["(attach)", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "(detach)"]);
         expect(row.during).toMatchObject(NO_CDP);
         expect(row.during.pointer).toMatchObject(cdpClickEvents("cv"));
         const click = row.during.pointer.at(-1);
@@ -329,21 +338,28 @@ test.describe("input", () => {
 
     test("sealed shadow click (CDP): DOM.* and a callFunctionOn in a world of its own, then the trusted click", async () => {
         const row = await scenario("click-sealed-cdp", { script: () => [{ tool: "click", args: { selector: "#sealed >>> #inner" } }] });
-        expect(row.cdp).toEqual(["(attach)", "DOM.getDocument", "DOM.querySelectorAll", "DOM.describeNode", "DOM.describeNode", "DOM.querySelectorAll", "Page.getFrameTree", "Page.createIsolatedWorld", "DOM.resolveNode", "Runtime.callFunctionOn", "Runtime.releaseObject", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "(detach)"]);
+        expect(row.cdp).toEqual(["(attach)", "DOM.getDocument", "DOM.querySelectorAll", "DOM.describeNode", "DOM.describeNode", "DOM.querySelectorAll", "Page.getFrameTree", "Page.createIsolatedWorld", "DOM.resolveNode", "Runtime.callFunctionOn", "Runtime.releaseObject", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "(detach)"]);
         expect(row.during.pointer).toMatchObject(cdpClickEvents("sealed"));
         expect(row.during.sealed).toEqual([{ type: "pointerdown", isTrusted: true }, { type: "click", isTrusted: true }]);
     });
 
     test("cross-origin iframe click (CDP): the frame's own probe sees the trusted click", async () => {
         const row = await scenario("click-iframe-cdp", { script: () => [{ tool: "locate", args: { description: "the button inside the frame", selector: "#xo", strategy: "grid", gridSize: 2 } }, clickLastPoint] });
-        expect(row.cdp).toEqual(["(attach)", "Page.captureScreenshot", "Page.captureScreenshot", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "(detach)"]);
+        expect(row.cdp).toEqual(["(attach)", "Page.captureScreenshot", "Page.captureScreenshot", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "(detach)"]);
         const frame = row.others["http://xo.test/frame"];
-        expect(frame.pointer.map((e) => [e.type, e.isTrusted, e.activation])).toEqual(["pointerdown", "mousedown", "pointerup", "mouseup", "click"].map((t) => [t, true, [true, true]]));
+        expect(frame.pointer.map((e) => e.type)).toEqual(["pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]);
+        expect(frame.pointer.filter((e) => !e.type.endsWith("move")).map((e) => [e.type, e.isTrusted, e.activation])).toEqual(
+            ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].map((t) => [t, true, [true, true]]));
     });
 
-    test.fixme("a CDP click's pointerdown reports a pressed mouse's pressure (0.5)", async () => {
-        // FINDING (looks automated): Input.dispatchMouseEvent without `force` gives pointerdown/pointerup pressure 0 with
-        // a button held, which no hardware mouse reports (Playwright sends 0.5, see the baseline). One field in sw-cdp.ts.
+    test("a CDP click's pointerdown reports a pressed mouse's pressure (0.5)", async () => {
+        // Was a fixme (looks automated): without `force` the press reported pressure 0 with a button held, which no
+        // hardware mouse reports. The dispatch layer now sends `force: 0.5` down / 0 up, same as Playwright's baseline.
+        const row = await scenario("click-canvas-pressure", { script: () => [{ tool: "click", args: { selector: "#cv" } }] });
+        const down = row.during.pointer.find((e) => e.type === "pointerdown");
+        const up = row.during.pointer.find((e) => e.type === "pointerup");
+        expect(down.pressure).toBe(0.5);
+        expect(up.pressure).toBe(0);
     });
 
     test("type by selector: input + change, untrusted, no key events, and the field focused by script", async () => {
@@ -353,17 +369,13 @@ test.describe("input", () => {
         expect(row.during.extensionCallers).toEqual(expect.arrayContaining(["dispatchEvent", "focus"]));
     });
 
-    test("type into a sealed field (CDP): trusted keydown/keypress/beforeinput/input/keyup with an empty `code`", async () => {
+    test("type into a sealed field (CDP): trusted keydown/keypress/beforeinput/input/keyup with the key's `code`", async () => {
         const row = await scenario("type-sealed-cdp", { script: () => [{ tool: "type", args: { selector: "#sealed >>> #sinput", text: "hi" } }] });
-        expect(row.cdp.filter((m) => m.startsWith("Input."))).toEqual(["Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent"]);
+        expect(row.cdp.filter((m) => m.startsWith("Input."))).toEqual(["Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent"]);
         expect(row.during.keys.map((e) => e.type)).toEqual(["keydown", "keypress", "beforeinput", "input", "keyup", "keydown", "keypress", "beforeinput", "input", "keyup"]);
         expect(row.during.keys.every((e) => e.isTrusted)).toBe(true);
-        expect(row.during.keys[0]).toMatchObject({ key: "h", code: "", keyCode: 72 });
-    });
-
-    test.fixme("a CDP keystroke carries the `code` its key has", async () => {
-        // FINDING (looks automated): cdpKeyType sends `key` and the virtual key code but no `code`, so keydown.code is ""
-        // for a letter, which a physical keyboard never produces. One field in sw-cdp.ts.
+        expect(row.during.keys[0]).toMatchObject({ key: "h", code: "KeyH", keyCode: 72 });
+        expect(row.during.keys.filter((e) => e.type === "keydown").map((e) => e.code)).toEqual(["KeyH", "KeyI"]);
     });
 
     test("look and locate with CDP on: a screenshot through the debugger, nothing on the page but the card", async () => {

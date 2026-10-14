@@ -49,10 +49,11 @@ The page must learn as little as possible from it:
   random custom-element name per session, a closed shadow root, no `ml-` id, class or attribute, present only while the
   approval waits.
 
-What stays visible, and is not removed: CDP input looks like CDP input (trusted events with no pointer path, at the
-target's centre), and synthetic input is untrusted. Input simulation and event fidelity are handled out-of-band in a
-separate subsystem and are out of scope for this repository. The two one-field defects the measurement found, `pressure` 0 on a pressed CDP click and an
-empty `code` on CDP typing, are bugs and are fixed.
+What stays visible, and is not removed: synthetic input is untrusted. CDP input is trusted and now carries the
+W3C/hardware envelope (move→press→release, `pressure` 0.5 while pressed, `key`/`code`/`keyCode` cross-mapped —
+`src/input-dispatch.ts`); what still distinguishes it from a person is timing and cadence, not the event fields.
+A CDP click is at the target's centre. Input simulation beyond that envelope (human timing, trajectory) is out of
+scope here and is the `lab/user-dynamics` topic.
 
 ## A visible page
 

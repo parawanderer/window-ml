@@ -28,9 +28,12 @@ point (see [[idea-iframe-support-security]]).
 
 ## Mechanism
 
-Background: `chrome.debugger.attach({ tabId }, "1.3")` → `Input.dispatchMouseEvent`
-(`mousePressed` then `mouseReleased`, `button:"left"`, `clickCount:1`) at viewport
-`(x, y)` → detach. The browser routes the real input to whatever's at `(x, y)`.
+Background: `chrome.debugger.attach({ tabId }, "1.3")` → `Input.dispatchMouseEvent` as the
+W3C/hardware sequence at viewport `(x, y)`: `mouseMoved` (establishes the prior coordinate state
+`movementX/Y` is measured from), `mousePressed`, `mouseReleased` (`button:"left"`, `clickCount:1`,
+`force` 0.5 while pressed / 0 otherwise, `pointerType:"mouse"`) — the same envelope a hardware mouse
+and Playwright's baseline produce (`src/input-dispatch.ts`, `cdpClickPlan`). The browser routes the
+real input to whatever's at `(x, y)` and fills client/page/screen coordinates.
 
 ## Attach lifecycle — DECIDED: per-**reserved-click** only
 

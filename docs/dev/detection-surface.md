@@ -60,10 +60,10 @@ names are the spec's.
 | 11 | `__mlCdpStream` on the page's global, still there after the exec, the run and the detach | exec-strict+stream only | "strict-CSP page with streaming…": `final.mlCdpStream` true | Yes (fixme): name the binding for a world, or delete it in the wrapper's finally | Streaming of strict-page execs |
 | 12 | `Runtime.enable` console-getter tell (Error `stack`/`message`/`name` getters, a function's `toString`) | **never**: no shape changes when a client enables Runtime | "a debugger client's Runtime.enable is invisible…" (controlled attach, no extension); rebrowser's `runtimeEnableLeak`: "No leak detected" | — | — |
 | 13 | Selector click: one `click`, `isTrusted` false, no pointer/mouse down/up, client and screen (0,0), no activation, injected.js on the stack | click-sel; also a canvas with `cdp` off | "selector click…", "canvas click with CDP off…" | Only by making every click a CDP click | The debugger attached on every page a run clicks |
-| 14 | CDP click: trusted pointerdown/mousedown/pointerup/mouseup/click with activation; no move before it; `pressure` 0 while pressed; size 1x1; the exact centre; `screenX` = `clientX` + the window's `screenX` | click-cdp (canvas, sealed, iframe; the frame's own probe sees it) | "canvas click (CDP)…", "sealed…", "cross-origin iframe…" | `pressure` yes (fixme: `force: 0.5`); the move and the centre are input-humanising, out of scope | One field |
+| 14 | CDP click: trusted pointermove/mousemove then pointerdown/mousedown/pointerup/mouseup/click with activation; `pressure` 0.5 while pressed, 0 otherwise; size 1x1; the exact centre; `screenX` = `clientX` + the window's `screenX` | click-cdp (canvas, sealed, iframe; the frame's own probe sees it) | "canvas click (CDP)…", "sealed…", "cross-origin iframe…" | Matched to Playwright's baseline (`input-dispatch.ts`, `cdpClickPlan`) | Timing/cadence still differ from a person |
 | 15 | Isolated-world `el.click()`: `isTrusted` false but user activation true | exec-iso | "isolated world (unapproved page, CDP)…" | Drop `userGesture: true` | Popups/clipboard from an isolated exec |
 | 16 | Typing by selector: `input` + `change` only, untrusted, no key events | type-sel | "type by selector…" | Only by CDP typing | The debugger per typed field |
-| 17 | CDP typing: trusted keydown/keypress/beforeinput/input/keyup, `code` "" | type-cdp | "type into a sealed field (CDP)…" | `code` yes (fixme) | One field |
+| 17 | CDP typing: trusted keydown/keypress/beforeinput/input/keyup, `key`/`code`/`keyCode` the US-layout cross-map, Shift held around a capital | type-cdp | "type into a sealed field (CDP)…" | Matched to Playwright's baseline (`input-dispatch.ts`, `cdpTypePlan`) | Typing cadence still differs from a person |
 | 18 | Infobar resize at a CDP attach | **not observed**: no UI headless; headful (Chrome for Testing 151, macOS) also 0 resizes, the infobar itself not verified on screen | `resizes` 0 in the CDP rows | — | Unverified on branded Chrome |
 | 19 | Debugger attach/detach | one attach and one detach per run that uses CDP (not per click) | the recorder's `(attach)`/`(detach)` in each row | — | — |
 | 20 | Focus emulation and lifecycle | rendered only, on the render tab: `visibilityState` hidden then visible, `hasFocus` false then true (on Linux already true at the probe's first look), 4 `visibilitychange`, rAF ≥40 Hz; never on the run's tab; no `freeze`/`resume` ever | "rendered fetch…" | — | — |
@@ -119,8 +119,9 @@ Ranked; each also in the table.
 6. **`__mlClosedRoots` is a page-writable WeakMap** (row 2), read by the DOM tools when piercing is on: a page can put a
    root of its choosing behind any host. Inferred from the source, not tested here; the page controls its own DOM anyway.
 
-Only "looks automated": rows 7-8, 13-17, 20, 24-25, 27 (untrusted or CDP-shaped input, focus moves, script-started
-navigation, worker request headers).
+Only "looks automated": rows 7-8, 13, 15-16, 20, 24-25, 27 (untrusted input, focus moves, script-started
+navigation, worker request headers). CDP click/typing (14, 17) now match Playwright's baseline field-for-field;
+what still separates them from a person is timing and cadence, not the envelope.
 
 ## Where the request was wrong
 
