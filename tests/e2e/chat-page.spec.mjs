@@ -985,10 +985,11 @@ test("the start page holds through a worker restart, and its tab list is fresh a
         // …with the Background work section above it: the worker's declared jobs, read through DUMP_JOBS.
         const bgw = chat.getByRole("region", { name: "Background work" });
         // Every declared job has a row; their order is the order the worker's modules loaded in, so it is not asserted.
-        for (const title of ["Screenshot compaction", "Saved-session cleanup", "Stored-value sweep", "Archive folder sync", "Price snapshot refresh", "Python pre-warm"]) {
-            await expect(bgw.locator(".disc-label", { hasText: title })).toHaveCount(1);
+        // Matched WHOLE: "Screenshot compaction" is also inside "Archive screenshot compaction".
+        for (const title of ["Screenshot compaction", "Archive screenshot compaction", "Saved-session cleanup", "Stored-value sweep", "Archive folder sync", "Price snapshot refresh", "Python pre-warm"]) {
+            await expect(bgw.locator(".disc-label").getByText(title, { exact: true })).toHaveCount(1);
         }
-        await bgw.getByRole("button", { name: /Screenshot compaction/ }).click();
+        await bgw.getByRole("button", { name: /^Screenshot compaction/ }).click();
         await expect(bgw).toContainText("Runs 15 s after saved sessions stop changing");
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }

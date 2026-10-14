@@ -25,7 +25,7 @@ import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesB
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
-import { compactionJob, imageCompactor } from "./sw-image-compact";
+import { archiveCompactionJob, archiveImageCompactor, compactionJob, imageCompactor } from "./sw-image-compact";
 import { defineJob } from "../job-registry";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
@@ -202,6 +202,7 @@ function archiveToggled(): void {
     sessionServer.runtimeChanged();
     recomputeAttention();
     if (archiveOn) void archiveCall("folder").catch(() => { /* no OPFS: the capability stays "none" */ });
+    if (archiveOn) archiveCompaction.kick();
 }
 
 /** What only background.ts can do, because it owns the runs: set once at startup by `configureSessionCommands`. */
@@ -528,6 +529,9 @@ export const sessionStore = (() => {
 /** The background pass that re-encodes saved screenshots as lossless WebP once the store goes quiet. */
 const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping }) : null;
 if (imageCompaction) defineJob(compactionJob(imageCompaction));
+/** The same re-encode over the archive's screenshots, which were archived as PNG (sw-image-compact.ts). */
+const archiveCompaction = archiveImageCompactor({ call: (op, args) => archiveCall(op, args as never), record: recordHousekeeping, onReplaced: scheduleFolderSync });
+defineJob(archiveCompactionJob(archiveCompaction));
 if (sessionStore) defineJob({
     id: "sessions.evict",
     title: "Saved-session cleanup",
@@ -908,6 +912,7 @@ try {
         imageCompaction?.kick();
         // The same clock catches a folder whose grant came back (re-granted from a page since the last write).
         if (archiveOn) void syncFolder("sync", "alarm").catch(() => {});
+        if (archiveOn) archiveCompaction.kick();
     });
     void chrome.alarms?.get(SNAPSHOT_ALARM).then((a) => { if (!a) void chrome.alarms.create(SNAPSHOT_ALARM, { periodInMinutes: SNAPSHOT_CHECK_MIN }); }).catch(() => {});
 } catch { /* no alarms (a test harness) */ }

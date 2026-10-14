@@ -72,6 +72,7 @@ Declared today:
 | Stored-value sweep | `sw-values.ts` | none: each `value-store/evict` | its alarm's next time |
 | Archive folder sync | `sw-archive.ts` `syncFolder` | `archive/folder-sync` → `folder-sync-done` / `folder-sync-failed`, only while a folder is connected | running, month files waiting, the debounce's due time, `blocked` when the grant lapsed |
 | Price snapshot refresh | `sw-prices.ts` `startRefresh` | `prices/refresh` → `refresh-done` / `refresh-failed` | running |
+| Archive screenshot compaction | `sw-image-compact.ts` `archiveImageCompactor` | `archive/image-compact` → `image-compact-done` / `image-compact-failed` | running, archived PNGs waiting (known once a pass has asked), the quiet timer's due time |
 | Python pre-warm | `sw-python.ts` | none: each `pyodide/prewarm` | none |
 
 `blocked` is a live field for work that waits on a person (a folder whose permission lapsed); the row says what to do

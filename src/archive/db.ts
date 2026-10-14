@@ -370,6 +370,55 @@ function markDirty(db: ArchiveDb, ts: number): void {
     db.exec({ sql: "INSERT OR IGNORE INTO dirty_months(month) VALUES (?)", bind: [monthOf(ts)] });
 }
 
+// --- re-encoding the archive's PNG screenshots as lossless WebP (the backfill, sw-image-compact.ts) ---
+
+/** The table of PNGs the encoder chose to keep (not opaque, or no smaller as WebP), so a backfill does not try them
+ *  again. Created on first use rather than in `migrate`: it belongs to this archive, never to a month file. */
+function ensureKept(db: ArchiveDb): void {
+    db.exec("CREATE TABLE IF NOT EXISTS main.image_kept (sha TEXT PRIMARY KEY) WITHOUT ROWID");
+}
+
+/** How many PNG images wait to be re-encoded. */
+export function pngPending(db: ArchiveDb): number {
+    ensureKept(db);
+    return Number(db.selectValue("SELECT count(*) FROM images WHERE mime = 'image/png' AND sha NOT IN (SELECT sha FROM image_kept)") ?? 0);
+}
+
+/** Up to `limit` PNG images still to re-encode, smallest first (many done before one huge one), as data URLs. */
+export function pngBatch(db: ArchiveDb, limit: number): { sha: string; url: string }[] {
+    ensureKept(db);
+    return db.selectObjects("SELECT sha, data FROM images WHERE mime = 'image/png' AND sha NOT IN (SELECT sha FROM image_kept) ORDER BY length(data), sha LIMIT ?", [limit])
+        .map((r) => ({ sha: String(r.sha), url: `data:image/png;base64,${toBase64(r.data as Uint8Array)}` }));
+}
+
+/**
+ * Put the re-encoded images in place of their PNGs, in one transaction. An image is keyed by the hash of what was
+ * first stored, never re-checked, so every event pointing at it reads the WebP from now on; an import of an older
+ * month file cannot bring the PNG back, since it never overwrites an image the archive has. `url: null` means keep the
+ * PNG. Every month holding a session that shows a replaced image is marked dirty, so the folder's files follow.
+ * @returns what was replaced and kept, the bytes before and after, and how many PNGs still wait
+ */
+export function replacePngs(db: ArchiveDb, items: { sha: string; url: string | null }[]): { replaced: number; kept: number; bytesBefore: number; bytesAfter: number; pending: number } {
+    ensureKept(db);
+    let replaced = 0, kept = 0, bytesBefore = 0, bytesAfter = 0;
+    db.transaction(() => {
+        for (const { sha, url } of items) {
+            const before = Number(db.selectValue("SELECT length(data) FROM images WHERE sha = ? AND mime = 'image/png'", [sha]) ?? -1);
+            if (before < 0) continue; // gone, or already replaced
+            const img = url ? decodeImage(url) : null;
+            if (!img || img.mime !== "image/webp" || img.data.byteLength >= before) {
+                db.exec({ sql: "INSERT OR IGNORE INTO image_kept(sha) VALUES (?)", bind: [sha] });
+                kept++;
+                continue;
+            }
+            db.exec({ sql: "UPDATE images SET mime = ?, data = ? WHERE sha = ?", bind: [img.mime, img.data, sha] });
+            for (const ts of db.selectValues("SELECT DISTINCT s.last_ts FROM image_refs r JOIN sessions s ON s.hash = r.hash WHERE r.sha = ?", [sha])) markDirty(db, Number(ts));
+            replaced++; bytesBefore += before; bytesAfter += img.data.byteLength;
+        }
+    });
+    return { replaced, kept, bytesBefore, bytesAfter, pending: pngPending(db) };
+}
+
 /** Months whose folder file no longer matches the archive, oldest first. */
 export function dirtyMonths(db: ArchiveDb): string[] {
     return db.selectValues("SELECT month FROM dirty_months ORDER BY month").map(String);
