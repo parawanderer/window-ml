@@ -174,8 +174,9 @@ The rules, all enforced in the background (the stub only posts the request):
 `granted` takes effect without a reload: the content script swaps the stub for the full API on the state change.
 
 The stub means an unapproved page can still tell the extension is installed. That is the cost of letting pages
-ask, and it is a setting: **"Let sites ask for access"** (default on, decided). Off, unapproved pages get nothing at all,
-and approval happens from the popup only.
+ask, and it is a setting: **"Let sites ask for access"**. It was decided default on; on 2026-10-14 that changed to
+**off**, with a per-origin "visible" mark instead ([SITE_PRESENCE.md](SITE_PRESENCE.md)). Off, unapproved pages get
+nothing at all, and approval happens from the popup only.
 
 ### The self-approval whitelist (slice 3; DRAFT, wording for the owner to approve)
 
@@ -255,7 +256,8 @@ Removing `window.ml` is not invisibility. Two other signals exist today, and thi
   Limiting it to approved origins would break the agent on unapproved pages a run visits. Open question below.
 
 The goal of this spec is that an unapproved page gains no capability. Not being detectable is a separate goal, and
-only partly met.
+only partly met. [SITE_PRESENCE.md](SITE_PRESENCE.md) takes it up, from the measurement in
+[detection-surface.md](../dev/detection-surface.md).
 
 ## Upgrading an existing install
 
@@ -370,8 +372,8 @@ wait is on a run finishing or a state change, never a timer.
 3. `requestAccess` (the full API's member), with the badge and popup entry. Tests 3 to 7. The agent level and start approval
    ([above](#two-levels-using-windowml-and-starting-agents-slice-3-decided-2026-10-10-wording-for-the-owner-to-approve)). The self-approval whitelist moves to
    origins, and an approved site may ask for it ([above](#the-self-approval-whitelist-slice-3-draft-wording-for-the-owner-to-approve)).
-4. The stub (`window.ml` with only `requestAccess`) and not injecting the full API on unapproved pages, and
-   `use_dynamic_url`.
+4. Replaced by [SITE_PRESENCE.md](SITE_PRESENCE.md) (decided 2026-10-14): a page sees nothing of window.ml until the
+   person marks it visible; a visible page gets the stub, then the full API once allowed.
 
 The README's security paragraph changes after slice 2, not before: until then a run on a page still lends it the
 API.
