@@ -14,6 +14,13 @@
 // and a store's closure behind a page function), and one whose page lies to code in its own world. The controls are
 // everyday tasks where the world should not matter. What a default costs is measured as success, exec calls, the
 // page-global misses followed by a `world: "page"` retry (metrics.mjs `execWorld`), tokens, seconds and spend.
+//
+// A CONFOUND to report with any result: under the isolated default a world-less survey that reads the page is no longer
+// answered by the read-only dialect (which runs only in the page's world) but goes to the approval gate (approve "auto"
+// passes it) and runs as an approved exec in the isolated world. So the isolated arm also changes how surveys are
+// approved: the `exec gated` column counts those per run, against the page arm's. And an isolated default with NO
+// isolation available (no user scripts, no CDP) silently runs in the page's world, making the arms identical: check the
+// pilot's isolated arm shows the `Page globals need world: "page".` hint on app-state before trusting a sweep.
 
 import { defineBench } from "../spec";
 
