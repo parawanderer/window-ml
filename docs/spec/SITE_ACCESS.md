@@ -579,15 +579,21 @@ Recorded as each slice lands, with the reason.
   - Q14 taken: the self-approval list is `ml_site_selfapprove` (local, origins), and the popup's editor is gone;
     DevTools Settings edits it through `SITE_ACCESS`, so a page cannot. The old sync `pageApprovalDomains` is read once
     by the migration and left in place.
-  - A whitelist entry with a port typed on a bare host (`host:8443`) or a path trusted nothing before (#628) and is
-    dropped by the migration rather than read as an origin; only entries already stored as origins keep their scheme
-    and port.
-  - `deny` and `revoke` drop the origin's agent level and leave its self-approval entry, which a denial overrides, as
-    the whitelist always was; adding a self-approval does not lift a denial. A revoke of an origin that also
-    self-approves leaves it allowed by self-approval, and Settings marks such a row as implied (no revoke).
-  - The upgrade notice is a local flag (`ml_site_upgrade_notice`) the migration sets only when it moved a non-empty
-    whitelist; Settings' Dismiss clears it. The notice's last sentence in 1.4 ("#628 already lists ...") is read as a
-    note to the builder: the list of allowed origins a bare entry stopped covering stays under it, each with an Add.
+  - A whitelist entry with a port typed on a bare host (`host:8443`), a path, a wildcard (`*.x.test`) or a Unicode
+    host trusted nothing before (#628) and is dropped by the migration rather than read as a site; only entries already
+    stored as origins keep their scheme and port. A trailing dot (`x.test.`) names the same DNS name and becomes
+    `https://x.test`.
+  - `deny` and `revoke` take away every grant: the approvals, the agent level and the self-approval (review of #640).
+    "Stop denying" therefore leaves the site unknown, and a revoke of a self-approving site leaves it not allowed, so
+    every row in Settings and the popup's Revoke revoke it. Adding a self-approval does not lift a denial; a denial
+    still wins at read time as a backstop.
+  - The upgrade notice is a local key (`ml_site_upgrade_notice`, in `SITE_ACCESS_KEYS` so every open editor refreshes)
+    the migration sets when it moved a non-empty whitelist, holding the entries it could not carry over; Settings
+    shows the notice with those entries listed, also when none was carried over, and Dismiss clears it. The notice's
+    last sentence in 1.4 ("#628 already lists ...") is read as a note to the builder: the list of allowed origins a
+    bare entry stopped covering stays under it, each with an Add.
+  - Edits and the migration's writes run one at a time (`serially`), and an edit is refused while the migration
+    cannot complete, so it is never applied to the old layout and undone by a later migration.
   - The popup shows the agents line only; its buttons are PR 3's (the popup's agents buttons).
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.

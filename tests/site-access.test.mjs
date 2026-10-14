@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { originOf, grantableOrigin, levelsFor, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, migrateSiteLists } = await import("../src/site-access.ts");
+const { SITE_ACCESS_KEYS, originOf, grantableOrigin, levelsFor, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, migrateSiteLists } = await import("../src/site-access.ts");
 
 const empty = { always: [], session: [], denied: [], agents: {}, selfApprove: [] };
 /** Lists with some fields set, the rest empty. */
@@ -94,8 +94,9 @@ test("levelsFor: every (use x agents x selfApprove) state answers what the perso
 const EDITS = [
     [{ op: "allow", origin: O, scope: "always" }, (s) => ({ ...s, u: "always", a: s.u === "always" || s.u === "session" ? s.a : undefined })],
     [{ op: "allow", origin: O, scope: "session" }, (s) => ({ ...s, u: "session", a: s.u === "always" || s.u === "session" ? s.a : undefined })],
-    [{ op: "deny", origin: O }, (s) => ({ ...s, u: "denied", a: undefined })],
-    [{ op: "revoke", origin: O }, (s) => ({ ...s, u: s.u === "denied" ? "denied" : "none", a: undefined })],
+    // Deny and revoke take away every grant, self-approval included: "Stop denying" or a revoke leaves the site unknown.
+    [{ op: "deny", origin: O }, (s) => ({ ...s, u: "denied", a: undefined, self: false })],
+    [{ op: "revoke", origin: O }, (s) => ({ ...s, u: s.u === "denied" ? "denied" : "none", a: undefined, self: false })],
     [{ op: "undeny", origin: O }, (s) => ({ ...s, u: s.u === "denied" ? "none" : s.u })],
     ...["ask", "always", "denied", "off"].map((level) => [{ op: "agents", origin: O, level },
         (s) => (expectLevels(s).use === "always" || expectLevels(s).use === "session" ? { ...s, a: level === "off" ? undefined : level } : s)]),
@@ -119,6 +120,25 @@ test("applyEdit: every edit over every state lands where the person asked, and n
         for (const o of ["https://b.example", "https://c.example", "https://d.example", "https://e.example"])
             assert.deepEqual(levelsFor(others, o), levelsFor(withOthers, o), `${label} ${JSON.stringify(edit)} moved ${o}`);
     }
+});
+
+test("S1/S2: a self-approving site that is denied, then un-denied, is unknown; one revoked is unknown, not still allowed by self-approval", () => {
+    const self = L({ always: [O], selfApprove: [O], agents: { [O]: "ask" } });
+    const undenied = applyEdit(applyEdit(self, { op: "deny", origin: O }), { op: "undeny", origin: O });
+    assert.deepEqual(levelsFor(undenied, O), { use: "unknown", agents: "off", selfApprove: false });
+    assert.deepEqual(undenied.selfApprove, []);
+    const revoked = applyEdit(self, { op: "revoke", origin: O });
+    assert.deepEqual(levelsFor(revoked, O), { use: "unknown", agents: "off", selfApprove: false });
+    assert.deepEqual(levelsFor(applyEdit(L({ selfApprove: [O] }), { op: "revoke", origin: O }), O).use, "unknown", "an implied approval is revoked too");
+});
+
+test("the upgrade notice's key is a site key, so every open editor refreshes when it changes", () => {
+    assert.equal(SITE_ACCESS_KEYS.upgradeNotice, "ml_site_upgrade_notice");
+});
+
+test("migrateSiteLists names the entries it could not carry over", () => {
+    assert.deepEqual(migrateSiteLists(empty, ["x.test", "*.y.test", "z.test:8443", 42, "bücher.de"]).dropped, ["*.y.test", "z.test:8443", "42", "bücher.de"]);
+    assert.deepEqual(migrateSiteLists(empty, ["x.test"]).dropped, []);
 });
 
 test("applyEdit: a site allowed fresh starts with agents off; revoke and deny drop its agents level; a later allow does not bring it back", () => {
@@ -200,6 +220,9 @@ const MIGRATION_CASES = [
     ["an empty list", [], []],
     ["a non-string entry", [42, null, { host: "x.test" }, ["x.test"]], []],
     ["a mixed list, duplicates and case", ["X.test", "x.test", "https://x.test/", "", "  "], ["https://x.test"]],
+    ["a trailing dot (the same DNS name)", ["x.test."], ["https://x.test"]],
+    ["a wildcard (never a site)", ["*.x.test", "*"], []],
+    ["a Unicode host the old editor never stored", ["bücher.de"], []],
 ];
 
 test("UPGRADE: migrateSiteLists turns each stored host into the one origin it trusted, enumerated", () => {

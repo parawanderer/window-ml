@@ -756,8 +756,9 @@ function hostPatternFrom(input: string): string | null {
 function hostLabelOf(origin: string): string {
     return origin.replace(/^https?:\/\//, "").replace(/\/\*?$/, "");
 }
-/** What the worker's `SITE_ACCESS` answers Settings: the lists, and whether the one-time upgrade notice is still up. */
-interface SiteAccessView { lists: SiteLists; upgradeNotice: boolean }
+/** What the worker's `SITE_ACCESS` answers Settings: the lists, whether the one-time upgrade notice is still up, and the
+ *  whitelist entries the upgrade could not carry over. */
+interface SiteAccessView { lists: SiteLists; upgradeNotice: boolean; upgradeDropped: string[] }
 
 /**
  * Ask the worker for the site lists (`SITE_ACCESS`), applying an edit first when one is given.
@@ -767,10 +768,10 @@ interface SiteAccessView { lists: SiteLists; upgradeNotice: boolean }
 function askSiteAccess(payload: { edit?: SiteEdit; dismissUpgradeNotice?: boolean }): Promise<SiteAccessView | null> {
     return new Promise((resolve) => {
         try {
-            chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { lists?: SiteLists; upgradeNotice?: boolean } } | undefined) => {
+            chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { lists?: SiteLists; upgradeNotice?: boolean; upgradeDropped?: string[] } } | undefined) => {
                 void chrome.runtime.lastError;
                 const lists = res?.data?.lists;
-                resolve(lists ? { lists: { ...lists, agents: lists.agents ?? {}, selfApprove: lists.selfApprove ?? [] }, upgradeNotice: res?.data?.upgradeNotice === true } : null);
+                resolve(lists ? { lists: { ...lists, agents: lists.agents ?? {}, selfApprove: lists.selfApprove ?? [] }, upgradeNotice: res?.data?.upgradeNotice === true, upgradeDropped: Array.isArray(res?.data?.upgradeDropped) ? res.data.upgradeDropped : [] } : null);
             });
         } catch { resolve(null); }
     });
@@ -800,7 +801,8 @@ const AGENT_CHOICES: [AgentLevel | "off", string][] = [["off", "Off"], ["ask", "
  * Which sites may use `window.ml` at all (docs/spec/SITE_ACCESS.md), and whether each may start agents: one row per
  * allowed origin with its scope, its agent level and a revoke, then the denied ones. The full list; the toolbar popup
  * shows only the current tab's site. Edits go through the worker (`SITE_ACCESS`), which is what the router's gate reads
- * on every message. A site that approves its own actions is listed with the levels that implies, edited in its section.
+ * on every message. A site that approves its own actions is listed with the levels that implies; revoking it takes its
+ * self-approval away too.
  */
 function SiteApprovals() {
     const [view, setView] = useSiteLists();
@@ -845,9 +847,7 @@ function SiteApprovals() {
                                         {AGENT_CHOICES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
                                     </select>
                                 </label>
-                                {implied
-                                    ? <span class="perm-x" aria-hidden="true" />
-                                    : <button class="perm-x" aria-label={`Revoke ${o}`} {...cursorTipOn(`Revoke ${o}`)} onClick={() => edit({ op: "revoke", origin: o })}>✕</button>}
+                                <button class="perm-x" aria-label={`Revoke ${o}`} {...cursorTipOn(`Revoke ${o}`)} onClick={() => edit({ op: "revoke", origin: o })}>✕</button>
                             </div>
                         );
                     })}
@@ -1029,6 +1029,9 @@ function SelfApprovalList() {
             {view.upgradeNotice
                 ? <div class="set-warn perm-upgrade">
                     Sites on this list now match one origin each. Each host you had became its <code>https://</code> origin. Add an <code>http://</code> origin or another port yourself if you need one.
+                    {view.upgradeDropped.length
+                        ? <div class="perm-list">{view.upgradeDropped.map((d) => <span class="perm-chip" key={d}><span class="perm-host">{d}</span></span>)}</div>
+                        : null}
                     {" "}<button class="test-btn" onClick={() => { void askSiteAccess({ dismissUpgradeNotice: true }).then((v) => { if (v) setView(v); }); }}>Dismiss</button>
                   </div>
                 : null}

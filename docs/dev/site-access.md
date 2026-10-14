@@ -163,15 +163,17 @@ that wakes the worker is judged against the restored runs, not the empty maps th
 | `ml_site_agents` | local, and session | origin → agent level (`ask`, `always`, `denied`; absent is `off`). An origin allowed only for the session keeps its level in the session area, so it goes with that approval |
 | `ml_site_selfapprove` | local | the origins that approve their own actions |
 | `ml_site_schema` | local | `2` once the slice 3 migration ran |
-| `ml_site_upgrade_notice` | local | set by a migration that moved a whitelist, until Settings' notice is dismissed |
+| `ml_site_upgrade_notice` | local | set by a migration that moved a whitelist, with the entries it could not carry over, until Settings' notice is dismissed |
 
 `levelsFor(lists, origin)` answers `{ use, agents, selfApprove }`: `use` is `always`, `session`, `denied` or
 `unknown`; a denial wins over everything; an origin on the self-approval list is `use: always` and `agents: always`
 (slice 3, Q6); an origin that may not use window.ml has agents `off`. `applyEdit` takes `allow` (a site allowed fresh
-starts at agents `off`; one already allowed keeps its level when its scope changes), `deny` and `revoke` (both drop the
-agent level), `undeny`, `agents` (only for an origin that may use window.ml) and `selfApprove` (add or remove; a denial
+starts at agents `off`; one already allowed keeps its level when its scope changes), `deny` and `revoke` (both take
+every grant away: the approvals, the agent level and the self-approval, so neither a revoke nor a later "Stop denying"
+leaves self-approval behind), `undeny`, `agents` (only for an origin that may use window.ml) and `selfApprove` (add or remove; a denial
 still wins). An edit the rules do not know changes nothing, and the worker refuses one that does not name an origin as
-the browser writes it.
+the browser writes it. Edits and the migration's writes run one at a time (`serially` in `sw-site-access.ts`), so two
+editors writing at once cannot lose either change, and an edit is refused while the migration cannot complete.
 
 Nothing enforces the agent level yet: it is stored, shown and edited, and the start card (PR 2 of the slice 3
 reference) is what will read it.
@@ -181,8 +183,8 @@ an `origin` its `decision` (`use`), its `levels`, and `implied` when only the se
 DevTools Settings → Permissions, "Sites that may use window.ml" (`SiteApprovals`: one row per allowed origin with its
 scope, its agent level and a revoke) and "Sites that approve their own actions" (`SelfApprovalList`), and the toolbar
 popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set), which shows
-the agent level on a line of its own and offers no Revoke for an approval only the self-approval list implies. The popup
-does not edit the self-approval list (slice 3, Q14).
+the agent level on a line of its own. Its Revoke, like every Settings row's, also removes a self-approval. The popup
+does not add to the self-approval list (slice 3, Q14).
 
 ### The upgrade (`migrateSiteAccess`)
 
@@ -190,7 +192,8 @@ The worker migrates once, at start and before any reader (`siteSchemaReady`, whi
 message that wakes the worker is judged on the migrated lists): each entry of the old sync whitelist
 (`pageApprovalDomains`) becomes the one origin it trusted (`selfApprovalOrigin`: a bare host is `https://host` on the
 default port, loopback included; an entry stored as an origin is that origin; a host with a port, a path or a
-non-string trusted nothing and is dropped), and every origin allowed before gets agents `ask` (#578). It writes the
+non-string, a wildcard or a Unicode host trusted nothing and is dropped, and named in the notice; a trailing dot is
+dropped from the host), and every origin allowed before gets agents `ask` (#578). It writes the
 agent levels, the self-approval list and `ml_site_schema: 2` in one local write, and never rewrites the gate's three
 lists, so an edit racing it is not lost. The sync setting is read once and left in place, for another machine on an
 older build; nothing reads it after. A failed migration is tried again by the next reader, and until then the lists

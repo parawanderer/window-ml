@@ -84,8 +84,8 @@ test("popup: This site shows the agent level on its own line, hidden while the s
         const line = p.doc.getElementById("siteAgents");
         assert.equal(line.hidden, agents === null, `${label}: hidden`);
         if (agents) assert.equal(line.textContent, agents, label);
-        // An approval the self-approval list implies has no Revoke here: that list is edited in Settings.
-        if (implied) assert.equal(p.doc.getElementById("siteRevoke").hidden, true, label);
+        // Revoke takes every grant away, self-approval included, so an approval it implies is revocable here too.
+        if (implied) assert.equal(p.doc.getElementById("siteRevoke").hidden, false, label);
     }
 });
 

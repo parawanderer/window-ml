@@ -36,7 +36,7 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
-import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, SITE_UPGRADE_NOTICE_KEY } from "./sw/sw-site-access";
+import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -529,18 +529,18 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string; dismissUpgradeNotice?: boolean };
         (async () => {
-            if (p.dismissUpgradeNotice) await chrome.storage.local.remove(SITE_UPGRADE_NOTICE_KEY);
+            if (p.dismissUpgradeNotice) await dismissUpgradeNotice();
             const lists = p.edit ? await editSiteAccess(p.edit) : await readSiteLists();
             // A revoke is decided before the editor hears it is done: a page-built run on a site it took away is the
             // worker's by then (nav-handover.ts).
             if (p.edit) await handOverOnRevoke().catch(() => []);
-            const notice = (await chrome.storage.local.get(SITE_UPGRADE_NOTICE_KEY).catch(() => ({} as Record<string, unknown>)))[SITE_UPGRADE_NOTICE_KEY] === true;
+            const notice = await upgradeNotice();
             const origin = originOf(p.origin);
             const levels = origin ? await siteLevels(origin) : undefined;
             const decision = levels?.use;
             // An approval no list holds comes from the self-approval list: revoking it here would change nothing.
             const implied = !!origin && decision === "always" && !lists.always.includes(origin);
-            sendResponse({ data: { lists, ...(notice ? { upgradeNotice: true } : {}), ...(origin ? { origin, decision, levels, ...(implied ? { implied: true } : {}) } : {}) } });
+            sendResponse({ data: { lists, ...(notice ? { upgradeNotice: true, upgradeDropped: notice.dropped } : {}), ...(origin ? { origin, decision, levels, ...(implied ? { implied: true } : {}) } : {}) } });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }

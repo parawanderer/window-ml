@@ -98,3 +98,57 @@ test("UPGRADE: a fresh install migrates to an empty schema 2 and allows nothing"
     assert.equal(bg.localStore.ml_site_schema, 2);
     assert.deepEqual(bg.localStore.ml_site_selfapprove ?? [], []);
 });
+
+// --- the worker's writes: one at a time, a failed migration, an edit during it ---
+
+test("S3: two edits sent together both land, a denial included", async () => {
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch, local: { ml_site_schema: 2, ml_site_always: ["https://a.test", "https://b.test", "https://c.test"], ml_site_agents: { "https://a.test": "ask", "https://b.test": "ask" } } });
+    const edit = (e) => bg.send({ type: "SITE_ACCESS", payload: { edit: e } }, SETTINGS);
+    await Promise.all([edit({ op: "agents", origin: "https://a.test", level: "denied" }), edit({ op: "revoke", origin: "https://b.test" }), edit({ op: "deny", origin: "https://c.test" }), edit({ op: "allow", origin: "https://d.test", scope: "always" })]);
+    assert.deepEqual(await levels(bg, "https://a.test"), { use: "always", agents: "denied", selfApprove: false });
+    assert.deepEqual(await levels(bg, "https://b.test"), { use: "unknown", agents: "off", selfApprove: false });
+    assert.deepEqual(await levels(bg, "https://c.test"), { use: "denied", agents: "off", selfApprove: false });
+    assert.deepEqual(await levels(bg, "https://d.test"), { use: "always", agents: "off", selfApprove: false });
+});
+
+test("UPGRADE: a migration whose write fails leaves no self-approval and no agent level (fails closed), and is tried again", async () => {
+    const bg = upgraded();
+    const local = bg.context.chrome.storage.local;
+    const realSet = local.set;
+    let failed = 0;
+    local.set = async (obj) => { if ("ml_site_schema" in obj && failed === 0) { failed++; throw new Error("QUOTA_BYTES quota exceeded"); } return realSet(obj); };
+    // The first reader meets the failed migration: the whitelisted https origin is not allowed and not trusted.
+    assert.match((await chat(bg, "https://x.test/")).error, /not approved/);
+    assert.equal(failed, 1);
+    assert.equal(bg.localStore.ml_site_schema, undefined);
+    // An edit is refused rather than applied to the lists in the old layout.
+    const e = await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://d.test", scope: "always" } } }, SETTINGS);
+    assert.ok(e.error || plain(e.data?.lists?.always ?? []).includes("https://d.test"), "an edit either waits for a migration that worked or is refused");
+    // The next reader tries again, and it works.
+    assert.equal((await chat(bg, "https://x.test/")).data, "ok");
+    assert.equal(bg.localStore.ml_site_schema, 2);
+    // And a worker that starts over storage whose migration never landed migrates then.
+    const again = loadBackground({ config: baseConfig(structuredClone(OLD.sync)), local: structuredClone(OLD.local), siteGate: true, onFetch });
+    assert.deepEqual(await levels(again, "https://x.test"), { use: "always", agents: "always", selfApprove: true });
+});
+
+test("UPGRADE: an edit sent while the migration runs is not lost to it", async () => {
+    const bg = upgraded();
+    // Sent at once, before the migration's own write.
+    const [a, x] = await Promise.all([
+        bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "agents", origin: "https://a.test", level: "always" } } }, SETTINGS),
+        bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "selfApprove", origin: "https://x.test", on: false } } }, SETTINGS),
+    ]);
+    assert.ok(a.data && x.data);
+    assert.deepEqual(await levels(bg, "https://a.test"), { use: "always", agents: "always", selfApprove: false });
+    assert.deepEqual(await levels(bg, "https://x.test"), { use: "unknown", agents: "off", selfApprove: false });
+    assert.equal(bg.localStore.ml_site_agents["http://b.test"], "ask", "the migration's own levels landed too");
+});
+
+test("UPGRADE: entries that could not be carried over are named in the notice, also when none could", async () => {
+    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["*.x.test", "y.test:8443"] }), siteGate: true, onFetch });
+    const res = plain((await bg.send({ type: "SITE_ACCESS", payload: {} }, SETTINGS)).data);
+    assert.equal(res.upgradeNotice, true);
+    assert.deepEqual(res.upgradeDropped, ["*.x.test", "y.test:8443"]);
+    assert.deepEqual(res.lists.selfApprove, []);
+});

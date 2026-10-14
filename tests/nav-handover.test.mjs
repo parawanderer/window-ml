@@ -649,10 +649,10 @@ test("emptying the self-approval list hands over the runs of every origin it app
     await sleep(50);
     assert.deepEqual(await w.handed(), ["run-7", "run-8"]);
 
-    // Still covered: the list entry goes, the whitelist keeps the host.
+    // A revoke takes the self-approval too (slice 3 review): the site is no longer approved, and its run is handed over.
     const a = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, config: { pageApprovalDomains: ["builder.example"] }, tabs: [{ id: 7, url: BUILDER }] });
     await edit(a.bg, POPUP, { op: "revoke", origin: BUILDER_ORIGIN });
-    assert.deepEqual(await a.handed(), [], "the whitelist still approves the site");
+    assert.deepEqual(await a.handed(), ["run-7"], "a revoke of a self-approving site revokes it");
     // Still covered: one whitelist entry goes, another list keeps the origin.
     const b = await settledRuns({ local: { ml_site_always: [BUILDER_ORIGIN] }, config: { pageApprovalDomains: ["builder.example", "x.example"] }, tabs: [{ id: 7, url: BUILDER }] });
     b.bg.setLocal({ ml_site_selfapprove: ["https://x.example"] });

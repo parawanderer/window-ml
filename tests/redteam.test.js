@@ -201,6 +201,17 @@ test("GAIN blocked — a site trusted to self-gate (pageApprovalDomains) is appr
 
 // --- (f) slice 3: the agent level and the self-approval list, by origin, written only by the extension ---
 
+test("GAIN blocked — a self-approving site the person denied, then stopped denying, does not get its self-approval back", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdp: true }), siteGate: true, local: { ml_site_schema: 2, ml_site_always: ["https://trusted.example"], ml_site_selfapprove: ["https://trusted.example"] } });
+    const popup = { url: "chrome-extension://test/popup.html" };
+    await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "deny", origin: "https://trusted.example" } } }, popup);
+    const after = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://trusted.example", edit: { op: "undeny", origin: "https://trusted.example" } } }, popup);
+    assert.equal(after.data.decision, "unknown");
+    const page = { tab: { id: 2, url: "https://trusted.example/" }, url: "https://trusted.example/", origin: "https://trusted.example", frameId: 0 };
+    assert.match((await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, page)).error, /not approved/);
+    assert.equal(bg.debuggerCalls.filter((c) => c[0] === "attach").length, 0);
+});
+
 test("GAIN blocked — http://host, with the host on the old whitelist, is not 'whitelisted' for CDP_CLICK, even once allowed to use window.ml", async () => {
     // Regression for #628, kept through the slice 3 move of the whitelist to local origins: the old sync list of hosts
     // is migrated to `https://host`, never to the http origin.
@@ -303,7 +314,7 @@ test("the extension's own shell sends nothing the origin gate refuses (it shares
     assert.doesNotMatch(res?.error || "", /Refused/);
 });
 
-test("an approval that comes from the self-approval whitelist says so, so the popup does not offer a Revoke that does nothing", async () => {
+test("an approval that comes from the self-approval list says so, and a Revoke of it takes the self-approval away", async () => {
     const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true });
     const surface = { url: "chrome-extension://test/popup.html" };
     const implied = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://trusted.example" } }, surface);
@@ -312,6 +323,9 @@ test("an approval that comes from the self-approval whitelist says so, so the po
     await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://listed.example", scope: "always" } } }, surface);
     const listed = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://listed.example" } }, surface);
     assert.equal(listed.data.implied, undefined, "an approval on the list is the list's to revoke");
+    const revoked = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://trusted.example", edit: { op: "revoke", origin: "https://trusted.example" } } }, surface);
+    assert.equal(revoked.data.decision, "unknown", "revoked, not still allowed by self-approval");
+    assert.equal(revoked.data.levels.selfApprove, false);
 });
 
 // ── UNGATED: what the content script sends OUTSIDE PAGE_STARTED_TYPES, on a page's word ─────────────────────────

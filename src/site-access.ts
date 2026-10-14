@@ -13,6 +13,9 @@
 export const SITE_ACCESS_KEYS = {
     always: "ml_site_always", session: "ml_site_session", denied: "ml_site_denied",
     agents: "ml_site_agents", selfApprove: "ml_site_selfapprove",
+    /** Local: set by a migration that moved a whitelist, with the entries it could not carry over, until Settings'
+     *  notice is dismissed. Here so every editor refreshes when it changes. */
+    upgradeNotice: "ml_site_upgrade_notice",
 } as const;
 
 /** The local key holding which layout of the lists is stored (`SITE_SCHEMA`); absent before slice 3. */
@@ -97,9 +100,13 @@ export function selfApprovalOrigin(entry: unknown): string | null {
         const u = new URL(s);
         return u.pathname === "/" && !u.search && !u.hash && !u.username && !u.password ? o : null;
     }
-    const o = originOf(`https://${s}`);
+    // A trailing dot names the same DNS name (`x.test.` is `x.test`), so it trusts the site written without it. A
+    // wildcard, or any character a host name cannot hold, is never a site: dropped.
+    const host = s.toLowerCase().replace(/\.$/, "");
+    if (!/^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/.test(host)) return null;
+    const o = originOf(`https://${host}`);
     // A bare host only: the parsed hostname must be the whole entry (no port, no path, no credentials).
-    return o && new URL(o).hostname === s.toLowerCase() ? o : null;
+    return o && new URL(o).hostname === host ? o : null;
 }
 
 /**
@@ -165,14 +172,17 @@ export function uncoveredApprovals(lists: Partial<SiteLists>): string[] {
  * inferred. Applying it twice gives what applying it once gave, and a level already stored is kept.
  * @param v1 the lists as stored (the slice 3 fields may be absent)
  * @param syncHosts the `pageApprovalDomains` setting, whatever shape it has
- * @returns the lists to store
+ * @returns the lists to store, and `dropped`: the entries that trusted nothing, as the person will be shown them
  */
-export function migrateSiteLists(v1: Partial<SiteLists>, syncHosts: unknown): SiteLists {
+export function migrateSiteLists(v1: Partial<SiteLists>, syncHosts: unknown): SiteLists & { dropped: string[] } {
     const l = full(v1);
     const agents: Record<string, AgentLevel> = { ...l.agents };
     for (const o of [...l.always, ...l.session]) if (!l.denied.includes(o) && !Object.prototype.hasOwnProperty.call(agents, o)) agents[o] = "ask";
-    const fromSync = (Array.isArray(syncHosts) ? syncHosts : []).map(selfApprovalOrigin).filter((o): o is string => o != null);
-    return { ...l, agents, selfApprove: [...new Set([...l.selfApprove, ...fromSync])].sort() };
+    const entries = Array.isArray(syncHosts) ? syncHosts : [];
+    const fromSync = entries.map(selfApprovalOrigin).filter((o): o is string => o != null);
+    const dropped = entries.filter((e) => selfApprovalOrigin(e) == null && !(typeof e === "string" && !e.trim()))
+        .map((e) => (typeof e === "string" ? e.trim() : JSON.stringify(e) ?? String(e)));
+    return { ...l, agents, selfApprove: [...new Set([...l.selfApprove, ...fromSync])].sort(), dropped };
 }
 
 /** A change to the lists, as the settings and the popup ask for one. */
@@ -186,9 +196,9 @@ export type SiteEdit =
 
 /**
  * Apply one edit. Allowing lifts a denial and moves the origin to the chosen scope only, keeping its agent level when
- * it was already allowed (a site allowed fresh starts at "off"); denying removes every approval and the agent level;
- * revoking removes the approvals and the agent level and leaves the origin unknown (it may ask again); un-denying lifts
- * a denial. `agents` sets the level of an origin that may use window.ml ("off" removes it; for any other origin it does
+ * it was already allowed (a site allowed fresh starts at "off"); denying removes every grant (the approvals, the agent
+ * level and self-approval); revoking removes the same and leaves the origin unknown (it may ask again), so neither a
+ * revoke nor a later "Stop denying" leaves self-approval behind; un-denying lifts a denial. `agents` sets the level of an origin that may use window.ml ("off" removes it; for any other origin it does
  * nothing); `selfApprove` adds or removes the origin from the self-approval list, which a denial still overrides. An
  * edit the rules do not know changes nothing.
  * @param lists the lists before
@@ -214,8 +224,8 @@ export function applyEdit(lists: Partial<SiteLists>, edit: SiteEdit): SiteLists 
                 selfApprove: [...l.selfApprove],
             };
         }
-        case "deny": return { always: without(l.always), session: without(l.session), denied: add(l.denied), agents: agentsWithout(), selfApprove: [...l.selfApprove] };
-        case "revoke": return { ...copy(), always: without(l.always), session: without(l.session), agents: agentsWithout() };
+        case "deny": return { always: without(l.always), session: without(l.session), denied: add(l.denied), agents: agentsWithout(), selfApprove: without(l.selfApprove) };
+        case "revoke": return { ...copy(), always: without(l.always), session: without(l.session), agents: agentsWithout(), selfApprove: without(l.selfApprove) };
         case "undeny": return { ...copy(), denied: without(l.denied) };
         case "agents": {
             const lv = levelsFor(l, o).use;

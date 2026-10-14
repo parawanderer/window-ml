@@ -746,6 +746,8 @@ test("settings search: Escape in the box clears it", async () => {
 async function settingsOverWorker({ config = {}, local = {} } = {}) {
     const bg = loadBackground({ config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", ...config }, local, siteGate: true });
     const w = await loadSidebarWorld({ siteAccess: (payload) => bg.send({ type: "SITE_ACCESS", payload }, { url: "chrome-extension://test/sidebar.html" }) });
+    // One browser's storage: what the worker writes reaches every open extension page's storage.onChanged, as Chrome does.
+    bg.context.chrome.storage.onChanged.addListener((changes, area) => { for (const fn of [...w.changeListeners]) fn(JSON.parse(JSON.stringify(changes)), area); });
     await openSettings(w, "Permissions");
     await w.flush(); await w.flush();
     return { bg, w };
@@ -778,7 +780,7 @@ test("UPGRADE (Settings): the old lists render as rows: a and b allowed with age
     assert.deepEqual(siteRows(w), [
         { origin: "http://b.test", use: "always", agents: "ask", revoke: true },
         { origin: "https://a.test", use: "always", agents: "ask", revoke: true },
-        { origin: "https://x.test", use: "always", agents: "always", revoke: false },
+        { origin: "https://x.test", use: "always", agents: "always", revoke: true },
     ]);
     const sites = section(w, "Sites that may use window.ml");
     assert.deepEqual([...sites.querySelectorAll(".perm-list .perm-host")].map((e) => e.textContent), ["https://c.test"], "c is listed as denied");
@@ -853,4 +855,21 @@ test("self-approval list: empty says so; an allowed http origin of a self-approv
     await w.flush(); await w.flush();
     assert.deepEqual([...note().querySelectorAll(".perm-host")].map((e) => e.textContent), ["http://mlbox.lan:8080"], "an added origin leaves the notice");
     assert.deepEqual(bg.localStore.ml_site_selfapprove, ["http://localhost:3000", "https://localhost", "https://mlbox.lan"]);
+});
+
+test("Settings: revoking a self-approving site's row takes its self-approval too, and the site is no longer allowed", async () => {
+    const { bg, w } = await settingsOverWorker({ local: { ml_site_schema: 2, ml_site_selfapprove: ["https://x.test"] } });
+    section(w, "Sites that may use window.ml").querySelector('button.perm-x[aria-label="Revoke https://x.test"]').click();
+    await w.flush(); await w.flush();
+    assert.deepEqual(siteRows(w), []);
+    assert.deepEqual(bg.localStore.ml_site_selfapprove, []);
+    assert.deepEqual(whitelistParts(w).chips, []);
+});
+
+test("UPGRADE (Settings): the notice names the whitelist entries that could not be carried over, also when none could", async () => {
+    const { w } = await settingsOverWorker({ config: { pageApprovalDomains: ["*.x.test", "y.test:8443"] } });
+    const notice = whitelistParts(w).sec.querySelector(".perm-upgrade");
+    assert.ok(notice, "the notice shows although nothing was carried over");
+    assert.deepEqual([...notice.querySelectorAll(".perm-host")].map((e) => e.textContent), ["*.x.test", "y.test:8443"]);
+    assert.doesNotMatch(notice.textContent, /—/);
 });

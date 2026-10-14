@@ -17,10 +17,6 @@ const asLevels = (v: unknown): Record<string, AgentLevel> => {
 };
 const none = (): Record<string, unknown> => ({});
 
-/** The local key the migration leaves set when it moved a whitelist, so Settings shows its one-time notice until the
- *  person dismisses it. */
-export const SITE_UPGRADE_NOTICE_KEY = "ml_site_upgrade_notice";
-
 /** The lists as stored, without waiting for the migration: what the migration itself reads. */
 async function readStored(): Promise<SiteLists> {
     const K = SITE_ACCESS_KEYS;
@@ -51,37 +47,57 @@ function agentHalves(lists: SiteLists): { local: Record<string, AgentLevel>; ses
     return { local, session };
 }
 
+/** Every write to the site keys, one after another: an edit, and the migration's read and write. Two edits sent at
+ *  once each read the lists the other wrote, so neither (a denial included) is lost to the other. */
+let siteWrites: Promise<unknown> = Promise.resolve();   // state: plumbing
+
+/**
+ * Run `fn` after every write already queued, and before any queued after it.
+ * @param fn the read-modify-write
+ * @returns what `fn` returns
+ */
+function serially<T>(fn: () => Promise<T>): Promise<T> {
+    const run = siteWrites.catch(() => undefined).then(fn);
+    siteWrites = run.catch(() => undefined);
+    return run;
+}
+
 /**
  * Move an install's site lists to the slice 3 layout, once: the sync whitelist of hosts (`pageApprovalDomains`) becomes
  * local origins, and every origin allowed before gets the agent level "ask" (`migrateSiteLists`). Marked done by
  * `ml_site_schema: 2`, written in the same local write as the levels, so a worker that dies midway migrates again from
  * the same input. The sync setting is read and left in place, so another machine on an older build keeps working. The
- * gate's own three lists are not rewritten: they do not change, and an edit racing the migration must not be lost.
+ * gate's own three lists are not rewritten. A migration that moved a non-empty whitelist leaves the one-time notice
+ * set, with the entries it could not carry over, so the person is told which they were even when none was carried.
+ * Runs in the write chain, so no edit interleaves with it.
  * @returns whether this call migrated (false when the marker was already set)
  */
-export async function migrateSiteAccess(): Promise<boolean> {
-    const marker = await chrome.storage.local.get(SITE_SCHEMA_KEY).catch(none);
-    if (typeof marker[SITE_SCHEMA_KEY] === "number" && (marker[SITE_SCHEMA_KEY] as number) >= SITE_SCHEMA) return false;
-    const [stored, sync] = await Promise.all([readStored(), chrome.storage.sync.get({ pageApprovalDomains: [] }).catch(none)]);
-    const syncHosts = (sync as Record<string, unknown>).pageApprovalDomains;
-    const next = migrateSiteLists(stored, syncHosts);
-    const halves = agentHalves(next);
-    await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.agents]: halves.session });
-    const moved = Array.isArray(syncHosts) && syncHosts.length > 0;
-    await chrome.storage.local.set({
-        [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
-        ...(moved ? { [SITE_UPGRADE_NOTICE_KEY]: true } : {}), [SITE_SCHEMA_KEY]: SITE_SCHEMA,
+export function migrateSiteAccess(): Promise<boolean> {
+    return serially(async () => {
+        const marker = await chrome.storage.local.get(SITE_SCHEMA_KEY);
+        if (typeof marker[SITE_SCHEMA_KEY] === "number" && (marker[SITE_SCHEMA_KEY] as number) >= SITE_SCHEMA) return false;
+        const [stored, sync] = await Promise.all([readStored(), chrome.storage.sync.get({ pageApprovalDomains: [] }).catch(none)]);
+        const syncHosts = (sync as Record<string, unknown>).pageApprovalDomains;
+        const next = migrateSiteLists(stored, syncHosts);
+        const halves = agentHalves(next);
+        await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.agents]: halves.session });
+        const moved = Array.isArray(syncHosts) && syncHosts.length > 0;
+        await chrome.storage.local.set({
+            [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
+            ...(moved ? { [SITE_ACCESS_KEYS.upgradeNotice]: { dropped: next.dropped } } : {}), [SITE_SCHEMA_KEY]: SITE_SCHEMA,
+        });
+        return true;
     });
-    return true;
 }
 
 /** The migration of this worker's life, started by the first reader (and by background.ts at start). */
-let schemaReady: Promise<unknown> | null = null;   // state: plumbing
+let schemaReady: Promise<boolean> | null = null;   // state: plumbing
 
-/** Wait for the lists to be in this build's layout. A failed migration is tried again by the next reader; meanwhile the
- *  lists read as stored, which holds no self-approval and no agent level: the refusing side. */
-export function siteSchemaReady(): Promise<unknown> {
-    schemaReady ??= migrateSiteAccess().catch((e) => { schemaReady = null; return e; });
+/** Wait for the lists to be in this build's layout; true once they are. A failed migration answers false and is tried
+ *  again by the next reader; meanwhile the lists read as stored, which holds no self-approval and no agent level: the
+ *  refusing side. */
+export function siteSchemaReady(): Promise<boolean> {
+    schemaReady ??= migrateSiteAccess().then(() => true, () => { schemaReady = null; return false; });
     return schemaReady;
 }
 
@@ -94,20 +110,40 @@ export async function readSiteLists(): Promise<SiteLists> {
 
 /**
  * Change the lists. Only the extension's own pages call this (the router checks), so a page can never approve itself.
- * An edit that names something other than an origin, as the browser writes one, is refused.
+ * An edit that names something other than an origin, as the browser writes one, is refused, and so is any edit while
+ * the lists could not be moved to this build's layout: applied to the old layout, a later migration would undo it.
+ * Edits run one at a time (`serially`).
  * @param edit the change
  * @returns the lists after it
  */
 export async function editSiteAccess(edit: SiteEdit): Promise<SiteLists> {
     if (!edit || typeof edit.origin !== "string" || originOf(edit.origin) !== edit.origin) throw new Error("not a site's origin");
-    const next = applyEdit(await readSiteLists(), edit);
-    const halves = agentHalves(next);
-    await chrome.storage.local.set({
-        [SITE_ACCESS_KEYS.always]: next.always, [SITE_ACCESS_KEYS.denied]: next.denied,
-        [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
+    if (!await siteSchemaReady()) throw new Error("the site lists could not be upgraded; try again");
+    return serially(async () => {
+        const next = applyEdit(await readStored(), edit);
+        const halves = agentHalves(next);
+        await chrome.storage.local.set({
+            [SITE_ACCESS_KEYS.always]: next.always, [SITE_ACCESS_KEYS.denied]: next.denied,
+            [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
+        });
+        await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.session]: next.session, [SITE_ACCESS_KEYS.agents]: halves.session });
+        return next;
     });
-    await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.session]: next.session, [SITE_ACCESS_KEYS.agents]: halves.session });
-    return next;
+}
+
+/**
+ * The one-time upgrade notice, if it is still up: the whitelist entries the migration could not carry over.
+ * @returns null when there is no notice
+ */
+export async function upgradeNotice(): Promise<{ dropped: string[] } | null> {
+    const v = (await chrome.storage.local.get(SITE_ACCESS_KEYS.upgradeNotice).catch(none))[SITE_ACCESS_KEYS.upgradeNotice] as { dropped?: unknown } | true | undefined;
+    if (!v) return null;
+    return { dropped: v === true ? [] : asList(v.dropped) };
+}
+
+/** Dismiss the one-time upgrade notice. */
+export function dismissUpgradeNotice(): Promise<void> {
+    return serially(() => chrome.storage.local.remove(SITE_ACCESS_KEYS.upgradeNotice));
 }
 
 /** What the lists say about one origin: its three levels. */

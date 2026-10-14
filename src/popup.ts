@@ -417,13 +417,11 @@ const AGENTS_LINE: Record<SiteLevels["agents"], string> = {
 };
 let siteOrigin: string | null = null;
 let siteNow: SiteDecision | null = null;   // what the lists said last, which decides what "Revoke" undoes
-let siteImplied = false;   // allowed by the self-approval list, not by a list this block edits
 let siteLevelsNow: SiteLevels | null = null;   // state: ui (what the worker said last about this tab's site)
 function siteAccess(payload: { origin?: string; edit?: SiteEdit }): Promise<SiteDecision | null> {
     return new Promise((resolve) => {
         chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean; levels?: SiteLevels } } | undefined) => {
             void chrome.runtime.lastError;
-            siteImplied = !!res?.data?.implied;
             siteLevelsNow = res?.data?.levels ?? null;
             resolve(res?.data?.decision ?? null);
         });
@@ -448,8 +446,8 @@ function renderSite(decision: SiteDecision | null) {
     $("siteAllowSession").hidden = decision === "session";
     $("siteAllowAlways").hidden = decision === "always";
     $("siteDeny").hidden = decision === "denied";
-    // Revoking an approval the self-approval list implies would remove nothing: that list is edited in Settings.
-    $("siteRevoke").hidden = siteImplied || (!allowed && decision !== "denied");
+    // Revoke takes every grant away, self-approval included, so it is offered for an approval self-approval implies too.
+    $("siteRevoke").hidden = !allowed && decision !== "denied";
     $("siteRevoke").textContent = decision === "denied" ? "Stop denying" : "Revoke";
 }
 async function loadSite() {
