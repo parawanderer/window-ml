@@ -55,6 +55,38 @@ export async function stopServedSweep({ port = null, waitMs = 5000 } = {}) {
     return s;
 }
 
+/**
+ * Start the detached server for a finished sweep's page (this file, as its own process, so the sweep's can exit) and
+ * wait until it says it is listening (SERVER_FILE). Resolves its URL, or null when it did not come up. It outlives the
+ * sweep on purpose (`serve.mjs --stop` ends it), so it goes in the memory ledger the moment it exists, before it is up:
+ * a runner killed during the wait leaves it counted, and findable by merge-when-green. One that never came up is
+ * stopped, not left running unseen. `spawnServer`, `served`, `register`, `unregister` and `kill` are for tests.
+ */
+export async function handOffPage(sweepDir, port, { repo, waitMs = 20_000, spawnServer = null, served = servedSweep, register = null, unregister = null, kill = (pid) => process.kill(pid, "SIGTERM") } = {}) {
+    const budget = register && unregister ? null : await import("./memory-budget.mjs");
+    register ??= budget.register;
+    unregister ??= budget.unregister;
+    spawnServer ??= async () => {
+        const { spawn } = await import("node:child_process");
+        const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), sweepDir, "--port", String(port)], { cwd: repo, detached: true, stdio: "ignore" });
+        child.unref();
+        return child.pid;
+    };
+    const pid = await spawnServer();
+    try { register({ kind: "page", pid, sweep: basenameOf(sweepDir), repo }); } catch { /* not counted, nothing worse */ }
+    for (const until = Date.now() + waitMs; Date.now() < until;) {
+        const s = served();
+        if (s?.pid === pid) return s.url;
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    try { kill(pid); } catch { /* it already went */ }
+    try { unregister(pid); } catch { /* dropped on the next read: its pid is gone */ }
+    console.log("  (the page server did not come up, and was stopped; report.html in the sweep directory is the same page, from disk)");
+    return null;
+}
+
+const basenameOf = (p) => p.split(sep).filter(Boolean).pop();
+
 /** The repository root: a held run's `dir` is relative to it. */
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 /** The runs held open whose directory is inside the sweep at `root`. */

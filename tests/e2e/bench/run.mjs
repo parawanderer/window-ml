@@ -73,7 +73,7 @@ import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
 import { holdMode, loadSpec, startHeld, heldWindow, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
-import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
+import { startDashboard, staticPage, servedSweep, handOffPage } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
@@ -1023,7 +1023,7 @@ const main = async () => {
         const port = Number(new URL(dash.url).port);
         await dash.stop();
         unwatchMarks();
-        page = await handOffPage(sweepDir, port);
+        page = await handOffPage(sweepDir, port, { repo: ROOT });
     }
     // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
     // About what THIS invocation did: a run already on disk is in the report, not in the exit status.
@@ -1052,25 +1052,5 @@ const main = async () => {
     process.exit(done.exit);
 };
 
-/**
- * Start the detached server for a finished sweep's page (serve.mjs, as its own process, so this one can exit) and wait
- * until it says it is listening (SERVER_FILE). Resolves its URL, or null when it did not come up.
- */
-async function handOffPage(sweepDir, port) {
-    const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(new URL("./serve.mjs", import.meta.url)), sweepDir, "--port", String(port)],
-        { cwd: ROOT, detached: true, stdio: "ignore" });
-    child.unref();
-    for (const until = Date.now() + 20_000; Date.now() < until;) {
-        const s = servedSweep();
-        if (s?.pid === child.pid) {
-            // In the ledger with the bench's other processes: a page server lives on after its sweep.
-            try { register({ kind: "page", pid: child.pid, sweep: path.basename(sweepDir), repo: ROOT }); } catch { /* not counted, nothing worse */ }
-            return s.url;
-        }
-        await new Promise((r) => setTimeout(r, 200));
-    }
-    console.log("  (the page server did not come up; report.html in the sweep directory is the same page, from disk)");
-    return null;
-}
 
 main().catch((e) => { console.error(e); process.exit(1); });
