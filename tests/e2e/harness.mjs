@@ -461,8 +461,8 @@ export async function narrate(/** @type {any} */ page, /** @type {string|null} *
             + " letter-spacing: .02em; border-top: 1px solid rgba(255,255,255,.14);"
             + " color: " + (fin ? "#4ade80" : "#fbbf24") + ";";
         status.textContent = fin
-            ? "\u25cf  demo finished \u2014 the browser is yours"
-            : "\u25cf  demo running \u2014 it is driving the pointer and keyboard";
+            ? "\u25cf  demo finished: the browser is yours"
+            : "\u25cf  demo running: it is driving the pointer and keyboard";
         el.append(status);
     }, [text ?? null, sub, done]);
 }
