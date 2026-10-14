@@ -22,6 +22,7 @@ import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RAD
 import { annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box } from "../dom/locate";
 import { OpaqueKind, canvasAt, reservedSurfaceAt, pageVisionHost } from "../dom/page-geometry";
 import type { VisionHost, Geometry, GeoMark } from "./vision-host";
+import { syntheticClickPlan, keyPress, keyInit } from "../input-dispatch";
 
 /** The delimiters locate quotes a mark's name with ("…"), and the legend's « » and `, folded inside a page's name. */
 const MARK_DELIMS = "\"«»`";
@@ -52,19 +53,23 @@ const surfaceNoun = (kind: OpaqueKind): string =>
 /** For a RESERVED kind, a one-line note that the click needs CDP (canvas clicks plainly). */
 const reservedClickNote = (kind: OpaqueKind): string =>
     kind === "canvas" ? "" : ` This needs a debugger (CDP) click — turn on "reserved-element clicking" in window.ml Settings → Advanced (a normal click can't reach ${kind === "iframe" ? "into a cross-origin frame" : "a sealed shadow root"}).`;
-/** Synthesize a real click at a viewport coordinate (for canvas surfaces): the full
- *  pointer/mouse sequence at (x,y) on the topmost element there. */
+/** Synthesize a real click at a viewport coordinate (for canvas surfaces): the full W3C
+ *  pointer/mouse sequence at (x,y) on the topmost element there — move, down, up, click, with
+ *  pressure / button / buttons / detail set the way hardware leaves them ({@link syntheticClickPlan}). */
 const clickAt = (x: number, y: number): Element | null => {
     // Ignore the debug sidebar overlay so a click under the panel reaches the canvas/page.
     const el = withHiddenSidebar(() => canvasAt(x, y) || (() => { try { return document.elementFromPoint(x, y); } catch { return null; } })());
     if (!el) return null;
-    const base: MouseEventInit = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, view: window };
-    const hasPointer = typeof PointerEvent === "function";
-    if (hasPointer) el.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1, isPrimary: true }));
-    el.dispatchEvent(new MouseEvent("mousedown", base));
-    if (hasPointer) el.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1, isPrimary: true }));
-    el.dispatchEvent(new MouseEvent("mouseup", base));
-    el.dispatchEvent(new MouseEvent("click", base));
+    const screenX = x + window.screenX, screenY = y + window.screenY;
+    for (const step of syntheticClickPlan(x, y, screenX, screenY)) {
+        try {
+            if (step.pointer) {
+                if (typeof PointerEvent === "function") el.dispatchEvent(new PointerEvent(step.type, step.init));
+            } else {
+                el.dispatchEvent(new MouseEvent(step.type, step.init));
+            }
+        } catch { /* one event failing to construct must not abandon the click */ }
+    }
     return el;
 };
 
@@ -1299,8 +1304,17 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             }
             let note = "";
             if (submit) {
-                for (const type of ["keydown", "keyup"]) {
-                    try { el.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })); } catch {}
+                const enter = keyPress("Enter");
+                for (const type of ["keydown", "keyup"] as const) {
+                    try {
+                        const ev = new KeyboardEvent(type, enter ? keyInit(enter) : { key: "Enter", code: "Enter", bubbles: true });
+                        // KeyboardEventInit drops the legacy `keyCode`/`which`; a listener still reads them.
+                        if (enter) {
+                            Object.defineProperty(ev, "keyCode", { value: enter.keyCode });
+                            Object.defineProperty(ev, "which", { value: enter.keyCode });
+                        }
+                        el.dispatchEvent(ev);
+                    } catch {}
                 }
                 if (input.form && typeof input.form.requestSubmit === "function") { try { input.form.requestSubmit(); } catch {} }
                 await settle(80);

@@ -7,6 +7,7 @@ import { clipOut } from "../dom/dom";
 import { isOwnUiId } from "../ids";
 import { OUTPUT_CEILING, ceilingNote } from "../agent/output-clip";
 import { noteRunMechanic } from "./sw-runs";
+import { cdpClickPlan, cdpTypePlan } from "../input-dispatch";
 
 /** Is the `debugger` permission held? It's declared at INSTALL time (in `permissions`, not optional) —
  *  Chrome forbids `debugger` as a runtime-optional grant (`permissions.request` rejects it: "Only permissions
@@ -83,16 +84,16 @@ try { chrome.debugger.onDetach.addListener((source) => { if (source.tabId != nul
  *  retargets INTO the frame / closed tree and is a TRUSTED, user-activated event (a synthetic dispatch is
  *  neither — it fires on the named element and can't cross those boundaries). Attaches the debugger (its
  *  unsuppressible banner is the honest "input-level control" signal — and it's shown ONLY for these reserved
- *  clicks, so the flash marks the risk), sends press+release, and ALWAYS detaches. See docs/spec/CDP_CLICK.md. */
+ *  clicks, so the flash marks the risk), sends the W3C move→press→release sequence ({@link cdpClickPlan}:
+ *  `force`/pressure, `pointerType`, `button`/`buttons` per stage), and ALWAYS detaches. See docs/spec/CDP_CLICK.md. */
 export async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attaches once per run (see the lifecycle above)
     if ("error" in at) return { error: `Couldn't attach the debugger to click a reserved element (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    const send = (type: string, buttons: number) =>
-        chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type, x, y, button: "left", buttons, clickCount: 1 });
     try {
-        await send("mousePressed", 1);
-        await send("mouseReleased", 0);
+        for (const params of cdpClickPlan(x, y)) {
+            await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", params);
+        }
         return { ok: true };
     } catch (e) {
         return { error: `The CDP click failed (${(e as Error)?.message || e}).` };
@@ -323,36 +324,20 @@ export async function cdpShadowResolve(tabId: number, selector: string, cap = 25
     }
 }
 
-// A "virtual key code" for a character — good enough for letters/digits/space (games/streams read
-// `key`/`keyCode`); punctuation falls back to the char code. Not a full keymap (that's `press`, later).
-const vkFor = (ch: string): number => {
-    if (/[a-z]/i.test(ch)) return ch.toUpperCase().charCodeAt(0);
-    if (/[0-9]/.test(ch)) return ch.charCodeAt(0);
-    if (ch === " ") return 32;
-    return ch.charCodeAt(0) || 0;
-};
-
 /** Type `text` into the tab's CURRENT focus via CDP `Input.dispatchKeyEvent` — REAL (isTrusted) key events a
  *  canvas / WebGL / remote-desktop surface actually honours (synthetic KeyboardEvents don't fire their input
- *  paths / are dropped on `isTrusted`). One keyDown (carrying `text`, so the character is produced) + keyUp per
- *  char; a printable char also reaches a keydown-forwarding remote-desktop listener via `key`/`windowsVirtualKeyCode`.
- *  `submit` presses Enter after. The caller establishes focus first (a CDP click at an @pt, a resolved sealed
- *  field, or the ambient focus). Reuses the run's live attachment. */
+ *  paths / are dropped on `isTrusted`). The sequence is {@link cdpTypePlan}: per character a keyDown (carrying
+ *  `text`, so the character is produced) + keyUp, each with `key`/`code`/`keyCode`/`which` cross-mapped from the
+ *  keyboard code table and the Shift hold around a shifted character; `submit` presses Enter after. The caller
+ *  establishes focus first (a CDP click at an @pt, a resolved sealed field, or the ambient focus). Reuses the
+ *  run's live attachment. */
 export async function cdpKeyType(tabId: number, text: string, submit = false): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);
     if ("error" in at) return { error: at.error, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    const key = (params: Record<string, unknown>) => chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", params);
     try {
-        for (const ch of String(text)) {
-            const vk = vkFor(ch);
-            // keyDown WITH `text` = the character is inserted (like a real keypress); keyUp completes the stroke.
-            await key({ type: "keyDown", text: ch, key: ch, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
-            await key({ type: "keyUp", key: ch, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
-        }
-        if (submit) {
-            await key({ type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
-            await key({ type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+        for (const params of cdpTypePlan(text, submit)) {
+            await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", params);
         }
         return { ok: true };
     } catch (e) {

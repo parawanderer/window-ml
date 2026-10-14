@@ -736,26 +736,35 @@ test("UPGRADE: an install that never touched the debugger setting gets it on; on
     assert.equal((await turnedOff.send({ type: "GET_CONFIG", payload: {} })).data.cdp, false);
 });
 
-test("CDP_CLICK dispatches a trusted press+release via the debugger; the attachment is REUSED across clicks", async () => {
+test("CDP_CLICK dispatches a trusted move+press+release via the debugger; the attachment is REUSED across clicks", async () => {
     const bg = loadBackground({ config: baseConfig({ cdp: true }) });
     // A trusted surface (no sender.tab — e.g. the approval UI) passes the inspected tabId in the payload.
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 120, y: 340, tabId: 9 } }, {});
     assert.deepEqual(res, { ok: true });
-    // attach → press → release. Detach is now lifecycle-driven (run-end / tab-close / idle), NOT per-click —
+    // attach → move → press → release (the W3C click sequence; the move establishes movementX/Y's prior state).
+    // Detach is now lifecycle-driven (run-end / tab-close / idle), NOT per-click —
     // attaching/detaching per call is the dominant per-CDP-op cost we're eliminating.
-    assert.deepEqual(bg.debuggerCalls.map(c => c[0]), ["attach", "sendCommand", "sendCommand"], "attach → press → release (no per-click detach)");
+    assert.deepEqual(bg.debuggerCalls.map(c => c[0]), ["attach", "sendCommand", "sendCommand", "sendCommand"], "attach → move → press → release (no per-click detach)");
     assert.deepEqual(bg.debuggerCalls[0][1], { tabId: 9 });
     assert.equal(bg.debuggerCalls[0][2], "1.3");
-    const [, , pressMethod, pressParams] = bg.debuggerCalls[1];
-    const releaseParams = bg.debuggerCalls[2][3];
-    assert.equal(pressMethod, "Input.dispatchMouseEvent");
+    const [, , moveMethod, moveParams] = bg.debuggerCalls[1];
+    const pressParams = bg.debuggerCalls[2][3];
+    const releaseParams = bg.debuggerCalls[3][3];
+    assert.equal(moveMethod, "Input.dispatchMouseEvent");
+    assert.deepEqual({ type: moveParams.type, x: moveParams.x, y: moveParams.y, button: moveParams.button, buttons: moveParams.buttons, force: moveParams.force }, {
+        type: "mouseMoved", x: 120, y: 340, button: "none", buttons: 0, force: 0,
+    });
     assert.equal(pressParams.type, "mousePressed");
     assert.equal(releaseParams.type, "mouseReleased");
     assert.equal(pressParams.x, 120); assert.equal(pressParams.y, 340); assert.equal(pressParams.button, "left");
+    assert.deepEqual({ pointerType: pressParams.pointerType, buttons: pressParams.buttons, clickCount: pressParams.clickCount, force: pressParams.force }, {
+        pointerType: "mouse", buttons: 1, clickCount: 1, force: 0.5,
+    });
+    assert.deepEqual({ buttons: releaseParams.buttons, force: releaseParams.force }, { buttons: 0, force: 0 });
     // A SECOND click on the same tab REUSES the live attachment — no second attach (the whole point of persisting).
     await bg.send({ type: "CDP_CLICK", payload: { x: 5, y: 6, tabId: 9 } }, {});
     assert.equal(bg.debuggerCalls.filter(c => c[0] === "attach").length, 1, "attached ONCE, reused for the second click");
-    assert.equal(bg.debuggerCalls.filter(c => c[0] === "sendCommand").length, 4, "two clicks = two press+release pairs on the one attachment");
+    assert.equal(bg.debuggerCalls.filter(c => c[0] === "sendCommand").length, 6, "two clicks = two move+press+release triples on the one attachment");
 });
 
 test("CDP_CLICK is refused when the cdp flag is off (never attaches)", async () => {
@@ -1026,7 +1035,7 @@ async function driveCdpShadowClick({ cdp, resolveEmpty = false }) {
 test("delegated cdpShadowClick (ON): a sealed `>>>` click is CDP-resolved, then clicked at the resolved coordinate", async () => {
     const { toolResult, clicks, attached } = await driveCdpShadowClick({ cdp: true });
     assert.ok(attached, "attached the debugger");
-    assert.equal(clicks.length, 2, "press + release dispatched");
+    assert.equal(clicks.length, 3, "move + press + release dispatched");
     assert.equal(clicks[0].x, 50, "clicked the resolved centre X"); assert.equal(clicks[0].y, 60, "…and Y");
     assert.match(toolResult, /sealed shadow root via the debugger/i, "the model is told it clicked inside a sealed root via CDP");
 });
@@ -1099,13 +1108,13 @@ test("delegated cdpType (focus mode): types real key events into the current foc
 
 test("delegated cdpType (@pt mode): clicks the coordinate to focus, THEN types", async () => {
     const { keys, mouse } = await driveCdpType({ cdp: true, mode: "pt", text: "ab" });
-    assert.equal(mouse.length, 2, "a trusted press+release click focuses the point first");
+    assert.equal(mouse.length, 3, "a trusted move+press+release click focuses the point first");
     assert.equal(keys.length, 4, "then two chars, down/up each");
 });
 
 test("delegated cdpType (sealed field): CDP-resolves the `>>>` field, focuses it, then types", async () => {
     const { keys, mouse } = await driveCdpType({ cdp: true, mode: "sealed", text: "x" });
-    assert.equal(mouse.length, 2, "resolved the sealed field then clicked to focus it");
+    assert.equal(mouse.length, 3, "resolved the sealed field then clicked to focus it");
     assert.equal(keys.length, 2, "one char typed via trusted keyboard");
 });
 
@@ -1129,8 +1138,20 @@ test("delegated cdpType: a page naming other text at a point or a sealed field s
 
 test("delegated cdpType: an honest page types exactly the call's keys, with its submit (control)", async () => {
     const { toolResult, keys } = await driveCdpType({ cdp: true, text: "hi", submit: true });
-    assert.deepEqual(keys.map(k => [k.type, k.key]), [["keyDown", "h"], ["keyUp", "h"], ["keyDown", "i"], ["keyUp", "i"], ["keyDown", "Enter"], ["keyUp", "Enter"]]);
+    assert.deepEqual(keys.map(k => [k.type, k.key, k.code, k.windowsVirtualKeyCode]), [
+        ["keyDown", "h", "KeyH", 72], ["keyUp", "h", "KeyH", 72],
+        ["keyDown", "i", "KeyI", 73], ["keyUp", "i", "KeyI", 73],
+        ["keyDown", "Enter", "Enter", 13], ["keyUp", "Enter", "Enter", 13],
+    ], "key/code/keyCode cross-mapped like a hardware keyboard");
     assert.match(toolResult, /^Typed "hi" into the page's current focus via the debugger \(trusted keyboard, additive\)\. Submitted \(Enter\)\. Re-run look to see the result\./);
+});
+
+test("delegated cdpType: a capital holds Shift around the character, as hardware does", async () => {
+    const { keys } = await driveCdpType({ cdp: true, text: "Hi" });
+    assert.deepEqual(keys.map(k => [k.type, k.key, k.modifiers ?? 0]), [
+        ["keyDown", "Shift", 8], ["keyDown", "H", 8], ["keyUp", "H", 8], ["keyUp", "Shift", 0],
+        ["keyDown", "i", 0], ["keyUp", "i", 0],
+    ]);
 });
 
 test("delegated cdpType: a page answering a call that is not `type` with a cdpType types nothing", async () => {

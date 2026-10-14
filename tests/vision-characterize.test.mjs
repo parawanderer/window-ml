@@ -539,8 +539,8 @@ test("a canvas click with CDP on: the worker clicks through the debugger, then t
         assert.ok(!sends.some((p) => "verifyAt" in p), "no verifyAt ring-back to the page");
         assert.deepEqual(sends.map(sendKind).slice(3), ["stream,verifyInWorker", "geometry:mint", "geometry:target", "geometry:view", "geometry:legend"]);
         assert.deepEqual(sends.find((p) => p.geometry?.op === "mint").geometry.pt, { x: 300, y: 250 }, "the verify is at the canvas centre");
-        assert.deepEqual(w.bg.debuggerCalls.map((c) => c[0] === "sendCommand" ? c[2] : c[0]), ["attach", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Page.captureScreenshot", "detach"],
-            "the click, then the worker's own capture through the debugger (CDP on)");
+        assert.deepEqual(w.bg.debuggerCalls.map((c) => c[0] === "sendCommand" ? c[2] : c[0]), ["attach", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Input.dispatchMouseEvent", "Page.captureScreenshot", "detach"],
+            "the move+press+release click, then the worker's own capture through the debugger (CDP on)");
         assert.equal(w.bg.captures.length, 0, "no captureVisibleTab with CDP on");
         assert.deepEqual(pageSent(w.page), [], "the page sends no CAPTURE_TAB and no FETCH_LLM");
         const [call] = w.subs();
