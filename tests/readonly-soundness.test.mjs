@@ -11,6 +11,10 @@ import { Worker } from "node:worker_threads";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
+import { vectors } from "./dialect-vectors.mjs";
+
+/** The shared vectors (tests/fixtures/dialect-vectors/<genre>.json) lifted from a named group of this file. */
+const lifted = (genre, label) => vectors(genre, `tests/readonly-soundness.test.mjs ${label}`);
 
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
 const TSX_API = import.meta.resolve("tsx/esm/api");
@@ -64,14 +68,7 @@ async function fallsBack(src, why, o) {
 test("HALTING: a String object gets a string's checks before repeat, padStart and a pattern given as a string", async () => {
     // `new String(...)` is a safe constructor, and `ml.dereference` returns one (DerefText), so the receiver of a string
     // method is not always a primitive. The size and backtracking checks looked only at `typeof obj === "string"`.
-    const EVIL = `"a".repeat(34) + "!"`;
-    for (const [src, why] of [
-        [`new String(${EVIL}).match("(a+)+$")`, "match with a backtracking pattern string on a String object"],
-        [`new String(${EVIL}).search("(a+)+$")`, "search, the same"],
-        [`[...new String(${EVIL}).matchAll("(a+)+$")].length`, "matchAll, the same"],
-        [`new String("ab").repeat(1000000000).length`, "repeat past MAX_STRING on a String object"],
-        [`new String("ab").padStart(2000000000).length`, "padStart past MAX_STRING on a String object"],
-    ]) await fallsBack(src, why);
+    for (const v of lifted("halting", "a String object is checked as a string")) await fallsBack(v.js, v.name, { stepBudget: v.budget });
 });
 
 test("HALTING: in the WORKER, a pointer value (a String subclass) cannot be handed a backtracking pattern", async () => {
@@ -102,36 +99,16 @@ test("HALTING: a RegExp reached off a page value is checked like one the script 
 // Forty lines of `d = [d, d]` build a value of 2^40 leaves out of forty arrays. Anything that EXPANDS it (stringify,
 // flat, an array's toString, which every coercion of an array calls) does 2^40 work inside one host call. Measured in
 // Node 22: String(d) at depth 24 takes 3 s, and each level doubles it.
+// (The shared vectors spell this prefix out in each program; only the cases that need a `setup` still use the constant.)
 const DAG = `let d = []; for (const _ of Array(40).keys()) d = [d, d];`;
 
 test("HALTING: no host call or coercion can expand an array that shares its parts", async () => {
-    for (const [src, why] of [
-        ["JSON.stringify(d).length", "JSON.stringify"],
-        ["JSON.stringify({ d }).length", "JSON.stringify of an object holding it"],
-        ["d.flat(Infinity).length", "flat(Infinity)"],
-        ["d.flatMap(x => x).flat(Infinity).length", "flatMap then flat"],
-        ["String(d).length", "String()"],
-        ["`${d}`.length", "a template literal"],
-        ["(d + '').length", "+ with a string"],
-        ["d * 1", "* (ToPrimitive calls toString)"],
-        ["-d", "unary minus"],
-        ["d.join().length", "join"],
-        ["d.toString().length", "toString"],
-        ["[d, d].sort().length", "sort without a comparator"],
-        ["({})[d]", "a computed key"],
-        ["'x'.includes(d)", "a string method's argument"],
-        ["parseInt(d)", "a callable root's argument"],
-        ["Object.fromEntries([[d, 1]])", "a key in fromEntries"],
-        ["new Date(d)", "a safe constructor's argument"],
-        ["d < 1", "a comparison"],
-    ]) await fallsBack(`${DAG} ${src}`, why);
+    for (const v of lifted("halting", "no host call or coercion can expand an array that shares its parts")) await fallsBack(v.js, v.name, { stepBudget: v.budget });
 });
 
 test("HALTING: printing or returning an array that shares its parts reaches the person, not a 2^40 serialisation", async () => {
-    await fallsBack(`${DAG} console.log(d); 0`, "console.log");
     // The RETURNED value is serialised by every caller (formatReadonlyExec, a watch, the console): refused here, once.
-    await fallsBack(`${DAG} d`, "the returned value");
-    await fallsBack(`${DAG} ({ d })`, "the returned value, nested");
+    for (const v of lifted("halting", "printing or returning an array that shares its parts")) await fallsBack(v.js, v.name, { stepBudget: v.budget });
 });
 
 test("an array that shares its parts in a SMALL way still stringifies, prints and returns", async () => {
@@ -147,16 +124,7 @@ test("an array that shares its parts in a SMALL way still stringifies, prints an
 test("HALTING: an arrow the host calls cannot hand it an array that shares its parts to expand", async () => {
     // The guard walked what went INTO a host call; a callback's RETURN goes to the host unwalked, and a comparator's
     // result is ToNumber'd, a replacer's ToString'd, a toJSON's serialised.
-    for (const [src, why] of [
-        ["JSON.stringify({ toJSON: () => d }).length", "a script-written toJSON on an object"],
-        ["const a = [1]; a.toJSON = () => d; JSON.stringify(a).length", "a toJSON written onto the script's array"],
-        ["({ toJSON: () => d })", "a returned value with a toJSON the caller's serialisation would call"],
-        ["console.log({ toJSON: () => d }); 0", "a printed value with a toJSON"],
-        ["JSON.stringify({ x: 1 }, (k, v) => k === 'x' ? d : v).length", "a stringify replacer"],
-        ["[1, 2, 3].sort(() => d)", "a sort comparator (its result is ToNumber'd)"],
-        ["'a'.replace('a', () => d).length", "a replacer (its result is ToString'd)"],
-        ["'aa'.replaceAll('a', () => d).length", "replaceAll's replacer"],
-    ]) await fallsBack(`${DAG} ${src}`, why);
+    for (const v of lifted("halting", "an arrow the host calls cannot hand it an array that shares its parts")) await fallsBack(v.js, v.name, { stepBudget: v.budget });
 });
 
 test("HALTING: an `ml` member's arguments are walked, except the two that read them as data", async () => {
@@ -174,14 +142,7 @@ test("HALTING: an `ml` member's arguments are walked, except the two that read t
 });
 
 test("HALTING: a Map or a Set does not hide an array that shares its parts", async () => {
-    for (const [src, why] of [
-        ["const m = new Map(); m.set(d, 1); Object.fromEntries(m)", "a Map key that fromEntries coerces"],
-        ["const m = new Map(); m.set(d, 1); Object.fromEntries(m.entries())", "the same through its entries iterator"],
-        ["const s = new Set(); s.add(d); s", "a returned Set"],
-        ["const m = new Map(); m.set(1, d); console.log(m); 0", "a printed Map"],
-        ["const s = new Set(); s.add(d); Array.from(s).join().length", "Array.from of a Set, then join"],
-        ["const s = new Set(); s.add(d); [...s.values()].join().length", "a Set's values iterator, spread"],
-    ]) await fallsBack(`${DAG} ${src}`, why);
+    for (const v of lifted("halting", "a Map or a Set does not hide an array that shares its parts")) await fallsBack(v.js, v.name, { stepBudget: v.budget });
 });
 
 // --- HALTING: a long string that is consumed where no charge was ---------------------------------------------------
@@ -189,16 +150,10 @@ test("HALTING: a Map or a Set does not hide an array that shares its parts", asy
 test("HALTING: a long string built by + is charged where it is hashed, compared, coerced or sliced", async () => {
     // `s + i` is a rope, O(1) to build; a Set lookup, a property key, a loose comparison or a fixed-slice read flattens
     // and hashes it: 8M characters, milliseconds, at the step cost of the 2-character version.
-    const S = "const s = 'ab'.repeat(4000000); let n = 0;";
-    for (const [src, why] of [
-        ["const set = new Set(); for (const i of Array(250000).keys()) { if (set.has(s + i)) n++; } n", "Set.has"],
-        ["const m = new Map(); for (const i of Array(250000).keys()) { if (m.get(s + i)) n++; } n", "Map.get"],
-        ["const o = {}; for (const i of Array(250000).keys()) { if (o[s + i]) n++; } n", "a computed property key"],
-        ["for (const i of Array(250000).keys()) { if ((s + i) == 5) n++; } n", "a loose comparison with a number"],
-        ["for (const i of Array(250000).keys()) { n += (s + i).charCodeAt(5); } n", "charCodeAt"],
-        ["for (const i of Array(250000).keys()) { n += (s + i).startsWith('ab') ? 1 : 0; } n", "startsWith"],
-        ["for (const i of Array(250000).keys()) { n += -(s + i) || 0; } n", "unary minus"],
-    ]) await fallsBack(`${S} ${src}`, why, { stepBudget: STEP_BUDGET, ms: 8000 });
+    for (const v of lifted("halting", "a long string built by + is charged where it is hashed, compared, coerced or sliced")) {
+        assert.equal(v.budget, STEP_BUDGET, "the vector carries the shipped budget");
+        await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+    }
 });
 
 // --- HALTING: a loop of O(n) host calls --------------------------------------------------------------------------------
@@ -206,25 +161,13 @@ test("HALTING: a long string built by + is charged where it is hashed, compared,
 test("HALTING: a host call is charged for the size of what it walks, so a loop of them is bounded by the budget", async () => {
     // Each of these is a few steps per iteration and a few milliseconds of host work per iteration: tens of thousands
     // of iterations fit a step budget that assumed every step costs about the same.
-    for (const [src, why] of [
-        ["const big = new Array(1000000).fill(0); let n = 0; for (const _ of Array(100000).keys()) n += big.slice().length; n", "slice of a million-element array, in a loop"],
-        ["const big = new Array(1000000).fill(0); let n = 0; for (const _ of Array(100000).keys()) n += big.indexOf(1); n", "indexOf over a million elements, in a loop"],
-        ["const s = 'ab'.repeat(4000000); let n = 0; for (const _ of Array(100000).keys()) n += s.toLowerCase().length; n", "toLowerCase of 8M characters, in a loop"],
-        ["const s = 'ab'.repeat(4000000); let n = 0; for (const _ of Array(100000).keys()) n += s.split('b').length; n", "split of 8M characters, in a loop"],
-        ["const s = 'ab'.repeat(4000000); let n = 0; for (const _ of Array(100000).keys()) { const [c] = s; n++; } n", "destructuring 8M characters, in a loop"],
-    ]) await fallsBack(src, why);
+    for (const v of lifted("halting", "a host call is charged for the size of what it walks")) await fallsBack(v.js, v.name, { stepBudget: v.budget });
 });
 
 test("the charge leaves ordinary surveys alone: a needle list over a long text, a reduce that concatenates, keys per item", async () => {
-    for (const [src, want, why] of [
-        ["const t = 'lorem ipsum dolor sit amet '.repeat(7500); const names = Array.from({ length: 1000 }, (_, i) => 'product ' + i); names.filter(n => t.includes(n)).length", 0, "1,000 names checked with includes against 200,000 characters"],
-        ["const rows = Array.from({ length: 20000 }, (_, i) => ({ i })); rows.reduce((acc, r) => acc.concat([r]), []).length", 20000, "reduce with concat over 20,000 rows"],
-        ["const data = { items: Array.from({ length: 20000 }, (_, i) => ({ id: i, tags: ['a', 'b', 'c'], meta: { x: 1, y: 2 } })) }; data.items.slice(0, 200).map(it => Object.keys(data).length + it.id).length", 200, "Object.keys of a large value, per item"],
-        ["const g = {}; for (const i of Array(50000).keys()) (g['k' + (i % 50)] = g['k' + (i % 50)] || []).push({ i }); Object.entries(g).map(([k, v]) => k + ':' + v.length).length", 50, "Object.entries of groups"],
-        ["const t = 'x'.repeat(16000); let n = 0; for (const i of Array(16000).keys()) n += t.charCodeAt(i); n > 0", true, "charCodeAt by index over a 16,000-character string"],
-    ]) {
-        const r = await inWorker(src, { stepBudget: STEP_BUDGET });
-        assert.deepEqual(r, { value: want, logs: 0 }, why);
+    for (const v of lifted("halting", "the charge leaves ordinary surveys alone")) {
+        const r = await inWorker(v.js, { stepBudget: v.budget });
+        assert.deepEqual(r, { value: v.expect.value, logs: 0 }, v.name);
     }
 });
 
@@ -251,15 +194,14 @@ test("FAILURE: a survey that curates its answer and then trips an expansion, a c
     const doc = new JSDOM("<!doctype html><body></body>").window.document;
     // A RegExp as a page value's property: the short input keeps a regression here from backtracking on the main thread.
     doc.body.re = /(a+)+$/;
-    for (const [src, why] of [
-        [`let d = []; for (const _ of Array(40).keys()) d = [d, d]; JSON.stringify(d)`, "an expansion"],
-        [`const s = "ab".repeat(4000000); for (const _ of Array(100000).keys()) s.toLowerCase(); 0`, "the string charge"],
-        [`document.body.re.test("ab")`, "a page RegExp"],
-        [`new String("ab").match("(a+)+$")`, "a String object's pattern"],
-    ]) {
+    const cases = [
+        ...lifted("failure", "a survey that curates its answer and then trips a check").map((v) => [v.js, v.name, v.budget]),
+        [`ml.answer.add("found it"); document.body.re.test("ab")`, "a page RegExp", 200_000],   // needs the planted RegExp above
+    ];
+    for (const [js, why, stepBudget] of cases) {
         const set = new AnswerSet();
-        await assert.rejects(evalReadonly(`ml.answer.add("found it"); ${src}`, doc, { getModel: async () => "m" }, makeAnswerFacade(set),
-            { checkpoint: () => set.checkpoint(), stepBudget: 200_000 }), (e) => e instanceof NotInDialect || e instanceof Denied, why);
+        await assert.rejects(evalReadonly(js, doc, { getModel: async () => "m" }, makeAnswerFacade(set),
+            { checkpoint: () => set.checkpoint(), stepBudget }), (e) => e instanceof NotInDialect || e instanceof Denied, why);
         assert.equal(set.dump().length, 0, `${why}: the add before the refusal was rolled back`);
     }
 });

@@ -1,0 +1,114 @@
+[
+  {
+    "name": "answer add and remove, then a click",
+    "js": "ml.answer.add('leaked'); ml.answer.remove(0); document.body.click()",
+    "env": "answer",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "pre": {
+      "js": "ml.answer.add('kept')"
+    },
+    "reason": "an add before the fall-back would otherwise outlive it and the human is asked to approve a script whose earlier half has already run",
+    "from": "tests/readonly-exec.test.mjs a survey that falls out of dialect leaves the answer set as it found it"
+  },
+  {
+    "name": "a counter survey adds an answer and then clicks",
+    "js": "let n = 0; for (const x of [1, 2]) n += x; ml.answer.add(\"total \" + n); document.body.click(); return n",
+    "env": "answer",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "reason": "the add before the refusal is rolled back, so a refused survey leaves nothing behind",
+    "from": "tests/readonly-exec.test.mjs a counter survey that falls out of dialect afterwards has changed nothing"
+  },
+  {
+    "name": "answer add then an expansion",
+    "js": "ml.answer.add(\"found it\"); let d = []; for (const _ of Array(40).keys()) d = [d, d]; JSON.stringify(d)",
+    "env": "answer",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "budget": 200000,
+    "reason": "the add before the refusal is rolled back when an expansion check trips",
+    "from": "tests/readonly-soundness.test.mjs a survey that curates its answer and then trips a check"
+  },
+  {
+    "name": "answer add then the string charge",
+    "js": "ml.answer.add(\"found it\"); const s = \"ab\".repeat(4000000); for (const _ of Array(100000).keys()) s.toLowerCase(); 0",
+    "env": "answer",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "budget": 200000,
+    "reason": "the add before the refusal is rolled back when the cost charge trips",
+    "from": "tests/readonly-soundness.test.mjs a survey that curates its answer and then trips a check"
+  },
+  {
+    "name": "answer add then a String object's pattern",
+    "js": "ml.answer.add(\"found it\"); new String(\"ab\").match(\"(a+)+$\")",
+    "env": "answer",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "budget": 200000,
+    "reason": "the add before the refusal is rolled back when a String object's pattern is refused",
+    "from": "tests/readonly-soundness.test.mjs a survey that curates its answer and then trips a check"
+  },
+  {
+    "name": "py: a new name does not survive a refusal",
+    "pre": {
+      "py": "n = 1"
+    },
+    "py": "n = 2\ny = 3\nreturn ().__class__",
+    "env": "none",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "reason": "a rebound name and a new one are both undone",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an append and a dict write are undone",
+    "pre": {
+      "py": "xs = [1, 2]\nd = {\"a\": 1}"
+    },
+    "py": "xs.append(3)\nd[\"b\"] = 2\nimport os",
+    "env": "none",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "reason": "the undo log at the write barrier replays a C method's write (list.append) and a SetItem",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a delete is undone",
+    "pre": {
+      "py": "xs = [1, 2]\nd = {\"a\": 1}"
+    },
+    "py": "del xs[0]\ndel d[\"a\"]\nreturn eval(\"1\")",
+    "env": "none",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "reason": "a deletion is a write with an old value to restore",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: writes before a budget refusal are undone",
+    "pre": {
+      "py": "xs = [1]"
+    },
+    "py": "xs.append(9)\nn = 0\nfor i in range(10 ** 12):\n    n += i",
+    "env": "none",
+    "expect": "refused",
+    "budget": 200000,
+    "leaves_nothing": true,
+    "reason": "a refusal at run time (the budget) rolls back like one at a gate",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an in-place sort is undone",
+    "pre": {
+      "py": "xs = [3, 1, 2]"
+    },
+    "py": "xs.sort()\nreturn type(xs)",
+    "env": "none",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "reason": "a C method that rewrites a container's contents in one call must log the whole old contents (or copy first)",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  }
+]

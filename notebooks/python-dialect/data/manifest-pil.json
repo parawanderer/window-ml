@@ -1,0 +1,43 @@
+{
+  "module": "PIL",
+  "version_counted_against": "12.3.0",
+  "functions": [
+    "Image.fromarray",
+    "Image.open"
+  ],
+  "kinds": {
+    "Image": [
+      "save"
+    ]
+  },
+  "leaves": {
+    "PIL.Image.fromarray": {
+      "cost": "pixels",
+      "returns": "fresh"
+    },
+    "PIL.Image.open": {
+      "cost": "pixels",
+      "returns": "fresh",
+      "effects": "read(buffer arg)",
+      "why": "open reads the path or buffer it is given: allowed only over an owned BytesIO, never a path"
+    },
+    "Image.save": {
+      "cost": "pixels",
+      "effects": "write(buffer arg)",
+      "why": "save writes to the file or buffer it is given: allowed only into an owned BytesIO"
+    }
+  },
+  "cells": 10,
+  "observed": {
+    "functions": {
+      "Image.open": 2,
+      "Image.fromarray": 1
+    },
+    "kinds": {
+      "Image": {
+        "save": 1
+      }
+    }
+  },
+  "note": "every name the corpus calls, however rare (MIN_CELLS does not apply: the list is short); the prelude binds Image; effects and return marking per method are the second pass, cost is in pixels (ruled 2026-10-15)"
+}

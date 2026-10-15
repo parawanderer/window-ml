@@ -1,0 +1,394 @@
+[
+  {
+    "name": "node → window → fetch",
+    "js": "document.querySelectorAll(\"input\")[0].ownerDocument.defaultView.fetch(\"/x\")",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a node's ownerDocument leads to the window, whose fetch is an effect",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "constructor → Function",
+    "js": "({}).constructor.constructor(\"return fetch\")()",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the realm's Function constructor compiles a string",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "computed owner-document",
+    "js": "document.querySelectorAll(\"input\")[0][\"owner\" + \"Document\"]",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a computed key must not reach what the plain name is denied",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "__proto__ access",
+    "js": "({}).__proto__",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the prototype chain leads to the realm",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "bare fetch",
+    "js": "fetch(\"/x\")",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a network call is an effect and no global of the dialect",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "window global",
+    "js": "window.location",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the window is the realm and is not a name in the dialect",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "self global",
+    "js": "self.fetch",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "self is the window under another name",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "setAttribute (mutation)",
+    "js": "document.body.setAttribute(\"x\", \"y\")",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a method that changes the page is not on the allowlist",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "innerHTML assign",
+    "js": "document.body.innerHTML = \"x\"",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a write to a page node's property mutates the page",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "click (effect)",
+    "js": "document.querySelector(\"input\").click()",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "click is an effect the page can observe",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "method as value",
+    "js": "const g = document.body.getAttribute; g(\"x\")",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a method read as a value is an inert reference that cannot be called",
+    "from": "tests/readonly-exec.test.mjs ESCAPES"
+  },
+  {
+    "name": "C-style for",
+    "js": "for (let i = 0; i < 3; i++) { i }",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a C-style for is outside the dialect, since its trip count is not fixed at entry",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "for...in",
+    "js": "for (const k in {a: 1}) { k }",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "for...in is outside the dialect; for...of over Object.entries replaces it",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "assigning to the environment",
+    "js": "document = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "an environment name cannot be rebound by the script",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "an implicit global",
+    "js": "leaked = 1; leaked",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "assignment to an undeclared name would create a global in real JavaScript",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "a const rebound",
+    "js": "const x = 1; x = 2; x",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const is a const, so the dialect never computes what real JavaScript would not",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "logical assignment",
+    "js": "let o = null; o ||= 1; o",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "short-circuiting compound forms make whether the write happens depend on the value",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "tagged template",
+    "js": "tag`hi ${1}`",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a tagged template is a call, and a plain template is the supported form",
+    "from": "tests/readonly-exec.test.mjs OUT"
+  },
+  {
+    "name": "py: a dunder attribute in the source",
+    "py": "return (1).__class__",
+    "env": "none",
+    "expect": "refused",
+    "reason": "dunders are refused outright, which cuts the __class__ → __subclasses__ chain at its root",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: the subclasses walk",
+    "py": "return ().__class__.__base__.__subclasses__()",
+    "env": "none",
+    "expect": "refused",
+    "reason": "the classic escape to every loaded class; refused at its first dunder",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: str.format walks an attribute in C",
+    "py": "return \"{0.__class__}\".format(1)",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path: no dunder in the AST; str.format's field lookup goes through PyObject_GetAttr, which the gate covers",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: str.format_map walks an attribute in C",
+    "py": "return \"{x.__class__.__mro__}\".format_map({\"x\": 1})",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path: the same field lookup through format_map",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: getattr with a computed dunder",
+    "py": "return getattr(1, \"__\" + \"class__\")",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path: the name is built at run time, so only the gate in PyObject_GetAttr can see it",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: operator.attrgetter reaches a dunder",
+    "py": "import operator\nreturn operator.attrgetter(\"__class__\")(1)",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path: attrgetter calls PyObject_GetAttr from C; refused there whether or not operator is importable",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: attrgetter as a sort key",
+    "py": "import operator\nreturn sorted([1, 2], key=operator.attrgetter(\"__class__\"))",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path inside a C call: sorted invokes the key from C, and the gate still applies under the depth",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: type(x) has no attributes",
+    "py": "return type(1).mro()",
+    "env": "none",
+    "expect": "refused",
+    "reason": "the type kind lists no attributes, so mro, __mro__, __subclasses__ and __name__ are all refused at the gate",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: type(x) is not callable",
+    "py": "return type(1)(5)",
+    "env": "none",
+    "expect": "refused",
+    "reason": "calling a type instantiates it; the type kind is not callable",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: three-argument type builds a class",
+    "py": "return type(\"A\", (), {})",
+    "env": "none",
+    "expect": "refused",
+    "reason": "type(name, bases, dict) creates a new class, the dynamic form of the refused ClassDef",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: type(x) through the format path",
+    "py": "return \"{0.__mro__}\".format(type(1))",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path: str.format's field lookup on a type object goes through the gate like any other",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an exception's traceback frame",
+    "py": "try:\n    1 / 0\nexcept Exception as e:\n    return e.__traceback__.tb_frame.f_globals",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a frame reaches globals and builtins; refused at __traceback__, and tb_frame is not on the traceback kind's list",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a generator's frame without a dunder",
+    "py": "g = (x for x in [1])\nreturn g.gi_frame.f_builtins",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a genexp outside consumer position is refused before running (ruled 2026-10-15); if that rule regresses, gi_frame and f_builtins are still refused because the generator kind lists no attributes",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a function's globals",
+    "py": "def f():\n    return 1\nreturn f.__globals__",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a function's __globals__ holds __builtins__ and every name the module sees",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a lambda's code object",
+    "py": "return (lambda: 0).__code__.co_consts",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a code object can be rebuilt into a function outside the restricted mode",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: the builtins by name",
+    "py": "return __builtins__",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a dunder NAME is refused like a dunder attribute",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: globals()",
+    "py": "return globals()[\"__builtins__\"]",
+    "env": "none",
+    "expect": "refused",
+    "reason": "globals, locals and vars hand out the namespace dict and builtins; not allowed calls",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: eval",
+    "py": "return eval(\"1 + 1\")",
+    "env": "none",
+    "expect": "refused",
+    "reason": "eval compiles a string outside the membership pre-pass",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: exec",
+    "py": "exec(\"x = 1\")\nreturn 1",
+    "env": "none",
+    "expect": "refused",
+    "reason": "exec compiles a string outside the membership pre-pass",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: compile",
+    "py": "return compile(\"1\", \"<x>\", \"eval\")",
+    "env": "none",
+    "expect": "refused",
+    "reason": "compile makes a code object without CO_RESTRICTED",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: open a file",
+    "py": "return open(\"/etc/hosts\").read()",
+    "env": "none",
+    "expect": "refused",
+    "reason": "open is an effect on the filesystem, outside B = heap(owned)",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an unlisted import",
+    "py": "import os\nreturn os.getcwd()",
+    "env": "none",
+    "expect": "refused",
+    "reason": "IMPORT_NAME is gated; os is not a listed module",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an unlisted import through __import__",
+    "py": "return __import__(\"os\").getcwd()",
+    "env": "none",
+    "expect": "refused",
+    "reason": "the dunder name is refused, and the import would be gated anyway",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an unlisted import through importlib",
+    "py": "import importlib\nreturn importlib.import_module(\"os\")",
+    "env": "none",
+    "expect": "refused",
+    "reason": "importlib is not listed, and import_module would reach IMPORT_NAME's gate from C",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an unlisted submodule of a listed package",
+    "py": "import numpy.ctypeslib\nreturn 1",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a module is a receiver kind with its own allow list; listing numpy does not list every submodule",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an object's __dict__",
+    "py": "import math\nreturn math.__dict__",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a module's dict holds everything its allow list leaves out",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a callback reaches a dunder inside pandas",
+    "py": "return df.apply(lambda col: col.__class__)",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the lambda is a restricted frame entered from pandas' loop: the depth is set again whoever calls it",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: pandas' own expression parser",
+    "py": "return df.eval(\"a.__class__\")",
+    "env": "table",
+    "expect": "refused",
+    "reason": "pandas.eval is pure Python run under the gates (tier 3); its getattr is refused like the cell's own",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: numpy's object dtype calls back into Python",
+    "py": "import numpy as np\na = np.array([1, 2], dtype=object)\nreturn np.frompyfunc(lambda x: x.__class__, 1, 1)(a)",
+    "env": "none",
+    "expect": "refused",
+    "reason": "C path into a restricted lambda: frompyfunc's ufunc loop calls the lambda, which runs under the gate",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a column attribute's dunder",
+    "py": "return df.a.__class__",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the dynamic column rule never admits a dunder, on the frame or on the Series it returns",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a column rule is ours, not pandas' __getattr__",
+    "py": "return df.not_a_column",
+    "env": "table",
+    "expect": "refused",
+    "reason": "a name that is neither a listed method nor a column is NotInDialect, never pandas' AttributeError",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  }
+]

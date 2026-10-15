@@ -1,0 +1,678 @@
+[
+  {
+    "name": "window = new Map(); 1",
+    "js": "window = new Map(); 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "rebinding window would corrupt the environment",
+    "from": "tests/readonly-exec.test.mjs assignment cannot rebind a bare variable"
+  },
+  {
+    "name": "document = new Map(); document.querySelectorAll('x')",
+    "js": "document = new Map(); document.querySelectorAll('x')",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "rebinding document would swap the page for a stand-in",
+    "from": "tests/readonly-exec.test.mjs assignment cannot rebind a bare variable"
+  },
+  {
+    "name": "Object = { entries: () => [] }; Object.entries({})",
+    "js": "Object = { entries: () => [] }; Object.entries({})",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "rebinding a builtin would change what later code means",
+    "from": "tests/readonly-exec.test.mjs assignment cannot rebind a bare variable"
+  },
+  {
+    "name": "const x = 1; x = 2; x (rebind)",
+    "js": "const x = 1; x = 2; x",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const cannot be assigned",
+    "from": "tests/readonly-exec.test.mjs assignment cannot rebind a bare variable"
+  },
+  {
+    "name": "o.__proto__ = {…}",
+    "js": "const o = {}; o.__proto__ = { pwned: 1 }; o",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a write through __proto__ would poison every object",
+    "from": "tests/readonly-exec.test.mjs assignment cannot poison the prototype or reach the realm via a write"
+  },
+  {
+    "name": "o['__proto__'] = {}",
+    "js": "const o = {}; o['__proto__'] = {}; o",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a computed __proto__ write is the same write",
+    "from": "tests/readonly-exec.test.mjs assignment cannot poison the prototype or reach the realm via a write"
+  },
+  {
+    "name": "o.constructor = 1",
+    "js": "const o = {}; o.constructor = 1; o",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "constructor is a denied name for writes as for reads",
+    "from": "tests/readonly-exec.test.mjs assignment cannot poison the prototype or reach the realm via a write"
+  },
+  {
+    "name": "a['constructor'] = 1",
+    "js": "const a = []; a['constructor'] = 1; a",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "constructor is denied on an array too",
+    "from": "tests/readonly-exec.test.mjs assignment cannot poison the prototype or reach the realm via a write"
+  },
+  {
+    "name": "o.map = document.querySelector",
+    "js": "const o = {}; o.map = document.querySelector; o.map('#a')",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a method read as a value is the inert reference, and storing it under map does not revive it",
+    "from": "tests/readonly-exec.test.mjs assignment cannot launder a live method under an allowlisted name"
+  },
+  {
+    "name": "o.c = [].constructor",
+    "js": "const o = {}; o.c = [].constructor; o.c",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the constructor read is denied before the store",
+    "from": "tests/readonly-exec.test.mjs assignment cannot launder a live method under an allowlisted name"
+  },
+  {
+    "name": "top level of ml.info() is writable",
+    "js": "const i = await ml.info(); i.compute = { mine: 1 }; i.compute.mine",
+    "env": "dom",
+    "expect": {
+      "value": 1
+    },
+    "reason": "the facade built this value for this call, so the top level is the script's",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "a spread is the script's own object",
+    "js": "const c = { ...(await ml.info()) }; c.mine = 1; c.mine",
+    "env": "dom",
+    "expect": {
+      "value": 1
+    },
+    "reason": "a spread is likewise the script's own object, one level deep",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "a JSON round trip: top level writable",
+    "js": "const j = JSON.parse('{\"a\":{\"b\":1}}'); j.a = 5; j.a",
+    "env": "dom",
+    "expect": {
+      "value": 5
+    },
+    "reason": "the outermost container of a JSON.parse result is owned like any other",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "a later read is untouched",
+    "js": "(await ml.info()).compute.supported_gpus[0].name",
+    "env": "dom",
+    "expect": {
+      "value": "CUDA0"
+    },
+    "reason": "the facade builds a fresh value per call, so no earlier write is visible",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested write off the result",
+    "js": "const i = await ml.info(); i.compute.system_compute = {}; 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a container below the top level is owned by nobody",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested push off the result",
+    "js": "const i = await ml.info(); i.compute.supported_gpus.push({ gpu_id: \"9\" }); 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a nested array is owned by nobody, so push is refused",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested element write off the result",
+    "js": "const i = await ml.info(); i.compute.supported_gpus[0].name = 'HACKED'; 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "two levels down is refused",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested write off a shallow copy (element)",
+    "js": "const c = { ...(await ml.info()) }; c.compute.supported_gpus[0].name = 'HACKED'; 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the spread carried the nested containers by reference, so the refusal lands where the alias is",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested write off a shallow copy (field)",
+    "js": "const c = { ...(await ml.info()) }; c.compute.system_compute.total_memory = 1; 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "same alias, one level shallower",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested write off JSON.parse",
+    "js": "const j = JSON.parse('{\"a\":{\"b\":1}}'); j.a.b = 2; 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "only the outermost container of a parse is marked owned, so there is no deeply writable copy in the dialect",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "nested write off a JSON round trip of ml.info()",
+    "js": "const mine = JSON.parse(JSON.stringify(await ml.info())); mine.compute.system_compute.total_memory = 1; 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a clone-and-edit fails loudly instead of editing something the script did not create",
+    "from": "tests/readonly-exec.test.mjs ownership is one level deep for every source"
+  },
+  {
+    "name": "document = 1",
+    "js": "document = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "ml = 1",
+    "js": "ml = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "Math = 1",
+    "js": "Math = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "JSON = 1",
+    "js": "JSON = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "console = 1",
+    "js": "console = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "Object = 1",
+    "js": "Object = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "Array = 1",
+    "js": "Array = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "Promise = 1",
+    "js": "Promise = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "document += 1",
+    "js": "document += 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "ml += 1",
+    "js": "ml += 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "Math++",
+    "js": "Math++",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "++document",
+    "js": "++document",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "console--",
+    "js": "console--",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "getComputedStyle = 1",
+    "js": "getComputedStyle = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "undefined = 1",
+    "js": "undefined = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "NaN = 1",
+    "js": "NaN = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "Infinity = 1",
+    "js": "Infinity = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "parseInt = 1",
+    "js": "parseInt = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a name of the environment lives in a frame the script cannot write to",
+    "from": "tests/readonly-exec.test.mjs the host's own names cannot be assigned to"
+  },
+  {
+    "name": "leaked = 1; return leaked",
+    "js": "leaked = 1; return leaked",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "nothing declared the name, so a write would create an implicit global",
+    "from": "tests/readonly-exec.test.mjs assignment never creates a binding"
+  },
+  {
+    "name": "leaked += 1",
+    "js": "leaked += 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "nothing declared the name, so a write would create an implicit global",
+    "from": "tests/readonly-exec.test.mjs assignment never creates a binding"
+  },
+  {
+    "name": "leaked++",
+    "js": "leaked++",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "nothing declared the name, so a write would create an implicit global",
+    "from": "tests/readonly-exec.test.mjs assignment never creates a binding"
+  },
+  {
+    "name": "window = 1",
+    "js": "window = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "nothing declared the name, so a write would create an implicit global",
+    "from": "tests/readonly-exec.test.mjs assignment never creates a binding"
+  },
+  {
+    "name": "globalThis = 1",
+    "js": "globalThis = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "nothing declared the name, so a write would create an implicit global",
+    "from": "tests/readonly-exec.test.mjs assignment never creates a binding"
+  },
+  {
+    "name": "self = 1",
+    "js": "self = 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "nothing declared the name, so a write would create an implicit global",
+    "from": "tests/readonly-exec.test.mjs assignment never creates a binding"
+  },
+  {
+    "name": "const n = 1; n = 2; return n",
+    "js": "const n = 1; n = 2; return n",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const binding is never writable, destructured or loop-bound included",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "const n = 1; n += 1; return n",
+    "js": "const n = 1; n += 1; return n",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const binding is never writable, destructured or loop-bound included",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "const n = 1; n++; return n",
+    "js": "const n = 1; n++; return n",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const binding is never writable, destructured or loop-bound included",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "const { a } = { a: 1 }; a = 2; return a",
+    "js": "const { a } = { a: 1 }; a = 2; return a",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const binding is never writable, destructured or loop-bound included",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "const [a] = [1]; a = 2; return a",
+    "js": "const [a] = [1]; a = 2; return a",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const binding is never writable, destructured or loop-bound included",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "for (const x of [1]) { x = 2; } return 0",
+    "js": "for (const x of [1]) { x = 2; } return 0",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a const binding is never writable, destructured or loop-bound included",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "a let loop variable is writable",
+    "js": "let out = 0; for (let x of [1, 2]) { x = x * 10; out += x; } return out",
+    "env": "dom",
+    "expect": {
+      "value": 30
+    },
+    "reason": "a let loop variable is a per-iteration binding like any other",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "an inner const does not freeze an outer let",
+    "js": "let x = 1; if (true) { const x = 9; } x = 2; return x",
+    "env": "dom",
+    "expect": {
+      "value": 2
+    },
+    "reason": "the const set is an own property of its frame, not read through the prototype chain",
+    "from": "tests/readonly-exec.test.mjs a const is a const"
+  },
+  {
+    "name": "const ml = 1 shadows ml",
+    "js": "const ml = 1; return [ml, typeof document]",
+    "env": "dom",
+    "expect": {
+      "value": [
+        1,
+        "object"
+      ]
+    },
+    "reason": "a shadow is a local binding and the host's own stays untouched",
+    "from": "tests/readonly-exec.test.mjs shadowing a host name"
+  },
+  {
+    "name": "a block-local document leaves the real one",
+    "js": "{ const document = 1; } return typeof document.querySelectorAll",
+    "env": "dom",
+    "expect": {
+      "value": "function"
+    },
+    "reason": "the shadow ends with its block, and the environment's document was never written",
+    "from": "tests/readonly-exec.test.mjs shadowing a host name"
+  },
+  {
+    "name": "o = querySelector(\"#a\"); o.id = \"x\"",
+    "js": "let o = {}; o = document.querySelector(\"#a\"); o.id = \"x\"; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "owned is a property of the value, not of the name holding it",
+    "from": "tests/readonly-exec.test.mjs rebinding cannot launder a host value"
+  },
+  {
+    "name": "o = querySelector(\"#a\"); o.id += \"x\"",
+    "js": "let o = {}; o = document.querySelector(\"#a\"); o.id += \"x\"; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a compound write through a rebound node is refused likewise",
+    "from": "tests/readonly-exec.test.mjs rebinding cannot launder a host value"
+  },
+  {
+    "name": "o = body; o.innerHTML = \"\"",
+    "js": "let o = {}; o = document.body; o.innerHTML = \"\"; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "moving the body into a local does not make it writable",
+    "from": "tests/readonly-exec.test.mjs rebinding cannot launder a host value"
+  },
+  {
+    "name": "o = querySelector(\"#a\"); o.scrollTop++",
+    "js": "let o = {}; o = document.querySelector(\"#a\"); o.scrollTop++; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "++ on a property of a page node is a write",
+    "from": "tests/readonly-exec.test.mjs rebinding cannot launder a host value"
+  },
+  {
+    "name": "o.__proto__ = { x: 1 } (reassign form)",
+    "js": "const o = {}; o.__proto__ = { x: 1 }; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a prototype write",
+    "from": "tests/readonly-exec.test.mjs the realm is out of reach through every new assignment form"
+  },
+  {
+    "name": "o[\"__proto__\"] += 1",
+    "js": "const o = {}; o[\"__proto__\"] += 1; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "a compound write to __proto__",
+    "from": "tests/readonly-exec.test.mjs the realm is out of reach through every new assignment form"
+  },
+  {
+    "name": "o.constructor = 1 (reassign form)",
+    "js": "const o = {}; o.constructor = 1; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "constructor is denied for writes",
+    "from": "tests/readonly-exec.test.mjs the realm is out of reach through every new assignment form"
+  },
+  {
+    "name": "o.prototype++",
+    "js": "const o = {}; o.prototype++; return 1",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "prototype is denied for writes",
+    "from": "tests/readonly-exec.test.mjs the realm is out of reach through every new assignment form"
+  },
+  {
+    "name": "a lifted method passed through a reassignment",
+    "js": "let f = [].map; let g = f; return g.call([1], x => x)",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the inert reference is not reanimated by being copied",
+    "from": "tests/readonly-exec.test.mjs the realm is out of reach through every new assignment form"
+  },
+  {
+    "name": "f = f on a lifted page method",
+    "js": "let f = document.querySelector; f = f; return f(\"#a\")",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "the inert reference is not reanimated by a self-assignment",
+    "from": "tests/readonly-exec.test.mjs the realm is out of reach through every new assignment form"
+  },
+  {
+    "name": "s += s forty times",
+    "js": "let s = \"x\"; for (const i of ml.range(40)) s += s; return s.length",
+    "env": "dom",
+    "expect": "refused",
+    "reason": "+= that skipped the size guard would be a string-growth hole",
+    "from": "tests/readonly-exec.test.mjs a compound assignment runs through the same size guard"
+  },
+  {
+    "name": "py: a list the cell built is its own",
+    "py": "xs = []\nxs.append(1)\nxs[0] = 2\nreturn xs",
+    "env": "none",
+    "expect": {
+      "value": [
+        2
+      ]
+    },
+    "reason": "an object allocated while restricted is owned, so writes to it are free",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a dict the cell built is its own",
+    "py": "d = {}\nd[\"a\"] = 1\nd.update({\"b\": 2})\nreturn d",
+    "env": "none",
+    "expect": {
+      "value": {
+        "a": 1,
+        "b": 2
+      }
+    },
+    "reason": "the same for a dict, through SetItem and a C method",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an earlier cell's list is still the run's own",
+    "pre": {
+      "py": "xs = [1]"
+    },
+    "py": "xs.append(2)\nreturn xs",
+    "env": "none",
+    "expect": {
+      "value": [
+        1,
+        2
+      ]
+    },
+    "reason": "ASSUMPTION (spec silent): ownership is per run, not per cell, so a value an earlier restricted cell allocated stays owned",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a module attribute is not the cell's",
+    "py": "import math\nmath.pi = 3\nreturn math.pi",
+    "env": "none",
+    "expect": "refused",
+    "reason": "a module is shared by every run in the interpreter; a write to it is a write to heap(unowned)",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a builtin type is not the cell's",
+    "py": "list.append = None\nreturn 1",
+    "env": "none",
+    "expect": "refused",
+    "reason": "must be NotInDialect at the gate, not the TypeError CPython would raise anyway",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: an injected table is not the cell's",
+    "py": "df[\"new\"] = 1\nreturn 1",
+    "env": "table",
+    "expect": "refused",
+    "reason": "ASSUMPTION (spec silent on whether injected names are owned): a value the cell was handed is unowned, as page values are in the JS dialect",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a copy of an injected table is the cell's",
+    "py": "d = df.copy()\nd[\"new\"] = 1\nreturn int(d.shape[1])",
+    "env": "table",
+    "expect": {
+      "value": 4
+    },
+    "reason": "copy is marked fresh in the manifest, so its result is owned",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a view into an injected table is not the cell's",
+    "py": "v = df.values\nv[0, 0] = 99\nreturn 1",
+    "env": "table",
+    "expect": "refused",
+    "reason": "values is internal: a view into memory the cell does not own",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a reshape view of an owned array is internal",
+    "py": "import numpy as np\na = np.arange(4)\nb = a.reshape(2, 2)\nb[0, 0] = 9\nreturn int(a[0])",
+    "env": "none",
+    "expect": "refused",
+    "reason": "the spec marks reshape's return internal, never owned, even when the base is owned; likely too strict (alias(0) would admit it), kept as written until the manifest pass decides",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a column read through an attribute",
+    "py": "return int(df.a.sum())",
+    "env": "table",
+    "expect": {
+      "value": 10
+    },
+    "reason": "the DataFrame kind's dynamic rule admits a name in df.columns (ruled 2026-10-15)",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a method name wins over a column",
+    "py": "return int(df.sum().sum())",
+    "env": "table",
+    "expect": {
+      "value": 78
+    },
+    "reason": "a name in the kind's static method set is the method, as in pandas, whatever the columns are called",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: a column Series aliases the frame",
+    "py": "s = df.a\ns[0] = 99\nreturn 1",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the column rule returns alias(0), so the Series inherits the injected frame's ownership: unowned",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: type(x) is a value",
+    "py": "return type(1) == type(2) and type(\"a\") is not type(1)",
+    "env": "none",
+    "expect": {
+      "value": true
+    },
+    "reason": "one-argument type(x) is its own receiver kind: is and == against another type are allowed (ruled 2026-10-15)",
+    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  }
+]

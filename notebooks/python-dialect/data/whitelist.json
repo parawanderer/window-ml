@@ -1,0 +1,326 @@
+{
+  "nodes": [
+    "Add",
+    "And",
+    "AnnAssign",
+    "Assert",
+    "Assign",
+    "Attribute",
+    "AugAssign",
+    "BinOp",
+    "BitAnd",
+    "BitOr",
+    "BitXor",
+    "BoolOp",
+    "Break",
+    "Call",
+    "Compare",
+    "Constant",
+    "Continue",
+    "Del",
+    "Delete",
+    "Dict",
+    "DictComp",
+    "Div",
+    "Eq",
+    "Expr",
+    "FloorDiv",
+    "For",
+    "FormattedValue",
+    "FunctionDef",
+    "Gt",
+    "GtE",
+    "If",
+    "IfExp",
+    "Import",
+    "ImportFrom",
+    "In",
+    "Invert",
+    "Is",
+    "IsNot",
+    "JoinedStr",
+    "LShift",
+    "Lambda",
+    "List",
+    "ListComp",
+    "Load",
+    "Lt",
+    "LtE",
+    "MatMult",
+    "Mod",
+    "Mult",
+    "Name",
+    "Not",
+    "NotEq",
+    "NotIn",
+    "Or",
+    "Pass",
+    "Pow",
+    "RShift",
+    "Raise",
+    "Return",
+    "Set",
+    "SetComp",
+    "Slice",
+    "Starred",
+    "Store",
+    "Sub",
+    "Subscript",
+    "Tuple",
+    "UAdd",
+    "USub",
+    "UnaryOp",
+    "alias",
+    "arg",
+    "arguments",
+    "comprehension",
+    "keyword"
+  ],
+  "conditional": {
+    "GeneratorExp": "only as the sole positional argument (keywords allowed) of all, any, dict, enumerate, list, max, min, set, sorted, str.join, sum, tuple, zip; rewritten to a ListComp by the pre-pass; refused anywhere else"
+  },
+  "type": "one-argument type(x) only: a receiver kind with no attributes, not callable, is/== and repr only; any other form refused",
+  "excluded": {
+    "AsyncFor": {
+      "why": "async",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "AsyncFunctionDef": {
+      "why": "async",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "AsyncWith": {
+      "why": "async",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "Await": {
+      "why": "async",
+      "cells": 2,
+      "gain_if_admitted": 0.0
+    },
+    "ClassDef": {
+      "why": "a class builds a new type with its own dunders",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "ExceptHandler": {
+      "why": "part of Try",
+      "cells": 6,
+      "gain_if_admitted": 0.0
+    },
+    "GeneratorExp": {
+      "why": "a lazy generator object (Starlark has none)",
+      "cells": 172,
+      "gain_if_admitted": 0.0966
+    },
+    "Global": {
+      "why": "writes a module-level name",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "Match": {
+      "why": "structural pattern matching",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "NamedExpr": {
+      "why": "the walrus: an assignment inside an expression",
+      "cells": 1,
+      "gain_if_admitted": 0.0
+    },
+    "Nonlocal": {
+      "why": "writes an enclosing frame's name",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "ParamSpec": {
+      "why": "PEP 695 type parameters",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "Try": {
+      "why": "Starlark has none; the spec leaves it open",
+      "cells": 6,
+      "gain_if_admitted": 0.0
+    },
+    "TryStar": {
+      "why": "except*",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "TypeAlias": {
+      "why": "a type statement",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "TypeIgnore": {
+      "why": "a type comment",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "TypeVar": {
+      "why": "PEP 695 type parameters",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "TypeVarTuple": {
+      "why": "PEP 695 type parameters",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "While": {
+      "why": "may not halt; the spec refuses it statically",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "With": {
+      "why": "a context manager runs __enter__/__exit__",
+      "cells": 7,
+      "gain_if_admitted": 0.0
+    },
+    "Yield": {
+      "why": "a generator suspends a frame",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "YieldFrom": {
+      "why": "a generator suspends a frame",
+      "cells": 0,
+      "gain_if_admitted": 0.0
+    },
+    "withitem": {
+      "why": "part of With",
+      "cells": 7,
+      "gain_if_admitted": 0.0
+    }
+  },
+  "modules": [
+    "PIL",
+    "base64",
+    "bisect",
+    "calendar",
+    "collections",
+    "csv",
+    "datetime",
+    "decimal",
+    "fractions",
+    "functools",
+    "heapq",
+    "io",
+    "itertools",
+    "json",
+    "math",
+    "numpy",
+    "operator",
+    "pandas",
+    "random",
+    "re",
+    "statistics",
+    "string",
+    "textwrap"
+  ],
+  "builtins": [
+    "dir",
+    "enumerate",
+    "float",
+    "hasattr",
+    "int",
+    "isinstance",
+    "len",
+    "list",
+    "map",
+    "max",
+    "min",
+    "next",
+    "print",
+    "range",
+    "repr",
+    "round",
+    "set",
+    "str",
+    "sum",
+    "type"
+  ],
+  "refused_builtins": [
+    "__import__",
+    "breakpoint",
+    "compile",
+    "delattr",
+    "eval",
+    "exec",
+    "exit",
+    "globals",
+    "help",
+    "input",
+    "locals",
+    "memoryview",
+    "open",
+    "quit",
+    "setattr",
+    "vars"
+  ],
+  "builtin_kinds": {
+    "str": [
+      "find",
+      "index",
+      "isdigit",
+      "join",
+      "lower",
+      "replace",
+      "split",
+      "splitlines",
+      "startswith",
+      "strip",
+      "upper"
+    ],
+    "list": [
+      "append",
+      "copy",
+      "index"
+    ],
+    "dict": [
+      "copy",
+      "get",
+      "items",
+      "keys",
+      "update",
+      "values"
+    ],
+    "set": [
+      "copy",
+      "update"
+    ],
+    "tuple": [
+      "index"
+    ],
+    "int": [],
+    "float": [
+      "hex"
+    ]
+  },
+  "admitted": {
+    "starlark": {
+      "unique": 0.8939,
+      "occurrences": 0.9128,
+      "unique +gate": 0.8598,
+      "occurrences +gate": 0.8828
+    },
+    "ruled: + genexp in consumer position": {
+      "unique": 0.9835,
+      "occurrences": 0.9866,
+      "unique +gate": 0.9446,
+      "occurrences +gate": 0.9516
+    },
+    "(any genexp, for comparison)": {
+      "unique": 0.9906,
+      "occurrences": 0.9921,
+      "unique +gate": 0.9511,
+      "occurrences +gate": 0.9566
+    }
+  },
+  "decided": "2026-10-15, repl-specs rulings 1-4 (session-mail 20261015-1201Z-repl-specs-to-repl-lane3-genexp-type-columns-rulings.md)",
+  "parsed_with": "CPython 3.13.15 ast (Pyodide carries 3.14.0; 3.14 adds only TemplateStr/Interpolation)"
+}
