@@ -709,7 +709,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     const res = await bg.send({ type: "GET_CONFIG", payload: {} });
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
-        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
+        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: false,
         // The server-tool curation: the page needs it before it builds a run's toolset.
         serverToolsOff: [], commanderServerTools: [],
         autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
@@ -4086,17 +4086,32 @@ test("wire format: a toolIds call asks under ON too, and a server that answers S
 });
 
 // ---------------------------------------------------------------------------------------------------------
+// A PAGE-STARTED readonly cell is NOT assumed harmless while the sandbox is being hardened: it runs only code a
+// person approved on this tab, or on a site that approves its own actions. Our own surfaces and a run the worker
+// drives are unchanged. docs/plan/repl/PYODIDE_LOCKDOWN.md is the defence this papers over.
+
+test("SECURITY (PYTHON_EXEC): a PAGE-started readonly cell is refused without approval", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const res = await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "1+1" } },
+        { tab: { id: 9 }, url: "https://evil.example/attack" });
+    assert.match(String(res?.error), /Refused: Python from a page needs approval on this page/);
+    assert.equal(bg.pyRuns.filter(m => m.type === "PY_RUN").length, 0, "nothing reached the sandbox");
+});
+
+// ---------------------------------------------------------------------------------------------------------
 // THE PYTHON RUN WATCHDOG is a WORKBENCH-ONLY favour. A run is killed at 15s; a person who deliberately wrote
 // something slow and is sitting in front of it can turn that off, and nobody else can — a page-invoked tool
 // with no limit holds the one Pyodide instance against every later call, with nobody watching it.
 
 test("SECURITY (PYTHON_EXEC): a PAGE cannot turn off the run watchdog", async () => {
-    const bg = loadBackground({ config: baseConfig() });
+    // Self-approving so the cell is allowed to run at all; the property is the FLAG, on any allowed path.
+    const bg = loadBackground({ config: baseConfig(), local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
     await bg.send(
         { type: "PYTHON_EXEC", payload: { code: "while True: pass", noTimeout: true } },
         { tab: { id: 9, id2: 9 }, url: "https://evil.example/attack" });   // a page: its own url, not ours
     const run = bg.pyRuns.find(m => m.type === "PY_RUN");
-    assert.ok(run, "the run still goes (readonly python is safe for any caller)");
+    assert.ok(run, "the run still goes (this site approves its own actions)");
     assert.ok(!run.noTimeout, "…but the flag is dropped — an endless run from a page wedges the sandbox");
 });
 
@@ -4249,7 +4264,7 @@ test("PYTHON_EXEC: an ordinary run carries no completion field", async () => {
 // page cannot throw away a person's variables.
 
 test("SECURITY (PYTHON_EXEC): a PAGE cannot ask to keep state — its run stays in the namespace that resets", async () => {
-    const bg = loadBackground({ config: baseConfig() });
+    const bg = loadBackground({ config: baseConfig(), local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
     await bg.send({ type: "PYTHON_EXEC", payload: { code: "x = 1", persist: true } }, { tab: { id: 9 }, url: "https://evil.example/attack" });
     const run = bg.pyRuns.find(m => m.type === "PY_RUN");
     assert.ok(run, "the run still goes");
@@ -4513,7 +4528,8 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
     const seed = new ValueStore({ idb, budgetBytes: () => 1e9 });
     const held = await seed.put(new Blob(["a\n1\n"]), { format: "csv", session: "run-elsewhere" });
     const loose = await seed.put(new Blob(["a\n1\n"]), { format: "csv" });
-    const bg = loadBackground({ config: baseConfig(), indexedDB: idb });
+    // Self-approving so the cell is allowed to run at all; the property is the TABLE OWNERSHIP, on any allowed path.
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
     const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
     const page = { tab: { id: 9 }, url: "https://evil.example/attack" };
 
@@ -4552,7 +4568,8 @@ test("SECURITY (page-hosted values): a tab reads a stored value the worker discl
     // Held for tab 9's page-hosted runs (what a disclosure records), and held for ANOTHER tab's.
     const mine = await seed.put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "page:9" });
     const theirs = await seed.put(new Blob(["a\n7\n"]), { format: "csv", session: "page:11" });
-    const bg = loadBackground({ config: baseConfig(), indexedDB: idb });
+    // Self-approving so the cell is allowed to run at all; the property is the DISCLOSURE SCOPE, on any allowed path.
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://shop.example"] } });
     const page = { tab: { id: 9 }, url: "https://shop.example/report" };
 
     // VALUE_COLUMNS: the run id is decorative on this path — the entitlement is the tab's.

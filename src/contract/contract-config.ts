@@ -308,7 +308,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveReadonly: true,
     serverToolsOff: [],
     commanderServerTools: [],
-    autoApprovePython: true,
+    autoApprovePython: false,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
     agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab

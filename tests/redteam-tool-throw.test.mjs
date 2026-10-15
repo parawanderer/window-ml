@@ -86,11 +86,16 @@ test("main world: an exec whose js cannot be a string is an error result, and th
 });
 
 // --- the worker: a tool the worker runs itself, and the decisions before it ---
-for (const [tool, args] of [["fetch_url", { url: { toString: 1 } }], ["python_exec", { code: { toString: 1 } }]])
+// `autoApprovePython` must be ON for the python_exec case: the throw it is about lives inside the auto-approve
+// decision (`String(code)` in auto-approve.ts), and with the flag off that decision returns null before reaching it.
+for (const [tool, args, config] of [
+    ["fetch_url", { url: { toString: 1 } }, {}],
+    ["python_exec", { code: { toString: 1 } }, { autoApprovePython: true }],
+])
 test(`worker: ${tool} with an argument that cannot be a string is asked about instead of ending the run`, async () => {
     // Before: auto-approve's String(url) / autoApprovePython threw in the loop, and the approval's bookkeeping threw
     // when the person approved, which left the gate hanging.
-    const r = await runSteps([{ name: tool, args }]);
+    const r = await runSteps([{ name: tool, args }], { config });
     wentOn(r, 1);
     assert.equal(r.results.length, 1, "the model read the call's result");
     assert.ok(r.log.some((x) => x.kind === "threw" && x.reason === "auto-approve" && x.detail?.tool === tool), JSON.stringify(r.log));
