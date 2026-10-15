@@ -157,6 +157,8 @@ for a case that needs it, not the default.
 
 ## Step 0: measure the subset before writing it
 
+The session plan that carries this and the vector corpus: [`docs/plan/repl/`](../plan/repl/README.md), lane 3.
+
 The repo holds a corpus of real `python_exec` cells in run logs and bench results. Walking them with `ast` and counting
 node types, imports and attribute calls says which subset admits most of what models actually write, and which numpy and
 pandas methods the first manifest must cover. The JS dialect grew the same way. The gap list from that count is the
