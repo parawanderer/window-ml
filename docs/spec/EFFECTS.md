@@ -1,6 +1,6 @@
 # Spec (WIP): one effect algebra for every description of a call
 
-**Status: draft, nothing built.** Written on 2026-10-15 to close the "one effect vocabulary, or one per consumer" question
+**Status: the algebra is built** (`src/effects.ts`, tested row by row in `tests/effects.test.mjs`); no consumer reads it yet. Written on 2026-10-15 to close the "one effect vocabulary, or one per consumer" question
 in [`POLICIES.md`](POLICIES.md). Every spec that DESCRIBES what a call does ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md),
 [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), [`SHELL.md`](SHELL.md), [`SECRET_HANDLES.md`](SECRET_HANDLES.md),
 [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)) projects its own terms onto this one, and every policy reads this one.
@@ -43,7 +43,7 @@ reaches the network), and because sets compare: "is this call inside what the sa
 
 `unknown` is never inside any bound, so an undescribed call never runs without asking. `read(secret(name))` does not
 exist in any vocabulary: a secret can be `use`d, never read, and a file the host flags as secret-looking is
-`read(fs(path))` with `secret: true`, which the default free tier excludes by name below.
+`read(fs(path))` with `secret: true`, which is inside NO bound, below.
 
 ## Each vocabulary is a projection
 
@@ -70,16 +70,24 @@ An enforcer publishes the set `B` of effects it bounds, meaning effects it makes
 default policy of every consumer is then one rule:
 
 ```
-free(c)  ⇔  c.effects ⊆ B(c.placement) ∪ ReadsInRoots(c)      with ReadsInRoots excluding any path flagged secret
+free(c)  ⇔  c.effects ⊆ B(c.placement) ∪ ReadsInRoots(c)      with no fs(path) flagged secret in either set
 ```
+
+**A path flagged secret is inside no bound, sandbox and container included** (ratified 2026-10-15, after lane 2 of the
+plan built it stricter than this spec first said). The harm of reading `.env` or a key file is DISCLOSURE: its contents
+reach the model's context, the run log and the export, and no enforcer bounds that. Seatbelt confining writes and
+denying the network does not make the read harmless, so `B` never contains it; the only way such a read runs is a
+person saying so, per call or by a policy they wrote. The default policy is a UNIVERSAL over the set ("every element is
+a read on fs, in a root, not secret", plus whatever `B` adds), never a list of excluded operations: an exclusion list
+forgets `use` and `alloc` the day they are added, a universal cannot.
 
 | Placement | `B` |
 | --- | --- |
 | the page's main world | `∅` (nothing is bounded there, which is why the JS dialect must prove effects from the source) |
 | a worker-side survey | `∅` for the same reason, with the dialect as the proof |
 | the Python dialect (CPython's restricted mode), anywhere | `{ read/write/alloc on heap(owned) }` by the runtime's own gates, plus `read(entropy)` if allowed |
-| a container | `read/write(fs(mounts))`, `exec(process)` inside it, `net(allowlist)` |
-| host mode under the OS sandbox | `read/write(fs(roots))`, `exec(process)`, `net(allowlist)` |
+| a container | `read/write(fs(mounts))` less the secret-flagged paths, `exec(process)` inside it, `net(allowlist)` |
+| host mode under the OS sandbox | `read/write(fs(roots))` less the secret-flagged paths, `exec(process)`, `net(allowlist)` |
 | plain host mode | `∅` |
 
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a

@@ -247,6 +247,21 @@ export const SAFE_CONSTRUCTORS: Record<string, new (...a: any[]) => unknown> = {
 // only the survey's local accumulators (`(o[k] = o[k] || []).push(x)`, `new Set()`, `new Map()`) can.
 export const MUTATING_METHODS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "add", "set", "delete", "clear"]);
 
+/** Allowed methods that WRITE one of their ARGUMENTS, by receiver kind, to the argument indices they write: the library
+ *  manifest's `mutates(i)` in miniature (docs/spec/READONLY_LIBRARY_MANIFEST.md). Each listed argument must be what
+ *  `o[k] = v` may write: a plain object or array the script built, not being iterated. A new allowed member that writes
+ *  an argument is covered by a line here, and `tests/readonly-exec.test.mjs` enumerates this table. */
+export const ARG_WRITERS: Readonly<Partial<Record<MethodKind, Readonly<Record<string, readonly number[]>>>>> = {
+    ObjectCtor: { assign: [0] },
+};
+
+/** The argument indices `obj.key(…)` writes, from {@link ARG_WRITERS}; empty for a call that writes none. */
+export function argWrites(obj: unknown, key: string): readonly number[] {
+    const kind = kindOf(obj);
+    const row = kind ? ARG_WRITERS[kind as MethodKind] : undefined;
+    return row && Object.hasOwn(row, key) ? row[key] : [];
+}
+
 // The ONLY methods callable on the `ml.answer` facade (curate the run's own user-facing answer). Kept
 // local so this interpreter stays dependency-free; must match makeAnswerFacade's surface in answer-set.ts.
 // Deliberately NOT in ALLOWED_METHODS — so `x.remove()`/`x.dump()` on any OTHER object stays out of dialect.
@@ -280,8 +295,10 @@ export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilitie
 const PAGE_ML_METHODS: ReadonlySet<string> = new Set(["queryAll", "a11y"]);
 
 /** Where a survey is evaluated. `page`: the page's main world, with its DOM. `worker`: the service worker, with no
- *  DOM, where the run's own context can be read without it ever entering the page (docs/spec/CURRENT_CONTEXT.md). */
-export type ReadonlyRealm = "page" | "worker";
+ *  DOM, where the run's own context can be read without it ever entering the page (docs/spec/CURRENT_CONTEXT.md).
+ *  `policy`: a policy over one call's facts (docs/spec/POLICIES.md), with no `ml`, no DOM and no clock, whose only root
+ *  is `c`, a facade that refuses a field it does not have; `==` and `!=` are refused there (`evalPolicy`). */
+export type ReadonlyRealm = "page" | "worker" | "policy";
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,

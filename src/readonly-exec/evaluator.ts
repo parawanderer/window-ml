@@ -5,7 +5,7 @@ import type { CurrentSnapshot } from "../agent/current-context";
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
-import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS } from "./policy";
+import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -310,6 +310,28 @@ export class Evaluator {
     private rows = new Map<object, number>();
     constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
 
+    /** STRICT FACADES: the policy realm's `c` and every object and array inside it. Reading a field one does not have
+     *  is a REFUSAL, never `undefined`, so a typo'd `deny` is a broken policy the person sees rather than a rule that
+     *  silently never fires (docs/spec/POLICIES.md, "The policy realm"). An array is strict for its non-index keys
+     *  only: an index past the end reads `undefined`, as `c.argv[1] === "status"` on a one-word argv needs. Decided by
+     *  the member-read path itself, so an alias (`const x = c; x.argv0`) is refused the same way. */
+    private strict = new WeakSet<object>();
+    /** Mark a policy facade object strict (see {@link strict}); only `evalPolicy` builds them. */
+    markStrict<T extends object>(o: T): T { this.strict.add(o); return o; }
+    /** Refuse a read of a field a strict facade does not have. */
+    private strictRead(obj: unknown, key: string): void {
+        // A policy reading off null or undefined is a TypeError, as in JavaScript. A survey reads `undefined` there, a
+        // forgiveness that in a policy turns `c.argv[9].length > 0` into a quiet `false`, and a `deny` into nothing.
+        if (obj == null && this.realm === "policy") throw new TypeError(`Cannot read properties of ${String(obj)} (reading '${key}')`);
+        // A string's typo (`c.url.lenght`) is refused in a policy too: a string has its length, its indices and its
+        // methods (read as values only to be called), and nothing else.
+        if (this.realm === "policy" && typeof obj === "string" && !(key in Object(obj))) throw new NotInDialect(`a string has no field '${key}'`);
+        if (obj === null || typeof obj !== "object" || !this.strict.has(obj)) return;
+        if (Object.prototype.hasOwnProperty.call(obj, key)) return;
+        if (Array.isArray(obj) && /^(0|[1-9]\d*)$/.test(key)) return;
+        throw new NotInDialect(`the call has no field '${key}'`);
+    }
+
     /** Members this run does not have, to why (ml-member-tools.ts): the host leaves them off the facade, and reaching
      *  one is a runtime error saying so, since no approval would give the run a tool it was not built with. */
     hidden: ReadonlyMap<string, string> = new Map();
@@ -435,6 +457,7 @@ export class Evaluator {
     private prop(obj: unknown, key: string): unknown {
         this.guardKey(key);
         if (this.ml !== null && obj === this.ml && !Object.prototype.hasOwnProperty.call(this.ml, key)) this.absentRead(key);
+        this.strictRead(obj, key);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
         return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
@@ -462,6 +485,7 @@ export class Evaluator {
         if (node.optional && obj == null) return SHORT;        // this `?.` short-circuits the rest of the chain
         const key = node.computed ? this.guardKey(yield* this.eval(node.prop, scope)) : this.guardKey(node.prop);
         if (this.ml !== null && obj === this.ml && !Object.prototype.hasOwnProperty.call(this.ml, key)) this.absentRead(key);
+        this.strictRead(obj, key);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
         // Uniformly with querySelectorAll (evalCall), a collection PROPERTY (.children/.rows/.cells/…)
@@ -492,6 +516,11 @@ export class Evaluator {
         // `===` and `!==` never coerce, nor does `==` between two objects or against null; every other operator may call
         // an object operand's `toString`.
         const loose = op === "==" || op === "!=";
+        // In a POLICY a coercing comparison is where a quiet mistake becomes a grant (`"0" == 0`), so it is refused there.
+        if (loose && this.realm === "policy") throw new NotInDialect(`${op} coerces; compare with ${op}=`);
+        // So does an ordering between a string and a number (`c.n < "10"`): refused there too.
+        if (this.realm === "policy" && (op === "<" || op === ">" || op === "<=" || op === ">=") && typeof l !== typeof r)
+            throw new NotInDialect(`${op} between a ${typeof l} and a ${typeof r} coerces`);
         if (op !== "===" && op !== "!==" && !(loose && (l == null || r == null || (typeof l === "object") === (typeof r === "object")))) this.coerces(l, r);
         // A string operand of anything but `+` (a rope stays O(1) there) is flattened and compared or parsed: charged its
         // length. `===` between strings of different lengths answers from the lengths alone.
@@ -665,6 +694,8 @@ export class Evaluator {
             }
             case "New": {
                 const ctor = SAFE_CONSTRUCTORS[node.ctor];
+                // A policy is a function of the call alone: the clock is not one of its facts.
+                if (node.ctor === "Date" && this.realm === "policy") throw new NotInDialect("new Date() reads the clock, which is not a fact of the call");
                 if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`);
                 // A script-CREATED instance is owned, so its own mutators (Set.add / Map.set/…) pass the
                 // MUTATING_METHODS gate. Mark it directly, not via own(): a Set/Map's prototype isn't
@@ -818,6 +849,14 @@ export class Evaluator {
         } finally { this.depth--; }
     }
 
+    /** Call one of the script's OWN functions with host-supplied arguments (a policy is called with `c`). Anything
+     *  else is not a policy. */
+    *callOwn(fn: unknown, args: unknown[]): Ev {
+        const ours = typeof fn === "function" ? this.ourFns.get(fn as Function) : undefined;
+        if (!ours) throw new NotInDialect("a policy is a function of the call: (c) => …");
+        return yield* this.callArrow(ours.node, ours.scope, args);
+    }
+
     private *evalCall(node: Node, scope: any): Ev {
         const callee = node.callee;
         // obj.method(args) — the common case. Allowlisted method names only.
@@ -838,8 +877,15 @@ export class Evaluator {
             // read-only API, and `ml.answer` only its four curate methods — the real `window.ml` has
             // `setModel`/`chat`/`pythonExec`, so a missing name here means "the dialect withheld it", which
             // is precisely the thing a human may want to approve. Escalate, never explain it away.
+            // A STRICT facade object (the policy realm's `c.effects`) carries its own callables, put there by
+            // `evalPolicy` alone, so an own function is the whole check, and a name it lacks is a refusal like any
+            // other field it lacks. A strict ARRAY's methods are the array kind's, gated below as on any array.
+            const onStrict = obj !== null && typeof obj === "object" && this.strict.has(obj) && !Array.isArray(obj);
+            if (onStrict) this.strictRead(obj, key);
             if (onMl) {
                 if (!Object.prototype.hasOwnProperty.call(this.ml, key)) this.absentMl(key);
+            } else if (onStrict) {
+                if (typeof obj[key] !== "function") throw new TypeError(`${key} is not a function on the call`);
             } else if (onAnswer) {
                 if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
             } else if (!methodAllowed(obj, key)) {
@@ -887,6 +933,17 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
+            // An argument the call WRITES (ARG_WRITERS: `Object.assign`'s target) meets the same rule as `o[k] = v`: a
+            // plain object or array the script built, not one being iterated. Without it, a survey assigned into the
+            // page (`Object.assign(document.body, { innerHTML })`) and into the host's own builtins (`Math`, `JSON`,
+            // `Array`), which outlive the survey and every guard here reads.
+            for (const i of argWrites(obj, key)) {
+                const target = args[i];
+                this.refuseWrite(target);
+                if (target === null || typeof target !== "object" || !this.owned.has(target) || !isWritableTarget(target))
+                    throw new Denied(`${key} can only write into an object or array you built — never a DOM node, a page object, or a builtin`);
+                this.notIterating(target, "write into");
+            }
             this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
             // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
             // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
@@ -954,7 +1011,7 @@ export async function runAsync(gen: Ev): Promise<unknown> {
 /** Run one SYNCHRONOUSLY — for an arrow a host method invokes (`arr.map(fn)` calls fn synchronously,
  *  so there is nowhere to await). A yield means the body tried to: close the generator (its `finally`
  *  unwinds the depth guard) and fall out of dialect, so the survey drops to the approval path. */
-function runSync(gen: Ev): unknown {
+export function runSync(gen: Ev): unknown {
     const r = gen.next();
     if (!r.done) { gen.return(undefined); throw new NotInDialect("await is not supported inside a callback"); }
     return r.value;

@@ -1,6 +1,6 @@
 # Spec (WIP): `ml` over the wire, the one protocol every executor speaks
 
-**Status: draft, nothing built as a protocol; most of the server half exists.** Written on 2026-10-15. Four pieces of work
+**Status: the server half is built (`ML_CALL`, `src/sw/sw-ml-wire.ts`; how it is bound: [`docs/dev/site-access.md`](../dev/site-access.md), "The `ml` wire"); no client consumes it yet.** Written on 2026-10-15. Four pieces of work
 turned out to depend on the same missing thing: `ml` inside Pyodide, JS values reaching Python, Python running at the
 process host, and policies answering a call from inside a script. The missing thing is a definition of ONE `ml` call as a
 message, so that every place code runs is a client of the same server.
@@ -14,24 +14,29 @@ cannot see any of those objects, and the readonly hardening purges the `js` brid
 reason, one hop further out.
 
 The fix is not a bridge per place. It is a wire form of an `ml` call, served by the service worker, which already answers
-most of these requests for the isolated world and the background-hosted run (`DEREF_TOKEN` by run id, `GET_CONFIG`, the
+most of these requests for the isolated world and the background-hosted run (the run-keyed dereference resolver, `derefByRun` in `src/sw/sw-runs.ts`, `GET_CONFIG`, the
 pointer store, the run's `current` snapshot).
 
 ## One call, one message
 
 ```jsonc
 // request, from any client
-{ "run": "<run id>", "seq": 12, "call": "dereference", "args": ["@tool:a1b2c3", { "pipe": ".rows" }] }
+{ "client": "mlw-<uuid>", "run": "<run id>", "seq": 12, "call": "dereference", "args": ["@tool:a1b2c3", { "pipe": ".rows" }] }
 
 // answers
 { "seq": 12, "value": { … } }                                  // plain data
-{ "seq": 12, "pointer": { "token": "@tool:9f2e1a0", "label": "…", "size": 20480 } }   // too big to cross: stays home
+{ "seq": 12, "pointer": { "token": "@tool:9f2e1a0", "label": "…", "size": 20480 } }   // too big to cross: stays home (today only a TABLE has a whole to point at; a text capture is kept model-sized, root J of the plan)
 { "seq": 12, "error": { "code": "NotInDialect", "message": "…" } }
 { "seq": 12, "ask": { "card": "…" } }   // the call needs the person; the client WAITS, and a later message answers
 ```
 
-**What crosses.** Plain JSON; bytes as Arrow or a buffer (the one copy, as `injectStoredTable` makes today); a `@tool:`
-pointer; a table value with its `shape`; a secret HANDLE as a tagged reference `{ "$secret": "github" }` that names a grant
+`client` is the handle the server issued when it started the code making the call (built: one per Python cell); the
+server answers by it and the verified sender together, and checks `run` against it. An `ask`'s final answer is a later
+`ML_ANSWER` push carrying the same `client` and `seq`.
+
+**What crosses.** Plain JSON; bytes as Arrow (the one copy, as `injectStoredTable` makes today), carried as a transferred
+`ArrayBuffer` on the Pyodide-worker↔offscreen hop and as `{ "$bytes": "<base64>" }` on every `chrome.runtime` hop, which
+is JSON; a `@tool:` pointer; a table value with its `shape`; a secret HANDLE as a tagged reference `{ "$secret": "github" }` that names a grant
 and carries no value ([`SECRET_HANDLES.md`](SECRET_HANDLES.md)). **Never a proxy**, in either direction: a live object
 would be a capability into the realm that made it, which is exactly what the Pyodide hardening exists to remove.
 

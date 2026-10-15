@@ -90,6 +90,11 @@ that model; `false` disables it.
 from it. Returns `null` when undeterminable (cloud model, old Ollama) — treat as
 "unknown", never "no".
 
+**`ML_CALL`** (one `ml` call as a message) is not page-started and not in HANDLE_MAP. `sw-ml-wire.ts` serves it for
+clients the worker itself opened (the Pyodide cell today), answering only when the handle and the browser-set sender
+both match. How it is bound and what the tests hold: `docs/dev/site-access.md`, "The `ml` wire"; the contract:
+`docs/spec/ML_WIRE.md`.
+
 ## Streaming (`onToken`)
 
 Streaming is the **one path that bypasses `HANDLE_MAP`/`sendMessage`** — the

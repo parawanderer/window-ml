@@ -111,9 +111,11 @@ Two specs carry a consumer such as `ml.sh`, and they are separate on purpose:
 **Built-in defaults are policies too.** A consumer's "free" tier is the built-in default policy, sitting beside the
 person's, and it is ONE rule for every consumer ([`EFFECTS.md`](EFFECTS.md)): the call's effects are a subset of what
 the enforcer at its placement bounds, plus reads inside the workspace roots of paths not flagged secret. For a shell
-call on the plain host that reduces to `(c) => !c.effects.has("write") && !c.effects.has("exec") &&
-c.effects.reads.every((r) => r.inRoot && !r.secret)`; under the OS sandbox, writes inside the roots join the free set
-because Seatbelt publishes them as bounded. So the free tier needs both specs: the manifest for `effects`, the policy to
+call on the plain host, where nothing is bounded, that reduces to `(c) => c.effects.every((e) => e.op === "read" &&
+e.res.kind === "fs" && e.res.inRoot && !e.res.secret)`: a UNIVERSAL over the set, never a list of excluded operations
+(an earlier draft wrote `!has("write") && !has("exec") && …`, which let `use(secret)` and `alloc` through unnamed; lane
+2 of the plan caught it building the algebra). Under the OS sandbox, writes inside the roots join the free set because
+Seatbelt publishes them as bounded. The example is derived from `free()` in the algebra's module, not written by hand. So the free tier needs both specs: the manifest for `effects`, the policy to
 act on it. Without a manifest a call's `effects` is `unknown`, the top element, inside no bound, and it asks: correct,
 only slower.
 
@@ -123,7 +125,7 @@ only slower.
 | --- | --- | --- |
 | global | the person, in DevTools Settings | until removed |
 | workspace | the person, for one set of roots | with the workspace |
-| run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session: it **survives a resume, and a fork inherits it** (decided 2026-10-13), listed with each session until removed |
+| run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session, keyed by its hash: it **survives a resume**, and a fork the WORKER builds inherits it (decided 2026-10-13, narrowed 2026-10-15: today's fork is page-side and arrives as a plain start the worker cannot tell from a new run, and a page naming a parent to inherit its grants would be an escalation route, so a page-built fork inherits NOTHING); listed with each session until removed, and removed when the session is archived |
 
 The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
 a page never can. A policy reached over the hub is set by a principal holding `approve`.
@@ -188,7 +190,11 @@ and string operations inside. A tree small enough to analyse can answer it; code
 policy is measured, never derived.
 
 **Every allowed call says which policy allowed it**, in the run log and on the call's row, and a run's policies are
-readable by the model without approval, since reading what you may do is not an escalation. An agent that can see its
+readable by the model without approval, since reading what you may do is not an escalation. Where that lands
+(2026-10-15): the run's policies are declared in the state registry with audience `model` and reach the model as
+`ml.current.policies`; the resume divider the PERSON sees names the policies a resumed session carried. (The
+`session-resumed` event's text never reaches the model, whatever two older docs said; lane 2 of the plan found and
+fixed the claim.) An agent that can see its
 own grants stops asking for what it already has, and can say which grant it relies on.
 
 ## Open questions

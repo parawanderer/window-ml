@@ -71,6 +71,44 @@ Edges (what waits on what):
 Not a root, and not started this round: `mode` removal, the Pyodide build, the host's extension side, package install,
 secrets, placement, the hub desktop runtime.
 
+**Added 2026-10-15: K. registering a program** ([`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md), "Registering a
+program"): the sandbox profile derived from a manifest's claims (the description as the envelope), hash pinning of a
+resolved program, a manifests directory with workspace and global scope, drafting a manifest from `--help` or completion
+files as a card with evidence, and the registration page. Depends on I and F; unassigned this round. Details settled
+with lane 4 (2026-10-15): the host's sandbox plan gains `write: none|roots` and `exec: any|program-only`; on macOS
+Seatbelt restricts `process-exec` to a literal path; on Linux the same comes from Landlock's per-path EXECUTE right,
+applied by a small exec shim (`exec-under <ruleset> -- prog`, which composes with bubblewrap and keeps the host free of
+`unsafe`), with EXECUTE granted to the program, the ELF interpreter and a script's `#!` interpreter; the Landlock ABI is
+reported in `hello`, and best-effort is treated as unavailable, so a no-runner claim is never silently trusted where
+the kernel cannot enforce it. Landlock also closes a WRITE gap bubblewrap has (measured in the host's Linux CI, 29 of 30
+enforcement tests passing): bwrap binds only paths that EXIST when the call starts, so a protected path that is absent
+then (`.vscode/settings.json`) is writable on Linux while Seatbelt's regex denies it. K's Linux write rules are Landlock
+rules over the roots minus the protected NAMES, which hold whether or not the file exists; the gap is pinned by its own
+test in the host repo, which must flip when K lands.
+
+**Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
+keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
+kept whole (`POINTER_VALUES.md`, slices 5 and 6). So "the operation goes to the value" has no value to go to for a text
+body, and a code client (a Python cell, a survey's pipe) computes over a prefix. J is a root (it extends the value store
+the way the table slices did) and is not assigned to a lane this round; until it lands, a `value` answer for a
+truncated capture carries `truncated: true` and the full size, and every client surfaces it.
+
+## Status (2026-10-15, end of the first day)
+
+- **Lane 4 is done for this round**: root I as `window-ml-host` v0.1.0 (+ its PRs #2 to #4), root F merged (#683),
+  results in `LANE_4_RESULT_I.md` and `LANE_4_RESULT_F.md` (#687). Open: Linux sandbox enforcement is unverified; its CI
+  fix waits on Shane pushing the host repo's `ci/linux-sandbox` branch.
+- **Lane 2**: root D merged (#672, result #676); root E and the first consumer in progress. Its red-team pass found and
+  fixed a hole in the shipped dialect (`Object.assign` into a foreign target, #675).
+- **Lane 3**: the corpus count and the shared vectors in PR #677; root H next.
+- **Lane 1**: root A (the `ml` wire) in PR #678. Its red-team pass found that the hardened `python_exec` sandbox reaches
+  JavaScript and the network. **The lockdown is owned OUTSIDE the lanes**, by the red-team session, built from
+  [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md): the interim mitigations PR first, then the vectors, then the defence.
+  The lane 1 session finishes its root A result file and a design note for the `ml` message channel and then STOPS;
+  a fresh session takes lane 1 forward (`ml` in Pyodide, root C) from the plan, those two documents and the merged
+  lockdown, because the first session's context carries the escape work and is stopped on anything near the sandbox.
+- **Added roots**: J (whole text captures in the value store) and K (registering a program), both unassigned.
+
 ## The lanes
 
 Each lane's second task is unblocked by its own first one, so a session never waits on another lane to have work.
