@@ -96,6 +96,15 @@ function staticString(node: Node | undefined): string | null {
     return null;
 }
 
+/**
+ * The key a python_exec cell's grant is held under on its tab: its mode and its exact code. A `full` grant also covers
+ * the same code in `readonly` (`pyCodeGranted`, sw-python.ts); a `readonly` one never covers `full`.
+ * @param mode the mode the person approved
+ * @param code the exact code
+ * @returns the key
+ */
+export const pyCodeGrant = (mode: "readonly" | "full", code: string): string => `${mode}:${code}`;
+
 /** What one approved call puts on its TAB for its own sub-operations (`grantsFor`, sw-consent.ts): what any script on
  *  that page could also spend while the call runs, so only what the call cannot do without. */
 export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sheets: string[]; pyCode: string[] }
@@ -106,7 +115,8 @@ export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sh
  * - An `exec`: the URLs its code spells out (its inline `ml.fetch`), and no others.
  * - A server tool: the exact call the person saw (`remoteKey`, `serverToolKey`).
  * - A `python_exec` the worker runs (`pyInWorker`): nothing on the tab; its grants are the run's (worker-tools.ts).
- * - A `python_exec` that runs on the page: its full-mode code. Its external sheets only for a run the PAGE built,
+ * - A `python_exec` that runs on the page: its code, keyed by its MODE (`pyCodeGrant`), since the worker runs a page's
+ *   cell in either mode only for code a person approved in that mode or `full`. Its external sheets only for a run the PAGE built,
  *   whose loop is the page's own. A worker-built run's sheet never goes on the tab, whatever the call's shape: the
  *   minted id is a credentialed read any script on the page could spend while the call runs (clause B, #442). Since
  *   site access part 5 every python_exec of a run the worker drives runs in the worker, so only a page-built run's,
@@ -120,7 +130,7 @@ export function tabGrantsForCall(c: { name: string; args: Record<string, unknown
     if (c.remoteKey) out.serverTools.push(c.remoteKey);
     if (c.name === "python_exec" && !c.pyInWorker) {
         if (!c.builtByWorker) out.sheets.push(...externalSheetIds(c.args));
-        if (c.args.mode === "full") out.pyCode.push(String(c.args.code ?? ""));
+        out.pyCode.push(pyCodeGrant(c.args.mode === "full" ? "full" : "readonly", String(c.args.code ?? "")));
     }
     return out;
 }

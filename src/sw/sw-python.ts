@@ -10,6 +10,7 @@ import { activeRuns, execReads, isWorkerRun, pageValueSession } from "./sw-runs"
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
+import { pyCodeGrant } from "./grant-extract";
 import { openWireClient } from "./ml-wire-serve";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
@@ -57,6 +58,9 @@ export interface PythonCaller {
     untrusted: () => Promise<boolean>;
     /** Whether `full` mode is approved for exactly this code. Absent: the call grants on the tab (`tabGrants(tabId).pyCode`, sw-consent.ts). */
     pyCodeOk?: (code: string) => boolean;
+    /** A run the worker drives, whose own gate decided a readonly cell (autoApprovePython or the person): no tab grant
+     *  is asked for it. Absent: a page-started cell, which runs readonly code only under a grant. */
+    runGated?: boolean;
     /** Whether this caller may read a stored table held by `holders`. Absent: a run hosted on its tab, or the tab the
      *  key was disclosed to. */
     valueOk?: (holders: string[], key: string) => boolean;
@@ -131,8 +135,15 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const wantsFull = !complete && payload?.hardened === false;
     if (wantsFull && await caller.untrusted()) {
         const code = String(payload?.code ?? "");
-        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : caller.tabId != null && !!tabGrants(caller.tabId)?.pyCode.has(code);
+        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : pyCodeGranted(caller.tabId, "full", code);
         if (!approved) return { error: "Refused: network-enabled (full) Python needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
+    }
+    // A PAGE-STARTED readonly cell is never auto-approved: it runs only code a person approved on this tab, in either mode.
+    // The readonly sandbox is being hardened, and until it is, readonly code from a page is not assumed harmless. Our own
+    // surfaces, a self-approving site and a run the worker drives (whose own gate decided) are unchanged.
+    if (!complete && !wantsFull && !ownSurface && !caller.runGated && await caller.untrusted()) {
+        const code = String(payload?.code ?? "");
+        if (!pyCodeGranted(caller.tabId, "readonly", code)) return { error: "Refused: Python from a page needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
     }
     // LIVE stdout streaming (opt-in): record where this run's chunks go.
     const streamId: string | undefined = payload?.stream ? requestId : undefined;
@@ -170,6 +181,18 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         if (streamId) pyStreamTabs.delete(streamId);
         wire?.close();
     }
+}
+
+/**
+ * Whether a person approved exactly this code on the tab, in this mode: a `full` approval also covers `readonly`.
+ * @param tabId the tab
+ * @param mode the mode the cell runs in
+ * @param code the exact code
+ * @returns true when granted
+ */
+function pyCodeGranted(tabId: number | undefined, mode: "readonly" | "full", code: string): boolean {
+    const g = tabId != null ? tabGrants(tabId)?.pyCode : undefined;
+    return !!g && (g.has(pyCodeGrant("full", code)) || (mode === "readonly" && g.has(pyCodeGrant("readonly", code))));
 }
 
 /** PY_STDOUT: relay one live stdout chunk from the offscreen host to whoever is awaiting that stream — a page
