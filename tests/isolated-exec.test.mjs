@@ -29,23 +29,30 @@ const SCRIPTS = {
     deref: "return ml.dereference(\"@tool:exec\").length",
     current: "return ml.current.messages.length",
     both: "return ml.current.messages.length + @tool:exec.length",
+    sh: "return (await ml.sh.run([\"git\", \"status\"])).code",
+    // ml.sh outranks a pointer: a pointer-naming script may fall back to the page's world, one naming ml.sh never does.
+    shPointer: "return (await ml.sh.run([\"wc\", \"-l\"])).code + @tool:exec.length",
 };
 
 test("what a script names is read lexically: pointers in any of their forms, ml.current, and nothing in a plain script", () => {
-    assert.deepEqual(execNames(SCRIPTS.plain), { current: false, pointers: false });
-    assert.deepEqual(execNames(SCRIPTS.pointer), { current: false, pointers: true });
-    assert.deepEqual(execNames(SCRIPTS.deref), { current: false, pointers: true });
-    assert.deepEqual(execNames(SCRIPTS.current), { current: true, pointers: false });
-    assert.deepEqual(execNames(SCRIPTS.both), { current: true, pointers: true });
-    assert.deepEqual(execNames("return ml . current"), { current: true, pointers: false }, "spacing does not hide it");
-    assert.deepEqual(execNames("const current = 1; return current"), { current: false, pointers: false }, "a local named current is not ml.current");
+    assert.deepEqual(execNames(SCRIPTS.plain), { current: false, pointers: false, sh: false });
+    assert.deepEqual(execNames(SCRIPTS.pointer), { current: false, pointers: true, sh: false });
+    assert.deepEqual(execNames(SCRIPTS.deref), { current: false, pointers: true, sh: false });
+    assert.deepEqual(execNames(SCRIPTS.current), { current: true, pointers: false, sh: false });
+    assert.deepEqual(execNames(SCRIPTS.both), { current: true, pointers: true, sh: false });
+    assert.deepEqual(execNames("return ml . current"), { current: true, pointers: false, sh: false }, "spacing does not hide it");
+    assert.deepEqual(execNames("const current = 1; return current"), { current: false, pointers: false, sh: false }, "a local named current is not ml.current");
+    assert.deepEqual(execNames(SCRIPTS.sh), { current: false, pointers: false, sh: true });
+    assert.deepEqual(execNames(SCRIPTS.shPointer), { current: false, pointers: true, sh: true });
+    assert.deepEqual(execNames("return ml\n  .sh.run(['ls'])"), { current: false, pointers: false, sh: true }, "a line break does not hide it");
+    assert.deepEqual(execNames("const sh = 1; return ml.shadowRoot ?? sh"), { current: false, pointers: false, sh: false }, "a local named sh, or a member starting with sh, is not ml.sh");
 });
 
 test("the route for every page, script and mechanism", () => {
     // [approved, script, userScripts, cdp] → where (how | reason)
     const ISO = [[true, true], [true, false], [false, true], [false, false]];
     const expect = (approved, kind, us, cdp) => {
-        const reason = !approved ? "unapproved-page" : (kind === "current" || kind === "both") ? "current" : kind === "plain" ? "plain" : "pointer";
+        const reason = !approved ? "unapproved-page" : kind.startsWith("sh") ? "sh" : (kind === "current" || kind === "both") ? "current" : kind === "plain" ? "plain" : "pointer";
         if (reason === "plain") return "main/plain";
         if (us) return `isolated/userScripts/${reason}`;
         if (cdp) return `isolated/cdp/${reason}`;
@@ -58,7 +65,7 @@ test("the route for every page, script and mechanism", () => {
         assert.equal(got, expect(approved, kind, us, cdp), `approved=${approved} ${kind} userScripts=${us} cdp=${cdp}`);
         n++;
     }
-    assert.equal(n, 40);
+    assert.equal(n, 2 * Object.keys(SCRIPTS).length * 4);
 });
 
 test("a refusal and the fallback each say what to turn on; the refusal for ml.current says how to read it instead", () => {
@@ -290,6 +297,14 @@ test("with no isolation on an approved site: a pointer script runs in the page a
     const cur = await isoRun(["window.b = 1; return ml.current.messages.length"], { us: "off" });
     assert.equal(cur.toPage.length, 0);
     assert.match(cur.results[0], /^Error: this exec reads ml\.current/);
+});
+
+test("with no isolation, a script naming ml.sh is refused and nothing reaches the page, even with a pointer that alone would fall back", T, async () => {
+    for (const js of ["window.b = 1; return (await ml.sh.run([\"ls\"])).code", "return ml.sh.run([\"wc\"]) && @tool:exec.length"]) {
+        const sh = await isoRun([FIRST, js], { us: "off" });
+        assert.equal(sh.toPage.length, 1, `positive control: the first exec reached the page (${js})`);
+        assert.match(sh.results[1], /^Error: this exec runs programs through ml\.sh, which only an isolated world is given/);
+    }
 });
 
 test("a script that only names a pointer it cannot have is still isolated: what it names decides, not what it gets", T, async () => {

@@ -328,6 +328,7 @@ export async function pageApproved(url: string): Promise<boolean> {
 const WHY: Record<ExecReason, string> = {
     "unapproved-page": "this site is not approved for window.ml",
     current: "it reads ml.current",
+    sh: "it runs programs through ml.sh",
     pointer: "it reads pointer values",
     requested: "you asked for it",
     default: "it is the default here",

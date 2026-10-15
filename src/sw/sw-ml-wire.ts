@@ -16,7 +16,7 @@ import { workerReadonlyMl, type RunDeref } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { derefByRun } from "./sw-runs";
 import { forPage } from "./sw-scrub";
-import { serveWireCall, wirePointer, WireError, wireClient, type WireMember, type WireClient, type WireFrom } from "./ml-wire-serve";
+import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom } from "./ml-wire-serve";
 
 /** The largest value a call answers in full, as JSON characters; past it, a pointer read answers its pointer instead.
  *  One megabyte: chrome serialises each message as JSON, and a cell awaiting more than this wants a pipe, not the bytes. */
@@ -81,8 +81,7 @@ const scrub = async (text: string): Promise<string> => (await forPage({ error: t
  * @param answer the answer
  */
 function deliverLater(handle: string, answer: MlWireAnswer): void {
-    if (!wireClient(handle) !== undefined) return;
-    void chrome.runtime.sendMessage({ type: "ML_ANSWER", client: handle, answer }).catch(() => { /* the document went: nothing waits */ });
+    deliverIfOpen(handle, answer, (m) => { void chrome.runtime.sendMessage(m).catch(() => { /* the document went: nothing waits */ }); });
 }
 
 /**
