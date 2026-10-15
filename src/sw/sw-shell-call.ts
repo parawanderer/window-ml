@@ -101,11 +101,15 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const again = judgeCall(ctx.runId, "sh", asPolicyFacts(f), f.placement);
             if (again.decision === "deny") { await discard(); return refuse("Denied", `ml.sh: ${denyText(again.by)}`); }
             if (ctx.signal.aborted) { await discard(); return refuse("Denied", "ml.sh: the run was cancelled"); }
-            await h.client.start(facts.id);
-            const onAbort = () => { void h.client.cancel(facts.id).catch(() => { /* already done */ }); };
+            // Listening BEFORE the start: a cancel that lands while the host is starting it still reaches it (finding C).
+            const onAbort = () => { void h.client.cancel(facts.id).catch(() => { /* not started yet, or already done */ }); };
             ctx.signal.addEventListener("abort", onAbort);
             let done;
-            try { done = await h.client.waitDone(facts.id); } finally { ctx.signal.removeEventListener("abort", onAbort); }
+            try {
+                await h.client.start(facts.id);
+                if (ctx.signal.aborted) onAbort();
+                done = await h.client.waitDone(facts.id);
+            } finally { ctx.signal.removeEventListener("abort", onAbort); }
             const stdout = await keep(ctx, h, done.stdout, f);
             const stderr = await keep(ctx, h, done.stderr, f);
             const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
@@ -153,10 +157,14 @@ async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Pr
     if (!m || m.version.range === "*" || !m.version.args.length) return null;
     const fp = facts.program.fingerprint;
     const log = (reason: string, version?: string | null) => recordRunLog(ctx.runId, { subsystem: "shell", kind: "version-probe", reason, detail: { program: facts.program.path, ...(version !== undefined ? { version: version ?? "unread" } : {}) } });
-    if (fp && versions.has(fp)) return versions.get(fp) ?? null;
+    // Refused BEFORE the cache: a hard link inside a root to a probed program shares its fingerprint, and must not
+    // borrow its version (red-team finding A).
     if (facts.program.inRoot) { log("program-in-root"); return null; }
     if (facts.placement !== "host-sandbox") { log("not-sandboxed"); return null; }
     if (!fp) { log("no-fingerprint"); return null; }
+    if (versions.has(fp)) return versions.get(fp) ?? null;
+    // Nothing starts after a cancel, the probe included (finding B).
+    if (ctx.signal.aborted) return null;
     const probe = await h.client.spawn({ argv: [facts.program.path, ...m.version.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS });
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
@@ -164,6 +172,7 @@ async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Pr
     const j = judgeCall(ctx.runId, "sh", { ...asPolicyFacts(shFacts(probe)), effects: [] }, "host-sandbox");
     // Only an allow starts it: a store not loaded yet ("ask") or no answer would need a card, which a probe never raises.
     if (j.decision !== "allow") { await drop(); log(j.decision === "deny" ? "denied" : "would-ask"); return null; }
+    if (ctx.signal.aborted) { await drop(); return null; }
     let version: string | null = null;
     try {
         await h.client.start(probe.id);

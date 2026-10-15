@@ -8,7 +8,7 @@ import { evalReadonlyInWorker } from "./sw-readonly";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory } from "./sw-scrub";
+import { forModel, forModelHistory, forPage } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -747,6 +747,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             let shWaited = 0;
                             const sh = shCtx ? async (c: "run" | "read", a: unknown[]) => {
                                 const r = c === "run" ? await shRun(shCtx, a) : await shRead(shCtx, a);
+                                // The script's world shares the page's DOM: an error's text crosses scrubbed, as a page's would.
+                                if ("error" in r) return { ...r, error: (await forPage({ error: r.error })).error };
                                 const w = "ok" in r ? (r.ok as { waitedMs?: unknown } | null)?.waitedMs : undefined;
                                 if (typeof w === "number") shWaited += w;
                                 return r;

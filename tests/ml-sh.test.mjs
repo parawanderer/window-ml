@@ -2,7 +2,7 @@
 // exec runs in an isolated world, and each call goes to the worker over that world's channel. The worker resolves it
 // through the process host (tests/fake-native-host.mjs), lets a policy or the built-in default answer, or asks the
 // person inside the running step, judges it again before the start, and hands back each output's head and pointer.
-// What no page may reach is in tests/redteam.test.js and tests/redteam-ml-sh.test.mjs.
+// What no page may reach is in tests/redteam.test.js and tests/ml-sh-redteam.test.mjs.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
