@@ -149,6 +149,15 @@ def test_genexp_position_and_type_arity():
     assert features("t = type(1)\nT = type('A', (), {})")["type_calls"] == {"one": 1, "other": 1}
 
 
+def test_leaf_args_name_strings_and_callable_kinds():
+    f = features("df.agg('sum')\ndf.agg(['mean', 'max'])\ndf.a.apply(str)\ndf.a.map(lambda v: v)\n"
+                 "df.apply(np.mean)\ndf.a.apply('{0}'.format)\nsorted(xs, key=len)\ndf.agg('not an id')")
+    a = f["leaf_args"]
+    assert a[".agg"] == {"str:sum": 1, "str:mean": 1, "str:max": 1, "str:<other>": 1}
+    assert a[".apply"] == {"builtin:str": 1, "module-fn:numpy.mean": 1, "method": 1}
+    assert a[".map"] == {"lambda": 1} and a["key=@sorted"] == {"builtin:len": 1}
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
