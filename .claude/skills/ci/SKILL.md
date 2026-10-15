@@ -231,14 +231,6 @@ window says otherwise.
 Measured from CI logs on 2026-10-15 (the same 80 runs; method: read every e2e shard log, count per test failed vs
 flaky), and the only entries that BLOCKED a run that day:
 
-- **`detection-surface.spec.mjs:446` › `rendered fetch: a real tab on the site, focus emulated, visibility flipped,
-  window.ml injected there`** (e2e 2/3) — bad in 14 of 24 e2e runs: FAILED 6 times (4 on main), flaky 8. It blocked six
-  runs, two of them PRs that touch no extension code (#677, #703). Always `expect(tab.visibility).toEqual(["hidden",
-  "visible"])` receiving `["visible"]`: on the Linux runner the render tab is visible before the probe's first sample,
-  the same race the `hasFocus` line above it already allows for. Not fixed yet, and NOT to be loosened casually: the
-  spec records what a page can observe of window.ml, and whether "visible from the first look" is an acceptable
-  observation is the spec owner's call. Until then: a failure of exactly this assertion is not yours; rerun the shard.
-
 Flaky only (passed on retry, never blocked a run), worth knowing because two may be PRODUCT bugs, not races:
 
 - **`chat-page.spec.mjs:935` › `the start page holds through a worker restart…`** (e2e 1/3) — flaky 3 times; the tab
@@ -254,6 +246,14 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`detection-surface.spec.mjs:446` › `rendered fetch: a real tab on the site, focus emulated, visibility flipped,
+  window.ml injected there`~~ — **fixed.** The assertion demanded `tab.visibility` be exactly `["hidden","visible"]`,
+  which is only the probe-samples-before-the-CDP-lands order (macOS). On the Linux runner the emulation wins the race
+  and the page is visible at its first look, so it received `["visible"]`. That is the same product behaviour the
+  `hasFocus` line above it already allowed for, and the assertion's own message ("not throttled") named the real
+  invariant. It now asserts the tab ends visible and focused, that a recorded flip goes hidden→visible, and that rAF
+  is never in the throttled `0`/`1-4` buckets; `["≥40"]` was asserting host load, not the extension.
 
 - ~~`tool-tokens.spec.mjs` › `res.outputs` (2D matrix)~~ — **fixed.** It hardcoded `@tool:([0-9a-f]{6})`
   and ids became SEVEN characters when the check character shipped, so the fake model cited the first six
