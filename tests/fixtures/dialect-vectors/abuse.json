@@ -216,14 +216,6 @@
     "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
   },
   {
-    "name": "py: type(df) does not reach the DataFrame constructor",
-    "py": "return type(df)()",
-    "env": "table",
-    "expect": "refused",
-    "reason": "the same for a pandas class: the constructor is not a listed call",
-    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
-  },
-  {
     "name": "py: three-argument type builds a class",
     "py": "return type(\"A\", (), {})",
     "env": "none",

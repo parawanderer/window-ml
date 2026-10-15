@@ -35,7 +35,7 @@ test("the lifted counts do not shrink silently", () => {
 test("the Python vectors do not shrink silently either", () => {
     // Run by nothing yet: they are the acceptance test for the CPython restricted mode (docs/plan/repl/, root H).
     const count = (genre) => loadVectors(genre).filter((v) => v.py !== undefined).length;
-    assert.deepEqual(Object.fromEntries(GENRES.map((g) => [g, count(g)])), { abuse: 44, halting: 20, failure: 5, ownership: 18, print: 0 });
+    assert.deepEqual(Object.fromEntries(GENRES.map((g) => [g, count(g)])), { abuse: 43, halting: 20, failure: 5, ownership: 19, print: 0 });
 });
 
 // --- the loader refuses a malformed vector ---

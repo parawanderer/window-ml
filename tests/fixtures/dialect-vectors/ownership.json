@@ -733,5 +733,13 @@
     },
     "reason": "type(1) IS int, the same object as the listed builtin, so calling it is int(5): a proxy would break type(x) is str",
     "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
+  },
+  {
+    "name": "py: type(df) is the listed class, no more",
+    "py": "import pandas as pd\nreturn type(df) is pd.DataFrame",
+    "env": "table",
+    "expect": { "value": true },
+    "reason": "type(x) returns the class itself, so a call through type(df) is exactly as allowed as pd.DataFrame(...), a manifest call; it reaches nothing the program could not already name (the refusal case is abuse.json's unlisted Box class)",
+    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
   }
 ]
