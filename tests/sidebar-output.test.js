@@ -1496,16 +1496,21 @@ test("embed: a click on the render's OWN controls does not jump to the source st
     await w.tick();
     assert.equal(jumps, 0, "a sort header is a control too — a <th> with a handler, not a <button>");
 
-    // …and the INERT parts still jump, or the guard would have removed the feature rather than scoped it.
+    // …and neither does the body: it is something to select and copy from. Only the CAPTION goes to the step.
     const cell = embed.querySelector("tbody td");
     assert.ok(cell, "a body cell is inert");
     cell.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(jumps, 0, "a click in the body does not go to the step");
+    const anno = embed.querySelector(".tok-anno");
+    assert.ok(anno, "the caption is there");
+    anno.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
     // A citation to a COLLAPSED step now scrolls once the step has settled rather than at the moment of the
     // click — it opens it, and where the step was before it opened is not where the reader wants to be
     // (step-scroll.ts). So this waits for those frames, which is what a person watching it also does — POLLED, not
     // a fixed wait: jsdom's frames are timers, and a loaded machine let a 120ms wait expire before they ran.
     for (let t = 0; jumps === 0 && t < 50; t++) await new Promise((r) => setTimeout(r, 20));
-    assert.ok(jumps > 0, "clicking the render itself still goes to the step that produced it");
+    assert.ok(jumps > 0, "clicking the caption goes to the step that produced the render");
 });
 
 // A CITATION IS A DIFFERENT PLACE TO SHOW CODE, NOT A DIFFERENT KIND OF THING. An embedded

@@ -13,8 +13,8 @@ import { focusMode } from "../store";
 import { pretty, markdown, inlineMarkdown } from "../format";
 import { reveal } from "./transcript-window";
 import { IconChevron, IconEye, IconCheck } from "../icons";
-import { ClickableImg, Code, SheetChip, cursorTipOn } from "../ui-kit";
-import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
+import { ClickableImg, SheetChip, cursorTipOn } from "../ui-kit";
+import { RenderPanel, PyDfTable, CodeRender, ValueOut } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
 import { scrollToStepSeq } from "./step-scroll";
 import { FoldRail } from "./fold-rail";
@@ -110,9 +110,9 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string, ctx?: Cod
             rawText = d.value ?? d.stdout ?? rawText; break;
     }
     const j = tryPrettyJson(rawText);
-    if (j) return { node: <Code text={j} lang="json" />, block: true };
+    if (j) return { node: <ValueOut text={j} />, block: true };
     const block = !!rawText && (rawText.length > 80 || /\n/.test(rawText));
-    return { node: block ? <Code text={rawText} lang="text" /> : <code class="tok-val">{rawText}</code>, block };
+    return { node: block ? <ValueOut text={rawText} /> : <code class="tok-val">{rawText}</code>, block };
 }
 
 // One embedded @tool citation, resolved to the step it cites — rendered as the ACTUAL (focused) output, with a
@@ -191,7 +191,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     const { node, block } = imgSrc
         ? { node: <ClickableImg src={imgSrc} alt={label || "image"} />, block: true }
         : isRaw
-            ? { node: rawBlock ? <Code text={rawText} lang="text" /> : <code class="tok-val">{rawText}</code>, block: rawBlock }
+            ? { node: rawBlock ? <ValueOut text={rawText} /> : <code class="tok-val">{rawText}</code>, block: rawBlock }
             : isLatex
                 // Use EXPLICIT delimiters, not `$…$` — single-`$` inline math only typesets when the content
                 // carries a math signal, so a bare value like `5` would render as the literal text "$5$". The
@@ -203,7 +203,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
                 : tokenRender(d, rawText, step.seq != null ? { hash: run.hash, seq: step.seq, result: step.result } : undefined);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") jump(); };
-    if (block) return <TokBlock node={node} label={label} tip={tip} name={`${step.tool || "tool"} · step ${step.localStep ?? step.step}`} onClick={onEmbedClick} onKey={onKey} />;
+    if (block) return <TokBlock node={node} label={label} tip={tip} name={`${step.tool || "tool"} · step ${step.localStep ?? step.step}`} onJump={jump} />;
     return <span class="tok-ref tok-inline" role="button" tabIndex={0}
         onClick={onEmbedClick} onKeyDown={onKey}>
         {node}
@@ -213,38 +213,51 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
 
 /** An output EMBEDDED in an answer as a block (a table, a plot, a value): the render, the model's caption under it, and
  *  in the reading view a fold rail down its left that collapses it to one row naming it, as an open step or group
- *  collapses. The row opens it again. Folded is this view's own state, kept while the embed is drawn. */
-function TokBlock({ node, label, tip, name, onClick, onKey }: { node: ComponentChildren; label: string; tip: string; name: string;
-    onClick: (e: MouseEvent) => void; onKey: (e: KeyboardEvent) => void }) {
+ *  collapses. The row opens it again. Folded is this view's own state, kept while the embed is drawn.
+ *
+ *  Only the CAPTION goes to the source step. The body is something to read, select and copy from, so a click in it
+ *  is the reader's own, and the controls inside it (copy, tree) keep theirs. */
+function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren; label: string; tip: string; name: string; onJump: () => void }) {
     const ref = useRef<HTMLSpanElement>(null);
     const { closing, close, cancel } = useCloseAnimation(ref);
+    // The folded row's label slides out before the body comes back: the reply does the same when it unfolds.
+    const leave = useCloseAnimation(ref);
     const [folded, setFolded] = useState(false);
     // Only an embed being OPENED AGAIN eases in: one drawn with the answer must simply be there.
     const [opening, setOpening] = useState(false);
     const railed = focusMode.value;
-    const unfold = (): void => { cancel(); setOpening(true); setFolded(false); };
+    const unfold = (): void => { cancel(); leave.close(() => { setOpening(true); setFolded(false); }); };
     if (railed && folded) {
-        return <span ref={ref} class="tok-ref tok-block tok-folded" role="button" tabIndex={0} aria-expanded="false"
+        return <span ref={ref} class={`tok-ref tok-block tok-folded${leave.closing ? " leaving" : ""}`} role="button" tabIndex={0} aria-expanded="false"
             onClick={(e) => { e.stopPropagation(); unfold(); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); unfold(); } }}
             {...cursorTipOn("Show this output again")}>
+            {/* The rail is the same line the open embed has, so it answers the pointer the same way. It is not a control
+                of its own here: the whole row opens the embed, and a click on the rail reaches it. */}
+            <span class="fold-rail fold-rail-cite" aria-hidden="true" />
             <span class="tri" aria-hidden="true"><IconChevron /></span>
             {label ? <span class="tok-fold-name" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : <span class="tok-fold-name">{name}</span>}
         </span>;
     }
-    return <span ref={ref} class={`tok-ref tok-block${railed ? " railed" : ""}`} role="button" tabIndex={0} onClick={onClick} onKeyDown={onKey}>
+    return <span ref={ref} class={`tok-ref tok-block${railed ? " railed" : ""}`}>
         {railed ? <FoldRail cls="fold-rail-cite" onFold={() => close(() => setFolded(true))} tip="Collapse this output" /> : null}
         <span class={`tok-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} onAnimationEnd={() => setOpening(false)}>{node}</span>
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
-            as safe as the answer prose. */}
-        {label ? <div class="tok-anno" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : null}
+            as safe as the answer prose. It is the one part of the embed that goes to the source step. */}
+        {label ? <div class="tok-anno" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}
+            dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : null}
         <span class="tok-tip" role="tooltip">{tip}</span>
     </span>;
 }
 
-// The agent's final ANSWER, with @tool citations RESOLVED to the actual (focused) tool output inline. NO toggle
-// — the HUD is a minimal surface; the raw markdown stays available in the DevTools bubble's [raw] and the
-// export's disclosure. No tokens → plain markdown.
+/** The agent's final ANSWER, with @tool citations RESOLVED to the actual (focused) tool output inline. NO toggle
+ *  — the HUD is a minimal surface; the raw markdown stays available in the DevTools bubble's [raw] and the
+ *  export's disclosure. No tokens → plain markdown.
+ *  @group transcript
+ *  @gallery embedded JSON value {"text": "Counts per kind:\n\n![the counts by kind](@tool:abcdef5:out)\n\nThat is all.", "run": {"hash": "g1", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}", "renderOut": {"type": "python-out", "value": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}"}}]}}
+ *  @gallery-flow fold tests/gallery-flows/AnswerBodyEmbed.mjs {"text": "Counts per kind:\n\n![the counts by kind](@tool:abcdef5:out)\n\nThat is all.", "run": {"hash": "g1", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}", "renderOut": {"type": "python-out", "value": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}"}}]}}
+ *  @gallery embedded code {"text": "The script:\n\n![the script that counted](@tool:abcdef5:in)\n\nThat is all.", "run": {"hash": "g2", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "42", "renderIn": {"type": "python-in", "mode": "script", "code": "q = [1, 2, 3]\nreturn sum(q) * 7"}}]}}
+ */
 export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: string; run: Session; cls?: string; scope?: readonly AgentStep[] }) {
     const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
     if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;

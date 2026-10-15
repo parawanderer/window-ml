@@ -48,15 +48,15 @@ test("a copied value: a string as itself, anything else as indented JSON", () =>
     assert.equal(T.copyableValue(false), "false");
 });
 
-// --- how a key is printed: bare when it is an identifier, quoted otherwise ---
+// --- how a key is printed: always quoted, as JSON writes it ---
 
-test("a key that is not an identifier is printed quoted, so a space or a colon in it reads as part of the key", () => {
-    for (const [key, want] of [["n", "n"], ["_x1", "_x1"], ["$el", "$el"], ["info routing/readonly-worker", '"info routing/readonly-worker"'],
+test("every key is printed quoted, an identifier and a key with a space or a colon alike", () => {
+    for (const [key, want] of [["n", '"n"'], ["_x1", '"_x1"'], ["$el", '"$el"'], ["info routing/readonly-worker", '"info routing/readonly-worker"'],
         ["a.b", '"a.b"'], ["1st", '"1st"'], ["a:b", '"a:b"'], ["", '""'], ['say "hi"', '"say \\"hi\\""']])
         assert.equal(T.keyLabel(key), want, `key ${JSON.stringify(key)}`);
     const host = show({ v: { n: 12, kinds: { "info tab/pinned": 6, "": 0 } }, allOpen: true });
     const keys = [...host.querySelectorAll(".jt-key")].map((k) => k.textContent);
-    assert.deepEqual(keys, ["n:", "kinds:", '"info tab/pinned":', '"":']);
+    assert.deepEqual(keys, ['"n":', '"kinds":', '"info tab/pinned":', '"":']);
 });
 
 // --- the right-click menu, only where a caller asked for it ---
@@ -69,7 +69,7 @@ test("with no path the tree offers no menu: the browser's own stays, so the tree
 
 test("with a path every row offers its value and its path, nested rows and odd keys included", async () => {
     const host = show({ v: { task: "count", "a.b": [{ n: 7 }] }, allOpen: true, path: "inspector.run.init" });
-    assert.equal(rightClick(rowWith(host, "n:")), true);
+    assert.equal(rightClick(rowWith(host, '"n":')), true);
     assert.deepEqual(ui.ctxMenu.value.items.map((i) => i.label), ["Copy value", "Copy path"]);
     await run("Copy path");
     await run("Copy value");
@@ -77,14 +77,14 @@ test("with a path every row offers its value and its path, nested rows and odd k
     // The root row names the root, and a string leaf copies as its text.
     rightClick(host.querySelector(".jt-row"));
     await run("Copy path");
-    rightClick(rowWith(host, "task:"));
+    rightClick(rowWith(host, '"task":'));
     await run("Copy value");
     assert.deepEqual(copied.slice(2), ["inspector.run.init", "count"]);
 });
 
 test("the row a menu is about is marked while that menu is open, and unmarked when it closes or another replaces it", () => {
     const host = show({ v: { a: 1, b: 2 }, allOpen: true, path: "$" });
-    const a = rowWith(host, "a:"), b = rowWith(host, "b:");
+    const a = rowWith(host, '"a":'), b = rowWith(host, '"b":');
     rightClick(a);
     assert.ok(a.classList.contains("ctx-target"));
     rightClick(b);
@@ -103,7 +103,7 @@ test("label replaces the key and trail ends the line, on the ROOT row only, for 
     const root = branch.querySelector(".jt-row");
     assert.ok(root.querySelector(".L") && root.querySelector(".T"), "both on the first row");
     assert.ok(!root.textContent.includes("ignored"), "the label stands in for the key");
-    assert.ok(rowWith(branch, "c:"), "members keep their own keys");
+    assert.ok(rowWith(branch, '"c":'), "members keep their own keys");
     const leaf = show({ v: "a string", label: h("span", { class: "L" }, "inspector.y:"), trail: h("span", { class: "T" }, "chip") });
     assert.equal(leaf.querySelectorAll(".jt-row").length, 1);
     assert.match(leaf.textContent, /inspector\.y:"a string"chip/);
@@ -125,17 +125,17 @@ test("a time is a time's key AND epoch milliseconds: neither alone is enough", (
 test("with `times` a time shows as a clock time and an age, the exact value on hover; without it, the number", async () => {
     const v = { since: Date.now() - 60_000, step: 3, nested: [{ ts: Date.now() }] };
     let host = show({ v, allOpen: true, times: true, path: "$" });
-    const since = rowWith(host, "since:");
+    const since = rowWith(host, '"since":');
     assert.ok(since.querySelector(".jt-time"), "drawn as a time");
     assert.match(since.textContent, /ago/);
-    assert.ok(rowWith(host, "ts:").querySelector(".jt-time"), "and in every member below");
-    assert.equal(rowWith(host, "step:").querySelector(".jt-time"), null, "a plain number stays a number");
+    assert.ok(rowWith(host, '"ts":').querySelector(".jt-time"), "and in every member below");
+    assert.equal(rowWith(host, '"step":').querySelector(".jt-time"), null, "a plain number stays a number");
     rightClick(since);
     await run("Copy value");
     assert.deepEqual(copied, [String(v.since)], "copying copies the number, not the label");
     host = show({ v, allOpen: true });
     assert.equal(host.querySelector(".jt-time"), null, "no `times`, no change");
-    assert.match(rowWith(host, "since:").textContent, new RegExp(String(v.since)));
+    assert.match(rowWith(host, '"since":').textContent, new RegExp(String(v.since)));
 });
 
 test("a labelled root with nothing to open keeps the chevron's width, so its name lines up with a branch's", () => {
