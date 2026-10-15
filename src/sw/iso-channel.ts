@@ -33,6 +33,9 @@ export interface IsoDeps {
     holders: (key: string) => Promise<string[] | null>;
     /** Read named columns of a stored value. */
     columns: (key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }) => Promise<{ rowCount: number; columns: Record<string, unknown[]> }>;
+    /** `ml.sh`'s calls, bound by the worker to the run and the step the exec runs in (sw-shell-call.ts); absent for a
+     *  script that does not name `ml.sh`, which then has no `ml.sh` to call. */
+    sh?: (call: "run" | "read", args: unknown[]) => Promise<IsoAnswer>;
 }
 
 /** The sentence a refused request throws in the world. */
@@ -44,6 +47,7 @@ export const ISO_REFUSED = {
     table: "That stored table was not named by the running script.",
     held: "That stored table is not held by this run.",
     ended: "The run's pointers are gone (the turn ended), so this read was not answered.",
+    noSh: "ml.sh is not available in this exec: the approved script did not name it.",
 } as const;
 
 /**
@@ -94,6 +98,12 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
                 if (holders && !holders.includes(runId)) return { error: ISO_REFUSED.held };
                 return { ok: await deps.columns(q.key, q.names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) };
             } catch (e) { return { error: (e as Error)?.message || String(e) }; }
+        }
+        if (q.op === "sh") {
+            const c = (q as { call?: unknown }).call, a = (q as { args?: unknown }).args;
+            if (!deps.sh) return { error: ISO_REFUSED.noSh };
+            if ((c !== "run" && c !== "read") || !Array.isArray(a) || a.length > 2) return { error: ISO_REFUSED.malformed };
+            try { return await deps.sh(c, a); } catch (e) { return { error: (e as Error)?.message || String(e) }; }
         }
         return { error: ISO_REFUSED.malformed };
     };

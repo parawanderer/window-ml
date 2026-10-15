@@ -55,7 +55,9 @@ export interface AgentLoopDeps {
     // Reached for a requiresApproval tool ONLY after the gate. This is the untrusted delegation point.
     // `onStream`, when provided (opt-in `stream`), is handed to the tool as `ctx.stream` so it can stream live
     // output as it runs (the loop throttles + fans it). Ignored by tools that don't support streaming.
-    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void): Promise<ToolRunResult>;
+    // `call.seq` is the loop's own seq of the step the call runs in: what a call made from inside it (an ml.sh) is
+    // asked about on (sw-asks.ts).
+    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number }): Promise<ToolRunResult>;
     // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
     // and `step` identify the pending step so a background gate can correlate its async decision to it.
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
@@ -776,7 +778,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
-            return withText("error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push));
+            return withText("error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push, { seq, step }));
         } catch (e) {
             threw(name, "run", e);
             return { result: toolThrewResult(name, e) };

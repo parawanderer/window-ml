@@ -28,14 +28,23 @@ import { siteDecision } from "./sw-site-access";
 import { ISOLATED_KIT_SOURCE } from "../isolated-kit.gen";
 import type { IsoAnswer } from "./iso-channel";
 
-/** What the worker binds in the isolated world: the pointer reads the script names, and `ml.current` (or why not). */
-export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCurrent; currentError?: string }
+/** What the worker binds in the isolated world: the pointer reads the script names, `ml.current` (or why not), and
+ *  whether `ml.sh` is there (the script names it and the worker bound it to the step; its calls ride the channel). */
+export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCurrent; currentError?: string; sh?: boolean }
 
 /** What a run of the wrapper returns, the shape `cdpEval` reports. */
 export type IsolatedResult = { ok: true; value: string; logs: string[]; dropped: number } | { error: string };
 
 /** The `ml` members an isolated exec is given; anything else throws a sentence saying so. */
-export const ISOLATED_ML_MEMBERS = ["current", "dereference"] as const;
+export const ISOLATED_ML_MEMBERS = ["current", "dereference", "sh"] as const;
+
+/**
+ * The members one isolated exec is given: `current` only when it was read for it (or failed to be), `sh` only when the
+ * worker bound it.
+ * @param b what was bound
+ */
+export const isolatedMembers = (b: IsolatedBindings): string[] =>
+    ISOLATED_ML_MEMBERS.filter((m) => (m !== "current" || b.current || b.currentError) && (m !== "sh" || b.sh));
 
 // Live console lines, keyed by the call's nonce: the user-script world posts them through `onUserScriptMessage`, which
 // only a world this extension configured can reach. The nonce is the second check, the tab the first.
@@ -85,7 +94,7 @@ const nonce = (): string => Array.from(crypto.getRandomValues(new Uint8Array(16)
  * @param ask an expression for the call's channel to the worker, `(req) => Promise<IsoAnswer>`, or "" for none
  */
 export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, stream: string, ask = ""): string {
-    const members = ISOLATED_ML_MEMBERS.filter((m) => m !== "current" || b.current || b.currentError);
+    const members = isolatedMembers(b);
     const bound = JSON.stringify({ reads: b.reads, current: b.current ?? null, currentError: b.currentError ?? null, members });
     return `(async () => {
     globalThis.__mlIsoStarted = ${JSON.stringify(n)};
@@ -103,9 +112,15 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const __chanAsk = __chan && (async (req) => {
         const r = await __chan(req);
         if (!r || typeof r !== "object") throw new Error("The worker did not answer this exec's pointer read.");
-        if (typeof r.error === "string") throw new Error(r.error);
+        if (typeof r.error === "string") { const e = new Error(r.error); if (typeof r.code === "string") e.code = r.code; throw e; }
         return r.ok;
     });
+    // ml.sh: each call goes to the worker over the call's channel, which judges it (a policy, or a card for the person)
+    // and answers when the program has finished. Never the page's: this world is the run's alone.
+    const __sh = __B.members.includes("sh") && __chanAsk ? Object.freeze({
+        run(argv, opts) { return __chanAsk({ op: "sh", call: "run", args: opts === undefined ? [argv] : [argv, opts] }); },
+        read(pointer, range) { return __chanAsk({ op: "sh", call: "read", args: range === undefined ? [pointer] : [pointer, range] }); },
+    }) : undefined;
     const __t0 = {
         dereference(ref, opts) {
             const e = __reads.get(JSON.stringify([String(ref), __stages(opts && opts.pipe)]));
@@ -123,6 +138,7 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const ml = new Proxy(Object.freeze(__t0), { get(t, k) {
         if (typeof k === "symbol" || k === "then" || k === "toJSON") return undefined;
         if (k === "current") { if (__B.currentError) throw new Error(__B.currentError); if (__cur) return __cur; return __no(k); }
+        if (k === "sh") return __sh ?? __no(k);
         return k in t ? t[k] : __no(k);
     }, set() { return false; } });
     const state = (globalThis.__mlState ??= {});
@@ -347,11 +363,14 @@ const ISO_EXEC_CAP = 500;
 export async function runIsolatedExec(o: {
     tabId: number; documentId: string; runId: string; js: string; how: "userScripts" | "cdp"; reason: ExecReason; reads: readonly PreRead[];
     current?: () => Promise<CurrentSnapshot | undefined>; onStream?: (text: string, ts?: number) => void;
-    /** The call's pointer-read server (iso-channel.ts): given only when a read was sent, so a call with none has no channel. */
+    /** The call's server (iso-channel.ts): given to the world only when a read was sent or `ml.sh` is bound, so a call
+     *  with neither has no channel. */
     serve?: (req: unknown) => Promise<IsoAnswer>;
+    /** `ml.sh` is bound: the server answers its calls for this exec's step. */
+    sh?: boolean;
 }): Promise<{ result: string; renderIn: RenderDescriptor; renderOut?: RenderDescriptor }> {
     const renderIn = execCodeIn(o.js);
-    const b: IsolatedBindings = { reads: o.reads };
+    const b: IsolatedBindings = { reads: o.reads, ...(o.sh && o.serve ? { sh: true } : {}) };
     if (o.current) {
         try {
             const c = currentForExec(await o.current(), true);
@@ -359,9 +378,9 @@ export async function runIsolatedExec(o: {
         } catch (e) { b.currentError = `ml.current could not be read (${(e as Error)?.message || e}).`; }
     }
     const code = expandPointers(o.js).code;
-    const serve = o.reads.some((r) => r.error === undefined) ? o.serve : undefined;
+    const serve = o.reads.some((r) => r.error === undefined) || b.sh ? o.serve : undefined;
     const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve);
-    const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there, and ml has only ${["current", "dereference"].filter((m) => m !== "current" || b.current || b.currentError).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
+    const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there, and ml has only ${isolatedMembers(b).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
     // A page global's miss, where the call could have run in the page's world: the one line that says how.
     const hint = "error" in r ? pageGlobalHint({ where: "isolated", reason: o.reason }, r.error) : "";
     if ("error" in r) return { result: `Error: ${r.error}${hint ? `\n${hint}` : ""}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };

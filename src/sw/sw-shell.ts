@@ -147,6 +147,8 @@ function touch(): void {
         // The host is still there to reach, so the status (and the capabilities) stay: the next call reconnects.
         if (current) { const c = current; current = null; c.client.close("idle"); }
     }, SHELL_IDLE_MS);
+    // Where timers can be unreferenced (Node, which the tests run the worker in), this one alone keeps nothing alive.
+    (idleTimer as { unref?: () => void }).unref?.();
 }
 
 /**

@@ -6,7 +6,7 @@
 /**
  * A fake host. Pass `onNative: host.onNative` to loadBackground.
  * @param opts `sandbox`: whether a sandbox is available (default true); `protocol` (default 1); `facts(args)`: the
- *   spawn answer for a call (default: the argv resolved under /usr/bin, everything in the root); `done(id, facts)`: the
+ *   spawn answer for a call (default: the argv resolved under /usr/bin, everything in the root); `done(id, spawnArgs)`: the
  *   done event (default exit 0 with "out\n"); `refuse`: { call: code } answers that call with an error
  */
 export function fakeNativeHost(opts = {}) {
@@ -31,17 +31,19 @@ export function fakeNativeHost(opts = {}) {
                 if (call === "spawn") {
                     const id = `c${++n}`;
                     const f = opts.facts?.(args) ?? {
-                        argv: args.argv, program: { path: `/usr/bin/${args.argv[0]}`, inRoot: false, fingerprint: "1:2:3:4" },
+                        argv: args.argv, program: { path: args.argv[0].startsWith("/") ? args.argv[0] : `/usr/bin/${args.argv[0]}`, inRoot: false, fingerprint: "1:2:3:4" },
                         cwd: { path: args.cwd, inRoot: true }, env: { set: Object.keys(args.env ?? {}), secrets: [], free: true },
                         repo: null, repoConfigRunsCode: null,
                         paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true, ...(p.walk ? { containsSecret: false } : {}) })),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
                     };
+                    msg.id = id;
                     return reply({ seq, value: { id, expiresInMs: 1800000, ...f } });
                 }
                 if (call === "start") {
                     reply({ seq, value: { id: args.id, pid: 4242 } });
-                    const d = opts.done?.(args.id) ?? { out: "out\n", err: "", code: 0 };
+                    const spawned = calls.find((c) => c.call === "spawn" && c.id === args.id);
+                    const d = opts.done?.(args.id, spawned?.args) ?? { out: "out\n", err: "", code: 0 };
                     const ptr = (text) => { const p = `out:${held.size + 1}`; held.set(p, Buffer.from(text)); return { ptr: p, size: Buffer.byteLength(text), sha256: "x", truncated: false }; };
                     return reply({ event: "done", id: args.id, code: d.code, signal: null, ok: d.code === 0, timedOut: false, cancelled: false, durationMs: 3, stdout: ptr(d.out), stderr: ptr(d.err) });
                 }

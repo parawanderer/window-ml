@@ -71,6 +71,29 @@ export interface JsonSchema {
  *
  *  Underscore-prefixed members are internal plumbing exposed for debugging;
  *  they are NOT part of the stable public API and may change. */
+/** `ml.sh`: programs on the person's machine, from an approved `exec` (MlApi `sh`). */
+export interface MlSh {
+    /** Run one program and wait for it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`,
+     *  `Refused`, `BadRequest`) throws with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
+     *  `complete`) and a `@tool:` pointer (`token`) to the whole. `ran` says where it ran: `host-sandbox` (writes only
+     *  inside the workspace folders, no network) or `host-plain`.
+     * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
+     * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
+     *   call ask), `timeoutMs` */
+    run(argv: string[], opts?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number }): Promise<{
+        code: number | null; signal: string | null; ok: boolean; timedOut: boolean; cancelled: boolean; durationMs: number;
+        ran: "host-sandbox" | "host-plain" | "container";
+        stdout: { token: string | null; size: number; truncated: boolean; text: string; complete: boolean };
+        stderr: { token: string | null; size: number; truncated: boolean; text: string; complete: boolean };
+        approvedBy?: string; waitedMs?: number; error?: string;
+    }>;
+    /** Read a range of an output past its head (`complete` false), by its `token`, while the run lasts. Text comes back
+     *  as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
+     * @param token the output's `@tool:` pointer
+     * @param range `offset` and `length` in bytes (default 0 and 64 KiB; at most 512 KiB) */
+    read(token: string, range?: { offset?: number; length?: number }): Promise<{ offset: number; length: number; size: number; eof: boolean; text?: string; bytes?: { $bytes: string } }>;
+}
+
 export interface MlApi {
     /** The agent's persistent JS scratchpad — a plain object, also injected into every `exec` body as the
      *  lexical `state` variable. Stash reusable functions/results across `exec` calls (the Jupyter/kernel
@@ -81,6 +104,12 @@ export interface MlApi {
      *  for `ml.pipe`), and the watches the person shared with you (`debug.userWatches`). A read-only snapshot, there
      *  only inside a read-only `exec` of an agent run the extension hosts; a page's `window.ml` has no `current`. */
     readonly current?: import("./agent/current-context").CurrentSnapshot;
+    /** Run PROGRAMS on the person's machine, through the process host they installed: `await ml.sh.run(["git",
+     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). There only inside an
+     *  approved `exec` that names `ml.sh`, of a run the extension hosts, and only when `ml.current.runtime.capabilities` reports
+     *  `shellHost`; a page's `window.ml` has none. Each call is decided on what the host resolved (program, folder,
+     *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. */
+    readonly sh?: MlSh;
     /** Curate the CURRENT run's user-facing answer (what the user sees as the result). A run-bound collection —
      *  valid only WHILE your run is executing; from the console outside a run it throws. Free to call from
      *  `exec` (no approval — curating your own answer is a safe operation). Keep it MINIMAL and matched to the

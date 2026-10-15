@@ -16,6 +16,7 @@ import type { EffectsData, Placement } from "../effects";
 import type { AskState, StepAsk } from "../contract";
 export type { AskState, StepAsk };
 import { pendingApprovals, type PendingApprovalDescriptor } from "./sw-consent";
+import type { PolicyConsumer } from "./sw-policies";
 import { recordRunLog } from "./sw-run-log";
 export { ASK_ID, approvalKey } from "../approval-key";
 
@@ -80,6 +81,13 @@ export function stepAsks(runId: string, seq: number): StepAsk[] | undefined {
 /** Whether a run can raise asks now (it is hosted by this worker and its turn is running). */
 export const canAsk = (runId: string): boolean => runs.has(runId);
 
+/** What a consumer asks: the kind of call and its facts. A call a policy store judges names its consumer, and then its
+ *  facts must carry `effects` (sw-consent.ts, PendingApprovalDescriptor). */
+export type AskRequest = { kind: string; placement?: Placement } & (
+    | { consumer: PolicyConsumer; facts: Record<string, unknown> & { effects: EffectsData } }
+    | { consumer?: undefined; facts: Record<string, unknown> }
+);
+
 /**
  * Raise one nested ask on a running step and wait for the person. Never throws: every way it can end is an outcome.
  * @param runId the run (the consumer's own, already verified by its sender; never one a script named)
@@ -87,7 +95,7 @@ export const canAsk = (runId: string): boolean => runs.has(runId);
  * @param ask what kind of call, its facts (the policy's `c`), and the consumer and placement a policy is judged with
  * @returns the outcome
  */
-export function raiseAsk(runId: string, seq: number, ask: { kind: string; facts: Record<string, unknown> & { effects?: EffectsData }; consumer?: string; placement?: Placement }): Promise<AskOutcome> {
+export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<AskOutcome> {
     const raisedAt = Date.now();
     const run = runs.get(runId);
     const ended = (state: AskOutcome["state"], note: string): AskOutcome => ({ allowed: false, state, note, raisedAt, answeredAt: raisedAt, waitedMs: 0 });
@@ -113,7 +121,6 @@ export function raiseAsk(runId: string, seq: number, ask: { kind: string; facts:
     }
     list.push(entry);
     if (run.unattended) return Promise.resolve(settle(entry, "unattended", "this run has nobody to ask"));
-    run.emit(seq, list.map((a) => ({ ...a })));
     const key = `${stepKey}#${id}`;
     return new Promise<AskOutcome>((resolve) => {
         let done = false;
@@ -130,10 +137,12 @@ export function raiseAsk(runId: string, seq: number, ask: { kind: string; facts:
         const timer = setTimeout(() => finish("timeout", "nobody answered in time"), run.waitMs ?? ASK_WAIT_MS);
         run.signal.addEventListener("abort", onAbort);
         enders.set(key, finish);
-        const descriptor: PendingApprovalDescriptor = {
-            key, runId, seq, step: run.stepOf(seq), tool: entry.kind, arguments: entry.facts, ts: raisedAt, routing: run.routing,
-            askId: id, ...(ask.consumer ? { consumer: ask.consumer } : {}), facts: entry.facts, ...(ask.placement ? { placement: ask.placement } : {}),
-        };
+        const base = { key, runId, seq, step: run.stepOf(seq), tool: entry.kind, arguments: entry.facts, ts: raisedAt, routing: run.routing, askId: id, ...(ask.placement ? { placement: ask.placement } : {}) };
+        // The copy keeps `effects` (plainCopy is JSON, and EffectsData is plain data), so a judged consumer's card stays
+        // judgeable; a copy that lost them (facts that would not serialise) is left to the person, never judged blind.
+        const descriptor: PendingApprovalDescriptor = ask.consumer && entry.facts.effects !== undefined
+            ? { ...base, consumer: ask.consumer, facts: entry.facts as Record<string, unknown> & { effects: EffectsData } }
+            : { ...base, facts: entry.facts };
         pendingApprovals.set(key, {
             descriptor,
             resolve: (d) => {
@@ -142,6 +151,9 @@ export function raiseAsk(runId: string, seq: number, ask: { kind: string; facts:
                 finish(o.approved ? "allowed" : "denied", o.approved ? undefined : o.feedback);
             },
         });
+        // Shown only once it can be answered: an approver that answers at once (an external one, a surface on the same
+        // turn of the event loop) must find the gate registered.
+        run.emit(seq, list.map((a) => ({ ...a })));
     });
 }
 

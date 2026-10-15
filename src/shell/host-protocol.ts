@@ -71,7 +71,9 @@ export type HostPlacement = "host-sandbox" | "host-plain" | "container";
 export interface HostFacts {
     id: string;
     argv: string[];
-    program: { path: string; inRoot: boolean };
+    /** `fingerprint` is `<dev>:<ino>:<size>:<mtime_ns>` of the program file (host 0.2.0; null when unreadable): what the
+     *  worker caches a program's reported version by. */
+    program: { path: string; inRoot: boolean; fingerprint?: string | null };
     cwd: { path: string; inRoot: boolean; containsSecret?: boolean | null };
     env: { set: string[]; secrets: string[]; free: boolean };
     repo: { root: string; reasons: string[] } | null;

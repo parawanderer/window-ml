@@ -71,6 +71,22 @@ test("asks accumulate on their step, history included, and each step keeps its o
     unhost();
 });
 
+test("an approver that answers the moment the ask is shown finds it registered: shown only once it can be answered", async () => {
+    let id;
+    const { r, unhost } = run({
+        // A surface (or an external approver) answering on the same turn as the event that shows the ask.
+        emit: (seq, asks) => {
+            const a = asks.find((x) => x.state === "pending");
+            if (a && !id) { id = a.id; resolveApproval(approvalKey(r.runId, seq, a.id), { approved: false, source: "user" }); }
+        },
+    });
+    const o = await raiseAsk(r.runId, 2, { kind: "sh", facts: FACTS });
+    assert.ok(id, "the ask was shown");
+    assert.deepEqual([o.allowed, o.state], [false, "denied"], "the answer reached it");
+    assert.equal(keysOf(r.runId).length, 0);
+    unhost();
+});
+
 // --- every way it ends without the person ---
 
 test("an ask on a step that is not running (finished, or never drawn) is refused at once, with no card", async () => {
