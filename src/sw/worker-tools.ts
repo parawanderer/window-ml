@@ -5,7 +5,9 @@
 // slice 2 part 2). These are the same tools, from the same factories, given an `ml` whose members the worker answers
 // itself: the descriptor the model is shown and the run's approval are unchanged, and only where the body runs moves.
 
-import { judgeCall, fetchFacts } from "./sw-policies";
+import { judgeCall, fetchFacts, runPolicies } from "./sw-policies";
+import { checkProposal } from "./policy-proposal";
+import { proposePolicyTool } from "../tools/propose-policy-tool";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
 import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
@@ -332,5 +334,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     // answer keeps the run's set here, with the page's descriptor (what the model is shown); worker-answer.ts.
     const pageAnswer = () => makeDomTools(defineTool).find((t) => t.name === "answer")!;
     // `look` and `locate` are none of these: the run host builds them for each call (worker-look.ts, worker-locate.ts).
-    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer()) : null)).filter((t): t is MlTool => !!t);
+    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer())
+        : n === "propose_policy" ? proposePolicyTool(defineTool, { check: checkProposal, added: (q) => runPolicies(runId).some((r) => r.consumer === "fetch" && r.source === q.source && r.effect === q.effect) })
+        : null)).filter((t): t is MlTool => !!t);
 }

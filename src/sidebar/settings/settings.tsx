@@ -1066,7 +1066,7 @@ function SelfApprovalList() {
 // --- the policy page: every policy, one line each, editable and deletable (docs/dev/policies.md) ---
 
 /** A stored policy as the worker's `POLICIES` answer carries it (`StoredPolicy`, src/sw/sw-policies.ts; worker code, so not imported here). */
-interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh"; effect: "allow" | "deny"; source: string; label: string; origin: "person" | "card"; created: number }
+interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh"; effect: "allow" | "deny"; source: string; label: string; origin: "person" | "card" | "proposed"; created: number }
 /** What the worker's `POLICIES` answers (`policyView`, src/sw/sw-policies.ts). */
 interface PolicyView { global: PolicyRecord[]; runs: { hash: string; policies: PolicyRecord[] }[]; builtin: { label: string; source: string }; broken: Record<string, string> }
 /** The fields an Edit may change. */
@@ -1111,6 +1111,7 @@ function usePolicies(): [PolicyView | null, (v: PolicyView) => void] {
  * One line of the policy page: a stored policy with its effect, label and source, an Edit that opens an inline editor, and a remove. A policy the evaluator cannot run shows why, and that it decides nothing until fixed.
  * @group settings
  * @gallery broken card allow {"policy": {"id": "p1a2b3c", "scope": "run", "consumer": "fetch", "effect": "allow", "source": "(c) => c.kind === \"fetch\" && c.uurl === \"https://example.com/data.json\"", "label": "fetch https://example.com/data.json", "origin": "card", "created": 1760000000000}, "broken": "not allowed in a policy: the call has no field 'uurl'"}
+ * @gallery proposed allow {"policy": {"id": "p7a8b9c", "scope": "run", "consumer": "fetch", "effect": "allow", "source": "(c) => c.host === \"docs.python.org\" && !c.credentials", "label": "Read docs.python.org", "origin": "proposed", "created": 1760000000000}}
  * @gallery person deny {"policy": {"id": "p4d5e6f", "scope": "global", "consumer": "fetch", "effect": "deny", "source": "(c) => c.kind === \"fetch\" && c.host === \"tracker.example\"", "label": "never reach tracker.example", "origin": "person", "created": 1760000000000}}
  */
 export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: PolicyRecord; broken?: string; onEdit: (patch: PolicyPatch) => void; onRemove: () => void }) {
@@ -1134,6 +1135,7 @@ export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: Policy
                 <span class="pol-label">{policy.label}</span>
                 {policy.consumer !== "fetch" ? <span class="pol-tag">{policy.consumer}</span> : null}
                 {policy.origin === "card" ? <span class="pol-tag">from a card</span> : null}
+                {policy.origin === "proposed" ? <span class="pol-tag">proposed by the model</span> : null}
                 {editing ? null : <button class="test-btn" onClick={open}>Edit</button>}
                 <button class="perm-x" aria-label={`Remove policy ${policy.label}`} {...cursorTipOn(`Remove policy ${policy.label}`)} onClick={onRemove}>✕</button>
             </div>

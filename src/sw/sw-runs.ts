@@ -80,10 +80,17 @@ export function makeWorkerRun(runId: string): void {
 /** TEST-ONLY (`__mlEvictForTest`): forget the hand-overs held in memory, as an eviction does; storage keeps them. */
 export function dropHandedMemoryForTest(): void { handedToWorker.clear(); }
 
+/** A run's tools without `propose_policy`, which only a run the worker BUILT offers: what a page-built run keeps when it is
+ *  handed to the worker, in every copy of it that is stored (here, and `storedP` in sw-run-host.ts). */
+export function withoutProposals<T extends { name?: unknown }>(tools: T[]): T[] {
+    return Array.isArray(tools) ? tools.filter((t) => t?.name !== "propose_policy") : tools;
+}
+
 /** Set a run's in-memory record to the worker's (its settled snapshot and its rebuild). */
 function markWorkerRun(runId: string): void {
     const stored = bgRuns.get(runId);
-    if (stored) stored.p = { ...stored.p, builtBy: "worker", ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
+    // A page-built run never offers propose_policy (`pageStartPayload` drops it); the hand-over must not make one that does.
+    if (stored) stored.p = { ...stored.p, builtBy: "worker", tools: withoutProposals(stored.p.tools), ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
     const rb = runRebuilds.get(runId);
     if (rb) runRebuilds.set(runId, { ...rb, builtBy: "worker" });
 }

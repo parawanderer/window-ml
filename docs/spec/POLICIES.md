@@ -1,6 +1,6 @@
 # Spec (WIP): policies, or "decide this without asking me"
 
-**Status: draft, nothing built.** The general mechanism behind every "run this without asking" in the extension. Moved
+**Status: partly built** (2026-10-15, REPL lane 2): the evaluator, the store with global and run scopes, the `fetch` and `sh` consumers' judging, the policy page, and `propose_policy`; how, and what is not built, in [`docs/dev/policies.md`](../dev/policies.md). The general mechanism behind every "run this without asking" in the extension. Moved
 out of [`SHELL.md`](SHELL.md) on 2026-10-15, where it was first written (2026-10-13) for `ml.sh`, its first consumer;
 `SHELL.md` keeps what a shell call gives a policy. The idea is older (2026-10-04): an agent that proposes its own
 permissions as a structure a person can read and approve, every grant listed and revocable.

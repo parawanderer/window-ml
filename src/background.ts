@@ -38,10 +38,8 @@ import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/sw-policies";
 
-/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
-const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
