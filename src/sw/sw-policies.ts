@@ -13,8 +13,12 @@ import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 
-/** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. */
-export type PolicyConsumer = "fetch";
+/** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
+ *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
+export type PolicyConsumer = "fetch" | "sh";
+
+/** Every consumer, for checking what storage held. */
+const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh"]);
 
 /** Where a policy came from: written by the person, or added by answering an approval card. */
 export type PolicyOrigin = "person" | "card";
@@ -31,9 +35,10 @@ export interface StoredPolicy {
     created: number;
 }
 
-/** What judging one call decided: the answer, the policy that gave it, and every policy that broke on the way. */
+/** What judging one call decided: the answer, the policy that gave it, and every policy that broke on the way.
+ *  `"ask"` means the saved policies are not read yet: nothing below a policy may answer for the person either. */
 export interface PolicyJudgement {
-    decision: PolicyEffect | undefined;
+    decision: PolicyEffect | "ask" | undefined;
     /** The policy that decided, or `"builtin"` for the built-in default (the effect algebra's free tier). */
     by?: StoredPolicy | "builtin";
     broken: { policy: StoredPolicy; reason: string }[];
@@ -87,7 +92,7 @@ function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
     if (!Array.isArray(v)) return [];
     return v.filter((p): p is StoredPolicy => !!p && typeof p === "object"
         && typeof p.id === "string" && typeof p.source === "string" && typeof p.label === "string"
-        && (p.effect === "allow" || p.effect === "deny") && p.consumer === "fetch" && p.scope === scope);
+        && (p.effect === "allow" || p.effect === "deny") && CONSUMERS.has(p.consumer) && p.scope === scope);
 }
 
 function saveGlobals(): void {
@@ -146,8 +151,8 @@ export function removePolicy(id: string): boolean {
     return false;
 }
 
-/** Forget a session's run policies: the session was deleted, from the live store or the archive, or evicted with no
- *  archive to move it to. An archived session keeps them, since it can come back. */
+/** Forget a session's run policies: the session was deleted, archived or evicted (POLICIES.md, "Scopes": removed when
+ *  the session is archived, so an archived session that comes back has none). */
 export function forgetRunPolicies(runId: string): void {
     const list = byRun.get(runId);
     if (!list) return;
@@ -160,6 +165,13 @@ export function forgetRunPolicies(runId: string): void {
  * Judge one call against the global policies and the run's. `deny` wins over `allow` across both scopes; a policy that
  * breaks is no opinion (and recorded); with no person's answer, the built-in default allows a call whose effects are
  * inside what its placement bounds (`free`, effects.ts) and otherwise the tiers above decide (`undefined`).
+ *
+ * Two rules every consumer keeps (docs/spec/POLICIES.md, "A change takes effect at once"):
+ * - **A store not yet loaded means ASK, free tiers included.** Until the saved policies are read after a worker wake
+ *   this returns `"ask"`, and the consumer must put the call to the person without letting any free tier of its own
+ *   answer: an unloaded `deny` is an unenforced one. This function carries the rule so a consumer cannot forget it.
+ * - **Judge again at the choke point.** A consumer whose call runs somewhere other than its gate (the worker's fetch,
+ *   the host's process start) calls this again there, over the same facts, rather than trusting the gate's answer.
  * @param runId the run's session hash, or undefined for a call no run made
  * @param consumer the kind of call
  * @param facts the call's resolved facts, with `effects` the call's effect set
@@ -167,6 +179,7 @@ export function forgetRunPolicies(runId: string): void {
  */
 export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, facts: Record<string, unknown> & { effects: EffectsData },
     placement: Parameters<typeof boundFor>[0] = "worker-survey"): PolicyJudgement {
+    if (!loaded) return { decision: "ask", broken: [] };
     const all = [...globals, ...(runId ? byRun.get(runId) ?? [] : [])].filter((p) => p.consumer === consumer);
     const broken: PolicyJudgement["broken"] = [];
     let allow: StoredPolicy | undefined;

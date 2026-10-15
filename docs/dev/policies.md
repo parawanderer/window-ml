@@ -23,7 +23,7 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | What the model reads | `policies` on `CurrentSnapshot` (`src/agent/current-context.ts`) |
 
 State is declared in the registry as `policies.global` and `policies.run` (audience `model`, exposed as
-`ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (only `"fetch"` so far),
+`ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (`"fetch"`, and `"sh"` for `ml.sh`, whose facts its own consumer builds),
 `effect`, `source`, `label`, `origin` (`person` or `card`) and `created`.
 
 ## Scopes and lifetime
@@ -41,16 +41,14 @@ A run policy is keyed by the session hash, so it survives a resume: the resumed 
 note (`session-resumed`) lists the labels in `kept`, for the person reading the divider and the exports. The note is
 not shown to the model; the model reads the policies themselves in `ml.current.policies`.
 
-A run's policies go when its session does:
+A run's policies go when its session does, deleted or archived (the scope table in
+[`POLICIES.md`](../spec/POLICIES.md), "Scopes"): `forgetStored` calls `forgetRun`, which calls `forgetRunPolicies`, and
+`onEvicted` does the same for an eviction whose outcome is `"deleted"` or `"archived"`. An archived session that comes
+back starts with none; an eviction whose move to the archive failed (`"kept"`) keeps them.
 
-- deleting the session (`forgetStored` calls `forgetRun`, which calls `forgetRunPolicies`);
-- an eviction whose outcome is `"deleted"` (no archive to move it to), in `onEvicted`.
-
-An ARCHIVED session keeps them, because it can come back. Any other `onEvicted` outcome leaves them alone.
-
-A fork a page builds inherits nothing. A page that could name a parent hash for its fork would be handing itself that
-parent's policies, which is an escalation route. A fork the worker builds can inherit, since the worker knows the parent
-from its own state; that is not built, and `docs/spec/POLICIES.md` is being amended to say it.
+A fork the WORKER builds inherits a run's policies and a fork a PAGE builds inherits nothing (`POLICIES.md`, "Scopes"):
+today's fork is page-side and reaches the worker as a plain start it cannot tell from a new run, and a page naming a
+parent hash to inherit its grants would be an escalation route. No worker-built fork exists yet, so nothing inherits.
 
 The run scope is capped at 500 sessions (`RUN_POLICY_SESSIONS_MAX`). Past it, `saveRuns` drops the session whose
 policies were written longest ago; `addRunPolicy` re-inserts the session last, so the one being written is never the one
@@ -60,7 +58,8 @@ dropped.
 
 `judgeCall(runId, consumer, facts, placement)`:
 
-1. Collect the global policies and the run's, keep those of the call's `consumer`.
+1. Before the saved policies are read after a worker wake, return `"ask"` and do nothing else (see Traps).
+   Otherwise collect the global policies and the run's, and keep those of the call's `consumer`.
 2. Evaluate each with `evalPolicy(source, facts, effect)`. A policy that breaks (does not parse, falls out of the
    dialect, throws, returns something that is not a boolean) is NO OPINION. It is recorded: `brokenReason(id)` for the
    policy page, and the caller writes a `policy`/`broken` run log record with the policy id.
@@ -125,10 +124,12 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   rule that applies only to cross-origin fetches.
 - A broken policy fails closed in both directions: a broken `allow` does not allow, a broken `deny` does not deny, and
   the call asks. Nothing breaks silently, but nothing breaks loudly either: look for `policy`/`broken` in the run log.
-- Storage is read asynchronously when the worker starts (`policiesReady`). Until it resolves, `policiesLoaded()` is false
-  and `fetchPolicy` answers `"unknown"`, on which `autoApprove` returns before ANY free tier: the call asks. Otherwise a
-  `deny` saved before an eviction would go unenforced for the first calls after the worker woke, and a same-origin or
-  current-page fetch it was written to refuse would run. A new consumer must do the same.
+- Storage is read asynchronously when the worker starts (`policiesReady`). Until it resolves, `judgeCall` returns
+  `"ask"` (`POLICIES.md`, "A store not yet loaded means ASK, free tiers included"), and the consumer must ask WITHOUT
+  letting its own free tiers answer: `fetchPolicy` maps it to `"unknown"`, on which `autoApprove` returns before the
+  same-origin and current-page checks. Otherwise a `deny` saved before an eviction would go unenforced for the first
+  calls after the worker woke. The rule is in `judgeCall` so a new consumer gets it; honouring `"ask"` is still the
+  consumer's.
 - A stored entry that is not a well-formed policy of its scope is dropped on read, not repaired (`validList`).
 - The choke point judges again. A new path that fetches for a run in the worker must go through `consented` in
   `worker-tools.ts`, or an `allow` from the gate is the only check.
