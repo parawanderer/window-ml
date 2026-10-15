@@ -848,9 +848,10 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {} } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false } = {}) {
     let turns = 0, bg, evicted = false;
-    const calls = [{ name: "fetch_url", args }, ...then];
+    const calls = [first ?? { name: "fetch_url", args }, ...then];
+    const gates = [];
     const seenByModel = [];
     bg = loadBackground({
         config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate, local,
@@ -874,7 +875,8 @@ async function attackRun(args, { then = [], siteGate = true, atApproval, inPage,
                     void bg.send({ type: "RUN_READOPTED", payload: {} }, RUN_TAB);
                     return undefined;
                 }
-                void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+                gates.push(msg.event.tool);
+                void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true, ...(persist ? { persist: true } : {}) } });
                 if (atApproval) await atApproval(bg);
             }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
@@ -891,7 +893,8 @@ async function attackRun(args, { then = [], siteGate = true, atApproval, inPage,
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
     const fetched = bg.calls.filter((c) => c.url.startsWith("https://other.example/")).map((c) => ({ url: c.url, credentials: c.init?.credentials }));
     const toolResults = (seenByModel.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => m.content);
-    return { bg, toPage, fetched, toolResults, evicted };
+    const steps = bg.tabMessages.filter(([, m]) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-step" && !m.event.pending).map(([, m]) => m.event);
+    return { bg, toPage, fetched, toolResults, evicted, gates, steps };
 }
 
 test("a page cannot read a URL the person approved for the run's worker-side fetch_url by sending FETCH_URL itself", T, async () => {
@@ -911,6 +914,59 @@ test("a page cannot read a URL the person approved for the run's worker-side fet
     assert.ok(stolen !== undefined, "the page's attempt was made while the run was live");
     assert.ok(!JSON.stringify(stolen ?? {}).includes("SECRET OTHER SITE"), `the page read what the run fetched: ${JSON.stringify(stolen).slice(0, 160)}`);
     assert.equal(fetched.length, 1, `only the run fetched; got ${JSON.stringify(fetched)}`);
+});
+
+// --- POLICIES: "Approve + remember" makes run policies (sw-policies.ts), which the run's gate honours and the page never gets ---
+
+test("ACCEPTANCE: a worker-hosted run's fetch_url gate honours a run policy that 'Approve + remember' added", T, async () => {
+    const { gates, toolResults, fetched, steps } = await attackRun({ url: OTHER }, {
+        local: SITE_APPROVED, persist: true,
+        first: { name: "exec", args: { js: `const r = await ml.fetch(${JSON.stringify(OTHER)}); return r.status;` } },
+        then: [{ name: "fetch_url", args: { url: OTHER } }],
+    });
+    assert.deepEqual(gates, ["exec"], `one card, the exec's; the fetch_url after it asked nothing. Gates: ${JSON.stringify(gates)}`);
+    const fetchStep = steps.find((e) => e.tool === "fetch_url");
+    assert.equal(fetchStep?.approval, "consented");
+    assert.deepEqual(JSON.parse(JSON.stringify(fetchStep?.reused)), [{ kind: "policy", detail: `fetch ${OTHER}` }], "the row says which policy allowed it");
+    assert.match(toolResults.at(-1) ?? "", /SECRET OTHER SITE/, "and the fetch ran, in the worker, and the model read it");
+    assert.equal(fetched.length, 1);
+});
+
+test("a global DENY policy refuses a fetch_url with no card, and the model reads which policy refused it", T, async () => {
+    const deny = { id: "g1", scope: "global", consumer: "fetch", effect: "deny", source: '(c) => c.host === "other.example"', label: "never other.example", origin: "person", created: 1 };
+    const { gates, toolResults, fetched, steps } = await attackRun({ url: OTHER }, { local: { ...SITE_APPROVED, ml_policies_global: [deny] } });
+    assert.deepEqual(gates, [], "no card");
+    assert.equal(fetched.length, 0, "nothing fetched");
+    assert.equal(steps.find((e) => e.tool === "fetch_url")?.approval, "denied");
+    assert.match(toolResults[0] ?? "", /Refused by the policy "never other\.example"/);
+});
+
+test("a survey reads the policies that apply to its run as ml.current.policies", T, async () => {
+    const deny = { id: "g1", scope: "global", consumer: "fetch", effect: "deny", source: '(c) => c.host === "x.example"', label: "never x.example", origin: "person", created: 1 };
+    const { toolResults } = await attackRun({}, {
+        local: { ...SITE_APPROVED, ml_policies_global: [deny] },
+        first: { name: "exec", args: { js: "return JSON.stringify(ml.current.policies)" } },
+    });
+    assert.match(toolResults[0] ?? "", /never x\.example/, `the survey saw the policy; got ${(toolResults[0] ?? "").slice(0, 300)}`);
+});
+
+test("RED TEAM: a page-started FETCH_URL on the run's tab does not get the run's remembered URL", T, async () => {
+    // Before run policies, "remember" wrote the TAB's consent ledger, which the page's own FETCH_URL read: a URL the
+    // person remembered for a run was the page's to fetch until the tab closed. The page here is APPROVED, so the
+    // origin gate lets its FETCH_URL through and only the consent decides.
+    let stolen;
+    await attackRun({ url: OTHER }, {
+        local: SITE_APPROVED, persist: true,
+        first: { name: "exec", args: { js: `const r = await ml.fetch(${JSON.stringify(OTHER)}); return r.status;` } },
+        then: [{ name: "findByText", args: { text: "x" } }],
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "findByText" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            stolen = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.ok(stolen !== undefined, "the page's attempt was made after the person remembered the URL");
+    assert.ok(!JSON.stringify(stolen ?? {}).includes("SECRET OTHER SITE"), `the page fetched the run's remembered URL: ${JSON.stringify(stolen).slice(0, 160)}`);
 });
 
 test("a page cannot spend the one-time as-you grant the person minted for the run's worker-side fetch_url", T, async () => {

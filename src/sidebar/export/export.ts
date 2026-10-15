@@ -358,6 +358,7 @@ function writeAgent(s: Session, d: Sink): void {
             const r = x.resume;
             d.divider(`resumed on ${r.url}${r.fromUrl ? ` (was ${r.fromUrl})` : ""} · after ${fmtDur(r.afterMs)}`);
             d.note(`did not survive the resume: ${r.dropped.join("; ")}`);
+            if (r.kept?.length) d.note(`kept across the resume: ${r.kept.join("; ")}`);
             return;
         }
         const a = x.answer;

@@ -112,8 +112,10 @@ export interface CommandDeps {
      * `"adopted"` when that page now holds it.
      */
     adoptSession(tabId: number, hash: string, history: SessionHistory): Promise<PageOutcome | "adopted">;
+    /** The labels of the run policies a session carries across a resume (sw-policies.ts), for the note's `kept`. */
+    runPolicyLabels?(hash: string): string[];
     /** note in the session's own transcript that it has been picked up on another page */
-    noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[] }): void;
+    noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[]; kept?: string[] }): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
     /** `error`: why nothing started, in words the person can act on */
     startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
@@ -157,11 +159,12 @@ export const RESUME_DROPS = [
     "the page's state object",
     "cached fetches",
     "tools a page script defined (functions cannot be stored)",
-    // Per TAB, not per page: the ledger (`fetchConsent`, sw-consent.ts) is keyed by tab id and survives navigation
-    // within it, and is dropped only when the tab closes. A resume is only offered once its tab HAS closed, so this
+    // The run's POLICIES are not in this list: they are kept with the session (sw-policies.ts) and listed in the
+    // note's `kept`. Every other grant is per TAB, not per page: the ledger (`fetchConsent`, sw-consent.ts) is keyed
+    // by tab id and survives navigation within it, and is dropped only when the tab closes. A resume is only offered once its tab HAS closed, so this
     // is true of every resume — but the sentence says what the code does, because "per page" would be wrong the day
     // somebody offers a resume onto the same tab.
-    "approval grants (consent belongs to the tab it was given in, and is asked again)",
+    "approval grants other than the run's policies (consent belongs to the tab it was given in, and is asked again)",
 ] as const;
 
 /** How many events one backfill page carries, whatever a client asks for. A page holds screenshots, so this is a
@@ -433,9 +436,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (outcome === "no-answer") return fail("unavailable", "that page did not answer; it may still be loading");
                 return fail("failed", "that page did not take the session");
             }
-            // Only once the page holds it: a note about a resume that did not happen would be a lie in the one
-            // place a reader and the model both trust.
+            // Only once the page holds it: a note about a resume that did not happen would be a lie in the place a
+            // reader trusts (the divider and the exports; the model does not read the note).
             const at = deps.now();
+            const kept = deps.runPolicyLabels?.(s.id.hash) ?? [];
             deps.noteResumed(s.id.hash, t.tabId, {
                 // ONE resume, not one session: the index de-duplicates a note by its id, because two surfaces can
                 // report the same resume, and a session resumed twice would otherwise show one divider for both.
@@ -444,6 +448,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 ...(summary.page?.url ? { fromUrl: summary.page.url } : {}),
                 afterMs: Math.max(0, at - summary.lastTs),
                 dropped: [...RESUME_DROPS],
+                ...(kept.length ? { kept } : {}),
             });
             // AND CARRY IT ON, when a budget said to. The page holds the run again by here, so this is the ordinary
             // continue — the same call the button makes, made for you. A refusal after the adopt is reported as

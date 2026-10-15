@@ -26,6 +26,7 @@ const baseDeps = (over = {}) => {
         fetchIsCurrentPage: over.fetchIsCurrentPage,
         fetchSameOrigin: over.fetchSameOrigin,
         fetchNeedsConsent: over.fetchNeedsConsent,
+        fetchPolicy: over.fetchPolicy,
         emit: over.emit,
         signal: over.signal,
     };
@@ -174,6 +175,29 @@ test("inline vision: a native look screenshot reaches the NEXT model turn as a u
     const imgTurn = seen[1].find(m => m.role === "user" && m.images);   // the 2nd call's messages
     assert.ok(imgTurn, "a user turn carrying the screenshot was injected before the next model call");
     assert.deepEqual(imgTurn.images, ["data:image/png;base64,SHOT"]);
+});
+
+test("a fetch_url policy is consulted first: a deny refuses with no card even on the page the tab is on, an allow skips the card, and unread policies ask", async () => {
+    const here = "https://site.example/inbox?id=3", other = "https://other.example/x", fresh = "https://fresh.example/y";
+    const deps = baseDeps({
+        callModel: scriptedModel([
+            call("fetch_url", { url: here }, "a"),
+            call("fetch_url", { url: other }, "b"),
+            call("fetch_url", { url: fresh }, "c"),
+            call("fetch_url", { url: other, credentials: true }, "d"),
+            answer("done"),
+        ]),
+        fetchIsCurrentPage: (url) => url === here,
+        fetchSameOrigin: (url) => url.startsWith("https://site.example/"),
+        fetchNeedsConsent: () => true,
+        // `here` is denied, `other` allowed, and for `fresh` the worker has not read the saved policies yet.
+        fetchPolicy: (url) => url === here ? { decision: "deny", label: "never the inbox" } : url === other ? { decision: "allow", label: "fetch other" } : "unknown",
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "SYS", tools: [{ name: "fetch_url", requiresApproval: true }] }, deps);
+    const ran = deps.delegated.map((d) => d.args?.url ?? d.arguments?.url ?? d.payload?.args?.url);
+    assert.ok(!ran.includes(here), `the denied fetch never ran: ${JSON.stringify(ran)}`);
+    const asked = deps.approvals.map((a) => (a.arguments ?? a.args)?.url);
+    assert.deepEqual(asked.sort(), [fresh, other].sort(), "unread policies ask, and an allow never covers an as-you fetch");
 });
 
 test("fetch_url of the page the tab is ON is free in every mode, as-you included; the rest of the origin still asks", async () => {

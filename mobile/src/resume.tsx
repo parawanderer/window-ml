@@ -17,7 +17,7 @@ import { blankBlockedReason, blankStartState } from "../../src/chat/blank-start"
 export interface ResumeHandle { present(): void }
 
 /** What a resume loses, as the page's resume form words it. */
-const LOST = "It carries on from what it had said, on the page you pick. It does not carry over live references to elements on the old page, that page's state, cached fetches, tools a page script defined, or approval grants: those are asked again.";
+const LOST = "It carries on from what it had said, on the page you pick. It does not carry over live references to elements on the old page, that page's state, cached fetches, tools a page script defined, or approval grants: those are asked again. The run's own policies (a URL you said to remember) come with it.";
 
 /** The resume sheet for `chrome`'s session. */
 export const ResumeSheet = forwardRef<ResumeHandle, { chrome: SessionChrome | null }>(function ResumeSheet({ chrome: c }, ref) {

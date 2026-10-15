@@ -243,7 +243,8 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel, extras 
                     The same run, not a new one: it keeps its hash and its history, and carries straight on from what
                     it had said, on the page you pick. It does not carry over live references to elements on the old page,
                     that page's state, cached fetches, tools a page script defined, or approval grants: consent
-                    belongs to the tab it was given in, and is asked again.
+                    belongs to the tab it was given in, and is asked again. The run's own policies (a URL you said to
+                    remember) come with it.
                 </p>
             </div>
             <div class="chat-dialog-actions">

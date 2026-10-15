@@ -937,6 +937,7 @@ export function ResumeDivider({ r }: { r: NonNullable<Session["resumes"]>[number
                     <span>
                         <b>What did not survive</b>
                         <ul class="resume-lost">{r.dropped.map((d) => <li key={d}>{d}</li>)}</ul>
+                        {r.kept?.length ? <><b>Kept</b><ul class="resume-kept">{r.kept.map((k) => <li key={k}>{k}</li>)}</ul></> : null}
                         {r.fromUrl ? <span class="resume-from">was {r.fromUrl}</span> : null}
                     </span>,
                 )}

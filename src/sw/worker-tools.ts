@@ -5,6 +5,7 @@
 // slice 2 part 2). These are the same tools, from the same factories, given an `ml` whose members the worker answers
 // itself: the descriptor the model is shown and the run's approval are unchanged, and only where the body runs moves.
 
+import { judgeCall, fetchFacts } from "./sw-policies";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
 import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
@@ -132,6 +133,12 @@ export function runFetchConsented(runId: string, url: string): boolean | undefin
     return runs.get(runId)?.consented.has(url);
 }
 
+/** Whether a person's policy (not the built-in default) allows this run an uncredentialed fetch of `url`. */
+function policyAllows(runId: string, url: string): boolean {
+    const j = judgeCall(runId, "fetch", fetchFacts(url));
+    return j.decision === "allow" && j.by !== "builtin";
+}
+
 /** Forget a run's worker-tool state, with its local tools. */
 export function dropWorkerTools(runId: string): void { runs.delete(runId); }
 
@@ -196,8 +203,9 @@ function runMl(ctx: RunCtx): MlApi {
             const trust = await senderTrust({ tab: { id: ctx.tabId, url: tabUrl } as chrome.tabs.Tab, url: tabUrl });
             const r = await fetchUrlFor({ url: String(url), credentials, rendered, format }, {
                 tabId: ctx.tabId, frameUrl: tabUrl, tabUrl, untrusted: trust === "untrusted", disclose: false,
-                // The run's own approvals, which no page can reach (grantRunFetch).
-                consented: (u) => ctx.consented.has(u),
+                // The run's own approvals, which no page can reach (grantRunFetch), and its policies (sw-policies.ts), judged
+                // here again at the choke point rather than trusted from the gate's earlier answer.
+                consented: (u) => ctx.consented.has(u) || policyAllows(ctx.runId, u),
                 takeCred: (u) => ctx.credOnce.delete(u),
             });
             if (r.error || !r.data) throw new Error(r.error || `the fetch of "${url}" returned nothing`);

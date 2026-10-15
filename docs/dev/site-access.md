@@ -438,7 +438,12 @@ nothing else in it starts a request (`docs/dev/readonly-exec.md`, "Threat questi
 the tools' and an approved exec's.
 
 Approval is per URL (`fetchConsent`, `runFetchConsented`: the exact URL a person approved, re-fetched without asking for
-the rest of the session), except for these, which are ORIGIN-wide and auto-approved with no prompt:
+the rest of the session). "Approve + remember" on an `exec` card is not a tab grant: it adds one exact-URL RUN policy per
+URL the person saw (`rememberFetchUrls`, `docs/dev/policies.md`), kept with the session, and a page-built run's fetch is
+not skipped by it. It used to write `fetchConsent`, which the page's own `FETCH_URL` reads, so a hostile page on the tab
+could fetch a URL remembered for a run.
+
+These are ORIGIN-wide instead, and auto-approved with no prompt:
 
 - `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin and every origin a
   `navigate` was approved to (`consentedOrigins`, `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). A `rendered` read is

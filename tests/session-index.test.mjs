@@ -382,6 +382,17 @@ test("a resume note that does not say what it dropped never enters the stream", 
     assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 0);
 });
 
+test("a resume note's `kept` is absent or a list of strings", () => {
+    const ix = index();
+    const note = (over) => base("aaaa0001", "session-resumed", { url: "https://new.example/", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), bg());
+    for (const bad of [{ kept: [1] }, { kept: "x" }, { kept: {} }, { kept: null }]) {
+        assert.deepEqual(ix.ingest(note({ id: "r-bad", ...bad }), page()), { accepted: false, reason: "invalid" }, JSON.stringify(bad));
+    }
+    assert.equal(ix.ingest(note({ id: "r-ok", kept: ["x"] }), bg()).accepted, true);
+    assert.equal(ix.ingest(note({ id: "r-none" }), bg()).accepted, true, "absent is fine");
+});
+
 test("every event kind the index accepts has been considered for de-duplication", async () => {
     const src = await readFile(new URL("../src/session/session-index.ts", import.meta.url), "utf8");
     const known = [...src.slice(src.indexOf("const KNOWN_KINDS"), src.indexOf("\n", src.indexOf("const KNOWN_KINDS"))).matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);

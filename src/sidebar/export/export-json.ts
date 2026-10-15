@@ -362,6 +362,7 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
             ? s.resumes.map((r) => compact<ExportResume>({
                 url: r.url, fromUrl: r.fromUrl || undefined,
                 at: iso(r.ts) || new Date(0).toISOString(), afterMs: r.afterMs, dropped: [...r.dropped],
+                kept: r.kept?.length ? [...r.kept] : undefined,
             }))
             : undefined,
     });

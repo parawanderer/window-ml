@@ -125,16 +125,6 @@ export const takeCredFetch = (tabId: number | undefined, url: string): boolean =
     return true;
 };
 
-// button #3 ("Approve + remember"): persist a gated call's static egress grants for the session. Keyed by
-// `kind` so a new egress kind is one case here + one extractor in grant-extract.ts + one UI branch. Called
-// ONLY from a run's approval `resolve` on a positive persist decision (unforgeable — grants are re-derived
-// background-side from the call, never trusted from the message).
-export const persistGrants = (tabId: number, grants: import("../contract").PersistGrant[]): void => {
-    for (const g of grants) {
-        if (g.kind === "fetch-url") for (const u of g.urls) consentFetch(tabId, u);
-    }
-};
-
 /** The grant key for one server-tool call: the bundle, the function AND the arguments. Hashing the whole
  *  call rather than the tool id is the point — approving "run the search tool for THIS query" must not
  *  authorise running it for another one. Key order is normalised so an equivalent object still matches. */
