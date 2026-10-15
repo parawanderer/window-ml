@@ -69,6 +69,23 @@ comprehensions over the same, no `while`, recursion to a bounded depth, no gener
 `lambda` and `def` are in. The budget catches what the static rules cannot see; the static rules keep a refusal
 BEFORE the run wherever the form is decidable from the source, so nothing has to be rolled back.
 
+**What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
+admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on
+what the count surfaced:
+
+- **A generator expression is rewritten to a list comprehension in the pre-pass, in CONSUMER POSITION only**: as the
+  sole argument of `sum`, `any`, `all`, `min`, `max`, `sorted`, `list`, `tuple`, `set`, `dict`, `str.join`,
+  `enumerate` or `zip`, where the two differ only in early exit and memory, both bounded by the budget and the
+  allocation cap. That one rule takes admission to 99.1%. A genexp anywhere else is refused: there the rewrite would be
+  observable, and a generator object is a suspended frame the patch's first slice does not have to get right.
+- **`type(x)` is allowed** (2.4% of cells, mostly a debugging print or `type(x) == str`), returning a receiver kind of
+  its own that lists no attributes (so `__mro__`, `__subclasses__`, `__name__` are refused by the gate), is not callable,
+  and supports `is`, `==` and `repr`. The three-argument `type(name, bases, dict)` is refused outright.
+- **A kind may carry a DYNAMIC attribute rule from its manifest**: the DataFrame kind's `dynamic: columns` lets `df.Region`
+  resolve when `Region` is a column, by a predicate registered beside the table and run with the depth lifted like any
+  approved leaf, returning `alias(0)`. Never a dunder, never a name in the kind's static method set (`df.sum` is the
+  method even when a column is called `sum`, pandas' own rule), and never the object's `__getattr__`.
+
 **What this does not solve**, and the spec keeps saying so: the COST of a C leaf (tier 1 bounds over `len`, `size` and
 `shape`, with hard caps, since there is no charge hook inside a C loop); `re` backtracking (`sre` is C, so the
 `riskyRegex` pre-check is ported and applied before the call); and a long numpy operation does not visit the eval
@@ -185,6 +202,8 @@ manifest format, one vector corpus.
   or owning by reachability from the cell's namespace at the write barrier instead of by allocation.
 - **Which CPython and Pyodide versions carry the patch first**, and how the host's build is distributed (a wheel of
   the interpreter, a `uv`-managed toolchain, the container image).
+- **The genexp tail.** If a real share of generator expressions turns out to sit outside consumer position, a generator
+  object becomes a receiver kind with no attributes and the frame bookkeeping for suspension joins the patch.
 - **How much of real pandas falls inside tier 1.** `groupby().apply`, `merge` and string accessors have data-dependent
   cost; the first manifest may need a hard cap in place of a bound for some of them.
 - **Exceptions.** `try`/`except` over the dialect's own errors is in (the JS dialect has it); whether a cell may catch a
