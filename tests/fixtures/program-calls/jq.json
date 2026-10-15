@@ -1,0 +1,589 @@
+{
+  "program": "jq",
+  "version": "1.7.1",
+  "calls": [
+    {
+      "argv": [
+        "jq",
+        ".",
+        "data.json"
+      ],
+      "note": "the first operand is the filter, the rest are files",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 2,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        ".a.b",
+        "x.json",
+        "y.json"
+      ],
+      "note": "a filter and two files",
+      "described": true,
+      "effects": [
+        "read:fs:x.json:?:?",
+        "read:fs:y.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 2,
+          "role": "read"
+        },
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-n",
+        "1+1"
+      ],
+      "note": "-n reads no input",
+      "described": true,
+      "effects": [],
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-nr",
+        "\"x\""
+      ],
+      "note": "a cluster",
+      "described": true,
+      "effects": [],
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-r",
+        "-c",
+        ".[]",
+        "data.json"
+      ],
+      "note": "separate flags",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 4,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--indent",
+        "4",
+        ".",
+        "data.json"
+      ],
+      "note": "--indent takes a value",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 4,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--tab",
+        ".",
+        "data.json"
+      ],
+      "note": "--tab",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-e",
+        ".a",
+        "data.json"
+      ],
+      "note": "-e makes exit codes 1 and 4 answers",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0,
+        1,
+        4
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--exit-status",
+        ".a",
+        "data.json"
+      ],
+      "note": "--exit-status likewise",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0,
+        1,
+        4
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-f",
+        "prog.jq",
+        "data.json"
+      ],
+      "note": "-f reads the filter from a file: every operand is an input path",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?",
+        "read:fs:prog.jq:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 2,
+          "role": "read"
+        },
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--from-file",
+        "prog.jq",
+        "data.json"
+      ],
+      "note": "--from-file likewise",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?",
+        "read:fs:prog.jq:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 2,
+          "role": "read"
+        },
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-L",
+        "mods",
+        "-n",
+        "1"
+      ],
+      "note": "-L reads modules from a directory",
+      "described": true,
+      "effects": [
+        "read:fs:mods:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 2,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-Lmods",
+        "-n",
+        "1"
+      ],
+      "note": "a path attached to a short flag cannot be resolved: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--rawfile",
+        "v",
+        "f.txt",
+        ".",
+        "data.json"
+      ],
+      "note": "--rawfile takes two values: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        },
+        {
+          "arg": 4,
+          "role": "read"
+        },
+        {
+          "arg": 5,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--slurpfile",
+        "v",
+        "f.json",
+        ".",
+        "data.json"
+      ],
+      "note": "--slurpfile takes two values: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        },
+        {
+          "arg": 4,
+          "role": "read"
+        },
+        {
+          "arg": 5,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--arg",
+        "k",
+        "v",
+        ".",
+        "data.json"
+      ],
+      "note": "--arg takes two values: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        },
+        {
+          "arg": 4,
+          "role": "read"
+        },
+        {
+          "arg": 5,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--argjson",
+        "k",
+        "{}",
+        ".",
+        "data.json"
+      ],
+      "note": "--argjson takes two values: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        },
+        {
+          "arg": 4,
+          "role": "read"
+        },
+        {
+          "arg": 5,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-n",
+        "$ARGS",
+        "--args",
+        "a",
+        "b"
+      ],
+      "note": "--args turns later operands into strings: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [
+        {
+          "arg": 4,
+          "role": "read"
+        },
+        {
+          "arg": 5,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-n",
+        "$ARGS",
+        "--jsonargs",
+        "1",
+        "2"
+      ],
+      "note": "--jsonargs turns later operands into JSON: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [
+        {
+          "arg": 4,
+          "role": "read"
+        },
+        {
+          "arg": 5,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-n",
+        "env"
+      ],
+      "note": "the env builtin prints the process environment: echoes is set",
+      "described": true,
+      "effects": [],
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--wml-made-up",
+        "."
+      ],
+      "note": "an unlisted flag is unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--",
+        "-x",
+        "data.json"
+      ],
+      "note": "-- then a filter that starts with a dash",
+      "described": true,
+      "effects": [
+        "read:fs:data.json:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 3,
+          "role": "read"
+        }
+      ],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "-n",
+        "--",
+        "1"
+      ],
+      "note": "a flag, then -- and an operand",
+      "described": true,
+      "effects": [],
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    },
+    {
+      "argv": [
+        "jq",
+        "--end-of-options",
+        "."
+      ],
+      "note": "jq does not honour --end-of-options: unknown",
+      "described": false,
+      "effects": "unknown",
+      "pathArgs": [],
+      "actsOnDir": false,
+      "runner": false,
+      "okCodes": [
+        0
+      ]
+    }
+  ]
+}
