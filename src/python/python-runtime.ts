@@ -45,7 +45,6 @@ df = None
 tables = {}
 _tsj = globals().get("INJECTED_TABLES_JSON")
 if _tsj:
-    import json as _json
     def _build_df(_t):
         # A STORED table (the value store): its bytes were copied once into a bytearray bound as _t["buf"], and are
         # decoded here by the format they arrived in. A delimited body is re-read with the columns, delimiter and
@@ -75,7 +74,7 @@ if _tsj:
                 return pd.DataFrame(_rows, columns=_cols)
             return pd.DataFrame(_rows)
         return pd.read_html(io.StringIO(_t.get("html") or ""), flavor="bs4")[0]
-    for _entry in _json.loads(_tsj):
+    for _entry in _ml_loads(_tsj):
         _df = _build_df(_entry["data"])
         globals()[_entry["name"]] = _df
         tables[_entry["name"]] = _df
@@ -223,14 +222,22 @@ for _k in list(globals().keys()):
  *   scope would swallow them: `x = 1` is a LOCAL of `_user` and disappears when the run ends.
  */
 export const wrapUserCode = (code: string, hardened = true, persist = false): string => /* python */ `
+# THE HARNESS'S OWN REFS (lockdown.ts captured them at boot, before any cell ran). A cell that patches
+# \`ast.parse\` or \`json.loads\` changes what the RUN's own later cells see, never what the harness parses,
+# encodes or injects. Fallback to the plain module attributes when the frozen module is absent (real-CPython tests).
+try:
+    from _ml_harness import ast_parse as _ml_parse, json_loads as _ml_loads, json_dumps as _ml_dumps
+except ImportError:
+    import ast as _ml_a2, json as _ml_j2
+    _ml_parse, _ml_loads, _ml_dumps = _ml_a2.parse, _ml_j2.loads, _ml_j2.dumps
 ${persist ? PRELUDE_BASE : RESET + PRELUDE}
 ${netPolicy(hardened)}
 result = None
 _ml_src = ${JSON.stringify(code)}
 _ml_persist = ${persist ? "True" : "False"}
-# stdout capture that ALSO tees each write to a JS callback (\`_ml_stdout_cb\`, set by the worker ONLY when
-# the run opted into live streaming) so print() output streams live (Jupyter-style) — while _out still holds
-# the byte-exact full stdout for the final result. No callback set → pure capture, unchanged.
+# stdout capture that tees each write to the REAL stdout (Pyodide's \`setStdout\` wraps it on the JS side for
+# live streaming) — no JS callback in the namespace, so the namespace holds no JsProxy at all.
+_ml_real_out = sys.stdout
 class _MlTee(io.StringIO):
     # Bounded (output-clip.ts OUTPUT_CEILING): past it a write is counted, not kept and not teed, so a print in a loop
     # costs a counter, not the worker's memory.
@@ -242,23 +249,21 @@ class _MlTee(io.StringIO):
             return len(_s)
         self._ml_kept += len(_s)
         _n = super().write(_s)
-        _cb = globals().get("_ml_stdout_cb")
-        if _cb is not None:
-            try: _cb(_s)
-            except Exception: pass
+        try: _ml_real_out.write(_s)
+        except Exception: pass
         return _n
 _out = _MlTee()
 _err = None
 _ml_ret_latex = False
 with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
     try:
-        import ast as _ast, textwrap as _tw
+        import textwrap as _tw
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
         _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    ")
         try:
-            _ml_tree = _ast.parse(_ml_def_src, filename="<python_exec>")
+            _ml_tree = _ml_parse(_ml_def_src, filename="<python_exec>")
         except SyntaxError as _ml_se:
             # A SyntaxError is raised BY THE PARSE, so the correction below never runs for it — and it
             # carries the prefixed line number in its own fields, which is what gets printed. Shift it here
@@ -318,9 +323,8 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         result = None
 _stdout = _out.getvalue()
 _ml_stdout_dropped = _out._ml_dropped
-import json as _json
 try:
-    _json_result = _json.dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
+    _json_result = _ml_dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
 except Exception:
     _json_result = None
 # Auto-render by RETURN TYPE (no cast needed): a sympy expression becomes its LaTeX (+ a 'latex' hint the UI
@@ -331,11 +335,11 @@ try:
     _rmod = (getattr(type(result), '__module__', '') or '').split('.')[0]
     if _rmod == 'sympy':
         import sympy as _sp
-        _json_result = _json.dumps(_sp.latex(result)); _json_render = 'latex'
+        _json_result = _ml_dumps(_sp.latex(result)); _json_render = 'latex'
     elif _rmod == 'PIL' and hasattr(result, 'save'):
         import io as _io2, base64 as _b642
         _pbuf = _io2.BytesIO(); result.save(_pbuf, format='PNG')
-        _json_result = _json.dumps('data:image/png;base64,' + _b642.b64encode(_pbuf.getvalue()).decode()); _json_render = 'img'
+        _json_result = _ml_dumps('data:image/png;base64,' + _b642.b64encode(_pbuf.getvalue()).decode()); _json_render = 'img'
     # The code RETURNED a latex(...) call's string (AST-detected above) — typeset it, even a bare "5".
     elif _ml_ret_latex and isinstance(result, str):
         _json_render = 'latex'
@@ -371,9 +375,9 @@ try:
                 _dfr = _dfr.assign(**{_c: _dfr[_c].map(_ml_cell)})
         except Exception:
             pass   # a frame this cannot walk still serialises the way it always did
-        _split = _json.loads(_dfr.to_json(orient='split', date_format='iso'))
+        _split = _ml_loads(_dfr.to_json(orient='split', date_format='iso'))
         _ml_n = len(_ml_full)
-        _json_table = _json.dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', []), **({'rowCount': _ml_n} if _ml_n > len(_dfr) else {})})
+        _json_table = _ml_dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', []), **({'rowCount': _ml_n} if _ml_n > len(_dfr) else {})})
         # PAST THE PREVIEW, the whole frame is written as Arrow IPC for the value store, so a later step reads every row by
         # pointer (POINTER_VALUES slice 6). The index is dropped, as the preview above drops it. A frame Arrow cannot
         # hold (mixed-type object columns, non-string column names) is simply not stored: its preview still says how
@@ -390,6 +394,15 @@ try:
                 _ipc_result = None
 except Exception:
     _json_table = None
+# Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5): a task
+# left pending would run during the next cell's pump of the event loop, observing its source and injected
+# inputs. Cancel is enough — a cancelled task's coroutine throws at its await point and never continues.
+try:
+    import asyncio as _ml_aio
+    for _ml_task in _ml_aio.all_tasks():
+        _ml_task.cancel()
+except Exception:
+    pass
 `;
 
 // --- Sandbox hardening (the `readonly` mode) --------------------------------------
