@@ -1644,7 +1644,8 @@ export function ValueOut({ text, fill, seen, after }: { text: string; fill?: boo
         return { value, unsent: partial ? markSeen(value, text.slice(0, seen)) : undefined };
     }, [asTree, text, seen]);
     const asText = <SeenSplit text={text} seen={partial ? seen : undefined} lang="json" />;
-    if (!loose) return <OutputCell fill={fill}>{asText}{after}</OutputCell>;
+    // A value that is not JSON has no tree, but it is still a value you may want out: copy stays, the toggle goes.
+    if (!loose) return <OutputCell fill={fill} corner={<CopyBtn text={text} tip="copy the value" />}>{asText}{after}</OutputCell>;
     const dropped = loose.droppedChars;
     const cut = `… cut here${dropped != null ? `: ${dropped.toLocaleString("en-US")} more characters were not kept` : ""}`;
     const tip = asTree ? "Show the value as text"

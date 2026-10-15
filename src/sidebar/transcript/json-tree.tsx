@@ -60,10 +60,9 @@ export function JtKey({ name: raw, desc, unknown }: { name: string; desc?: strin
     if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
     return <span class="jt-key">{name}:</span>;
 }
-/** A key as the tree prints it: bare when it is an identifier, quoted as a JSON string otherwise, so a key with a
- *  space, a colon or nothing in it does not read as part of the syntax around it. */
-export const keyLabel = (key: string): string => (IDENT.test(key) ? key : JSON.stringify(key));
-const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+/** A key as the tree prints it: always quoted as a JSON string, so every key reads the same and one with a space,
+ *  a colon or nothing in it does not read as part of the syntax around it. */
+export const keyLabel = (key: string): string => JSON.stringify(key);
 /** The JSONPath (RFC 9535) of a member: `[i]` for an array index, `.name` for a key that is an identifier, `["key"]`
  *  for any other key. What a watch takes, so a copied path can be pasted in as one. */
 export const childPath = (path: string, key: string, arr: boolean): string =>

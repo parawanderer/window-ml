@@ -91,7 +91,7 @@ try {
 
     await narrate(chat, "4 · What it may do without asking, this turn", { sub: "the origins it may navigate and fetch from freely. Marked \"you only\": the model's own view (ml.current) never includes it. Hover a name for what it holds and what loses it" });
     const turn = await open("grants.turn");
-    await turn.getByRole("button", { name: /origins:/ }).click().catch(() => {});
+    await turn.getByRole("button", { name: /"origins":/ }).click().catch(() => {});
     await turn.scrollIntoViewIfNeeded();
     {
         const key = turn.locator(".rstate-key");
@@ -103,7 +103,7 @@ try {
 
     await narrate(chat, "4b · Pin it: a watch", { sub: "right-click any row → Watch this. The watch group at the top re-reads it with the panel, as a debugger's watch pane does" });
     {
-        const task = member("run.input").locator(".jt-row", { hasText: "task:" });
+        const task = member("run.input").locator(".jt-row", { hasText: '"task":' });
         await task.click({ button: "right" }).catch(() => {});
         await chat.getByRole("button", { name: "Watch this" }).click().catch(() => {});
         await chat.locator(".rstate-watch-input").fill("$.inspector.run.mailbox[*].text");

@@ -326,7 +326,7 @@ test("value tree: text by default; the corner button draws the tree and back", a
     btn.click(); await tick();
     assert.ok(cell.querySelector(".jt-value .jt-node"), "the tree is drawn");
     assert.equal(cell.querySelector("pre.code"), null);
-    assert.match(cell.querySelector(".jt-value").textContent, /name:"qwen3"/);
+    assert.match(cell.querySelector(".jt-value").textContent, /"name":"qwen3"/);
     treeBtn(cell).click(); await tick();
     assert.ok(cell.querySelector("pre.code"), "and back to the text");
 });

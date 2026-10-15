@@ -723,7 +723,7 @@ test("HUD card: clicking a bottom-answer citation OPENS the collapsed block hold
     // Click the bottom Result citation (source = seq 1, in the collapsed prior block).
     const tok = w.shadow.querySelector(".card-result .tok-ref");
     assert.ok(tok, "the bottom Result citation is present in the card");
-    tok.click(); await w.tick(); await w.tick(); await w.tick();
+    (tok.querySelector(".tok-anno") ?? tok).click(); await w.tick(); await w.tick(); await w.tick();   // a block goes by its caption
     assert.ok(w.shadow.querySelector('[data-astep-seq="1"]'), "clicking the citation force-opened the collapsed block → the source step is now shown");
 });
 
@@ -739,10 +739,10 @@ test("answer render (sidebar): clicking a citation IMAGE opens the lightbox and 
     img.click(); await w.tick();
     assert.ok(posted.some(d => d.__mlLightbox === "data:image/png;base64,PIC"), "the image click posts __mlLightbox (opens the lightbox)");
     assert.ok(!step.classList.contains("astep-pulse"), "the image click did NOT bubble to the citation jump (no scroll/pulse)");
-    // Positive control: clicking the citation BACKGROUND (not the image) still jumps to the source step.
-    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
-    tok.click(); await w.tick();
-    assert.ok(step.classList.contains("astep-pulse"), "clicking the citation background still jumps to the step");
+    // Positive control: the CAPTION still jumps to the source step.
+    const anno = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref .tok-anno");
+    anno.click(); await w.tick();
+    assert.ok(step.classList.contains("astep-pulse"), "clicking the citation's caption still jumps to the step");
 });
 
 test("answer render (HUD card): the SAME image click opens the lightbox without jumping — parity", async () => {
@@ -755,4 +755,59 @@ test("answer render (HUD card): the SAME image click opens the lightbox without 
     assert.ok(img, "the HUD card renders the zoomable citation image");
     img.click(); await w.tick();
     assert.ok(posted.some(d => d.__mlLightbox === "data:image/png;base64,PIC"), "the HUD image click posts __mlLightbox too");
+});
+
+// --- a block embed: only its caption navigates, and its body has the value's own tools ------------------
+
+const jsonEmbedRun = async (w, hash) => {
+    w.window.HTMLElement.prototype.scrollIntoView = function () {};
+    const value = JSON.stringify({ n: 12, kinds: { a: 1 } });
+    await w.dispatch(agentStart(hash, "count"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: value,
+        renderOut: { type: "python-out", value } }));
+    await w.dispatch({ ...agentResult(hash, "Counts:\n\n![the counts](@tool:" + OUT + ":out)\n\nDone.", 1), answer: "" });
+    await openRun(w);
+    return { embed: w.shadow.querySelector(".msg.asst .answer-rendered .tok-block"), step: w.shadow.querySelector('[data-astep-seq="1"]') };
+};
+
+test("answer render (sidebar): clicking an embed's BODY does not navigate to the step, clicking its CAPTION does", async () => {
+    const w = await loadSidebarWorld();
+    const { embed, step } = await jsonEmbedRun(w, "ebody");
+    assert.ok(embed && step, "a block embed and its source step exist");
+    embed.querySelector(".tok-body").click(); await w.tick();
+    assert.ok(!step.classList.contains("astep-pulse"), "a click in the body leaves the reader where they are");
+    assert.equal(embed.getAttribute("role"), null, "the embed as a whole is not a button; only its caption is");
+    const anno = embed.querySelector(".tok-anno");
+    assert.equal(anno.getAttribute("role"), "button", "the caption is the control");
+    anno.click(); await w.tick();
+    assert.ok(step.classList.contains("astep-pulse"), "a click on the caption goes to the source step");
+});
+
+test("answer render (sidebar): an embed with NO caption is captioned with its tool and step, and that caption navigates", async () => {
+    const w = await loadSidebarWorld();
+    w.window.HTMLElement.prototype.scrollIntoView = function () {};
+    const value = JSON.stringify({ n: 12, kinds: { a: 1 } });
+    await w.dispatch(agentStart("enocap", "count"));
+    await w.dispatch(agentStep("enocap", 1, { seq: 1, tool: "python_exec", token: OUT, result: value, renderOut: { type: "python-out", value } }));
+    await w.dispatch({ ...agentResult("enocap", "Counts:\n\n![](@tool:" + OUT + ":out)\n\nDone.", 1), answer: "" });
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-block");
+    const step = w.shadow.querySelector('[data-astep-seq="1"]');
+    const anno = embed?.querySelector(".tok-anno");
+    assert.match(anno?.textContent || "", /python_exec · step 1/);
+    anno.click(); await w.tick();
+    assert.ok(step.classList.contains("astep-pulse"), "the fallback caption goes to the source step");
+});
+
+test("answer render (sidebar): an embedded JSON value has the step's copy button and tree/text toggle, with quoted keys", async () => {
+    const w = await loadSidebarWorld();
+    const { embed } = await jsonEmbedRun(w, "ectl");
+    assert.ok(embed.querySelector('button[aria-label="copy the value"]'), "a copy button is on the embed");
+    const toggle = [...embed.querySelectorAll("button.code-tool")].find((b) => b.textContent === "tree");
+    assert.ok(toggle, "the tree toggle is on the embed");
+    toggle.click(); await w.tick();
+    assert.equal(toggle.textContent, "text");
+    const keys = [...embed.querySelectorAll(".jt-key")].map((k) => k.textContent);
+    assert.deepEqual(keys, ['"n":', '"kinds":']);
+    assert.ok(!embed.closest(".msg").querySelector('[data-astep-seq="1"]')?.classList.contains("astep-pulse"), "using the controls did not navigate");
 });

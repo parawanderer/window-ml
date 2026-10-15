@@ -832,7 +832,7 @@ button.chat-page-go:hover { color: var(--fg); }
    frame's own text, so that is what carries the explanation; the block itself stays clickable. */
 .chat.calm .tok-block:hover > .tok-tip { opacity: 0; }
 .chat.calm .tok-anno { cursor: help; }
-.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-block:focus-visible > .tok-tip { opacity: 1; }
+.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-anno:focus-visible ~ .tok-tip { opacity: 1; }
 /* …and it appears AT the caption, not at the top of the embed. The tip is anchored rather than cursor-following
    (the shared component draws it, and the panel's own tests pin that), so the least confusing thing it can do is
    sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
@@ -897,9 +897,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .tok-block { --astep-close-ms: 200; }
 .chat.calm .tok-body.opening { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
 .chat.calm .tok-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* The folded row's name slides in from the left when the embed folds and back out when it opens, on the reply's own
+   keyframes and curves (`chat-asst-sum-in` / `chat-asst-sum-out`, below), so the two folds read as one gesture. */
+.chat.calm .tok-folded .tok-fold-name { animation: chat-asst-sum-in .18s cubic-bezier(0, 0, .2, 1) both; }
+.chat.calm .tok-folded.leaving .tok-fold-name { animation: chat-asst-sum-out .18s cubic-bezier(.4, 0, 1, 1) both; }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .tok-block { --astep-close-ms: 0; }
     .chat.calm .tok-body.opening, .chat.calm .tok-body.closing { animation: none; }
+    .chat.calm .tok-folded .tok-fold-name, .chat.calm .tok-folded.leaving .tok-fold-name { animation: none; }
 }
 /* A TURN ARRIVING IS THE LOG MOVING, so it looks like it. A new turn appearing at full height in one frame is a
    developer-tooling cut: everything under it jumps and the reader loses the line they were on. It drifts up and
