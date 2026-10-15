@@ -265,8 +265,8 @@ box (`USE_ENV=1`). Without it they use a scripted fake backend, which is what CI
 ## 9. Working on it
 
 - **Branch and open a PR** rather than committing to `main`. CI is what catches what one change broke for
-  someone else, and a local `npm test` is not that check — it does not run the e2e suite, three Node
-  versions, or the real-CPython tests.
+  someone else, and a local `npm test` is not that check — it does not run the e2e suite or the
+  real-CPython tests.
 - **Read [AGENTS.md](AGENTS.md) before changing anything structural.** It is long because the surprises are
   real: which file runs in which world, why the loop lives client-side, why a privileged fetch must
   validate its own target. Most of it exists because someone got it wrong once.

@@ -55,7 +55,7 @@ fi
 #    change, so on a normal commit this is a no-op.
 #
 #    CI already blocks a stale schema — tests/export-schema.test.mjs regenerates and diffs, in the `test`
-#    job on all three Node versions (verified: it fails on exactly this state). This hook is not a second
+#    job (verified: it fails on exactly this state). This hook is not a second
 #    gate, it is the same gate arriving 6 minutes earlier and pointing at the fix.
 if ! node scripts/gen-export-schema.mjs >/dev/null 2>&1; then
     echo "pre-commit: the JSON Schema generator FAILED. It throws rather than emitting a partial schema —"

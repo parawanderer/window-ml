@@ -8,7 +8,7 @@ description: Open a PR and drive its CI to green — watch the run, read the FAI
 Work on this repo happens in **several sessions at once** (UI here, benchmark/pointers elsewhere), which
 is why the work goes on branches and merges through PRs: the PR is the thing that runs CI, and CI is the
 thing that catches what one session broke for another. A green local `npm test` is not that check —
-it does not run the e2e suite, three Node versions, or the real-CPython tests.
+it does not run the e2e suite or the real-CPython tests.
 
 Merging your own PR once it is green: the `merge-when-green` skill (`node scripts/merge-when-green.mjs <pr> --wait
 --merge`), which applies the merge rule and keeps a worktree's bench results.
@@ -180,7 +180,7 @@ words, the crop box, and expected-vs-actual. The workflow also writes a pointer 
 
 | Job | Catches |
 | --- | --- |
-| `test` (Node 22/24/26) | `npm run typecheck` + the whole fast suite, including real-CPython tests when the pyodide wheels cache hits |
+| `test (node 26)` | `npm run typecheck` + the whole fast suite, including real-CPython tests when the pyodide wheels cache hits |
 | `build` | that `dist/` still builds, and uploads a loadable extension |
 | `e2e (N/3)` | the built extension in a real Chromium — navigation, the SW lifecycle, layout, anything jsdom cannot represent. One third of the suite each (`--shard=N/3`); read the failing SHARD's log, not the `e2e` job's |
 | `e2e` | the three shards' verdict in one check: red if any shard was not green. Its own log only says which result it saw |
