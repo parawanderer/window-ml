@@ -90,6 +90,9 @@ forgets `use` and `alloc` the day they are added, a universal cannot.
 | host mode under the OS sandbox | `read/write(fs(roots))` less the secret-flagged paths, `exec(process)`, `net(allowlist)` |
 | plain host mode | `∅` |
 
+Every process placement's `B` also carries `alloc(process) ≤ <bound>`, the footprint maximum of the row above
+(2026-10-15); the plain host included, since the bound is the host's own and needs no sandbox.
+
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because
 the plain host publishes nothing.
@@ -112,7 +115,10 @@ realm"), so a typo in a `deny` is a broken policy the person sees rather than a 
 
 - **`net(host)` granularity.** Host alone, or host plus path prefix, as the secret scopes need? Probably the secret's
   scope carries the prefix and the algebra stays at the host.
-- **`alloc` as an effect or only a cost.** Listed here so a policy can refuse a call that would store a large value; it
-  may belong only in the cost model.
+- **`alloc` as an effect** is decided (2026-10-15): it is an effect with a bound per placement, not only a cost. For a
+  process placement the bound is a physical-footprint maximum the host enforces (a watchdog on macOS, a cgroup memory
+  maximum on Linux), the measured footprint is a fact, and a policy may lower the default or raise it within what the
+  person set ([`SHELL.md`](SHELL.md), "Every process has an owner"). For a value stored by the extension it stays the
+  size cap the pointer store already applies.
 - **Composition across a pipe.** A pipe's effect is the union of its stages'; whether a policy sees the union or each
   stage is the shell spec's to decide.

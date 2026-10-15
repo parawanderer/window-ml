@@ -384,6 +384,33 @@ The order across every spec this one depends on, and the sessions building them:
    asking, and `shellSandboxed` is false).
 4. **Placement**: a script naming only `ml.sh` evaluated at the host.
 5. **The host on the hub** as a desktop runtime: a shell on another machine.
+6. **Process ownership and the memory bound** (decided 2026-10-15, after the crash of that evening; lane 4 after `ml.sh`
+   lands, before slice 5). See "Every process has an owner" below.
+
+## Every process has an owner, and a memory bound (decided 2026-10-15)
+
+The crash of 2026-10-15 was a run that outlived the session that started it, holding 15 GB that nobody could name without
+reading a Jetsam report and a shell's command line. The host already knows the run, the step and the session behind
+every spawn, because the run log and the pointer seeds need them. That table is made the ONE owner table, and two rules
+follow from it, both the host's and both defaults a policy may change:
+
+- **Ownership.** Each spawn runs in its own process group. The port closing is the signal that the owner is gone: the
+  default kills the group; the alternative a policy can choose parks it on an ORPHAN list the status and the resource
+  panel show, with a timeout after which it is killed anyway. A process outliving its owner silently is impossible by
+  construction, and "whose is this" is a read of the table, never of `ps`.
+- **The memory bound** is not a new concept: it is the enforcer's bound for `alloc` at the process placement
+  ([`EFFECTS.md`](EFFECTS.md)), judged like any other effect, with a default per placement a policy may lower or raise
+  within what the person set. It is enforced on PHYSICAL FOOTPRINT, never on address space: an `RLIMIT_AS` fails JITs,
+  Node and mimalloc for reserving ranges they never touch. On macOS the host runs a watchdog reading the process's
+  footprint and kills the group past the bound; on Linux it places the group in a transient cgroup with a memory maximum
+  before it execs, which bwrap cannot do and the host can. The measured footprint is a FACT the policy sees and the run
+  log records, and a spawn is a span on the resource panel's event lane beside the backend's VRAM and RAM, where memory
+  is already drawn.
+
+The boundary: the host owns what it spawned and nothing else. Processes a person's own shells start are outside it; a
+development machine's suites are governed by the test runner's own slot in the bench's memory ledger
+(`scripts/test.mjs`), and the two tables may become one VIEW later, which is a panel, not a mechanism. The runtime never
+becomes a monitor for the rest of the machine, for the same reason a hub is not an execution environment.
 
 ## The host's language: Rust, a sibling of the box connector (decided 2026-10-15, replacing Node)
 
