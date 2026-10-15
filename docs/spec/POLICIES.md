@@ -206,8 +206,10 @@ team showed that constant probes are excluded by name (`c.host !== "<probe>"`) a
 proposal. Random names are not enough: the dialect has `startsWith`, `endsWith` and `split`, so a policy can exclude
 probes by SHAPE (`!c.host.endsWith(".invalid")`) and still match every real site. The rule is that the probe set carries
 no fixed marker a policy could key on: random labels of random length under common public suffixes (`.com`, `.org`,
-`.net`) as well as the reserved ones, a SIBLING of each host the proposal matched (same public suffix, a different random
-label; a policy written for `shop.com` that also admits `<random>.com` reaches past the run), a path and a scheme variant
+`.net`) as well as the reserved ones, a SIBLING of each host the proposal matched at EVERY label depth (`a.b.c.d` gives
+`<random>.b.c.d`, `<random>.c.d`, `<random>.d`; a policy written for `shop.com` that also admits `<random>.com` reaches
+past the run, and one written as `endsWith(".github.io")` is caught by `<random>.github.io`, which a last-label sibling
+would miss; no public suffix list is needed), a path and a scheme variant
 of a matched URL, plus loopback and a private address, which stay fixed because reaching them is always past any site. A
 zero-stray result is reported as "matched none of the N unrelated sites it was tried on", never as "reaches no other
 site": outside the decidable fragment a measurement is a sample, and the card says so.
