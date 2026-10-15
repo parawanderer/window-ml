@@ -89,6 +89,22 @@ body, and a code client (a Python cell, a survey's pipe) computes over a prefix.
 the way the table slices did) and is not assigned to a lane this round; until it lands, a `value` answer for a
 truncated capture carries `truncated: true` and the full size, and every client surfaces it.
 
+## Status (2026-10-15, end of the first day)
+
+- **Lane 4 is done for this round**: root I as `window-ml-host` v0.1.0 (+ its PRs #2 to #4), root F merged (#683),
+  results in `LANE_4_RESULT_I.md` and `LANE_4_RESULT_F.md` (#687). Open: Linux sandbox enforcement is unverified; its CI
+  fix waits on Shane pushing the host repo's `ci/linux-sandbox` branch.
+- **Lane 2**: root D merged (#672, result #676); root E and the first consumer in progress. Its red-team pass found and
+  fixed a hole in the shipped dialect (`Object.assign` into a foreign target, #675).
+- **Lane 3**: the corpus count and the shared vectors in PR #677; root H next.
+- **Lane 1**: root A (the `ml` wire) in PR #678. Its red-team pass found that the hardened `python_exec` sandbox reaches
+  JavaScript and the network. **The lockdown is owned OUTSIDE the lanes**, by the red-team session, built from
+  [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md): the interim mitigations PR first, then the vectors, then the defence.
+  The lane 1 session finishes its root A result file and a design note for the `ml` message channel and then STOPS;
+  a fresh session takes lane 1 forward (`ml` in Pyodide, root C) from the plan, those two documents and the merged
+  lockdown, because the first session's context carries the escape work and is stopped on anything near the sandbox.
+- **Added roots**: J (whole text captures in the value store) and K (registering a program), both unassigned.
+
 ## The lanes
 
 Each lane's second task is unblocked by its own first one, so a session never waits on another lane to have work.
