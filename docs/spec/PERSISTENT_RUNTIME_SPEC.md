@@ -74,6 +74,15 @@ every call. This is the real unlock and its own body of work — track separatel
 So the two runtimes diverge on purpose: **JS = one shared page kernel; Python = per-run
 kernel.**
 
+**Reconciled with "one namespace" (2026-10-15).** [`SHELL.md`](SHELL.md) says the model knows ONE namespace
+reachable in two languages. Both hold: the run's namespace, as the worker sees it, is a map from name to
+HANDLE, each pointing at where its value lives (the page heap for `ml.state`, the Pyodide heap, the process
+host), and reading a value from the other language is a dereference, by copy or as a pointer. Where values
+live stays asymmetric as above; what the model sees is one namespace. The Python half below is superseded in
+two places by [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md): there is no `env` parameter (the namespace always
+persists per run, and a reset is TOLD to the run), and there is no `mode` (dialect membership decides, as for
+JS `exec`). The scope manifest and the sequencing stand.
+
 ## Python design (`python_exec` gains `env`)
 
 ```jsonc

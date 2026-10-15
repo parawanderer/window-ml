@@ -54,6 +54,11 @@ A yes/no "readonly" flag is not enough. Each function carries an effect signatur
 An effect may depend on an argument's VALUE: pandas `df.sort_values(…, inplace=True)` mutates `df`, and with
 `inplace=False` it is pure. So an effect signature can be a function of the arguments, like a cost (below).
 
+These five terms are the authoring vocabulary. What a policy reads is their projection onto the shared algebra of
+(operation, resource) pairs in [`EFFECTS.md`](EFFECTS.md): `mutates(i)` is `write(heap(arg i))`, which the interpreter
+resolves to owned or unowned at the call; `reads-external` is `read(entropy)`; `external` is `unknown` unless the manifest
+names the resource. The algebra is what lets one policy read a library call, a program call and a fetch alike.
+
 Two things the signature must also say, or the rest means nothing:
 
 - **Callbacks.** For a higher-order function, which arguments get called, and that they are called BACK THROUGH THE
@@ -190,14 +195,16 @@ export default {
 };
 ```
 
-## Examples: Python (hypothetical)
+## Examples: Python
 
-**There is no Python read-only dialect: none of this exists, even in part.** Everything built so far is JavaScript,
-the main REPL language here. (`python_exec`'s `mode: "readonly"` shares only the name: it cuts the sandbox's network
-and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and tracks no
-ownership.) A Python implementation of this concept starts with a Python-subset interpreter with the same three
-properties: ownership, a step budget, refusal on anything outside it. The manifest format would be shared, and the
-native leaves here are C extensions, as builtins are in JS.
+**A Python read-only dialect is decided and not yet built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), 2026-10-15); until
+it exists everything built is JavaScript. (`python_exec`'s `mode: "readonly"` shares only the name: it cuts the
+sandbox's network and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and
+tracks no ownership; the dialect replaces it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
+few native libraries to worry about, while in Python every useful cell is numpy or pandas, so these examples are the
+ones that matter first. The parser is `ast.parse`, the evaluator runs in-process with the values, and the native leaves
+are C extensions, as builtins are in JS. Tier 1 is the practical tier for them (no charge hook inside a C loop); tier 3
+is richer than in JS, because much of the stdlib is pure Python the interpreter can step into.
 
 Inline, as decorators in a pure-Python library:
 
@@ -265,8 +272,10 @@ dialect may not own.
   pure-Python or pure-JS library falls inside a subset strict enough to halt?
 - **Calibration at install time.** Measuring the cost constant needs representative inputs. Where do they come from:
   the manifest, or a generator from the size measures?
-- **Granularity of a refusal.** One unlisted function refuses the whole script (and sends it to approval), as now. Or
-  could a manifest mark a function as "ask a human for this call only"?
+- **Granularity of a refusal.** One unlisted function refuses the whole script (and sends it to approval), as now, on
+  the page. Under an async evaluator (a worker-side survey, a Python dialect cell) a gated call can instead SUSPEND on
+  a card for that call only ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"); whether a manifest may mark a function
+  "ask for this call" and get the same treatment is the remaining half.
 
 ## Related
 
@@ -276,9 +285,11 @@ dialect may not own.
   which every manifest-driven extension inherits.
 - [`docs/spec/SECRET_HANDLES.md`](SECRET_HANDLES.md): the same move ("what the dialect cannot say, the model cannot
   do") applied to credentials.
-- [`docs/spec/SHELL.md`](SHELL.md): the same manifest with PROGRAMS in place of libraries (effect per program,
-  subcommand and flag), which supplies the facts the free tier of `ml.sh` is decided on.
+- [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md): the same idea with PROGRAMS in place of libraries (effect per program,
+  subcommand and flag, which arguments are paths, where operands start, whether it runs or echoes), split out on
+  2026-10-15 because it needs none of the cost tiers and should not wait on them; it supplies the facts the free tier
+  of `ml.sh` ([`SHELL.md`](SHELL.md)) is decided on.
+- [`EFFECTS.md`](EFFECTS.md): the algebra every effect vocabulary projects onto.
+- [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md): the consumer that makes the Python examples real.
 - [`docs/spec/POLICIES.md`](POLICIES.md): what DECIDES on those facts. A manifest describes a call the same way for
   everyone; a policy, the person's, decides whether it needs them, and the free tier is the built-in default policy.
-  The two effect vocabularies (this spec's, about calls inside the interpreter, and the shell's, about processes) are an
-  open question there.
