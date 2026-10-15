@@ -59,7 +59,8 @@ const statusListeners = new Set<() => void>();   // state: plumbing — the capa
 defineState({
     id: "shell.host", scope: "browser", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
     describe: "The process host behind ml.sh: whether it is connected, its version, whether calls run under the OS sandbox, and the workspace roots it was configured with. An eviction closes the port, and the host deletes the output it held.",
-    read: () => ({ ...status, inFlight, held }),
+    // Nothing while ml.sh is off and the host idle: a session with nothing live must read as such (the Run state panel).
+    read: () => (status.enabled || inFlight || held ? { ...status, inFlight, held } : undefined),
 });
 
 /** The settings as one string: a different string is a different session. */

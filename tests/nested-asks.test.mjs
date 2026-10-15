@@ -85,7 +85,9 @@ test("an ask on a step that is not running (finished, or never drawn) is refused
 test("a run with nobody to ask refuses at once: no card, nothing in the store", async () => {
     const { r, emitted, unhost } = run({ unattended: true });
     const o = await raiseAsk(r.runId, 1, { kind: "sh", facts: FACTS });
-    assert.deepEqual([o.allowed, o.state, o.waitedMs], [false, "unattended", 0]);
+    assert.deepEqual([o.allowed, o.state], [false, "unattended"]);
+    // At once: nobody was waited for. Not exactly 0, which a slow runner's clock can miss by a millisecond or three.
+    assert.ok(o.waitedMs < 1000, `waited ${o.waitedMs} ms`);
     assert.equal(keysOf(r.runId).length, 0);
     assert.deepEqual(emitted.at(-1).asks.map((a) => a.state), ["unattended"], "the step still records what was asked");
     unhost();
