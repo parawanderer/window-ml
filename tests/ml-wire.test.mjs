@@ -5,7 +5,7 @@
 // copy rules. What a hostile page must not get from the wire is tests/redteam-ml-wire.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { serveWireCall, toWire, wirePointer, WireError } from "../src/sw/ml-wire-serve.ts";
+import { serveWireCall, toWire, wirePointer, WireError, openWireClient, deliverIfOpen } from "../src/sw/ml-wire-serve.ts";
 import { ML_READONLY_METHODS } from "../src/readonly-exec/policy.ts";
 import { wireRun, wireCall } from "./ml-wire-harness.mjs";
 
@@ -87,6 +87,22 @@ test("ask: a gated call answers ask first, then its value or a Denied once the p
     await serveWireCall(req("send", ["y"]), ctxOf({ send: { run: () => { throw new Error("ran"); }, gate: async () => ({ ask: "?", decided: Promise.resolve(false) }) } }, { later: (a) => no.push(a) }));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(no[0].error.code, "Denied", "a declined call never runs");
+});
+
+test("an ask's final answer is pushed as ML_ANSWER to an open client, and a closed client is sent nothing", async () => {
+    const sent = [];
+    const { handle, close } = openWireClient({ from: { kind: "offscreen" }, run: "r1", realm: "full" });
+    let decide;
+    const members = { send: { run: (x) => ({ sent: x }), gate: async () => ({ ask: "Send x?", decided: new Promise((r) => { decide = r; }) }) } };
+    const later = (a) => deliverIfOpen(handle, a, (m) => sent.push(m));
+    const first = await serveWireCall(req("send", ["x"]), ctxOf(members, { later }));
+    assert.deepEqual(first, { seq: 7, ask: { card: "Send x?" } });
+    decide(true);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(sent, [{ type: "ML_ANSWER", client: handle, answer: { seq: 7, value: { sent: "x" } } }], "the push carries the client and the seq");
+    close();
+    assert.equal(deliverIfOpen(handle, { seq: 8, value: 1 }, (m) => sent.push(m)), false);
+    assert.equal(sent.length, 1, "a closed client is sent nothing");
 });
 
 test("a gated call whose client closed while it waited never runs its member, and a card unanswered past the cap fails", async () => {

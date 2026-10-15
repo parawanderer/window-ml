@@ -1,7 +1,8 @@
 // exec-routing.ts — where an approved exec of a worker-built run runs: the page's world, an isolated world, or nowhere.
 
 // A script run in the page's main world shares a realm with every script on the page, so whatever it is handed there is
-// the page's too: the pointer values it names, and `ml.current` (docs/spec/SITE_ACCESS.md, part 4). Such a script, and
+// the page's too: the pointer values it names, `ml.current` (docs/spec/SITE_ACCESS.md, part 4), and the process host
+// behind `ml.sh`, whose output the page would read and whose calls it could make (docs/spec/SHELL.md). Such a script, and
 // every approved exec on a page the person has not approved, runs in a world of its own instead. Everything else runs
 // in the world the call names (`world`), else the default world: the main world, which is full parity with how the
 // page's own scripts see it, unless the build or the stored setting makes it the isolated one.
@@ -12,13 +13,15 @@ import type { ExecWorld } from "../contract/contract-config";
 
 /** What an approved exec's source asks for, read lexically. A miss is safe: what a script does not name literally is
  *  not sent with it (named-reads.ts), and the main world has no `ml.current`, so it fails there rather than leaking. */
-export interface ExecNames { current: boolean; pointers: boolean }
+export interface ExecNames { current: boolean; pointers: boolean; sh: boolean }
 
 /** Read what a script names. */
 export function execNames(js: string): ExecNames {
     const { code, expansions } = expandPointers(js);
     return {
         current: /\bml\s*\.\s*current\b/.test(code),
+        // `ml["sh"]` and a destructured `{ sh }` are misses, and safe ones: the main world has no `ml.sh` to reach.
+        sh: /\bml\s*\.\s*sh\b/.test(code),
         pointers: expansions.length > 0 || namedReads(code).length > 0 || /\bml\s*\.\s*dereference\s*\(/.test(code),
     };
 }
@@ -28,7 +31,7 @@ export interface Isolation { userScripts: boolean; cdp: boolean }
 
 /** Why a route was taken, for the execution log and the note the model is given. `requested`: the call's `world`;
  *  `default`: the default world, isolated. */
-export type ExecReason = "plain" | "current" | "pointer" | "unapproved-page" | "requested" | "default";
+export type ExecReason = "plain" | "current" | "sh" | "pointer" | "unapproved-page" | "requested" | "default";
 
 /** Where one approved exec runs. `main` with a `note` is the approved-page fallback when no isolation is available. */
 export type ExecRoute =
@@ -40,8 +43,9 @@ export type ExecRoute =
 const ENABLE = "Turn on Debugger-based actions, or allow user scripts, in window.ml Settings → Advanced → \"Debugger-based actions and user scripts\"";
 
 /** Why policy keeps a script out of the page's world, as a `world: "page"` refusal says it. */
-const FORCED: Record<"current" | "pointer" | "unapproved-page", string> = {
+const FORCED: Record<"current" | "sh" | "pointer" | "unapproved-page", string> = {
     current: "it reads ml.current",
+    sh: "it runs programs through ml.sh",
     pointer: "it reads pointer values",
     "unapproved-page": "this site is not approved for window.ml",
 };
@@ -53,8 +57,8 @@ export interface WorldAsk { world?: unknown; defaultWorld?: ExecWorld }
  * Decide where an approved exec of a worker-built run runs.
  *
  * POLICY first: isolated when the page is not approved (whatever the script names), or when the script names
- * `ml.current` or a pointer, and `world: "page"` never overrides it (refused, with why). With no isolation available:
- * refused on an unapproved page and for `ml.current` (which the main world does not have); a pointer-naming script on
+ * `ml.current`, `ml.sh` or a pointer, and `world: "page"` never overrides it (refused, with why). With no isolation
+ * available: refused on an unapproved page and for `ml.current` and `ml.sh` (which the main world never has); a pointer-naming script on
  * an approved page runs in the main world as before, with a note (owner's decision, 2026-10-08), unless the call asked
  * for `world: "isolated"`.
  *
@@ -73,7 +77,7 @@ export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask
     if (world !== undefined && world !== "page" && world !== "isolated")
         return { where: "refused", reason: "requested", result: `Error: world must be "page" or "isolated", or omitted.` };
     const names = execNames(js);
-    const forced = !approvedPage ? "unapproved-page" : names.current ? "current" : names.pointers ? "pointer" : null;
+    const forced = !approvedPage ? "unapproved-page" : names.sh ? "sh" : names.current ? "current" : names.pointers ? "pointer" : null;
     const isolated = (reason: ExecReason): ExecRoute | null =>
         iso.userScripts ? { where: "isolated", how: "userScripts", reason } : iso.cdp ? { where: "isolated", how: "cdp", reason } : null;
     const unavailable = (reason: ExecReason): ExecRoute =>
@@ -90,6 +94,8 @@ export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask
             where: "refused", reason: forced,
             result: forced === "current"
                 ? `Error: this exec reads ml.current, which only an isolated world is given, and none is available. Read ml.current in a read-only exec and act on the page in the next. ${ENABLE}.`
+                : forced === "sh"
+                ? `Error: this exec runs programs through ml.sh, which only an isolated world is given, and none is available. ${ENABLE}.`
                 : `Error: this page's site is not approved for window.ml, so an approved exec runs here only in an isolated world, and none is available. ${ENABLE}, or use the other tools.`,
         };
     }

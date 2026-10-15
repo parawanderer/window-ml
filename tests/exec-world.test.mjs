@@ -22,9 +22,9 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 // --- the route: every input ---
 
-const SCRIPTS = { plain: "document.title = 'x'; return 1", pointer: "return @tool:exec.length", current: "return ml.current.messages.length" };
+const SCRIPTS = { plain: "document.title = 'x'; return 1", pointer: "return @tool:exec.length", current: "return ml.current.messages.length", sh: "return (await ml.sh.run([\"ls\"])).code" };
 /** Each policy that forces isolation, and none: [approved page, script]. */
-const FORCED = { pointer: [true, SCRIPTS.pointer], current: [true, SCRIPTS.current], "unapproved-page": [false, SCRIPTS.plain], none: [true, SCRIPTS.plain] };
+const FORCED = { pointer: [true, SCRIPTS.pointer], current: [true, SCRIPTS.current], sh: [true, SCRIPTS.sh], "unapproved-page": [false, SCRIPTS.plain], none: [true, SCRIPTS.plain] };
 const AVAIL = { userScripts: { userScripts: true, cdp: false }, cdp: { userScripts: false, cdp: true }, none: { userScripts: false, cdp: false } };
 
 /**
@@ -57,7 +57,7 @@ test("the route for every world asked, default world, isolation and policy", () 
         if (r.where === "refused") assert.match(r.result, /^Error: /);
         n++;
     }
-    assert.equal(n, 3 * 2 * 3 * 4);
+    assert.equal(n, 3 * 2 * 3 * 5);
 });
 
 test("the default world, given nothing: a plain exec on an approved page runs in the page's world, as before this parameter", () => {
@@ -70,7 +70,7 @@ test("each refusal of a world says why and what to do instead, and never suggest
     const none = AVAIL.none;
     const iso = routeExec(SCRIPTS.plain, true, none, { world: "isolated" }).result;
     assert.match(iso, /world "isolated" was asked for and no isolated world is available.*Settings → Advanced.*or omit world\.$/);
-    for (const [forced, why] of [["pointer", "it reads pointer values"], ["current", "it reads ml.current"], ["unapproved-page", "this site is not approved for window.ml"]]) {
+    for (const [forced, why] of [["pointer", "it reads pointer values"], ["current", "it reads ml.current"], ["sh", "it runs programs through ml.sh"], ["unapproved-page", "this site is not approved for window.ml"]]) {
         const [approved, js] = FORCED[forced];
         const page = routeExec(js, approved, AVAIL.userScripts, { world: "page" }).result;
         assert.equal(page, `Error: world "page" is refused here: ${why}, so this exec runs only in an isolated world. Omit world.`);

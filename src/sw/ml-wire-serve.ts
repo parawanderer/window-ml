@@ -215,3 +215,18 @@ export function openWireClient(c: { from: WireFrom; run: string | null; realm: W
     clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => "") });
     return { handle, close: () => { clients.delete(handle); } };
 }
+
+/**
+ * Push the final answer to a call that answered `ask` first, as `ML_ANSWER`, if its client is still open. A closed
+ * client (its code finished, the worker restarted it) is sent nothing: whatever now holds the handle's channel did not
+ * ask.
+ * @param handle the client
+ * @param answer the answer
+ * @param send how the push leaves (`chrome.runtime.sendMessage` in the worker)
+ * @returns whether it was sent
+ */
+export function deliverIfOpen(handle: string, answer: MlWireAnswer, send: (m: { type: "ML_ANSWER"; client: string; answer: MlWireAnswer }) => void): boolean {
+    if (wireClient(handle) === undefined) return false;
+    send({ type: "ML_ANSWER", client: handle, answer });
+    return true;
+}

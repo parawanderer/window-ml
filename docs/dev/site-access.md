@@ -326,12 +326,15 @@ sent no answer content at `finish`, and answers none.
 rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs`, `tests/exec-world.test.mjs`):
 
 - A plain script on an approved page: the page's main world, full parity.
-- A script naming `ml.current` or a pointer (read lexically by `execNames`; a miss fails closed, since an unnamed
-  read is not sent and the main world has no `ml.current`), or any script on a page that is not approved: an
+- A script naming `ml.current`, `ml.sh` or a pointer (read lexically by `execNames`; a miss fails closed, since an
+  unnamed read is not sent and the main world has neither `ml.current` nor `ml.sh`), or any script on a page that is
+  not approved: an
   isolated world (`runIsolatedExec`, `src/sw/sw-isolated-exec.ts`). That is `chrome.userScripts.execute` in the run's
   world `wml-<runId>` when the person has allowed user scripts, else a CDP isolated world when the CDP setting is on.
-- Neither available: refused on an unapproved page and for `ml.current`; a pointer script on an approved page runs in
-  the main world with a note (owner's decision).
+- Neither available: refused on an unapproved page and for `ml.current` and `ml.sh`; a pointer script on an approved
+  page runs in the main world with a note (owner's decision), unless it also names `ml.sh`, which outranks the pointer
+  (reason `sh`), so a script reaching the process host never runs where the page's scripts could read its output or
+  make its calls (docs/spec/SHELL.md, "The routing rule this adds").
 - The call's `world` (owner's decisions, 2026-10-14): `"isolated"` runs isolated or is refused, never downgraded to the
   main world; `"page"` runs in the main world, and is REFUSED wherever the rules above isolate (a pointer, `ml.current`,
   an unapproved page), with a sentence saying why and to omit `world`. A malformed value is refused.
