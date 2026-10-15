@@ -69,7 +69,13 @@ list of CVEs look the way they do:
    checks it, and a warm-library vector (specialize a pure-Python function, then run it restricted and watch the gate
    fire) guards it forever. Per-form guards in the specialized instructions (deopt when restricted) are the later
    optimisation if the measured cost of the switch matters; the same vectors then prove they lose nothing. The cost is
-   measured on the corpus's own cells, not on a benchmark suite.
+   measured on the corpus's own cells, not only on a benchmark suite. **Measured** (lane 3, 2026-10-15, slice 1 at
+   `parawanderer/cpython` branch `ml/restricted-mode`, 5b1d921): pyperformance's fourteen pure-Python benchmarks run
+   1.66x slower with specialization off (geometric mean, stock and no-spec interleaved per benchmark over three rounds;
+   `json_loads` 1.04x, `nbody` 2.47x), so specialization is most of 3.11+'s speedup. The 684 real bench cells (median
+   152 µs, mostly pandas and numpy C) run about 1.06x (1.04x weighted by time; noise about 0 to 14%). So the switch is
+   right for the first slice and real cells barely notice it, and the per-form guards are the second slice, needed as
+   soon as tier-3 pure-Python library code carries the work rather than C leaves.
 2. **Tier 3 is the default.** A pure-Python library function called from a restricted frame simply runs under the gates,
    at native speed, with no manifest: it stays inside them or raises `NotInDialect`. Only C leaves need manifest
    entries, which is where the library manifest spec was always going to earn its keep ("interpret my body" costs
