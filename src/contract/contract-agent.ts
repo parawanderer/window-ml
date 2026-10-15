@@ -73,6 +73,10 @@ export interface ToolResult {
      *  worker to capture and describe, in place of a picture the page took. Set only when the run's call asked the page
      *  for it; the worker checks it field by field and uses nothing else of a page's result for the verify. */
     verifyRequest?: VerifyRequest;
+    /** The value-store key of the WHOLE text `content` was clipped from (fetch_url past its preview), so the pointer the
+     *  step mints reads the whole (docs/spec/POINTER_VALUES.md, slice 9). Only the worker stores one, and the run host
+     *  takes it only from a tool the worker ran itself (sw-run-host.ts). */
+    textValue?: string;
 }
 
 /** What a page asks the worker to picture after an action, as plain data: the area around a point (the element's

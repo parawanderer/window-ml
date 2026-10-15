@@ -294,6 +294,7 @@ test("with no isolation on an approved site: a pointer script runs in the page a
     assert.equal(ptr.toPage.length, 2);
     assert.match(ptr.toPage[1].reads[0].value, /FROM THE PAGE/, "sent with the call, as before part 4");
     assert.match(ptr.results[1], /Ran in the page's own world, where its scripts can read the pointer values/);
+    assert.match(ptr.results[1], /A stored text was sent as its preview; the dereference tool or a read-only exec reads the whole\./, "the one placement that reads the preview says so");
     const cur = await isoRun(["window.b = 1; return ml.current.messages.length"], { us: "off" });
     assert.equal(cur.toPage.length, 0);
     assert.match(cur.results[0], /^Error: this exec reads ml\.current/);

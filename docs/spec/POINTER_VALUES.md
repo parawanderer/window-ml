@@ -1,6 +1,6 @@
 # Pointers that address values
 
-**Status: built.** Slices 1 to 8 of the Implementation order below were finished on 2026-09-17 (the last two are
+**Status: built.** Slice 9, whole text captures, landed with root J of the REPL plan (2026-10-15). Slices 1 to 8 of the Implementation order below were finished on 2026-09-17 (the last two are
 #124 and #126). Written 2026-09-16, out of the table work (`fetch_url` returning parsed CSV and Parquet, PR #74). It
 describes what a `@tool:` pointer should BE, so that the pieces built on top of pointers stop each inventing their own
 answer.
@@ -283,6 +283,23 @@ Each slice ships and is useful without the next:
    directly (`services().storedTable`; every frame is extension-origin), decoding with `storedColumns`. A host with no
    store (the chat page) passes `null`, and the view works over the preview and says so.
 
+9. **Whole text captures** (root J of `docs/plan/repl/`, 2026-10-15). A `fetch_url` text body past its 4,000-character
+   preview keeps its WHOLE body in the store (`format: "text"`), and the pointer the step mints names it on
+   `TokenValue.value`, the field a table's key uses. The model's view is unchanged: the same preview and its
+   `[first 4000 of N chars]` note. A read by pointer computes over the whole, and the same read answers the same wherever
+   it runs: the dereference tool (its result clipped at `UI_OUT_CAP`, so an unpiped read still fits a context and says
+   how large the whole is), the read-only dialect's `ml.dereference`, an approved `exec` in an isolated world (its
+   pre-reads and re-pipes), and the `ml` wire, where a pipe runs at the store and only its result crosses, and an
+   unpiped read past `WIRE_VALUE_CAP` answers a `pointer`. The single deliberate exception is an approved pointer-naming `exec`
+   in the page's MAIN world, reached only where no isolated world is available (`routeExec`'s fallback, the owner's
+   decision of 2026-10-08): it is sent the PREVIEW, as before, and its note to the model says so and names what reads
+   the whole. An approved page is approved to use window.ml, not to read everything a run fetched from other sites, so
+   the whole does not follow a script into the page (decided, Shane, 2026-10-15). The same budget, claim and eviction as a table; an evicted body fails the
+   read with the store's reason. Only a WORKER-built run keeps one: the store hook is the worker's `ml` alone, and the
+   run host takes the key only off an envelope the worker made by running the tool itself, never off a page's answer.
+   Not kept: a body the fetch clipped at its read cap (8 MB), a page-hosted run's fetch, and every other clipped text
+   (an `exec` or `python_exec` output, a page's answer), whose pointers read what they did before.
+
 The shippable step before all of it, and worth doing now: `python_exec` accepts `@tool:<id>` when the pointer's
 table is complete (`!truncated`), and refuses a prefix with an error naming the URL form. It gives the idiom
 immediately for small tables, where the preview already is the value, and refuses rather than samples where it
@@ -315,7 +332,8 @@ of `tests/e2e/table-demo.mjs` walks the same path on screen.
   generous, but disk the user did not ask to spend is still disk: the budget should probably be a setting, and
   `navigator.storage.estimate()` should cap it below whatever the quota actually is.
 - **Other large values.** An image or a very long text output has the same preview-versus-value split, less
-  sharply. The store is not table-specific, but nothing needs it except tables yet.
+  sharply. A fetched text body is stored whole since slice 9; an `exec` or `python_exec` output past `UI_OUT_CAP` and
+  a page-hosted run's fetch are not yet.
 - **`@tool:id:in:<line>`** (parked) addresses PART of a value. It should compose with this — a line range over a
   stored text value — rather than grow its own addressing.
 

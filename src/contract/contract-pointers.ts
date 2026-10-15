@@ -25,7 +25,8 @@ export interface DerefMeta {
      *  {@link TableLike}, so a dereferenced table describes itself exactly as a fetched one does: `shape`,
      *  `columns`, `dtypes`, `rows`. The read-only dialect can traverse it as plain data. */
     table?: TableLike;
-    /** The value-store key of the WHOLE table when `table` is only its preview. Present only for a run that holds it. */
+    /** The value-store key of the WHOLE value when the read holds only its preview: a table's (`table` is the preview) or
+     *  a fetched text's. Present only for a run that holds it. */
     value?: string;
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;

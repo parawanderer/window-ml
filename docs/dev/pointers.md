@@ -147,6 +147,18 @@ service worker's side is `sw-values.ts`:
   and `FetchResult.bodyLines` lets the page's preview report the real row count. A body clipped at a read cap is never
   kept, since a stored prefix would later read as the whole file. The `FETCH_URL` handler stores it only AFTER the redirect guard has released the
   result, and names it on `FetchResult.valueKey`.
+- **Text capture** (POINTER_VALUES.md, slice 9). `fetch_url`'s text path, past its 4,000-character preview, keeps the exact
+  `body` the preview was cut from through `ml._keepText` (`storeText`), which only the worker's `ml` has, and returns
+  the key as `ToolResult.textValue`. `envelopeFrom` is shared with the page, so the run host forwards `textValue` only
+  off an envelope `runLocalTool` returned (a per-run `WeakSet`); the loop puts it on `TokenValue.value` and claims it
+  like a table's. Readers wait on `readStoredText(key, run)`, which refuses a key the run does not hold: the
+  dereference tool through `opts.readText` (clipped at `UI_OUT_CAP`), and every worker-side reader through `derefWhole`
+  (worker-readonly-ml.ts): the dialect's `ml.dereference`, the wire's, an isolated `exec`'s pre-reads (`preReadsFor`)
+  and its re-pipes (`IsoDeps.deref` may wait). The resolver itself (`derefByRun`) stays synchronous and holds only the
+  preview. One placement still reads it: an approved pointer-naming `exec` that runs in the page's MAIN world, which
+  happens only where no isolated world is available (`routeExec`'s fallback), is sent the preview, as before, and its routing note says
+  so (POINTER_VALUES.md, slice 9, names it as the one deliberate exception). tests/text-captures.test.mjs enumerates the placements.
+  A body the fetch clipped at its read cap is not kept.
 - **Claim.** There are two claims, and the second is what makes the first safe to have. Handing the key to a tab claims the
   value for that TAB (`page:<tabId>`), at the two points a key ever reaches a page: the `FETCH_URL` response and a
   `PYTHON_EXEC` result whose returned frame was stored. That is a record of what the worker disclosed, not a request from

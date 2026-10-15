@@ -21,6 +21,7 @@ import { promptSurfaceNote } from "./prompt-surface";
 import { clientOf } from "./current-client";
 import { tableOf } from "../table/table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "../contract/contract-chat";
+import { clipOut } from "../dom/dom";
 import { formatBytes } from "../resource/resource-model";
 import { type Capacity } from "../resource/resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
@@ -39,7 +40,10 @@ export interface ToolMeta { name: string; requiresApproval?: boolean; capabiliti
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
 // the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
-export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("../contract").ReusedGrant[]; remoteMs?: import("../contract").RemoteTiming; }
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("../contract").ReusedGrant[]; remoteMs?: import("../contract").RemoteTiming;
+    /** The value-store key of the whole text `result` was clipped from; the host sets it only for a tool the worker ran
+     *  itself (ToolResult.textValue). */
+    textValue?: string; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
@@ -310,6 +314,10 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  are held for its TAB, claimed by the worker when it disclosed the key (background.ts, pageValueSession), so
      *  there is nothing for the page to claim and nothing it could claim that it was not already given. */
     claimValue?: (key: string) => void;
+    /** The whole of a stored TEXT a pointer names (`TokenValue.value` on a text pointer), for the dereference tool.
+     *  Only the background host passes it, and it reads only a value the run holds; without it a read stays on the
+     *  preview, as before. Throws the store's reason for a value that is gone. */
+    readText?: (key: string) => Promise<string>;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -574,7 +582,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                  ...(claim ? { claim } : {}) };
     };
 
-    const derefLocally = (args: Record<string, unknown>, step: number, seq: number): ToolRunResult => {
+    const derefLocally = async (args: Record<string, unknown>, step: number, seq: number): Promise<ToolRunResult> => {
         const ref = String(args?.token ?? "").trim();
         const pipe = args?.pipe == null ? "" : String(args.pipe);
         // NO argument is a legitimate read: the INVENTORY of what this session holds. It used to be reachable
@@ -596,9 +604,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const when = age <= 0 ? "captured this step" : `captured at step ${v.step}, ${age} step${age === 1 ? "" : "s"} ago — the page may have changed since`;
         // The model's own label leads (it is what it will recognise), but the DERIVED description always
         // follows it — the label is a claim it wrote, the description is what the value actually is.
-        const head = `@tool:${v.id} (${nameOf(v)}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}${extraBeyondModel(v)}, ${when}.`;
         try {
-            const text = derefPipe(v, slot, pipe);
+            // A text pointer whose whole body is in the value store reads THAT, and says how large it is; the read is
+            // clipped like the panel's copy, so an unpiped read still fits the context and a pipe is how to go further.
+            // A whole that is gone fails the read with the store's reason, never the preview (POINTER_VALUES.md).
+            const whole = slot === "out" && v.value && v.kind !== "table" && opts.readText ? await opts.readText(v.value) : undefined;
+            const src: TokenValue = whole != null ? { ...v, full: whole } : v;
+            const read = (p: string): string => whole != null ? clipOut(derefPipe(src, slot, p), UI_OUT_CAP) : derefPipe(src, slot, p);
+            const head = `@tool:${v.id} (${nameOf(v)}${slot === "in" ? ", the call" : ""}) — ${describeToken(src)}${extraBeyondModel(src)}, ${when}.`;
+            const text = read(pipe);
             // MINT a pointer for a PIPED view. A no-pipe read really is "no new data" — the header above already
             // names the source's id, so a second handle for identical bytes would just clutter the store (the
             // reason `dereference` is excluded from `citable`). A PIPE is the case that reasoning doesn't cover:
@@ -608,7 +622,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // Minted here rather than through `citable` because the generic path would read this tool's `token`
             // PARAMETER (the pointer being read) as the model's opt-in/label. Uses the call's own seq, which the
             // generic path leaves unused for dereference, so ids cannot collide.
-            const derived = pipe.trim() && text !== derefPipe(v, slot, "") ? mintView(v, text, args, step, seq) : "";
+            const derived = pipe.trim() && text !== read("") ? mintView(v, text, args, step, seq) : "";
             // BIND the alias. `python_exec` means "the LATEST python_exec call" — a moving target that changes
             // the next time the tool runs. A model that didn't pass `token: true` at the time was never told
             // that call's id (it is minted for a citable builtin either way, just not surfaced), so the alias is
@@ -1041,7 +1055,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     : r?.type === "table" ? { ...tableOf(r.columns, r.rows, r.rowCount), ...(r.delimiter ? { delimiter: r.delimiter } : {}), ...(r.headerless ? { headerless: true } : {}) } : undefined;
                 // The WHOLE table, when the render is a preview of one the store holds: the pointer names it, so the
                 // run holds it.
-                const value = r?.type === "table" ? r.value : df?.value;
+                // Or the whole TEXT a clipped result was cut from (fetch_url past its preview), which the host passes only
+                // for a tool the worker ran itself.
+                const value = (r?.type === "table" ? r.value : df?.value) ?? (!tbl && typeof tr?.textValue === "string" ? tr.textValue : undefined);
                 if (value) opts.claimValue?.(value);
                 const looksJson = /^\s*[[{]/.test(result);
                 const kind: TokenKind = tbl ? "table"

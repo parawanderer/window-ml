@@ -193,6 +193,14 @@ export const navigateTool = function(this: MlApi, opts: { crossOrigin?: boolean 
  *
  * @returns {MlTool} A tool with `name: "fetch_url"` and `requiresApproval: true`.
  */
+/** Keep the WHOLE of a text the model is shown a preview of, and return its value-store key (undefined when it was not
+ *  kept). Only the worker's `ml` has it (worker-tools.ts): a page has no value store, so a page-hosted fetch keeps only
+ *  its preview, as before (docs/spec/POINTER_VALUES.md, slice 9). */
+export type KeepText = (text: string, source: string) => Promise<string | undefined>;
+
+/** Past this many characters a fetch_url body is shown as a preview, with a note saying how much there was. */
+export const FETCH_PREVIEW_CHARS = 4000;
+
 export const fetchTool = function(this: MlApi): MlTool {
     const ml = this;
     // Char budget for the ASK-mode reader sub-call: enough to fit a typical utility-model context
@@ -388,7 +396,12 @@ export const fetchTool = function(this: MlApi): MlTool {
                 ? `JSON schema: ${r.schema}\n\n` : "";
             // The pipe footer (size/lines) goes at the END, so the model has a reference for the doc it got.
             const buildTool = (t: string): string => `${head}${mdNote}\n\n${shapeLine}${t}${pd.footer}`;
-            return { content: buildTool(clipOut(body, 4000)), renderIn: inRender() };
+            // The whole of a body past its preview goes to the value store, so the pointer this step mints reads all of
+            // it (a piped dereference, the `ml` wire). The model's copy is the same preview either way. A body the fetch
+            // itself clipped at its read cap is never kept: stored, that prefix would later read as the whole.
+            const keep = (ml as MlApi & { _keepText?: KeepText })._keepText;
+            const textValue = keep && !r.truncated && body.length > FETCH_PREVIEW_CHARS ? await keep(body, r.url).catch(() => undefined) : undefined;
+            return { content: buildTool(clipOut(body, FETCH_PREVIEW_CHARS)), renderIn: inRender(), ...(textValue ? { textValue } : {}) };
         },
     });
 };
