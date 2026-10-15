@@ -48,6 +48,34 @@ export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "`state` (`ml.state`) persists across calls: stash results and helpers there and reuse them. Use exec only " +
     "when the other tools can't answer.";
 
+/** exec's `world` parameter, as the model reads it (exec-routing.ts decides what each value does). */
+export const EXEC_WORLD_PARAM = `"page": page JS globals. "isolated": hidden from page scripts.`;
+
+/**
+ * A run's tool definitions with exec's `world` parameter added. Only a run the worker drives is offered it: a run a page
+ * started runs its exec in that page's world and nowhere else, so there it would cost every call for nothing.
+ * @param tools the run's tool definitions, as the model is sent them
+ * @returns the same list, exec's parameters with `world` (a copy; the input is not changed)
+ */
+export function withExecWorld<T extends { name: string; parameters?: unknown }>(tools: T[]): T[] {
+    return tools.map((t) => {
+        const params = t.parameters as { properties?: Record<string, unknown> } | undefined;
+        if (t.name !== "exec" || !params?.properties || "world" in params.properties) return t;
+        return { ...t, parameters: { ...params, properties: { ...params.properties, world: { type: "string", enum: ["page", "isolated"], description: EXEC_WORLD_PARAM } } } };
+    });
+}
+
+/**
+ * Why an exec run in the page's own world refuses its `world`, or null when it runs: `isolated` is never downgraded to
+ * this world (a run the page started has no other), and any other value but `page` is malformed.
+ * @param world the call's `world` (null is omitted: some models send null for an optional field)
+ */
+export function pageWorldRefusal(world: unknown): string | null {
+    if (world == null || world === "page") return null;
+    if (world === "isolated") return `Error: world "isolated" is not available in this run, so this exec did not run. Omit world.`;
+    return `Error: world must be "page" or "isolated", or omitted.`;
+}
+
 /** `fetch_url`'s short form: what to reach for and when; the mechanics are {@link TOOL_DETAILS}. */
 export const FETCH_SHORT =
     "GET a URL via the extension (bypasses CORS; no cookies by default) to READ a raw file, a JSON API or another " +

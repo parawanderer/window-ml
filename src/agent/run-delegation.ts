@@ -17,6 +17,7 @@ import { pageTable } from "../ml/ml-python";
 import type { SubcallUsage } from "../contract/contract-debug";
 import { hintSession } from "../contract/contract-run";
 import { outputCapEscalated } from "../contract/contract-pointers";
+import { pageWorldRefusal } from "../tools/tool-details";
 import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "../tools/tool-exec";
 import { expandPointers } from "../pointers/pointer-macro";
 import { columnsViaBackground } from "../tools/deref-read";
@@ -249,6 +250,8 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     if (opts.readonlyTry) {
         if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
         if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
+        // A `world` this page's run cannot give (an isolated one) is never surveyed here in the main world: the precheck refuses it.
+        if (pageWorldRefusal((args as { world?: unknown }).world)) return { result: "", readonly: false };
         try {
             // A worker-built run's set is the worker's: the script is given its shape and reports what it changed.
             const log = opts.answerShape ? new AnswerLog(opts.answerShape) : undefined;

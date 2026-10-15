@@ -14,7 +14,7 @@ import type { ComponentChildren } from "preact";
 import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../../contract/contract-config";
 import type { VisionSupport } from "../../contract/contract-render";
 import type { LoadedModel, ServerTool } from "../../contract/contract-server";
-import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../../contract/contract-config";
+import { BUILD_DEFAULT_WORLD, DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../../contract/contract-config";
 import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../../contract/contract-render";
 import { detectGroundingModel, generatesText, producesEmbeddings } from "../../contract/contract-server";
 import { PY_PACKAGES } from "../../python/python-env";
@@ -283,6 +283,7 @@ const TIP = {
     agentSeesFocus: "Default ON. When you are not on the agent's tab, chat_metadata says where you are: the chat page (reading this run or not), another tab, or away from the browser. A run started from the extension's UI also gets that tab's site and title; a page-started run only \"another tab\". Never a full URL, never a private window. Off: nothing about where you are.",
     selfIntrospection: "Default ON. The agent may read its own run with `ml.current` in a read-only exec the extension hosts (never on the page), and its system prompt tells it so. Off: `ml.current` is absent and the prompt says nothing about it.",
     autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
+    execDefaultWorld: "Where the agent's approved `exec` runs when it does not say. **Page**: the page's own JavaScript world, where it sees the page's globals and the page's scripts can see it. **Isolated**: a world of its own on the page (user scripts, else the debugger), sharing the DOM but hidden from the page's scripts; the page's world when neither is available. **Build default**: what this build ships (page). The agent can still ask for a world per call, and an exec that reads `ml.current` or a pointer, or runs on a site you have not approved, is isolated whatever this says.",
     cdp: "Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. On by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
@@ -1709,6 +1710,14 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <div class="set-note">Use <code>chrome.debugger</code> (CDP) for what a normal page context can't: <b>click</b> cross-origin iframes / declarative-closed shadow roots, and run imperative <code>exec</code> on <b>strict-CSP / Trusted-Types</b> pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT — the only mechanism that works. Still gated by the per-action approval. Attaching flashes Chrome's <b>“is debugging this browser” banner</b> — only for these reserved actions, so the flash marks the risk.</div>
                 <CdpToggle />
                 <UserScriptsStatus />
+                <div class="set-field">
+                    <Lbl tip={TIP.execDefaultWorld}>Where exec runs by default</Lbl>
+                    <select value={c.execDefaultWorld || ""} onChange={(e: any) => setField("execDefaultWorld", e.target.value as MlConfig["execDefaultWorld"])}>
+                        <option value="">build default ({BUILD_DEFAULT_WORLD})</option>
+                        <option value="page">page — the page's own world</option>
+                        <option value="isolated">isolated — hidden from the page's scripts</option>
+                    </select>
+                </div>
                 </Section>
 
             </> : null}

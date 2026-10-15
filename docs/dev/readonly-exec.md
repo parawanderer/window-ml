@@ -416,8 +416,9 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
   (`sw-readonly.ts`, with the `ml` of `worker-readonly-ml.ts`, which reads the run's pointers in-process). Only one
   that reaches for the page is sent there, to `readonlyTry` in `run-delegation.ts`, which REFUSES every pointer read:
   a survey needing both the page and the run's pointers goes to the approval gate. Each decision is an execution-log
-  record, subsystem `routing`: `readonly-worker` (`no-page-reads` or `out-of-dialect`) or `readonly-page`
-  (`reads-page` or `refused-in-page`). The step's In is drawn in the worker too (`execCodeIn`), so a survey the
+  record, subsystem `routing`: `readonly-worker` (`no-page-reads`, `out-of-dialect`, or `world-isolated` for a
+  survey whose exec would run isolated, by its `world` or the default world, which never goes to the page's leg) or
+  `readonly-page` (`reads-page` or `refused-in-page`). The step's In is drawn in the worker too (`execCodeIn`), so a survey the
   worker answers never sends its script to the page.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
   `eval`, or through CDP on a page whose CSP forbids `eval`.

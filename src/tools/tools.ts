@@ -49,7 +49,7 @@ import { clipHeadTail, panelHead, boundedLines, ceilingNote, pageWorldResult, CO
 import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
 
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
-import { EXEC_SHORT } from "./tool-details";
+import { EXEC_SHORT, pageWorldRefusal } from "./tool-details";
 
 /**
  * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
@@ -429,9 +429,15 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 required: ["js"]
             },
             // A raise of maxChars beyond the default with no justification is DOOMED (it will just ask for one) —
-            // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card).
-            precheck: (args) => outputCapPrecheck("exec", args as Record<string, unknown>),
-            run: async ({ js: source, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+            // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card). So is
+            // a `world` this page cannot give (pageWorldRefusal).
+            precheck: (args) => pageWorldRefusal((args as { world?: unknown }).world) ?? outputCapPrecheck("exec", args as Record<string, unknown>),
+            run: async ({ js: source, maxChars, maxCharsReason, world }: { js: string; maxChars?: number; maxCharsReason?: string; world?: unknown }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+                // This is the page's main world: an exec that asked for an isolated one never runs here (exec-routing.ts
+                // runs a worker-built run's elsewhere and sends none here with `world`). The parameter is offered only to a
+                // run the worker drives (withExecWorld), so a page-built run's model is not told of it.
+                const refused = pageWorldRefusal(world);
+                if (refused) return refused;
                 // Timed so the step can say where its time went. An exec call is not all "running the code":
                 // resolving the pointers it mentions happens first, and on a background-hosted run that is a
                 // message round trip PER HANDLE. Unmeasured, it was invisible — the event lane draws a phase

@@ -141,6 +141,12 @@ the worker, and the page answers geometry only):
       a user gesture, including one the page navigated to on an unapproved origin (the page can force the CDP path by
       breaking its own `Function`). `cdpEval` takes the routed document, resolves the top frame's main-world context,
       checks the document after, and names that context in every evaluate (redteam-isolated.test.mjs): #652.
+- [x] exec's `world` parameter and the default world as a switch: `"page"` never overrides the policy (refused for a
+      pointer, `ml.current` or an unapproved page), `"isolated"` is refused rather than run in the main world, the page
+      is never sent `world`, a worker-built run's exec precheck no longer goes to the page with its script, a survey
+      whose exec runs isolated (asked or by default) is not tried in the page's world, a page-built run refuses
+      `"isolated"` without the page's survey, and the setting is not in the page's config. The page-global hint is only
+      given where `"page"` would run (tests/exec-world.test.mjs, tests/redteam-exec-world.test.mjs).
 
 ## In progress
 
