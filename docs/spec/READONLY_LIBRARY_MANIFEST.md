@@ -260,6 +260,42 @@ class DataFrame:
 `reshape` shows why return aliasing matters: a view aliases its source, so writing through it mutates an array the
 dialect may not own.
 
+**`lift` and `names` (Python only; lane 3, 2026-10-15).** Under CPython's restricted mode every allowed C callable runs
+with the gate ON, so the lookups it performs from its arguments are judged like a cell's own. A leaf whose internals
+legitimately touch dunders (numpy, pandas) is marked `@lift`, and runs with the gate lifted for its dynamic extent,
+callbacks excepted. The rule that comes with it: **a lifted leaf never resolves a name it is given.** A leaf that turns
+a string argument into an attribute lookup (`DataFrame.agg("sum")`, `apply("mean")`, `groupby(...).transform("max")`)
+declares the admitted strings as a closed vocabulary, `@names(func=[...])`, which the entry checks before the call;
+anything else is `NotInDialect`. `DataFrame.eval` and `DataFrame.query` are not listed: a string that is a program is
+another language, and the dialect compiles no string.
+
+**A callable handed to a lifted leaf is a `CO_RESTRICTED` function, or the call is refused** (lane 3, 2026-10-15, PR
+#721). Inside a lifted leaf only a restricted Python frame turns the gate back on, and a C callable makes no frame: a
+bound `str.format` (`df.a.apply("{0.__class__}".format)`), an `operator.attrgetter("__class__")` as a sort key, a bound
+method, a `functools.partial`, would run their lookups ungated inside pandas' lift. So on entry to a lifted leaf the
+entry walks the arguments, positional and keyword, into plain containers (`list`, `tuple`, `dict`, `set`; never into an
+object such as a frame), and every callable found must be a `CO_RESTRICTED` Python function, every string in a `names`
+position must be in the vocabulary, or the call is `NotInDialect` before the leaf runs. A gate-restoring shim around C
+callables is the alternative and is rejected: it is complexity in the one place that must stay simplest. The corpus
+count (lane 3, PR #722, `leaf-vocabulary.json` over 1,697 parsed cells) says the rule costs nothing measurable: no cell
+passes a builtin or a bound method as a callback or `key=`; nine cells (about 0.5%) pass a MODULE function,
+`.map(decimal.Decimal)` six times and `.apply(pd.to_numeric)` three, and the rule refuses all nine rightly, since
+`Decimal` is a C type and `to_numeric` is pandas' own Python, either of which would run ungated inside the lift. So
+there is no general list of callback-safe builtins. If a leaf is ever admitted in that position, it is marked on ITS
+OWN manifest entry ("may also appear as a callback"), judged entry by entry under the same burden as `lift` (it resolves
+no name it is given), with `decimal.Decimal` and `pandas.to_numeric` the two candidates the corpus names. The same count
+sets the `names` vocabulary: one cell passes a string to a name-resolving leaf (`agg("sum")`), none use `transform` or
+`aggregate`, so the vocabulary starts at the pandas reductions; `query` appears once and `eval` never, so leaving them out
+costs nothing.
+
+```python
+class DataFrame:
+    @lift; @effects("pure"); @returns("fresh")
+    @names(func=["sum", "mean", "median", "min", "max", "count", "size", "nunique", "std", "var", "first", "last"])
+    @cost(lambda self, func, axis=0: self.size)
+    def agg(self, func, axis=0): ...           # the vocabulary above is an example; the corpus count sets the real one
+```
+
 ## Open questions
 
 - **Size measures.** Which ones does an interpreter trust? `xs.length` on a host array is cheap and honest. On an
