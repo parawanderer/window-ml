@@ -71,6 +71,13 @@ Edges (what waits on what):
 Not a root, and not started this round: `mode` removal, the Pyodide build, the host's extension side, package install,
 secrets, placement, the hub desktop runtime.
 
+**Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
+keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
+kept whole (`POINTER_VALUES.md`, slices 5 and 6). So "the operation goes to the value" has no value to go to for a text
+body, and a code client (a Python cell, a survey's pipe) computes over a prefix. J is a root (it extends the value store
+the way the table slices did) and is not assigned to a lane this round; until it lands, a `value` answer for a
+truncated capture carries `truncated: true` and the full size, and every client surfaces it.
+
 ## The lanes
 
 Each lane's second task is unblocked by its own first one, so a session never waits on another lane to have work.
