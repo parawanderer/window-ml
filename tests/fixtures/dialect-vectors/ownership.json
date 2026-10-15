@@ -684,5 +684,44 @@
     },
     "reason": "the default: a warmed library function that only calls an allowed builtin (len) on a list the cell built returns its value; refusing everything is not passing",
     "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
+  },
+  {
+    "name": "py: agg with a listed name",
+    "py": "return int(df.agg(\"sum\").sum())",
+    "env": "table",
+    "expect": {
+      "value": 78
+    },
+    "reason": "a string in the leaf's closed vocabulary passes the check and the lifted call runs",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a sort key that calls a lifted leaf",
+    "py": "return sorted([3, 1, 2], key=lambda x: x + int(df.a.sum()) * 0)",
+    "env": "table",
+    "expect": {
+      "value": [
+        1,
+        2,
+        3
+      ]
+    },
+    "reason": "sorted (unlifted) calls the cell's lambda, which calls a lifted pandas leaf: lift and re-entry nest, and the result is right",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a callback writing to an owned list inside a lifted leaf",
+    "py": "xs = []\ndf.a.apply(lambda v: xs.append(int(v)))\nreturn xs",
+    "env": "table",
+    "expect": {
+      "value": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "reason": "the callback runs restricted; its write to the cell's own list is judged by ownership and allowed",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
   }
 ]

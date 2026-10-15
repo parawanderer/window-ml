@@ -686,5 +686,69 @@
     "expect": "refused",
     "reason": "dynamic extent, case 3: sorted (an approved C leaf, lifted) calls via_python's host closure, which calls the cell's lambda INLINE (no C entry); the frame walk up to the lift barrier still finds the CO_RESTRICTED lambda frame",
     "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
+  },
+  {
+    "name": "py: a method name outside the leaf's vocabulary",
+    "py": "return df.agg(\"__sizeof__\")",
+    "env": "table",
+    "expect": "refused",
+    "reason": "df.agg resolves its string by getattr; the manifest's closed vocabulary (@names) is checked before the lifted call, and an unlisted string is NotInDialect",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: apply with a dunder name",
+    "py": "return df.apply(\"__class__\")",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the same closed vocabulary on apply's string form",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: transform with an unlisted name",
+    "py": "return df.transform(\"to_pickle\")",
+    "env": "table",
+    "expect": "refused",
+    "reason": "not a dunder, but not in the vocabulary: a real method with an effect, reached by name",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: df.query is a second language",
+    "py": "return df.query(\"a > 1\")",
+    "env": "table",
+    "expect": "refused",
+    "reason": "a string that is a program; the dialect compiles no string (query and eval are out of the manifest)",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a bound str.format handed to a lifted leaf as a callback",
+    "py": "return df.to_string(float_format=\"{0.__class__}\".format)",
+    "env": "table",
+    "expect": "refused",
+    "reason": "inside a lifted leaf only CO_RESTRICTED frames are gated again; a bound C method passed as a callback would run its lookups ungated, so a lifted leaf must refuse any callable argument that is not the program's own restricted function",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a bound str.format as apply's function",
+    "py": "return df.a.apply(\"{0.__class__}\".format)",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the same: a C callable as the callback of a lifted leaf",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: attrgetter as a lifted leaf's key",
+    "py": "import operator\nreturn df.sort_values(\"a\", key=operator.attrgetter(\"__class__\"))",
+    "env": "table",
+    "expect": "refused",
+    "reason": "attrgetter instance as the key of a lifted pandas leaf: refused at the leaf's entry, since it is not a restricted function",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a callback writing to an unowned value inside a lifted leaf",
+    "py": "return df.a.apply(lambda v: df.insert(0, \"z\", v))",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the callback runs restricted again; its write to the injected frame is judged by ownership there, and the frame is unowned",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
   }
 ]
