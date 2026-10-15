@@ -20,10 +20,11 @@ export const DATA_URL = "https://data.example/report.csv";
  * Run a worker-built run whose python_exec cell plays `cell`.
  * @param cell `(wire, bg) => Promise<void>`: the cell's body, given the PY_RUN's `wire` and the worker
  * @param opts `body`: what fetch_url reads at `url`; `mode`: python_exec's mode; `siteGate: false` approves every page;
- *   `calls`: the model's tool calls in order, in place of fetch_url then python_exec
+ *   `calls`: the model's tool calls in order, in place of fetch_url then python_exec; `local` seeds `chrome.storage.local`
+ *   (e.g. `ml_site_selfapprove` so a page-started PYTHON_EXEC is allowed to run)
  * @returns the worker, the PY_RUN messages, and the tool results the model was last handed
  */
-export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", mode = "readonly", url = DATA_URL, siteGate = true, calls: script } = {}) {
+export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local } = {}) {
     let turns = 0;
     const pyRuns = [];
     const calls = script ?? [
@@ -32,7 +33,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
     ];
     const toolResults = [];
     const bg = loadBackground({
-        config, siteGate, openTabs: [SITE],
+        config, siteGate, openTabs: [SITE], local,
         onFetch: (c) => {
             if (c.url === url) return new Response(body, { status: 200, headers: { "content-type": "text/plain" } });
             if (/\/(api|v1)\/models$/.test(c.url)) return jsonResponse({ data: [{ id: "default-model" }, { id: "other-model" }] });

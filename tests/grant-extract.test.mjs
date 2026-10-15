@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "../src/sw/grant-extract.ts";
+import { extractGrants, fetchUrlLiterals, tabGrantsForCall, pyCodeGrant, pyCodeCovers } from "../src/sw/grant-extract.ts";
 
 test("extracts ml.fetch string literals from exec", () => {
     const grants = extractGrants("exec", { js: `const a = await ml.fetch("https://x.test/data.json"); a.text` });
@@ -79,14 +79,37 @@ test("a page-built run's python_exec, which the page's own loop runs, still gets
     }
 });
 
-test("a python_exec the worker runs puts nothing at all on the tab; one on the page gets its full-mode code", () => {
+test("a python_exec the worker runs puts nothing at all on the tab; one on the page gets its code keyed by MODE", () => {
     for (const builtByWorker of [true, false]) {
         const inWorker = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["full mode with a sheet"], builtByWorker, pyInWorker: true });
         assert.deepEqual(inWorker, { serverTools: [], sheets: [], pyCode: [] });
         const onPage = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["full mode with a sheet"], builtByWorker, pyInWorker: false });
-        assert.deepEqual(onPage.pyCode, ["print(1)"]);
-        assert.deepEqual(tabGrantsForCall({ name: "python_exec", args: { code: "print(1)" }, builtByWorker, pyInWorker: false }).pyCode, [], "readonly mode: no code grant");
+        assert.deepEqual(onPage.pyCode, ["full:print(1)"], "full mode: the key is mode-qualified");
+        // readonly is gated too now (a page-started readonly cell runs only under a grant), so it MINTS a key —
+        // just never one that covers `full`.
+        assert.deepEqual(tabGrantsForCall({ name: "python_exec", args: { code: "print(1)" }, builtByWorker, pyInWorker: false }).pyCode, ["readonly:print(1)"], "readonly mode: its own key");
     }
+});
+
+test("a `full` grant covers the same code in readonly, and a `readonly` one never covers `full`", () => {
+    const full = new Set([pyCodeGrant("full", "print(1)")]);
+    assert.equal(pyCodeCovers(full, "full", "print(1)"), true);
+    assert.equal(pyCodeCovers(full, "readonly", "print(1)"), true, "full covers readonly");
+    assert.equal(pyCodeCovers(full, "full", "print(2)"), false, "only the exact code");
+    const ro = new Set([pyCodeGrant("readonly", "print(1)")]);
+    assert.equal(pyCodeCovers(ro, "readonly", "print(1)"), true);
+    assert.equal(pyCodeCovers(ro, "full", "print(1)"), false, "readonly never covers full");
+});
+
+// UPGRADE: old state meets the new code. Before mode qualification the tab held the BARE code, and only for a
+// `full` call — so a stored key is exactly what a person's old full-mode approval left behind. The posture
+// changed (readonly is no longer assumed harmless), so that key must not keep spending: not as `full`, which is
+// the dangerous direction, and not as `readonly` either — the cell asks again and the person re-approves.
+test("upgrade: a grant written under the OLD unqualified key is not read as a full grant", () => {
+    const old = new Set(["print(1)"]);   // what the pre-qualification code wrote for mode:'full'
+    assert.equal(pyCodeCovers(old, "full", "print(1)"), false, "an old bare key must not grant full");
+    assert.equal(pyCodeCovers(old, "readonly", "print(1)"), false, "an old bare key grants nothing: the cell asks again");
+    assert.equal(old.has(pyCodeGrant("full", "print(1)")), false, "and it does not alias onto the new key");
 });
 
 test("an exec gets the URLs its code spells out and no others; a server tool its exact call; any other tool nothing", () => {

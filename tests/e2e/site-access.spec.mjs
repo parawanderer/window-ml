@@ -391,6 +391,29 @@ test.describe("@security approval", () => {
         } finally { await close(); }
     });
 
+    test("an approved site's page-started Python is refused until the person allows THIS site to approve its own actions", async () => {
+        // The upgrade: a page that used to run `pythonExec` the moment its site was approved now needs a second,
+        // Python-specific grant. The refusal names the list that restores it, and that list is the positive control.
+        test.skip(!fs.existsSync(new URL("../../dist/pyodide/pyodide.mjs", import.meta.url)), "needs the bundled Pyodide (npm run fetch-pyodide) — self-skips without it");
+        test.setTimeout(90_000);
+        const { fake, site, ext, close } = await setup();
+        try {
+            await approveOrigin(ext.sw, site.origin("approved.test"));
+            const page = await open(ext, site.url("approved.test"));
+            fake.setScript([{ content: "allowed" }]);
+            expect(await page.evaluate(() => window.ml.chat("hello"))).toBe("allowed");
+            const refused = await page.evaluate(() => window.ml.pythonExec("1 + 1").then((r) => ({ ok: r.ok }), (e) => ({ err: String(e?.message || e) })));
+            expect(refused.err, JSON.stringify(refused)).toMatch(/Refused: Python from a page needs approval on this page/);
+            // The refusal names DevTools Settings → Permissions: that edit is what restores it.
+            const settings = await ext.context.newPage();
+            await settings.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            await settings.evaluate((o) => chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload: { edit: { op: "selfApprove", origin: o, on: true } } }).then((r) => r?.error ? Promise.reject(new Error(r.error)) : r), site.origin("approved.test"));
+            const ok = await page.evaluate(() => window.ml.pythonExec("1 + 1").then((r) => ({ ok: r.ok, value: r.value }), (e) => ({ err: String(e?.message || e) })));
+            expect(ok.ok, JSON.stringify(ok)).toBe(true);
+            expect(ok.value).toBe(2);
+        } finally { await close(); }
+    });
+
     test("attack 8: approved, then revoked, and still calling without a reload: refused from the revoke on", async () => {
         const { fake, site, ext, close } = await setup();
         try {

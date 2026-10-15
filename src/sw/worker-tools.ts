@@ -291,7 +291,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,
         untrusted: async () => (await senderTrust({ tab: { id: ctx.tabId, url: ctx.tabUrl() } as chrome.tabs.Tab, url: ctx.tabUrl() })) === "untrusted",
-        pyCodeOk: (c) => ctx.pyCall?.code === c,
+        pyCodeOk: (c) => ctx.pyCall?.code === c, runGated: true,
         valueOk: (holders) => holders.includes(ctx.runId),
         wireRun: ctx.runId, tabUrl: ctx.tabUrl,
         ...(opts.onStdout ? { stream: opts.onStdout } : {}),

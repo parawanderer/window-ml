@@ -39,7 +39,9 @@ async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", on
         siteGate: true, indexedDB: idb, onPyRun,
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: vision === "text" ? "text-driver" : vision ? "vlm-driver" : "m", apiFormat: "openai", ocrModel: vision ? "reader-vl" : "", debugMode: "off", ...config },
         onCaptureTab: async () => SHOT,
-        local: { ml_site_always: ["https://site.example"] },
+        // The site self-approves so a page-started PYTHON_EXEC is allowed to run at all (the tests below send one);
+        // the properties they assert are the TABLE OWNERSHIP and DISCLOSURE SCOPE, which the worker enforces either way.
+        local: { ml_site_schema: 2, ml_site_always: ["https://site.example"], ml_site_selfapprove: ["https://site.example"] },
         openTabs: [{ id: 7, windowId: 3, active: true, url: tabUrl, title: "Site" }],
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: Object.keys(CAPS).map((id) => ({ id })) });
