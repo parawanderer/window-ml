@@ -873,3 +873,81 @@ test("UPGRADE (Settings): the notice names the whitelist entries that could not 
     assert.deepEqual([...notice.querySelectorAll(".perm-host")].map((e) => e.textContent), ["*.x.test", "y.test:8443"]);
     assert.doesNotMatch(notice.textContent, /—/);
 });
+
+// --- the policy page: a row per global and per run policy, broken ones say why, and edits reach the worker ---
+
+const policy = (id, extra = {}) => ({ id, scope: "global", consumer: "fetch", effect: "allow", source: `(c) => c.host === "${id}.test"`, label: `label ${id}`, origin: "person", created: 1, ...extra });
+
+/** A Settings world whose `POLICIES` is answered from `view` (edits are recorded in `calls`, and answer the same view). */
+async function settingsWithPolicies(view) {
+    const w = await loadSidebarWorld();
+    const calls = [];
+    const real = w.window.chrome.runtime.sendMessage;
+    w.window.chrome.runtime.sendMessage = (msg, cb) => {
+        if (msg && msg.type === "POLICIES") { calls.push(msg); cb({ data: JSON.parse(JSON.stringify(view)) }); return; }
+        return real(msg, cb);
+    };
+    await openSettings(w, "Permissions");
+    await w.flush(); await w.flush();
+    return { w, calls };
+}
+const policyView = (over = {}) => ({
+    global: [policy("a"), policy("b", { effect: "deny", consumer: "sh" })],
+    runs: [{ hash: "abc1234", policies: [policy("c", { scope: "run", origin: "card" })] }],
+    builtin: { label: "built-in default", source: "(c) => false" },
+    broken: { b: "unknown member c.kind" },
+    ...over,
+});
+const fire = (w, el, type) => el.dispatchEvent(new w.window.Event(type, { bubbles: true }));
+
+test("policy page: one row per global and per run policy, with its effect, tags and the built-in default", async () => {
+    const { w } = await settingsWithPolicies(policyView());
+    const sec = section(w, "Policies");
+    const rows = [...sec.querySelectorAll(".pol-row[data-policy-id]")];
+    assert.deepEqual(rows.map((r) => r.dataset.policyId), ["a", "b", "c"]);
+    assert.deepEqual(rows.map((r) => r.querySelector(".pol-effect").textContent), ["allows", "refuses", "allows"]);
+    assert.match(rows[1].textContent, /sh/, "a non-fetch consumer is named");
+    assert.match(rows[2].textContent, /from a card/);
+    assert.equal(sec.querySelector('.pol-run[data-run="abc1234"] .pol-row').dataset.policyId, "c", "the run's policy sits under its session hash");
+    assert.match(sec.querySelector(".pol-builtin").textContent, /built-in default/);
+});
+
+test("policy page: a broken policy shows its reason and that it decides nothing", async () => {
+    const { w } = await settingsWithPolicies(policyView());
+    const rows = section(w, "Policies").querySelectorAll(".pol-row[data-policy-id]");
+    assert.equal(rows[0].querySelector(".set-err"), null);
+    assert.match(rows[1].querySelector(".set-err").textContent, /Broken: unknown member c\.kind\. It decides nothing until fixed\./);
+});
+
+test("policy page: Remove sends op remove with the id", async () => {
+    const { w, calls } = await settingsWithPolicies(policyView());
+    section(w, "Policies").querySelector('.pol-row[data-policy-id="a"] button.perm-x').click();
+    await w.flush();
+    assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "remove", id: "a" } });
+});
+
+test("policy page: Edit then Save sends op edit with only the changed fields", async () => {
+    const { w, calls } = await settingsWithPolicies(policyView());
+    const row = () => section(w, "Policies").querySelector('.pol-row[data-policy-id="a"]');
+    [...row().querySelectorAll("button.test-btn")].find((b) => b.textContent === "Edit").click();
+    await w.flush();
+    const sel = row().querySelector('select[aria-label="Effect"]'); sel.value = "deny"; fire(w, sel, "change");
+    const src = row().querySelector("textarea"); src.value = '(c) => c.host === "z.test"'; fire(w, src, "input");
+    await w.flush();
+    [...row().querySelectorAll("button.test-btn")].find((b) => b.textContent === "Save").click();
+    await w.flush();
+    assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "edit", id: "a", effect: "deny", source: '(c) => c.host === "z.test"' } });
+});
+
+test("policy page: Add sends op add with the effect, label and source typed", async () => {
+    const { w, calls } = await settingsWithPolicies(policyView());
+    const sec = () => section(w, "Policies");
+    assert.equal(sec().querySelector('select[aria-label="New policy effect"]').value, "allow", "the form defaults to allow");
+    assert.match(sec().querySelector('textarea[aria-label="New policy source"]').value, /c\.host === "example\.com"/, "pre-filled with the starter");
+    const eff = sec().querySelector('select[aria-label="New policy effect"]'); eff.value = "deny"; fire(w, eff, "change");
+    const lab = sec().querySelector('input[aria-label="New policy label"]'); lab.value = "no tracker"; fire(w, lab, "input");
+    await w.flush();
+    [...sec().querySelectorAll(".pol-add button.test-btn")].find((b) => b.textContent === "Add").click();
+    await w.flush();
+    assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "add", effect: "deny", label: "no tracker", source: '(c) => c.kind === "fetch" && c.host === "example.com"' } });
+});

@@ -25,7 +25,7 @@ pointer store, the run's `current` snapshot).
 
 // answers
 { "seq": 12, "value": { … } }                                  // plain data
-{ "seq": 12, "pointer": { "token": "@tool:9f2e1a0", "label": "…", "size": 20480 } }   // too big to cross: stays home (today only a TABLE has a whole to point at; a text capture is kept model-sized, root J of the plan)
+{ "seq": 12, "pointer": { "token": "@tool:9f2e1a0", "label": "…", "size": 20480 } }   // too big to cross: stays home (a table's or a fetched text's whole, POINTER_VALUES.md slices 5 and 9)
 { "seq": 12, "error": { "code": "NotInDialect", "message": "…" } }
 { "seq": 12, "ask": { "card": "…" } }   // the call needs the person; the client WAITS, and a later message answers
 ```

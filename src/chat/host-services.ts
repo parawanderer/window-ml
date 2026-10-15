@@ -57,9 +57,9 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
             const r = await store.send(cmd, { quiet: true });
             return r.ok ? { ok: true, content: r.data.content } : { ok: false, error: r.error.message || r.error.code };
         },
-        answerApproval: (key, seq, decision, persist, feedback) => {
+        answerApproval: (key, seq, decision, persist, feedback, ask) => {
             const id = idOf(key);
-            if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}), ...(feedback ? { feedback } : {}) });
+            if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}), ...(feedback ? { feedback } : {}), ...(ask !== undefined ? { ask } : {}) });
         },
         sendToSession: async (key, text, images) => {
             const id = idOf(key);

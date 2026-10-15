@@ -38,7 +38,10 @@ import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { forgetRunPolicies } from "./sw/sw-policies";
+import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+
+/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
+const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -54,6 +57,8 @@ import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
+import { approvalKey } from "./approval-key";
+import { raiseAsk } from "./sw/sw-asks";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -127,6 +132,9 @@ startValueSweeps();
 });
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
+// A nested ask raised from inside a running step, as a consumer (ml.sh) raises one: what the surfaces, SET_APPROVAL and
+// the cancel path are tested against before any consumer exists.
+(globalThis as unknown as { __mlRaiseAskForTest?: unknown }).__mlRaiseAskForTest = (runId: string, seq: number, kind: string, facts: Record<string, unknown>) => raiseAsk(runId, seq, { kind, facts });
 (globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
@@ -352,7 +360,13 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
         // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
-        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
+        // A content script answers only for the run ITS tab hosts. The overlay on another tab can be shown a run's id
+        // by that tab's page (an event under a session the worker never spoke for there), and a person's click on it
+        // must not reach the real gate elsewhere. The DevTools panel is an extension page (no `sender.tab`).
+        if (sender.tab && sender.tab.id !== runInboxes.get(p?.runId)?.tabId) return;
+        // A nested ask is named by its id beside the seq; a malformed one names no gate, not even the step's own.
+        const key = approvalKey(p.runId, p.seq, p.ask);
+        if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
         return;   // fire-and-forget
     }
     if (message.type === "CONTENT_READY") {
@@ -530,6 +544,29 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // The site lists, for DevTools Settings and the toolbar popup. Extension pages only: a page could otherwise approve
     // itself, or raise its own agent level. `edit` changes the lists; `origin` asks what they say about one origin, as
     // its three levels; `dismissUpgradeNotice` drops the one-time notice about the whitelist's move to origins.
+    // The policy page (DevTools Settings, docs/dev/policies.md): read every policy, add a global one, edit or remove any.
+    // EXTENSION PAGES ONLY, judged by the sender the browser reports: a policy decides what runs without asking, so a page
+    // (or a content script relaying for one) that could add or widen one would be approving itself.
+    if (message.type === "POLICIES") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
+        const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
+        const effect = p.effect === "allow" || p.effect === "deny" ? p.effect : undefined;
+        if (p.op === "add") {
+            const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
+            const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
+            if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow or deny), a label and its code" }); return; }
+            addGlobalPolicy({ consumer, effect, source, label });
+        } else if (p.op === "edit") {
+            const id = str(p.id, 100);
+            if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
+        } else if (p.op === "remove") {
+            const id = str(p.id, 100);
+            if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
+        } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
+        sendResponse({ data: policyView() });
+        return;
+    }
     if (message.type === "SITE_ACCESS") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string; dismissUpgradeNotice?: boolean };

@@ -5,7 +5,8 @@
 
 import { runBackgroundAgent } from "../agent/agent-host";
 import { evalReadonlyInWorker } from "./sw-readonly";
-import { workerReadonlyMl } from "./worker-readonly-ml";
+import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
+import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
 import { forModel, forModelHistory } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
@@ -28,7 +29,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, policiesLoaded } from "./sw-policies";
+import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies } from "./sw-policies";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
@@ -51,14 +52,15 @@ import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue, runMayClaim, valueHolders, readStoredColumns, withHeldValuesOnly } from "./sw-values";
-import { isoServer } from "./iso-channel";
+import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
+import { isoServer, type IsoDeps } from "./iso-channel";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
+import { hostAsks, stepAsks } from "./sw-asks";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -111,16 +113,29 @@ function thrownKey(e: unknown): string {
 }
 
 /** Resolve the pointer reads an approved `exec` script names, against the run's store: each one's value, or the error
- *  the read raises (a MemoryFault, a bad pipe), which the page then throws where the script reads it. */
-function preReadsFor(runId: string, js: string): PreRead[] {
+ *  the read raises (a MemoryFault, a bad pipe, a stored text that was evicted), which the page then throws where the
+ *  script reads it. For an isolated world a stored text is read whole (`derefWhole`), as a survey of the same script
+ *  reads it. For the page's MAIN world it is the preview, as before: a pointer-naming script reaches the main world only
+ *  where no isolated world is available (exec-routing.ts, the owner's 2026-10-08 fallback), and a page approved for
+ *  window.ml is not thereby approved to read the whole of what a run fetched elsewhere (POINTER_VALUES.md, slice 9).
+ * @param whole whether a stored text is read whole: true only for an isolated world */
+async function preReadsFor(runId: string, js: string, whole: boolean): Promise<PreRead[]> {
     const fn = derefByRun.get(runId);
     if (!fn) return [];
-    return namedReads(expandPointers(js).code).map(({ ref, pipe }) => {
+    return Promise.all(namedReads(expandPointers(js).code).map(async ({ ref, pipe }): Promise<PreRead> => {
         try {
-            const r = fn(ref, pipe);
+            const r = whole ? await derefWhole(runId, fn, ref, pipeStages(pipe ?? null)) : fn(ref, pipe);
             return { ref, pipe, value: r.value, ...(r.warning ? { warning: r.warning } : {}), ...(r.meta ? { meta: r.meta } : {}) };
         } catch (e) { return { ref, pipe, error: (e as Error)?.message || String(e) }; }
-    });
+    }));
+}
+
+/** The run's resolver for an isolated exec's re-pipes: a stored text read whole, as the pre-reads were. */
+function wholeDerefFor(runId: string): IsoDeps["deref"] {
+    return () => {
+        const fn = derefByRun.get(runId);
+        return fn && ((ref: string, pipe?: string | string[]) => derefWhole(runId, fn, ref, pipeStages(pipe ?? null)));
+    };
 }
 
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
@@ -357,6 +372,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const cfg = await getConfig();
         return routeExec(js, await pageApproved(url), await isolationAvailable(!!cfg.cdp), { world, defaultWorld: defaultExecWorld(cfg.execDefaultWorld) });
     };
+    // The envelopes the worker made itself, by running the tool here (runLocalTool). Only these may name a stored text
+    // body (`textValue`): a page's answer is deserialized, so it can never be one of them, and a copy made on the way
+    // (a verify's) is not one either, which fails closed. state: plumbing
+    const workerEnvelopes = new WeakSet<object>();
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string, pageRouted = false): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
@@ -406,7 +425,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
             const local = await runLocalTool(payload, onStream);
-            if (local) return local;
+            if (local) { workerEnvelopes.add(local); return local; }
             // Nowhere else to run: a remote tool has no page side, and a worker builtin sent to the page would put what
             // it reads there and have the page send for it (site access part 5), so neither falls back to the page.
             if (p.tools.some((t) => t.name === payload.name && t.remote))
@@ -416,7 +435,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.name === "look" || payload.name === "locate") return toPage();
             return { result: `Error: "${payload.name}" could not be set up for this run. Try again.` };
         }
-        return (await runLocalTool(payload, onStream)) ?? toPage(documentId);
+        const local = await runLocalTool(payload, onStream);
+        if (local) { workerEnvelopes.add(local); return local; }
+        return toPage(documentId);
     };
     const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
     // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
@@ -425,7 +446,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // no surface ever learns it did (the observer/HUD sat on "running"). See emitLifecycle below.
     let hasNavigated = false;
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
-    const settle = (): void => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks)
+    let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
+    const settle = (): void => { unhostAsks?.(); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks)
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -479,6 +501,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // curated view of the same data; devtools fans to the panel. The card mounts itself lazily on the
         // first of these (which reach the shell over chrome.runtime, never the page) and self-reveals for a pending gate / the
         // final answer, so a no-approval off run streams to a hidden, cheap-to-mount card.
+        // The last event of each step that carried its tool, by RAW seq: a nested ask re-emits it with the step's asks, so
+        // the ask rides the event every surface already renders (sw-asks.ts). A turn's own; gone with it.
+        const lastStepEv = new Map<number, Record<string, unknown>>();   // state: plumbing — one turn's step events, for re-emitting a step with its asks
         const emitStep = (ev: Record<string, unknown>): void => {
             // Once the run is aborted (CANCEL_RUN), stop fanning steps: an in-flight tool's DONE resolves
             // AFTER the abort (the page tool round-trip isn't cancellable), and a straggler landing after the
@@ -493,9 +518,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (rawSeq != null && rawSeq > runMaxSeq) runMaxSeq = rawSeq;
             const step = stepBase + rawStep;
             const seq = rawSeq != null ? seqBase + rawSeq : rawSeq;
+            if (rawSeq != null && ev.tool != null) { const { asks: _asks, ...rest } = ev; lastStepEv.set(rawSeq, rest); }
+            // A step that raised asks carries them on every later event too (its DONE included), so no surface, export
+            // or saved session sees the step without what it asked.
+            const asks = seq != null && ev.asks === undefined && ev.tool != null ? stepAsks(runId, seq) : undefined;
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
-                session: { hash: runId, turn: step }, ...ev, step, localStep: rawStep, seq,
+                session: { hash: runId, turn: step }, ...ev, ...(asks?.length ? { asks } : {}), step, localStep: rawStep, seq,
                 // Running delegated-sub-call tally for the SESSION (seeded from the stored run's, so it carries across
                 // turns), so the UI "+N sub" chip works on the background path too (the page path attaches
                 // subcallUsage() the same way). Omit when nothing delegated.
@@ -523,6 +552,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             ingestSessionEvent(event, { tabId, trusted: true });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
+        // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
+        unhostAsks = hostAsks({
+            runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
+            emit: (seq, asks) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }); },
+            stepOf: (seq) => stepBase + (Number(lastStepEv.get(seq - seqBase)?.step) || 0),
+            running: (seq) => !!lastStepEv.get(seq - seqBase)?.pending,
+        });
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
          *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
          *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */
@@ -693,11 +729,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                             // Never unpinned: what it is given is the run's, so with no document to hold it to, it does not run.
                             if (!execDoc) return { result: "Error: could not tell which page the tab holds now, so this exec was not run. Run it again.", renderIn: execCodeIn(js) };
-                            const reads = preReadsFor(runId, js);
+                            const reads = await preReadsFor(runId, js, true);
                             return runIsolatedExec({
                                 tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc,
                                 // What the world may ask for while it runs: re-pipes of what it was sent, and those stored tables.
-                                serve: isoServer(runId, reads, { deref: () => derefByRun.get(runId), holders: valueHolders, columns: readStoredColumns }),
+                                serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
                                 ...(snap && execNames(js).current ? { current: async () => withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) } : {}),
                             });
@@ -715,7 +751,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // those, parsed here: the page shares the tab, and an open grant lent it every URL while any exec ran.
                     // The pointer reads an approved script names, resolved here and sent with it: the page answers only
                     // those, so it cannot read the rest of the run's store while the call is in flight (named-reads.ts).
-                    const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? preReadsFor(runId, (args as { js: string }).js) : undefined;
+                    const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? await preReadsFor(runId, (args as { js: string }).js, false) : undefined;
                     if (reads) execReads.set(runId, reads);
                     // A remote tool's args LEAVE THE MACHINE, so the grant is minted for the exact call the
                     // human saw — never for the tool in general. The identity comes from the tool's declared
@@ -1015,7 +1051,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
+                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
                     } finally {
                         dropCallGrants(tabId, callKey);   // grants were for THIS approved call's sub-ops only; another run's call on the tab keeps its own
                         if (pyInWorker) grantRunPython(runId, null);
@@ -1046,6 +1082,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A pointer to a stored table: this session holds it until the session is released. The key is read off the
                 // step's render, which a page's answer writes, so only a value this run may hold is claimed (runMayClaim).
                 claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
+                // The whole of a stored text the run's pointer names, for the dereference tool. Only a value this run holds.
+                readText: (key) => readStoredText(key, runId),
                 tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
                     if (name !== "exec") return null;
                     // Every decision below reads `byWorker()`: a navigation's hand-over must be decided first, as delegateTool does.
@@ -1212,7 +1250,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same
                             // via the emitStep below). args are already sanitized page-side for the render.
-                            descriptor: { key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui" },
+                            descriptor: { key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui",
+                                // An uncredentialed fetch_url the worker runs is a call a policy may decide, so the card
+                                // is judged again when one changes (`rejudgePending`): its facts, resolved here.
+                                ...(tool === "fetch_url" && !(args as { credentials?: unknown }).credentials && byWorker() && runsInWorker(p, "fetch_url")
+                                    ? { consumer: "fetch" as const, facts: fetchFacts(String((args as { url?: unknown }).url ?? ""), { rendered: !!(args as { rendered?: unknown }).rendered }) }
+                                    : {}) },
                         });
                         // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
                         // three surfaces render it identically from this one step: overlay/off in the page
@@ -1231,8 +1274,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // refuses any run's fetch; an `allow` answers only a fetch the worker itself runs, since only there does
                 // the fetch's own choke point (worker-tools.ts `consented`) consult the same policies.
                 fetchPolicy: (url, o) => {
-                    if (!policiesLoaded()) return "unknown";
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
+                    if (j.decision === "ask") return "unknown";   // not loaded yet: the call asks, free tiers included
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "fetch_url" } });
                     if (!j.decision || !j.by || j.by === "builtin") return undefined;
                     if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;

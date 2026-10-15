@@ -138,6 +138,9 @@ export interface CurrentSnapshot {
      *  function over the call) holds for. `run` ones are this run's, from a card's "remember"; `global` ones the
      *  person set. Absent when there are none. */
     policies?: { scope: "global" | "run"; effect: "allow" | "deny"; label: string; source: string }[];
+    /** This run's own policies that were REMOVED when its session was archived, and when: they no longer apply, so
+     *  those calls ask again. Absent when none were. */
+    policiesRemoved?: { at: string; labels: string[] };
     /** Who sent the LATEST user message, and what they can do and see from there: the person at this browser, or a
      *  device that reached it through the hub and cannot see the page. Use it for how to answer, never as permission.
      *  Absent when that message's sender is unknown. */

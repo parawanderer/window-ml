@@ -85,7 +85,8 @@ interface Indexed {
     endedStep: number;
     endStatus: SessionStatus;
     /** agent: the seqs of steps blocked on an approval gate */
-    gates: Set<number>;
+    /** The open gates: a step's own by its seq, a nested ask inside one as `${seq}#${askId}`. */
+    gates: Set<number | string>;
     /** chat: turn ids started and not yet answered */
     openTurns: Set<string>;
     lastResultKey: string | null;
@@ -289,6 +290,13 @@ export class SessionIndex {
                 if (ev.seq != null) {
                     if (ev.pending && ev.awaitingApproval) s.gates.add(ev.seq);
                     else s.gates.delete(ev.seq);
+                    // A step's nested asks are each a gate of their own while pending: the waiting status, the count a
+                    // phone badges and notifies with, and the chat page's jump-to-card all read this set. The event
+                    // carries the step's whole list, so the step's ask gates are rebuilt from it.
+                    if (ev.asks) {
+                        for (const g of [...s.gates]) if (typeof g === "string" && g.startsWith(`${ev.seq}#`)) s.gates.delete(g);
+                        for (const a of ev.asks) if (a?.state === "pending" && !a.external) s.gates.add(`${ev.seq}#${a.id}`);
+                    }
                 }
                 // The reducer's seal (debug-reducer.ts): a straggler from a finished turn does not reopen it.
                 if (!s.ended || (!ev.pending && (ev.step || 0) > s.endedStep)) { s.ended = false; s.interrupted = false; }

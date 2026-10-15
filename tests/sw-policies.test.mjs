@@ -9,6 +9,8 @@ const STORED = {
     ml_policies_global: [
         { id: "g-ok", scope: "global", consumer: "fetch", effect: "deny", source: '(c) => c.host === "blocked.example"', label: "never blocked.example", origin: "person", created: 1 },
         { id: "g-bad-effect", scope: "global", consumer: "fetch", effect: "maybe", source: "(c) => true", label: "x", origin: "person", created: 1 },
+        { id: "g-sh", scope: "global", consumer: "sh", effect: "allow", source: '(c) => c.argv[0] === "ls"', label: "ls", origin: "person", created: 1 },
+        { id: "g-unknown-consumer", scope: "global", consumer: "mail", effect: "allow", source: "(c) => true", label: "x", origin: "person", created: 1 },
         { id: "g-wrong-scope", scope: "run", consumer: "fetch", effect: "allow", source: "(c) => true", label: "x", origin: "person", created: 1 },
         "not a policy",
     ],
@@ -32,7 +34,7 @@ const facts = (url) => P.fetchFacts(url);
 // --- what storage held is read back, and only what is well-formed ---
 
 test("only well-formed policies of the right scope are read back from storage; junk is dropped, never guessed at", () => {
-    assert.deepEqual(P.globalPolicies().map((p) => p.id), ["g-ok"]);
+    assert.deepEqual(P.globalPolicies().map((p) => p.id), ["g-ok", "g-sh"], "an unknown consumer is dropped too");
     assert.deepEqual(P.runPolicies("h-old").map((p) => p.id), ["r-ok"]);
     assert.deepEqual(P.runPolicies("h-junk"), []);
 });
@@ -122,14 +124,87 @@ test("a deleted session's run policies go with it, and are written away", () => 
     assert.ok(!("h-del" in writes.at(-1).ml_policies_run));
 });
 
+test("an ARCHIVED session loses its run policies and the loss is recorded with the time; a DELETED one leaves no record", () => {
+    P.rememberFetchUrls("h-arch", ["https://arch.example/"]);
+    P.forgetRunPolicies("h-arch", "archived");
+    assert.deepEqual(P.runPolicies("h-arch"), []);
+    assert.equal(P.judgeCall("h-arch", "fetch", facts("https://arch.example/")).decision, undefined, "it no longer allows");
+    const lost = P.archivedPolicyLoss("h-arch");
+    assert.deepEqual(lost.labels, ["fetch https://arch.example/"]);
+    assert.ok(Math.abs(lost.at - Date.now()) < 5000);
+    const cur = P.withPolicies({}, "h-arch");
+    assert.deepEqual(cur.policiesRemoved.labels, ["fetch https://arch.example/"], "the model is told");
+    assert.match(cur.policiesRemoved.at, /^\d{4}-\d\d-\d\dT/);
+    assert.ok(writes.at(-1).ml_policies_archived["h-arch"], "and it is kept in storage");
+    P.forgetRunPolicies("h-arch", "deleted");
+    assert.equal(P.archivedPolicyLoss("h-arch"), undefined, "a deleted session takes its record with it");
+    P.forgetRunPolicies("h-nothing", "archived");
+    assert.equal(P.archivedPolicyLoss("h-nothing"), undefined, "a session that had none lost none");
+});
+
+test("an edit changes a policy in place, keeps its id and scope, and refuses an effect that is not allow or deny", () => {
+    const g = P.addGlobalPolicy({ consumer: "fetch", effect: "allow", source: "(c) => false", label: "g" });
+    const e = P.editPolicy(g.id, { source: '(c) => c.host === "edit.example"', effect: "maybe", label: "edited" });
+    assert.equal(e.id, g.id);
+    assert.equal(e.scope, "global");
+    assert.equal(e.effect, "allow", "an effect that is no effect is ignored");
+    assert.equal(P.judgeCall(undefined, "fetch", facts("https://edit.example/")).decision, "allow");
+    assert.equal(P.editPolicy("no-such-id", { label: "x" }), undefined);
+    P.removePolicy(g.id);
+});
+
+test("every change tells the listeners, which is how a card already showing is judged again", () => {
+    let n = 0;
+    const off = P.onPoliciesChanged(() => n++);
+    const g = P.addGlobalPolicy({ consumer: "fetch", effect: "deny", source: "(c) => false", label: "l" });
+    P.editPolicy(g.id, { label: "l2" });
+    P.removePolicy(g.id);
+    P.rememberFetchUrls("h-listen", ["https://l.example/"]);
+    P.forgetRunPolicies("h-listen");
+    off();
+    P.addGlobalPolicy({ consumer: "fetch", effect: "deny", source: "(c) => false", label: "after" });
+    assert.equal(n, 5);
+});
+
+test("the policy page's view lists the global policies, each session's, the built-in default and why any broke", () => {
+    P.addRunPolicy("h-view", { consumer: "fetch", effect: "allow", source: "(c) => c.nope", label: "broken one", origin: "person" });
+    P.judgeCall("h-view", "fetch", facts("https://v.example/"));
+    const v = P.policyView();
+    const run = v.runs.find((r) => r.hash === "h-view");
+    assert.equal(run.policies[0].label, "broken one");
+    assert.match(v.broken[run.policies[0].id], /no field 'nope'/);
+    assert.match(v.builtin.source, /free/);
+    assert.ok(v.global.length >= 1);
+});
+
 test("what the model reads lists the global and the run's policies, as written", () => {
     const seen = P.policiesForModel("h-old");
-    assert.deepEqual(seen.map((p) => [p.scope, p.effect, p.label]), [["global", "deny", "never blocked.example"], ["run", "allow", "fetch https://a.example/x"]]);
+    const rows = seen.map((p) => `${p.scope} ${p.effect} ${p.label}`);
+    for (const want of ["global deny never blocked.example", "global allow ls", "run allow fetch https://a.example/x"]) assert.ok(rows.includes(want), want);
+    assert.equal(rows.at(-1), "run allow fetch https://a.example/x", "the run's own come after the global ones");
     assert.deepEqual(Object.keys(P.withPolicies({ a: 1 }, "h-old")).sort(), ["a", "policies"]);
 });
 
-test("once storage has been read, the store says so; until then a consumer must ask", () => {
+test("once storage has been read, the store says so", () => {
     assert.equal(P.policiesLoaded(), true);
+});
+
+// --- consumers ---
+
+test("a policy is evaluated only over calls of its own consumer: an sh policy never decides a fetch, nor a fetch policy an sh call", () => {
+    P.addRunPolicy("h-cons", { consumer: "sh", effect: "deny", source: "(c) => true", label: "no shell", origin: "person" });
+    assert.equal(P.judgeCall("h-cons", "fetch", facts("https://a.example/")).decision, undefined);
+    P.addRunPolicy("h-cons2", { consumer: "fetch", effect: "deny", source: "(c) => true", label: "no fetch", origin: "person" });
+    const sh = { argv: ["git", "status"], effects: [{ op: "exec", res: { kind: "process" } }] };
+    assert.equal(P.judgeCall("h-cons2", "sh", sh).decision, undefined);
+    assert.equal(P.judgeCall("h-cons", "sh", sh).decision, "deny");
+});
+
+test("the policy page re-reads on exactly the keys the store writes (it keeps its own copy, not importing worker code)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync(new URL("../src/sidebar/settings/settings.tsx", import.meta.url), "utf8");
+    const keys = JSON.parse(page.match(/const POLICY_STORAGE_KEYS = (\[[^\]]*\])/)[1]);
+    assert.deepEqual(keys.sort(), [P.GLOBAL_POLICIES_KEY, P.RUN_POLICIES_KEY, P.ARCHIVED_POLICIES_KEY].sort());
 });
 
 test("policies are kept in local storage, never sync", () => {

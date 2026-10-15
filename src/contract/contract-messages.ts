@@ -248,6 +248,8 @@ export interface SetApprovalPayload {
     /** button #3: on a positive decision, ALSO persist the gated call's static egress grants for the
      *  session (the background re-derives them from the call — this is just the "remember it" intent). */
     persist?: boolean;
+    /** The NESTED ask inside step `seq` this answers (src/sw/sw-asks.ts); absent for the step's own gate. */
+    ask?: string;
 }
 
 /** CANCEL_RUN payload — abort a background-hosted run by id (the HUD's "Cancel agent run"). Harmless
@@ -378,6 +380,9 @@ export interface PageToolEnvelope {
     /** The verify the worker is to take after this click/type/wait (a run whose vision is the worker's, asked with
      *  `verifyInWorker`): the page's word, checked field by field (worker-verify.ts `checkVerifyRequest`). */
     verifyRequest?: VerifyRequest;
+    /** The stored whole of a clipped text result (ToolResult.textValue). Read only off an envelope the worker made
+     *  itself, never off a page's answer. */
+    textValue?: string;
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

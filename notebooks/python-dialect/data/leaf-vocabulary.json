@@ -1,0 +1,31 @@
+{
+  "unique_cells": 1697,
+  "vocabulary": {
+    ".agg": {
+      "sum": 1
+    }
+  },
+  "c_callables_as_callbacks": {},
+  "cells_with_a_c_callable_callback": 0,
+  "query_eval_cells": {
+    ".query": 1,
+    ".eval": 0
+  },
+  "all_kinds": {
+    ".agg": {
+      "str:sum": 1
+    },
+    ".apply": {
+      "lambda": 5,
+      "module-fn:pandas.to_numeric": 3,
+      "module-fn:decimal.Decimal": 2
+    },
+    ".map": {
+      "lambda": 6,
+      "module-fn:decimal.Decimal": 4
+    },
+    ".pipe": {
+      "lambda": 2
+    }
+  }
+}

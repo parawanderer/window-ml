@@ -27,13 +27,20 @@ starts from main.
    `Function`, `AsyncFunction` and `GeneratorFunction` constructors throw afterwards; a numpy/pandas cell and a later
    `loadPackage` still work. Two caveats from that measurement: indirect `eval` of a string still works after
    `lockdown()`, so the strip below must cover `eval` through any alias; and `lockdown()` removed `.sig` properties
-   Pyodide had attached to `Math` intrinsics, with nothing visibly breaking in ONE run. Do not trust one run: run lane
+   Pyodide had attached to `Math` intrinsics, with nothing visibly breaking in ONE run. A third, from the red-team
+   session's probe of `ses` under Node 26 (2026-10-15): `lockdown()` does NOT make the DIRECT `Function` and `eval`
+   globals throw, only the prototype-chain constructors (`({}).constructor.constructor`, `AsyncFunction`,
+   `GeneratorFunction`, `Function.prototype.constructor`), which is `ses`'s documented design (the start compartment
+   keeps its own powerful `eval` and `Function`). So the two steps divide the work and both are needed: `lockdown()`
+   closes the prototype-chain route (P1), the strip (step 3) removes the direct globals. A vector asserts each half on
+   its own: the chain route throws, and `globalThis.Function`/`globalThis.eval` are absent. Do not trust one run: run lane
    3's corpus of real cells (`notebooks/python-dialect/`, PR #677) under lockdown against unlocked, and carry the number
    in the PR. If `.sig` is Pyodide's FFI signature cache, keep those properties through `ses`'s allowlist rather than
    skipping `lockdown()`.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
-   `eval`, `importScripts`, the `WebAssembly` string-compiling paths, `setTimeout`/`setInterval` with a string
-   argument, and the whole host surface (`fetch`, `XMLHttpRequest`, `WebSocket`, `indexedDB`, `caches`, `navigator`,
+   `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
+   string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
+   first draft's "string-compiling paths" named nothing real), and the whole host surface (`fetch`, `XMLHttpRequest`, `WebSocket`, `indexedDB`, `caches`, `navigator`,
    `postMessage`, `addEventListener`). The relay keeps CLOSURE-HELD references captured before the strip; `onmessage` is
    defined once, non-writable, non-configurable. A JsProxy of `globalThis` must then find nothing. Commit the kept list
    as the set Pyodide needs, with a test that enumerates `globalThis` and fails on anything outside it.
@@ -61,7 +68,14 @@ starts from main.
   lands), which fail first and pass after: P1 to P4, and P5 in its two halves (cross-principal: a patched function is
   not visible after the principal changes; intra-principal: the harness's reporting is unaffected by a patched
   `json.loads` even though the next cell's own call sees it).
-- The corpus regression number from step 2.
+- The corpus regression number from step 2, and the lockdown's cost measured on the cold worker (the 18 ms above was
+  one measurement in one realm; the PR carries its own).
+- P4's half that reaches `globalThis` through the P1 route (`to_js({}).constructor.constructor("return this")()`)
+  passes as "the route is blocked" once it throws under `lockdown()` (ruling, 2026-10-15): an unreachable surface is
+  the stronger property. The surface assertion itself then runs from the HARNESS side, trusted code enumerating
+  `Object.getOwnPropertyNames(globalThis)` against the committed allow-list (the step 3 test), never through an
+  attacker route, and the stand-in-scope assertion stays as the strip's direct check.
+- A `loadPackage` of one wheel after `lockdown()` and the strip succeeds (the on-demand packages root loads after both).
 - The `globalThis` enumeration test from step 3.
 - Tests run under real CPython in `dist/pyodide/` (they self-skip without it).
 - `docs/dev/python-sandbox.md` rewritten in the same PR: the hardening section describes the allow list, the principals

@@ -53,7 +53,9 @@ test("a Python cold start is reported by the offscreen document and stamped offs
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
-        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        // These three tests drive the Pyodide RUNTIME through the page's own `pythonExec`, so the page is on the
+        // self-approve list (the escape hatch the refusal names). The gate itself is pinned in site-access.spec.mjs.
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", pageApprovalDomains: [new URL(fake.url).origin] });
         const page = await ext.context.newPage();
         await page.goto(`${fake.url}/api/version`);
         await waitForMl(page);
@@ -76,7 +78,7 @@ test("a run with python_exec pre-warms Pyodide at start, and its first call find
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
-        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", pageApprovalDomains: [new URL(fake.url).origin] });
         fake.setScript([{ content: "Done." }]);
         const page = await ext.context.newPage();
         await page.goto(`${fake.url}/api/version`);
@@ -100,7 +102,7 @@ test("a readonly script reads and writes Parquet through pyarrow, after an ordin
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
-        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", pageApprovalDomains: [new URL(fake.url).origin] });
         const page = await ext.context.newPage();
         await page.goto(`${fake.url}/api/version`);
         await waitForMl(page);

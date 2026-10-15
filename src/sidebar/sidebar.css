@@ -1387,6 +1387,18 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .sheet-chip-name { font-weight: 500; }
 .astep-approve .appr-ask { color: var(--fg); font-size: 0.9em; }
 .astep-approve .appr-ask b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A NESTED ASK's facts (ask-card.tsx): what the call will run, where and under what sandbox, as the worker resolved it.
+   One row per fact, the label in a narrow column; a fact worth a second look carries the warning icon. */
+.astep-approve .ask-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; font-size: 0.82em; }
+.astep-approve .ask-facts > div { display: contents; }
+.astep-approve .ask-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
+.astep-approve .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
+.astep-approve .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.astep-approve .ask-facts .warn dd { color: var(--notice); }
+/* An answered nested ask: one line under its step. */
+.astep-ask-done { font-size: 0.8em; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
+.astep-ask-done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
+.astep-ask-done.no { color: var(--err); }
 .appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }
 .appr-btn.yes { color: var(--accent-fg); background: var(--ok); border-color: var(--ok); }
 .appr-btn.no { color: var(--err); border-color: var(--err); }
@@ -3015,6 +3027,38 @@ html[data-focus] .action-verb { font-weight: 500; }
 .perm-row select { font-size: 0.9em; padding: 2px 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
 /* A site row's "Agents:" label with its select, which carries the tooltip explaining the level. */
 .perm-agents { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 0.9em; }
+/* The policy page's rows: one stored policy each (effect chip, label, tags, Edit, remove, then its source as code), and the add form under the global ones. */
+.pol-rows { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+/* One stored policy on the policy page: its head line, then its source as code. */
+.pol-row { padding: 4px 6px 6px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
+/* A policy row's first line: effect chip, label, tags, Edit, remove. */
+.pol-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* The policy's label, the sentence the person reads. */
+.pol-label { flex: 1 1 10em; min-width: 0; overflow-wrap: anywhere; }
+/* The chip saying whether a policy allows or refuses ("allows" / "refuses"). */
+.pol-effect { font-size: 0.8em; font-weight: 600; padding: 1px 7px; border-radius: 9px; background: var(--bg); border: 1px solid var(--border); }
+/* The effect chip of an allow policy. */
+.pol-allow { color: var(--ok); }
+/* The effect chip of a deny policy. */
+.pol-deny { color: var(--err); }
+/* A small tag on a policy row: its consumer, or where it came from ("from a card", "proposed by the model"). */
+.pol-tag { font-size: 0.8em; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 9px; padding: 0 6px; }
+/* Why a policy cannot run, under its head line. */
+.pol-broken { margin-top: 4px; }
+/* A policy's source, shown as code. */
+.pol-code { margin: 4px 0 0; padding: 4px 6px; background: var(--bg); border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pol-code code { font: inherit; }
+/* The inline editor of a policy, and the form that adds a global one. */
+.pol-edit, .pol-add { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+/* The form on the policy page that adds a global policy. */
+.pol-add { margin-bottom: 10px; }
+.pol-edit select, .pol-add select { align-self: flex-start; font-size: 0.9em; padding: 2px 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
+/* The textarea a policy's source is written in. */
+.pol-source-input { box-sizing: border-box; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+/* Save and cancel under a policy editor. */
+.pol-actions { display: flex; gap: 6px; }
+/* One session's run policies, under its hash. */
+.pol-run { margin-top: 8px; }
 /* The one-time notice that the self-approval list moved from hosts to origins, with its Dismiss. */
 .perm-upgrade { display: block; margin: 6px 0; }
 

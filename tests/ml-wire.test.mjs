@@ -41,9 +41,9 @@ test("a run's python cell gets a wire client bound to its run, and its calls ans
 });
 
 test("a capture larger than the model saw answers what the run's store holds: the wire adds no read past it", T, async () => {
-    // The store keeps the text the model was shown (fetch_url's "[first 4000 of N chars]"), and a pipe reads that text,
-    // so no dereference answer reaches WIRE_VALUE_CAP today: the pointer answer is the server's rule (tested below),
-    // and the whole of a large value is the value store's, by `meta.value`.
+    // With no value store (this harness's default) the pointer keeps the text the model was shown (fetch_url's
+    // "[first 4000 of N chars]"), and a pipe reads that text. With one, the whole body is stored and read whole:
+    // tests/text-captures.test.mjs.
     const big = Array.from({ length: 30000 }, (_, i) => `line ${i} ${"x".repeat(40)}`).join("\n");
     const got = {};
     await wireRun(async (wire, bg) => {

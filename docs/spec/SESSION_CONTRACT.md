@@ -188,7 +188,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `sessions.search`: the same rows and paging, matching a query: an archived session by every word its events hold (FTS5), a live one by title, task and page title; `match.snippet` is plain text with the match in «guillemets» | view | | nothing |
 | `session.unarchive`: bring an archived session back into the live store, to be opened, resumed, pinned or deleted like any other; `session.resume` does it first on its own | drive | | nothing |
 | `session.pin`: keep a session whatever the caps and retention say, or stop; the row's `pinned` changes by `upsert`; bounded, `conflict` past it | drive | `persistence` | nothing |
-| `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
+| `approval.answer`: by the pending step's `seq`, and `ask` for a nested ask inside it (a step's `asks[]`); `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
 | `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs`, and `agent` or `chat` by the session's kind | nothing |

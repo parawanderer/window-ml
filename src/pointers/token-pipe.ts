@@ -44,7 +44,8 @@ export interface TokenValue {
     in?: string;
     /** The structural value when there is one, so the pipe needn't reparse a rendered grid. */
     table?: TableLike;
-    /** The value-store key of the WHOLE table, when `table` is only its preview (a fetched table past the parse cap). */
+    /** The value-store key of the WHOLE value, when the row holds only its preview: a fetched table past the parse cap
+     *  (`table` is the preview), or a fetched text past its preview (`out` is the preview; POINTER_VALUES.md, slice 9). */
     value?: string;
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;

@@ -399,6 +399,52 @@ pd.concat([chains.head(30).rename_axis("chain").rename("cells").reset_index(), m
 """)
 
 md("""
+## Name-resolving leaves and callbacks
+
+Ruled 2026-10-15 (repl-specs): a pandas leaf that resolves a method NAME from a string (`df.agg("sum")`) admits only a
+closed vocabulary of strings, checked before the call; `query` and `eval` are out of the manifest; and a lifted leaf
+admits as a callable argument only the program's own function, so `df.a.apply(str)` or `key=len` would be refused. This
+counts each of those in the corpus: the vocabulary is what the cells actually pass, and the callback idiom's frequency
+decides whether the manifest needs a listed set of callback-safe C callables.
+""")
+
+code("""
+from collections import Counter
+leaf = {}
+for d in ok.leaf_args:
+    for m, kinds in d.items():
+        c = leaf.setdefault(m, Counter())
+        for k in kinds:
+            c[k] += 1                      # unique cells passing this kind to this leaf
+vocab = {m: {k[4:]: v for k, v in c.items() if k.startswith("str:")} for m, c in leaf.items()}
+vocab = {m: dict(sorted(v.items(), key=lambda kv: -kv[1])) for m, v in vocab.items() if v}
+c_callbacks = Counter()
+for m, c in leaf.items():
+    for k, v in c.items():
+        if k.startswith("builtin:") or k == "method":
+            c_callbacks[(m, k)] += v
+cells_with_c_callback = int(ok.leaf_args.map(lambda d: any(k.startswith("builtin:") or k == "method"
+                                                           for kinds in d.values() for k in kinds)).sum())
+query_eval = {m: int(ok.methods.map(lambda d: m in d).sum()) for m in (".query", ".eval")}
+(OUT / "leaf-vocabulary.json").write_text(json.dumps({
+    "unique_cells": len(ok),
+    "vocabulary": vocab,
+    "c_callables_as_callbacks": {f"{m} {k}": v for (m, k), v in sorted(c_callbacks.items(), key=lambda kv: -kv[1])},
+    "cells_with_a_c_callable_callback": cells_with_c_callback,
+    "query_eval_cells": query_eval,
+    "all_kinds": {m: dict(sorted(c.items(), key=lambda kv: -kv[1])) for m, c in sorted(leaf.items())},
+}, indent=2) + "\\n")
+print("strings passed, by leaf (unique cells):")
+for m, v in vocab.items():
+    print(f"  {m}: {v}")
+print(f"\\ncells passing a C callable as a callback: {cells_with_c_callback} of {len(ok)}")
+for (m, k), v in sorted(c_callbacks.items(), key=lambda kv: -kv[1])[:15]:
+    print(f"  {m} {k}: {v}")
+print(f"\\nquery / eval: {query_eval}")
+pd.DataFrame({m: dict(c) for m, c in leaf.items()}).fillna(0).astype(int).T
+""")
+
+md("""
 ## The proposed whitelist
 
 `data/whitelist.json`: the node set (`STARLARK`, the one ratchet), what stays excluded and why with the share of cells

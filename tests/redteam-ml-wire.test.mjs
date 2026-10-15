@@ -88,7 +88,7 @@ test("a cell a PAGE started has no run, even on the run's own tab mid-run: it ca
         got.runWire = wire;
         await bg.send({ type: "PYTHON_EXEC", requestId: "p1", payload: { code: "x", hardened: true } }, hostilePage());
         got.ok = await wireCall(bg, wire, "dereference", ["fetch_url"]);
-    }, { siteGate: false });
+    }, { siteGate: false, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://site.example"] } });
     assert.match(got.ok.value?.text ?? "", /north/, "positive control: the run's own cell reads it");
     assert.ok(got.pageWire, "positive control: the page's cell ran");
     assert.equal(got.pageWire.run, null, "a page's cell is bound to no run");

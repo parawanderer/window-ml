@@ -89,7 +89,7 @@ export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask
         if (r) return r;
         if (world === "isolated") return unavailable(forced);
         if (forced === "pointer")
-            return { where: "main", reason: forced, note: `(Ran in the page's own world, where its scripts can read the pointer values it was sent: no isolated world is available. ${ENABLE} to isolate it.)` };
+            return { where: "main", reason: forced, note: `(Ran in the page's own world, where its scripts can read the pointer values it was sent: no isolated world is available. ${ENABLE} to isolate it. A stored text was sent as its preview; the dereference tool or a read-only exec reads the whole.)` };
         return {
             where: "refused", reason: forced,
             result: forced === "current"

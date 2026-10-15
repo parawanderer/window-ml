@@ -150,6 +150,8 @@ export interface ToolEnvelope {
     answerManaged?: boolean;
     /** what to picture for a verify the worker takes (see ToolResult.verifyRequest) */
     verifyRequest?: import("../contract").VerifyRequest;
+    /** the stored whole of a clipped text result (see ToolResult.textValue) */
+    textValue?: string;
 }
 
 export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext, onStream?: (text: string, ts?: number) => void): Promise<ToolEnvelope> {
@@ -197,7 +199,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, ...(r.cdpShadowResolve ? { cdpShadowResolve: r.cdpShadowResolve } : {}), cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs, ...(r.verifyRequest ? { verifyRequest: r.verifyRequest } : {}) };
+            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, ...(r.cdpShadowResolve ? { cdpShadowResolve: r.cdpShadowResolve } : {}), cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs, ...(r.verifyRequest ? { verifyRequest: r.verifyRequest } : {}), ...(r.textValue ? { textValue: r.textValue } : {}) };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

@@ -348,6 +348,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
         remoteMs: env.remoteMs,
         // What a click/type/wait asks the worker to picture, in a run whose verifies the worker takes.
         ...(env.verifyRequest ? { verifyRequest: env.verifyRequest } : {}),
+        ...(env.textValue ? { textValue: env.textValue } : {}),
     };
 }
 

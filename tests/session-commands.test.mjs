@@ -458,6 +458,18 @@ test("session.resume lists the run policies the session carries across, by label
     assert.ok(withKept.dropped.some((d) => /approval grants other than the run's policies/.test(d)));
 });
 
+test("session.resume of a session an archive took run policies from says so, with when and which, among what it lost", async () => {
+    const at = Date.UTC(2026, 9, 1, 12);
+    const w = world({ archivedPolicyLoss: (hash) => (hash === "aaaa0021" ? { at, labels: ["fetch https://a.example/x"] } : undefined) });
+    endedRun(w, "aaaa0021");
+    endedRun(w, "aaaa0022");
+    await w.run({ type: "session.resume", session: sid("aaaa0021"), target: { kind: "tab", tabId: TAB } });
+    await w.run({ type: "session.resume", session: sid("aaaa0022"), target: { kind: "tab", tabId: TAB } });
+    const [lost, untouched] = w.named("noteResumed").map((c) => c[3]);
+    assert.ok(lost.dropped.some((d) => d.includes("removed when the session was archived (2026-10-01T12:00:00.000Z)") && d.includes("fetch https://a.example/x")), JSON.stringify(lost.dropped));
+    assert.ok(!untouched.dropped.some((d) => /archived/.test(d)));
+});
+
 test("resuming the same session twice is two notes, because it is two resumes", async () => {
     // The index de-duplicates a resume note by its id. A note identified by the SESSION would mean a session that
     // moved page twice showed one divider for both moves, with the second silently dropped.
@@ -881,4 +893,17 @@ test("side.call: a TITLE goes to the runtime's one title for the session, a summ
     assert.deepEqual(w.named("title"), [["title", "aaaa0001", base.messages]]);
     assert.deepEqual(await w.run({ ...base, purpose: "summary" }), { ok: true, data: { content: "a gloss", usage: null } });
     assert.equal(w.named("sideCall").length, 1);
+});
+
+// --- nested asks: a gate raised inside a running step (src/sw/sw-asks.ts) ---
+
+test("approval.answer with an ask id resolves that NESTED ask's key; a malformed id resolves nothing, not even the step's own gate", async () => {
+    const w = world({ resolveApproval: (key, d) => { w.calls.push(["resolve", key, d]); return true; } });
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    const id = `a${"0123456789abcdef".repeat(2).slice(0, 24)}`;
+    assert.deepEqual(await w.run({ type: "approval.answer", session: sid("aaaa0001"), seq: 2, decision: "deny", feedback: "no", ask: id }), { ok: true, data: { resolved: true } });
+    assert.deepEqual(w.named("resolve"), [["resolve", `aaaa0001:2#${id}`, { approved: false, feedback: "no" }]]);
+    for (const ask of ["x", `${id}0`, `A${id.slice(1)}`, `${id.slice(0, 24)}#`, 5, {}])
+        assert.equal(code(await w.run({ type: "approval.answer", session: sid("aaaa0001"), seq: 2, decision: "approve", ask })), "invalid", `ask ${JSON.stringify(ask)}`);
+    assert.equal(w.named("resolve").length, 1, "no malformed id reached the resolver, so none fell back to the step's own gate");
 });

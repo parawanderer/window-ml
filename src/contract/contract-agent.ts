@@ -73,6 +73,10 @@ export interface ToolResult {
      *  worker to capture and describe, in place of a picture the page took. Set only when the run's call asked the page
      *  for it; the worker checks it field by field and uses nothing else of a page's result for the verify. */
     verifyRequest?: VerifyRequest;
+    /** The value-store key of the WHOLE text `content` was clipped from (fetch_url past its preview), so the pointer the
+     *  step mints reads the whole (docs/spec/POINTER_VALUES.md, slice 9). Only the worker stores one, and the run host
+     *  takes it only from a tool the worker ran itself (sw-run-host.ts). */
+    textValue?: string;
 }
 
 /** What a page asks the worker to picture after an action, as plain data: the area around a point (the element's
@@ -233,12 +237,13 @@ export interface ApprovalRequest {
 
 /** The approval-gate contract: a boolean, or a rich object that can feed a
  *  rejection comment back to the model and/or edit the args before running.
- *  `source` records WHO decided — "user" (a browser UI surface) or "external"
- *  (the __mlApprovals IPC channel: an orchestrator / policy driver) — so a
- *  denial reads back accurately to the model. Absent → treated as "user". */
+ *  `source` records WHO decided — "user" (a browser UI surface), "external"
+ *  (the __mlApprovals IPC channel: an orchestrator / policy driver) or "policy" (a
+ *  policy that changed while the card was showing, sw-policies.ts; only the worker
+ *  sets it) — so a denial reads back accurately to the model. Absent → treated as "user". */
 export type ApprovalDecision =
     | boolean
-    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external";
+    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external" | "policy";
         /** button #3: ALSO persist this call's statically-known egress grants (its `ml.fetch` literal URLs)
          *  for the rest of the session, so a later call to the same URL auto-approves. Only ever set on a
          *  positive decision; the grants themselves are re-derived background-side (never trusted from here). */

@@ -39,7 +39,7 @@
 import type { TokenUsage } from "./contract/contract-chat";
 import type { PersistGrant, ReusedGrant } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
-import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig } from "./contract/contract-debug";
+import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig, StepAsk } from "./contract/contract-debug";
 import type { PromptDisplay } from "./contract/contract-run";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */
@@ -374,6 +374,9 @@ export interface ExportStep {
     /** Grants this step created / reused, for privileged fetches. */
     grants?: PersistGrant[];
     reused?: ReusedGrant[];
+    /** Nested asks: calls made from inside this step while it ran that needed the person, each with the facts it was
+     *  judged on, how it was answered and when (docs/spec/ML_WIRE.md, "Per-call asking"). */
+    asks?: StepAsk[];
 
     /** A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus. */
     elements?: number;

@@ -44,8 +44,9 @@ Where each property of the dialect lives:
 | --- | --- | --- |
 | membership | a Python-side pre-pass, unchanged | `ast.parse`, a WHITELIST of node types (the one ratchet), `compile` with a new code flag, `CO_RESTRICTED`; an unlisted node is `NotInDialect` before anything runs |
 | the gate | a thread-state flag with DYNAMIC extent | set on entering a restricted frame; checked in `PyObject_GetAttr`, `PyObject_SetAttr`, `PyObject_GetItem`, `PyObject_SetItem`, `PyObject_Call` and `IMPORT_NAME`, one branch per abstract call, against the kind tables (methods allowed per receiver kind, dunders refused outright, which cuts the `__class__` → `__subclasses__` chain at its root) |
-| C leaves | the flag is LIFTED for the dynamic extent of a manifest-approved native call | numpy's internals legitimately touch dunders; the manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)) is what approves the call and says what it returns |
-| callbacks | the flag is set again whenever a restricted frame is entered, whoever calls it | a `lambda` handed to `df.apply` runs restricted inside pandas' C loop; the manifest's `@calls` falls out of this instead of being an annotation the interpreter has to honour |
+| C leaves | every allowed C callable runs UNLIFTED by default: the flag stays on, so the lookups it makes from its arguments hit the gate. Only a manifest leaf marked `lift` runs with the flag lifted for its dynamic extent (lane 3, 2026-10-15; the first draft lifted by default, which was wrong) | the C paths are covered by construction only while C runs unlifted: `"{0.__class__}".format(1)`, `getattr(x, "__class__")`, `hasattr`, `operator.attrgetter` all escape through a lifted callable. numpy's and pandas' internals legitimately touch dunders, so their leaves are lifted, by the manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)) that approves the call and says what it returns, with the rule that a lifted leaf never resolves a NAME it is given |
+| callbacks | inside a lifted leaf, the gate also fires when a `CO_RESTRICTED` frame sits between the current frame and the lift barrier | a `lambda` handed to `df.apply` runs restricted inside pandas' C loop; the manifest's `@calls` falls out of this instead of being an annotation the interpreter has to honour. No per-frame depth counting: the state is set for the C extent of an ENTRY and the walk happens only inside a lifted leaf, up to its barrier |
+| entries | `_restricted.run(code, ns)` for a cell, `_restricted.call(fn, …)` for a registered command | restriction is a property of the ENTRY, not of a function's callers: a dialect-defined `def` called bare from full-mode Python or from the host's own code runs unrestricted, which escalates nothing since that caller already holds full capability. The one rule that follows: anything invoking a dialect-defined function AS A COMMAND on the strength of tier 3 ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Two kinds of command") goes through `_restricted.call`, because the proof holds only while the body runs restricted |
 | the step budget | a counter at the eval breaker | CPython already checks it on backward jumps and calls, which is where loops and recursion are; a few lines in `ceval`. The halting rules below still refuse the unbounded forms statically, so a refusal happens BEFORE running where it can |
 | ownership | an allocation hook under the flag, plus the manifest's return marking | an object allocated while restricted is owned; a leaf's `fresh` return is marked owned, `alias(i)` inherits argument i's, `internal` is never owned (a view from `reshape`). A side set keyed by pointer, with removal on dealloc, so the object layout is unchanged |
 | rollback | an undo log at the write barrier | every restricted write records container, key and old value, and a refusal replays it; a C leaf marked `mutates(i)` on a value from an earlier cell gets a copy first, or a refusal |
@@ -58,7 +59,49 @@ list of CVEs look the way they do:
 1. **The gate covers the C paths.** `str.format` walking `"{0.__class__}"`, `getattr`, `operator.attrgetter`, pickle:
    all of them go through `PyObject_GetAttr`. An evaluator or an AST rewrite guards the Python-visible paths and has to
    ENUMERATE them; the abstract layer is a small, stable set of entry points. Enumerating entry points beats enumerating
-   tricks.
+   tricks. **With one condition the first draft missed** (lane 3, 2026-10-15): CPython 3.11+'s specializing interpreter
+   rewrites hot `LOAD_ATTR`, `STORE_ATTR`, subscript and `CALL` instructions into about forty-five specialized forms that
+   do the access inline and never call the abstract function, and `CALL_LIST_APPEND`/`STORE_SUBSCR_DICT` skip the write
+   barrier too; a library warmed up before a run holds already-specialized instructions. So the honest claim is: every
+   access goes through the abstract layer BECAUSE the build has specialization off (`ENABLE_SPECIALIZATION`, and the
+   free-threading variant, off; the tier-2 interpreter and the JIT off). The build switch is part of the security
+   argument, the patched interpreter ASSERTS it at runtime through `_restricted` and the vector suite's first test
+   checks it, and a warm-library vector (specialize a pure-Python function, then run it restricted and watch the gate
+   fire) guards it forever. Per-form guards in the specialized instructions (deopt when restricted) are the later
+   optimisation if the measured cost of the switch matters; the same vectors then prove they lose nothing. The cost is
+   measured on the corpus's own cells, not only on a benchmark suite. **Measured** (lane 3, 2026-10-15, slice 1 at
+   `parawanderer/cpython` branch `ml/restricted-mode`, 5b1d921): pyperformance's fourteen pure-Python benchmarks run
+   1.66x slower with specialization off (geometric mean, stock and no-spec interleaved per benchmark over three rounds;
+   `json_loads` 1.04x, `nbody` 2.47x), so specialization is most of 3.11+'s speedup. The 684 real bench cells (median
+   152 µs, mostly pandas and numpy C) run about 1.06x (1.04x weighted by time; noise about 0 to 14%). So the switch is
+   right for the first slice and real cells barely notice it, and the per-form guards are the second slice, needed as
+   soon as tier-3 pure-Python library code carries the work rather than C leaves.
+   **Lifting is opt-in, and a lifted leaf resolves no name it is given** (lane 3's slice 2, 2026-10-15). The gate's
+   coverage of the C paths holds only while C runs with the flag ON: a lifted `str.format` walks `"{0.__class__}"`
+   ungated, and `getattr`, `hasattr` and `operator.attrgetter` are the same hole. So the default for every allowed C
+   callable (builtins, method descriptors, bound methods, a module's listed functions, instances of a kind that lists
+   `()`) is UNLIFTED, callbacks stay gated because the flag never went off, and only a leaf the manifest marks `lift`
+   runs lifted. Three consequences, each a rule: (a) a leaf is never `lift` if it resolves a name it is given. In pandas
+   that is `agg`, `apply` and `transform` with a string, `groupby(...).agg`/`transform` with strings, `eval` and
+   `query`, all of which `getattr` on the string. The ruling: the aggregation names are a CLOSED VOCABULARY in the
+   manifest entry (`names=`), checked against the string argument BEFORE the call by the entry, the same mechanism
+   that checks a `range` or a cost bound; an unlisted string is `NotInDialect`; a callable argument must be a
+   `CO_RESTRICTED` Python function, since only such a frame turns the gate back on inside the lift and a C callable
+   (a bound `str.format`, an `attrgetter`, a `partial`) makes no frame (lane 3's second finding, PR #721; the entry
+   walks plain containers for both rules, and a gate-restoring shim is rejected). `df.eval` and `df.query` are OUT: a string that is a program is a second language, and the dialect
+   never compiles a string, in Python as in JavaScript. If the corpus shows `query` common enough to matter, the
+   later answer is a parser of our own over a closed grammar of comparisons on column names, as `ml.pipe` has, never
+   pandas' engine. (b) An unlifted builtin that looks a method up by name (`sorted` reaching `list.sort` on the list it
+   just built) is judged by the SAME kind tables as user code, no separate list of internal names: the list is owned,
+   `sort` is an owned-only write in the table, the call passes; a builtin that needs a method the tables lack gets the
+   table entry, with its ownership condition. (c) A module's C function is callable only if its module's table lists
+   it, because `builtins.eval` is reached by name with no attribute read: `builtins` is a module with a table like any
+   other, and `eval`, `exec`, `compile`, `__import__`, `open`, `getattr`, `setattr`, `delattr`, `hasattr`, `globals`,
+   `locals`, `vars`, `input` and `breakpoint` are not in it. `getattr` with a literal would be gated correctly
+   unlifted, and stays out anyway: a cell whose attribute names are strings cannot be read statically, and the JS
+   dialect has no `Reflect.get` for the same reason; the corpus count decides if that ever changes. Vectors:
+   `df.agg("__sizeof__")`, `"{0.__class__}".format(1)` through every lifted leaf that takes a format-like string, and
+   `sorted` on a list the cell does not own.
 2. **Tier 3 is the default.** A pure-Python library function called from a restricted frame simply runs under the gates,
    at native speed, with no manifest: it stays inside them or raises `NotInDialect`. Only C leaves need manifest
    entries, which is where the library manifest spec was always going to earn its keep ("interpret my body" costs
@@ -81,8 +124,13 @@ what the count surfaced:
   static gate's import and builtin lists), against 99.1% if any generator expression were admitted. A genexp anywhere else is refused: there the rewrite would be
   observable, and a generator object is a suspended frame the patch's first slice does not have to get right.
 - **`type(x)` is allowed** (2.4% of cells, mostly a debugging print or `type(x) == str`), returning a receiver kind of
-  its own that lists no attributes (so `__mro__`, `__subclasses__`, `__name__` are refused by the gate), is not callable,
-  and supports `is`, `==` and `repr`. The three-argument `type(name, bases, dict)` is refused outright.
+  its own that lists no attributes (so `__mro__`, `__subclasses__`, `__name__` are refused by the gate) and supports
+  `is`, `==` and `repr`. The three-argument `type(name, bases, dict)` is refused outright. "Not callable" was the first
+  wording and cannot be implemented (lane 3, 2026-10-15): `type(1)` IS the `int` object, the same one the builtin name
+  binds, so `type(1)(5)` cannot be told from `int(5)`, and a proxy type object would break `type(x) is str`, one of the
+  two corpus uses. The property that matters holds without it: a call through `type(x)` is judged at the call gate by
+  the class's identity like any other call, so it reaches no constructor the manifest does not list. The vectors say
+  exactly that: `type(box)()` and `type(df)()` refused, `type(1)(5) == 5` a value.
 - **A kind may carry a DYNAMIC attribute rule from its manifest**: the DataFrame kind's `dynamic: columns` lets `df.Region`
   resolve when `Region` is a column, by a predicate registered beside the table and run with the depth lifted like any
   approved leaf, returning `alias(0)`. Never a dunder, never a name in the kind's static method set (`df.sum` is the

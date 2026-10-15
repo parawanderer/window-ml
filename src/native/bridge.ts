@@ -188,7 +188,7 @@ export type ToWeb =
     | { type: "cancel"; key: string }
     /** Carry a step-capped run on. `maxSteps` is a budget the person chose; omitted keeps the run's own. */
     | { type: "continue"; key: string; maxSteps?: number }
-    | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
+    | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean; ask?: string }
     | { type: "switchModel"; key: string; model: string }
     /** Pin or unpin a session on its runtime, rename it, or delete it: answered by `sent`, like `send`. */
     | { type: "pin"; id: string; key: string; on: boolean }

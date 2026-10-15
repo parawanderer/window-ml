@@ -277,7 +277,7 @@ const TIP = {
     valueStoreBudgetMB: "Disk for fetched tables too large to show whole. The table a pointer names is kept on disk, so a later step can read every row rather than the preview. Past this size, the one read longest ago is dropped first, and a step that then reads it is told to fetch it again. A value no one has read in a day is dropped regardless, and the browser's own storage quota caps this further (at most half of it). 0 stores nothing.",
     labelMatch: "How a pointer LABEL is matched when it isn't recalled exactly. A near match is only ever used when it clearly beats the runner-up, and is always reported — but WHICH metric ranks the candidates is genuinely undecided, so it is exposed here. hybrid (default): the better of trigram and word-overlap; handles both rewording and typos. tokenset: word overlap only — perfect on reordering, blind to typos. trigram: character-level, survives both without excelling. edit: Levenshtein — best on typos, but it ranks a DIFFERENT label above the correct one reworded, so it is here to be measured against, not recommended.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
-    autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
+    autoApprovePython: "Experimental, off by default while the readonly sandbox is being hardened. Run readonly-mode python_exec calls of a run without an approval prompt. Python a page starts by itself always asks. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     autoApproveSameOriginAuth: "Advanced, default OFF. Auto-approve a fetch that spends your session on the SAME origin you're already on — a fetch_url/ml.fetch with credentials:true (sends your cookies), or a rendered:true load in a normal (non-incognito) tab that inherits your login. OFF keeps you in charge: those always ask. This never touches cross-origin fetches (always ask) or the uncredentialed same-origin reads (already free — the page could fetch its own origin itself).",
     protoStream: "Default AUTO. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Self-negotiating, which is why asking by default is safe: the RESPONSE's content type picks the path, so a backend that doesn't serve it answers with the usual SSE and nothing breaks. ON sends the same request but REPORTS a reply that came back as SSE (once per URL, in the worker's console) — for when you believe your backend serves it; it never fails the call over it. OFF never sends the header. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
     agentSeesFocus: "Default ON. When you are not on the agent's tab, chat_metadata says where you are: the chat page (reading this run or not), another tab, or away from the browser. A run started from the extension's UI also gets that tab's site and title; a page-started run only \"another tab\". Never a full URL, never a private window. Off: nothing about where you are.",
@@ -1063,10 +1063,164 @@ function SelfApprovalList() {
     );
 }
 
+// --- the policy page: every policy, one line each, editable and deletable (docs/dev/policies.md) ---
+
+/** A stored policy as the worker's `POLICIES` answer carries it (`StoredPolicy`, src/sw/sw-policies.ts; worker code, so not imported here). */
+interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh"; effect: "allow" | "deny"; source: string; label: string; origin: "person" | "card"; created: number }
+/** What the worker's `POLICIES` answers (`policyView`, src/sw/sw-policies.ts). */
+interface PolicyView { global: PolicyRecord[]; runs: { hash: string; policies: PolicyRecord[] }[]; builtin: { label: string; source: string }; broken: Record<string, string> }
+/** The fields an Edit may change. */
+type PolicyPatch = { effect?: "allow" | "deny"; label?: string; source?: string };
+/** The storage keys the policy store lives under, re-read on change. Defined as GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY and ARCHIVED_POLICIES_KEY in src/sw/sw-policies.ts (worker code, not imported into this bundle). */
+const POLICY_STORAGE_KEYS = ["ml_policies_global", "ml_policies_run", "ml_policies_archived"];
+
+/**
+ * Ask the worker for the policies (`POLICIES`), applying an add, edit or remove first when one is given.
+ * @param payload `{}` to read, or `{ op, ... }` to change and read
+ * @returns the view after, or `{ error }` when the worker refused, or null when it could not be asked
+ */
+function askPolicies(payload: Record<string, unknown>): Promise<{ view?: PolicyView; error?: string } | null> {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: "POLICIES", payload }, (res: { data?: PolicyView; error?: string } | undefined) => {
+                void chrome.runtime.lastError;
+                if (res?.data) resolve({ view: { global: res.data.global ?? [], runs: res.data.runs ?? [], builtin: res.data.builtin, broken: res.data.broken ?? {} } });
+                else resolve(res?.error ? { error: res.error } : null);
+            });
+        } catch { resolve(null); }
+    });
+}
+
+/**
+ * The policies, kept current: a "remember" answered on an approval card shows up here without reopening Settings.
+ * @returns the view (null until read) and a setter for an edit's answer
+ */
+function usePolicies(): [PolicyView | null, (v: PolicyView) => void] {
+    const [view, setView] = useState<PolicyView | null>(null);
+    useEffect(() => {
+        const read = (): void => { void askPolicies({}).then((r) => { if (r?.view) setView(r.view); }); };
+        read();
+        const onChange = (changes: Record<string, unknown>) => { if (POLICY_STORAGE_KEYS.some((k) => k in changes)) read(); };
+        try { chrome.storage.onChanged.addListener(onChange); } catch { /* not an extension page */ }
+        return () => { try { chrome.storage.onChanged.removeListener(onChange); } catch { /* ignore */ } };
+    }, []);
+    return [view, setView];
+}
+
+/**
+ * One line of the policy page: a stored policy with its effect, label and source, an Edit that opens an inline editor, and a remove. A policy the evaluator cannot run shows why, and that it decides nothing until fixed.
+ * @group settings
+ * @gallery broken card allow {"policy": {"id": "p1a2b3c", "scope": "run", "consumer": "fetch", "effect": "allow", "source": "(c) => c.kind === \"fetch\" && c.uurl === \"https://example.com/data.json\"", "label": "fetch https://example.com/data.json", "origin": "card", "created": 1760000000000}, "broken": "not allowed in a policy: the call has no field 'uurl'"}
+ * @gallery person deny {"policy": {"id": "p4d5e6f", "scope": "global", "consumer": "fetch", "effect": "deny", "source": "(c) => c.kind === \"fetch\" && c.host === \"tracker.example\"", "label": "never reach tracker.example", "origin": "person", "created": 1760000000000}}
+ */
+export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: PolicyRecord; broken?: string; onEdit: (patch: PolicyPatch) => void; onRemove: () => void }) {
+    const [editing, setEditing] = useState(false);
+    const [effect, setEffect] = useState(policy.effect);
+    const [label, setLabel] = useState(policy.label);
+    const [source, setSource] = useState(policy.source);
+    const open = (): void => { setEffect(policy.effect); setLabel(policy.label); setSource(policy.source); setEditing(true); };
+    const save = (): void => {
+        const patch: PolicyPatch = {};
+        if (effect !== policy.effect) patch.effect = effect;
+        if (label !== policy.label) patch.label = label;
+        if (source !== policy.source) patch.source = source;
+        setEditing(false);
+        if (Object.keys(patch).length) onEdit(patch);
+    };
+    return (
+        <div class="pol-row" data-policy-id={policy.id}>
+            <div class="pol-head">
+                <span class={`pol-effect pol-${policy.effect}`}>{policy.effect === "allow" ? "allows" : "refuses"}</span>
+                <span class="pol-label">{policy.label}</span>
+                {policy.consumer !== "fetch" ? <span class="pol-tag">{policy.consumer}</span> : null}
+                {policy.origin === "card" ? <span class="pol-tag">from a card</span> : null}
+                {editing ? null : <button class="test-btn" onClick={open}>Edit</button>}
+                <button class="perm-x" aria-label={`Remove policy ${policy.label}`} {...cursorTipOn(`Remove policy ${policy.label}`)} onClick={onRemove}>✕</button>
+            </div>
+            {broken ? <div class="set-err pol-broken">Broken: {broken}. It decides nothing until fixed.</div> : null}
+            {editing
+                ? <div class="pol-edit">
+                    <select aria-label="Effect" value={effect} onChange={(e: any) => setEffect(e.target.value === "deny" ? "deny" : "allow")}>
+                        <option value="allow">allows</option>
+                        <option value="deny">refuses</option>
+                    </select>
+                    <input class="perm-input" type="text" aria-label="Label" value={label} onInput={(e: any) => setLabel(e.target.value)} />
+                    <textarea class="pol-source-input" aria-label="Source" rows={3} spellcheck={false} value={source} onInput={(e: any) => setSource(e.target.value)} />
+                    <div class="pol-actions">
+                        <button class="test-btn" onClick={save}>Save</button>
+                        <button class="test-btn" onClick={() => setEditing(false)}>Cancel</button>
+                    </div>
+                  </div>
+                : <pre class="pol-code"><code>{policy.source}</code></pre>}
+        </div>
+    );
+}
+
+/** The source a new global policy starts from: the shape every policy has, naming one host. */
+const POLICY_STARTER = '(c) => c.kind === "fetch" && c.host === "example.com"';
+
+/**
+ * The policy page (docs/spec/POLICIES.md): the global policies with an add form, the built-in default, and each run's
+ * policies. Every edit goes through the worker (`POLICIES`), which stores it and answers with the new view; a source
+ * that does not run is marked broken the next time a call is judged, and decides nothing until it is fixed.
+ */
+function Policies() {
+    const [view, setView] = usePolicies();
+    const [err, setErr] = useState("");
+    const [effect, setEffect] = useState<"allow" | "deny">("allow");
+    const [label, setLabel] = useState("");
+    const [source, setSource] = useState(POLICY_STARTER);
+    if (!view) return null;
+    const send = (payload: Record<string, unknown>): Promise<boolean> => askPolicies(payload).then((r) => {
+        if (r?.view) { setView(r.view); setErr(""); return true; }
+        setErr(r?.error ?? "The extension could not be reached.");
+        return false;
+    });
+    const rows = (list: PolicyRecord[]) => list.map((p) => (
+        <PolicyRow key={p.id} policy={p} broken={view.broken[p.id]}
+            onEdit={(patch) => { void send({ op: "edit", id: p.id, ...patch }); }}
+            onRemove={() => { void send({ op: "remove", id: p.id }); }} />
+    ));
+    const add = (): void => {
+        void send({ op: "add", effect, label: label.trim(), source }).then((ok) => { if (ok) { setLabel(""); setSource(POLICY_STARTER); } });
+    };
+    return (
+        <Section id="policies" title="Policies">
+            <div class="set-note">A policy is a short script over one call that allows or refuses it without asking you. A refusal wins over an allowance. A broken policy decides nothing. Run policies come from "remember" on an approval card and go when their session is deleted or archived.</div>
+            {err ? <div class="set-err">{err}</div> : null}
+            <div class="set-hint">Global: apply to every run.</div>
+            {view.global.length ? <div class="pol-rows">{rows(view.global)}</div> : <div class="set-hint">No global policy.</div>}
+            <div class="pol-add">
+                <select aria-label="New policy effect" value={effect} onChange={(e: any) => setEffect(e.target.value === "deny" ? "deny" : "allow")}>
+                    <option value="allow">allows</option>
+                    <option value="deny">refuses</option>
+                </select>
+                <input class="perm-input" type="text" placeholder="Label" aria-label="New policy label" value={label} onInput={(e: any) => setLabel(e.target.value)} />
+                <textarea class="pol-source-input" aria-label="New policy source" rows={3} spellcheck={false} value={source} onInput={(e: any) => setSource(e.target.value)} />
+                <button class="test-btn" onClick={add}>Add</button>
+            </div>
+            <div class="set-hint">Built-in: always in force, and not editable.</div>
+            <div class="pol-row pol-builtin">
+                <div class="pol-head"><span class="pol-label">{view.builtin.label}</span></div>
+                <pre class="pol-code"><code>{view.builtin.source}</code></pre>
+            </div>
+            {view.runs.length
+                ? view.runs.map((r) => (
+                    <div class="pol-run" key={r.hash} data-run={r.hash}>
+                        <div class="set-hint">Run <span class="perm-host">{r.hash}</span></div>
+                        <div class="pol-rows">{rows(r.policies)}</div>
+                    </div>
+                  ))
+                : <div class="set-hint">No run has remembered a policy.</div>}
+        </Section>
+    );
+}
+
 function PermissionsView() {
     return (
         <>
             <SiteApprovals />
+            <Policies />
             <SelfApprovalList />
             <HostAccess />
             <SheetsGrant />

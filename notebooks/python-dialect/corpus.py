@@ -23,6 +23,10 @@ MAX_MD_BYTES = 20 * 1024 * 1024
 ACCESSORS = {"str", "dt", "cat", "plot", "sparse"}
 # The calls a generator expression may be the sole argument of, where the pre-pass rewrites it to a list comprehension
 # (repl-specs ruling 2026-10-15; docs/spec/PYTHON_DIALECT.md). `str.join` is any `.join` call.
+# Leaves that resolve a method NAME from a string, or call what they are given back (repl-specs rulings, 2026-10-15:
+# a closed vocabulary of strings, and only the program's own functions as callbacks).
+NAME_LEAVES = {"agg", "aggregate", "apply", "transform", "map", "applymap", "pipe"}
+IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,40}$")
 CONSUMERS = {"sum", "any", "all", "min", "max", "sorted", "list", "tuple", "set", "dict", "enumerate", "zip"}
 BUILTINS = set(dir(builtins))
 STEP_RE = re.compile(r"^## Step [\d.]+ · python_exec\s*$", re.M)
@@ -42,7 +46,7 @@ def _empty(parse: str, lines: int) -> dict:
     return {"parse": parse, "lines": lines, "nodes": {}, "imports": [], "chains": {}, "methods": {}, "builtins": {},
             "prelude": [], "dunder_attrs": [], "dunder_names": [], "recursion": [], "defs": 0, "lambdas": 0, "max_loop_depth": 0,
             "range_args": {"const": 0, "nonconst": 0}, "genexp": {"consumer": 0, "consumer_kw": 0, "other": 0},
-            "type_calls": {"one": 0, "other": 0}}
+            "type_calls": {"one": 0, "other": 0}, "leaf_args": {}}
 
 
 def _chain(node: ast.AST) -> list[str] | None:
@@ -141,6 +145,45 @@ def features(code: str) -> dict:
                 consumed.add(id(n.args[0]))
                 genexp["consumer_kw" if n.keywords else "consumer"] += 1
     genexp["other"] = sum(1 for n in nodes_all if isinstance(n, ast.GeneratorExp) and id(n) not in consumed)
+
+    # What a name-resolving or callback-taking leaf is handed: the string's NAME (identifiers only, else "<other>"),
+    # or the kind of callable. Never a literal's value beyond an identifier.
+    leaf_args: dict[str, Counter] = {}
+
+    def kind_of(a: ast.AST) -> list[str]:
+        if isinstance(a, ast.Constant) and isinstance(a.value, str):
+            return ["str:" + (a.value if IDENT.match(a.value) else "<other>")]
+        if isinstance(a, (ast.List, ast.Tuple, ast.Set)):
+            return [k for e in a.elts for k in kind_of(e)]
+        if isinstance(a, ast.Dict):
+            return [k for v in a.values for k in kind_of(v)]
+        if isinstance(a, ast.Lambda):
+            return ["lambda"]
+        if isinstance(a, ast.Name):
+            if a.id in BUILTINS and a.id not in bound:
+                return ["builtin:" + a.id]
+            return ["module-fn:" + aliases[a.id]] if a.id in aliases else ["name"]
+        if isinstance(a, ast.Attribute):
+            ch = _chain(a)
+            if ch and ch[0] in aliases:
+                return ["module-fn:" + ".".join(aliases[ch[0]].split(".") + ch[1:])]
+            return ["method"]
+        return []
+
+    for n in nodes_all:
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Attribute) and f.attr in NAME_LEAVES:
+            given = n.args[:1] + [k.value for k in n.keywords if k.arg in ("func", "arg")]
+            for g in given:
+                for k in kind_of(g):
+                    leaf_args.setdefault("." + f.attr, Counter())[k] += 1
+        for k in n.keywords:
+            if k.arg == "key":
+                callee = ("." + f.attr) if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "?")
+                for kk in kind_of(k.value):
+                    leaf_args.setdefault("key=@" + callee, Counter())[kk] += 1
     defs = lambdas = 0
     dunder = re.compile(r"^__.+__$")
 
@@ -196,7 +239,8 @@ def features(code: str) -> dict:
             "builtins": dict(sorted(blt.items())), "prelude": prelude_used, "dunder_attrs": sorted(dattrs), "dunder_names": sorted(dnames),
             "recursion": sorted(recursion), "defs": defs, "lambdas": lambdas,
             "max_loop_depth": _loop_depth(body), "range_args": rng,
-            "genexp": genexp, "type_calls": types}
+            "genexp": genexp, "type_calls": types,
+            "leaf_args": {m: dict(sorted(c.items())) for m, c in sorted(leaf_args.items())}}
 
 
 # --- reading sources ---

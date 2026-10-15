@@ -157,6 +157,27 @@ export interface DebugAgentTurn extends DebugBase { kind: "agent-turn"; step: nu
  *  prompt — prose, and only present when `env` was on. A run that navigates ends somewhere else. */
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; /** how the task is shown when it is not what the person typed (contract-run.ts) */ display?: import("./contract-run").PromptDisplay; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; pageUrl?: string; pageTitle?: string; }
 
+/** Where a nested ask stands. `unattended`: the run had nobody to ask, so it was refused at once; `timeout`: nobody
+ *  answered in time; `ended`: the run's turn ended while it waited; `limit`: the step had already asked too often. */
+export type AskState = "pending" | "allowed" | "denied" | "cancelled" | "timeout" | "unattended" | "ended" | "limit";
+
+/** One nested ask as a step event carries it (docs/spec/ML_WIRE.md, "Per-call asking"). Plain data: every surface draws
+ *  it, both exports record it, and its `facts` are the policy's `c` for the call. */
+export interface StepAsk {
+    id: string;
+    /** What kind of call (`sh`), which picks how a surface draws `facts`; an unknown kind is drawn as its facts. */
+    kind: string;
+    /** The policy's `c` for the call, built in the worker from what it resolved, never from what a script or page said. */
+    facts: Record<string, unknown>;
+    state: AskState;
+    raisedAt: number;
+    answeredAt?: number;
+    /** The person's note on a denial, or why the ask ended without them. */
+    note?: string;
+    /** The run routes approvals to the external channel only: surfaces show the ask without buttons. */
+    external?: true;
+}
+
 /** ONE step of an agent run: a thought, or a tool call together with its result. One event, not three -- the
  *  phases inside it are how the event lane draws where the time went, and splitting them is the arithmetic
  *  that comes out wrong in three places every time. */
@@ -227,6 +248,10 @@ export interface DebugAgentStep extends DebugBase {
      *  extracted background-side. Present on a pending approval step when there's ≥1 — the surface showing it then
      *  offer an "Approve + remember" control and unfurl exactly this list (what's shown IS what persists). */
     grants?: PersistGrant[];
+    /** NESTED ASKS: calls made from inside this step while it ran that needed the person (an `ml.sh` from an approved
+     *  exec), each answered like a gate under `${runId}:${seq}#${id}` (src/sw/sw-asks.ts). Every event of the step
+     *  from the first ask on carries the whole list, its history included, so the DONE keeps what was asked. */
+    asks?: StepAsk[];
     /** transparency: prior grants this step REUSED (so it auto-ran without a prompt) — a cached `ml.fetch`
      *  URL a read-only `exec` re-read, an already-approved Google Sheet a `python_exec` reused. The sidebar
      *  shows a collapsed "reused a grant you approved" note in the In area, so a no-prompt run explains itself. */

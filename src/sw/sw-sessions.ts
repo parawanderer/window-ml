@@ -2,7 +2,7 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
-import { forgetRunPolicies, runPolicies } from "./sw-policies";
+import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession } from "../contract/contract-run";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
@@ -396,6 +396,7 @@ export function configureSessionCommands(run: RunDeps): void {
             return outcome;
         },
         runPolicyLabels: (hash) => runPolicies(hash).map((p) => p.label),
+        archivedPolicyLoss,
         noteResumed: (hash, tabId, note) => {
             ingestSessionEvent(
                 { kind: "session-resumed", ts: Date.now(), save: false, session: { hash, turn: 0 }, ...note },
@@ -509,9 +510,9 @@ export const sessionStore = (() => {
             onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
             // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
             onEvicted: (e) => {
-                // Deleted outright (no archive to move it to): its run policies go with it. Archived, it can come back,
-                // and keeps them.
-                if (e.outcome === "deleted") forgetRunPolicies(e.hash);
+                // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
+                // session that comes back starts with none. `kept` (the move failed) leaves them.
+                if (e.outcome === "deleted" || e.outcome === "archived") forgetRunPolicies(e.hash, e.outcome);
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },

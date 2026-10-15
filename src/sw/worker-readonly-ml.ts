@@ -8,19 +8,38 @@
 
 import type { DerefRead, DerefValue } from "../contract/contract-pointers";
 import { DerefText } from "../tools/deref-read";
-import { pipeStages } from "../pointers/token-pipe";
+import { pipeStages, derefPipe, TokenStore } from "../pointers/token-pipe";
 import { mlPipe } from "../pointers/text-pipe";
 import { mlJsonPath } from "../json-path";
 import { mlSchema } from "../ml/ml-schema";
 import { mlRange } from "../util";
 import { workerMl } from "./worker-ml";
 import { getConfig, listLoadedModels, fetchOllamaInfo } from "./sw-llm";
-import { valueHolders, readStoredColumns } from "./sw-values";
+import { valueHolders, readStoredColumns, readStoredText } from "./sw-values";
 import { workerFetchCached } from "./worker-tools";
 import type { StoredColumnReader } from "../table/table-data";
 
 /** A run's pointer resolver, as the loop hands it to the host (`tokenSink`). */
 export type RunDeref = (ref: string, pipe?: string | string[]) => DerefRead;
+
+/**
+ * Read a pointer through the run's resolver, over the WHOLE of a stored text when its row names one (fetch_url past its
+ * preview; docs/spec/POINTER_VALUES.md, slice 9) and over what the row holds otherwise. The resolver is synchronous and
+ * holds only the preview, so the whole is read here, where the caller can wait. A whole that is gone throws the store's
+ * reason, never the preview.
+ * @param runId the run, which must hold the stored value
+ * @param deref the run's pointer resolver
+ * @param ref the pointer
+ * @param stages the pipe, as stages
+ * @returns what the resolver answers, with the whole text in place of the preview
+ */
+export async function derefWhole(runId: string, deref: RunDeref, ref: string, stages: string[]): Promise<DerefRead> {
+    const base = deref(ref);
+    const key = base.meta?.value, meta = base.meta;
+    if (!key || !meta || meta.table || meta.kind === "table" || TokenStore.slotOf(ref) === "in") return stages.length ? deref(ref, stages) : base;
+    const whole = await readStoredText(key, runId);
+    return { ...base, value: derefPipe({ id: meta.id, tool: meta.tool, kind: meta.kind, out: whole, t: 0, step: meta.step }, "out", stages) };
+}
 
 /** A stored table's columns, read from the worker's value store for the run that holds it: what `VALUE_COLUMNS` answers
  *  a page, without the round trip. A key the run does not hold reads nothing. */
@@ -66,7 +85,7 @@ export function workerReadonlyMl(tabUrl: string, deref?: RunDeref, runId = ""): 
         // The page's `ml.dereference`, with the store read in-process. Its advisory has
         // nowhere to go: the dialect's console is the script's, and a warning written into it would read as output.
         const dereference = async (ref: unknown, opts: { pipe?: string | string[] | null } = {}): Promise<DerefValue> => {
-            const read = deref(String(ref ?? ""), pipeStages(opts?.pipe ?? null));
+            const read = await derefWhole(runId, deref, String(ref ?? ""), pipeStages(opts?.pipe ?? null));
             const again = (stages: string | string[]): Promise<DerefValue> => dereference(ref, { pipe: stages });
             return new DerefText(read.value, read.meta, again, read.readColumns ?? columnsFor(runId, read));
         };

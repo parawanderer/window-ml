@@ -12,7 +12,7 @@
 
 import type { MlWireAnswer, MlWireRequest } from "../contract";
 import { ML_READONLY_METHODS, mlFacade } from "../readonly-exec/policy";
-import { workerReadonlyMl, type RunDeref } from "./worker-readonly-ml";
+import { workerReadonlyMl, derefWhole, type RunDeref } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { derefByRun } from "./sw-runs";
 import { forPage } from "./sw-scrub";
@@ -45,7 +45,7 @@ function membersFor(client: WireClient): Record<string, WireMember> {
     for (const name of ML_READONLY_METHODS) {
         const fn = facade[name];
         if (typeof fn !== "function") continue;
-        out[name] = { run: name === "dereference" && deref ? dereferenceOverWire(deref) : fn as (...a: unknown[]) => unknown };
+        out[name] = { run: name === "dereference" && deref ? dereferenceOverWire(deref, client.run!) : fn as (...a: unknown[]) => unknown };
     }
     return out;
 }
@@ -53,16 +53,18 @@ function membersFor(client: WireClient): Record<string, WireMember> {
 /**
  * `dereference` for the wire, read from the run's resolver rather than through the page's DerefText: its `DerefRead` is
  * already plain data. Answers `{ text, meta?, warning? }`, or the pointer when that is larger than {@link WIRE_VALUE_CAP}.
+ * A text whose whole body is stored is read whole (`derefWhole`), so a pipe runs at the store and only its result crosses.
  * @param deref the run's pointer resolver
+ * @param run the client's run, which must hold a stored value to read it
  * @returns the member's function
  */
-function dereferenceOverWire(deref: RunDeref): (...a: unknown[]) => unknown {
-    return (ref: unknown, opts?: unknown) => {
+function dereferenceOverWire(deref: RunDeref, run: string): (...a: unknown[]) => unknown {
+    return async (ref: unknown, opts?: unknown) => {
         const o = opts && typeof opts === "object" ? opts as { pipe?: unknown } : {};
         const pipe = o.pipe ?? null;
         if (pipe !== null && typeof pipe !== "string" && !(Array.isArray(pipe) && pipe.every((x) => typeof x === "string")))
             throw new WireError("BadRequest", "dereference's pipe is a string or an array of strings");
-        const read = deref(String(ref ?? ""), pipeStages(pipe as string | string[] | null));
+        const read = await derefWhole(run, deref, String(ref ?? ""), pipeStages(pipe as string | string[] | null));
         const value = { text: read.value, ...(read.meta ? { meta: read.meta } : {}), ...(read.warning ? { warning: read.warning } : {}) };
         const size = JSON.stringify(value).length;
         if (size <= WIRE_VALUE_CAP) return value;

@@ -23,7 +23,7 @@ export const fromTab = { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "
 export const ROWS = MAX_TABLE_ROWS + 1;
 /** A CSV one row past the parse cap, so its pointer's table is a preview and the whole body is in the value store. */
 export const CSV = ["id,n,s", ...Array.from({ length: ROWS }, (_, i) => `${i},${(i * 7) % 1000},k${i % 13}`)].join("\n");
-const csvResponse = (url, body) => ({ ok: true, status: 200, url, headers: { get: (h) => (/content-type/i.test(h) ? "text/csv" : null) }, text: async () => body });
+const csvResponse = (url, body, type = "text/csv") => ({ ok: true, status: 200, url, headers: { get: (h) => (/content-type/i.test(h) ? type : null) }, text: async () => body });
 
 /** A vm context standing in for a world: its own globals, `window` among them, and a silent console. */
 export function world(extra = {}) {
@@ -94,9 +94,10 @@ export function cdpWorld(getBg, onEvaluate) {
  * - `between(i, { bg, idb, id })`: awaited before script `i` is sent.
  * - `onExecute(bg, injection, worlds)`: a user-script injection has arrived and is about to run (its call is in flight).
  * - `onEvaluate(bg, params, ctx)`: an evaluate in the CDP world is about to run.
+ * - `types`: a body's content type by URL, where it is not a CSV.
  * @returns the exec results the model read, the run's routing records, its hash, the worker, and the fetches' ids
  */
-export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, onExecute, onEvaluate, onBg } = {}) {
+export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg } = {}) {
     const idb = new IDBFactory();
     let n = 0, bg, id;
     const worlds = new Map();
@@ -120,7 +121,7 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
         openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
         ...(path === "cdp" ? { onDebuggerCommand: cdpWorld(() => bg, onEvaluate) } : {}),
         onFetch: async (call) => {
-            if (call.url in bodies) return csvResponse(call.url, bodies[call.url]);
+            if (call.url in bodies) return csvResponse(call.url, bodies[call.url], types[call.url]);
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const tools = (call.body?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
             id ??= /@tool:([0-9a-f]{7})/.exec(tools[0] ?? "")?.[1];

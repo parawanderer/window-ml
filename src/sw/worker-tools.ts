@@ -9,7 +9,8 @@ import { judgeCall, fetchFacts } from "./sw-policies";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
 import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
-import { fetchTool, defineTool, pythonTool } from "../ml/ml-tool-factories";
+import { fetchTool, defineTool, pythonTool, type KeepText } from "../ml/ml-tool-factories";
+import { storeText } from "./sw-values";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
@@ -218,6 +219,8 @@ function runMl(ctx: RunCtx): MlApi {
         },
         // No page here: python_exec's selector warning finds nothing (a send naming a selector goes to the page).
         _queryAll: () => [],
+        // fetch_url's whole body past its preview, kept in the value store for the pointer the step mints.
+        _keepText: storeText satisfies KeepText,
         pythonExec: (code: string, opts: { image?: unknown; margin?: number; mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
         // A cast's token goes into the page's registry, where a click resolves it (python-tool.ts `MintToken`).
         _mintToken: ((q, documentId) => {
@@ -291,7 +294,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,
         untrusted: async () => (await senderTrust({ tab: { id: ctx.tabId, url: ctx.tabUrl() } as chrome.tabs.Tab, url: ctx.tabUrl() })) === "untrusted",
-        pyCodeOk: (c) => ctx.pyCall?.code === c,
+        pyCodeOk: (c) => ctx.pyCall?.code === c, runGated: true,
         valueOk: (holders) => holders.includes(ctx.runId),
         wireRun: ctx.runId, tabUrl: ctx.tabUrl,
         ...(opts.onStdout ? { stream: opts.onStdout } : {}),
