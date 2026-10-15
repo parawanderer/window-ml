@@ -295,8 +295,10 @@ export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilitie
 const PAGE_ML_METHODS: ReadonlySet<string> = new Set(["queryAll", "a11y"]);
 
 /** Where a survey is evaluated. `page`: the page's main world, with its DOM. `worker`: the service worker, with no
- *  DOM, where the run's own context can be read without it ever entering the page (docs/spec/CURRENT_CONTEXT.md). */
-export type ReadonlyRealm = "page" | "worker";
+ *  DOM, where the run's own context can be read without it ever entering the page (docs/spec/CURRENT_CONTEXT.md).
+ *  `policy`: a policy over one call's facts (docs/spec/POLICIES.md), with no `ml`, no DOM and no clock, whose only root
+ *  is `c`, a facade that refuses a field it does not have; `==` and `!=` are refused there (`evalPolicy`). */
+export type ReadonlyRealm = "page" | "worker" | "policy";
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,

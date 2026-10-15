@@ -19,6 +19,7 @@ below, so nothing outside the folder imports `readonly-exec/` directly. The piec
 | `readonly-exec/policy.ts` | what may be read, called, built and written: `DENIED_PROPS`, the method gate (`BY_KIND`, `kindOf`, `methodAllowed`, the Set/Map brand checks), `CALLABLE_ROOTS`, `isWritableTarget`, `SAFE_CONSTRUCTORS`, `MUTATING_METHODS`, `ANSWER_METHODS`, `ML_READONLY_METHODS`, and `mlFacade`, the `ml` object the dialect sees |
 | `readonly-exec/print.ts` | the print boundary's helpers: `abridgeRow` (`ABRIDGE_OVER`), `PrintSwap`, `describeSwaps` and the JSONPath that names a substitution |
 | `readonly-exec/evaluator.ts` | the `Evaluator` (scope, reads, calls, writes, ownership, iteration guard, `printable`) and its two drivers, `runAsync` and `runSync` |
+| `readonly-exec/policy-realm.ts` | `evalPolicy`: a policy over one call's facts in the `policy` realm, the `c` facade, the parse cache, `POLICY_STEPS` |
 
 ## What it is for
 
@@ -478,6 +479,7 @@ survey AUTO-APPROVES, so a prompt-injected one would hand it over with no human 
 | --- | --- | --- |
 | `page` (default) | `document`, `getComputedStyle`, `ml.queryAll`/`a11y`/`fetch` (cached)/`answer` | the run's context: `ml.current` is a REFUSAL, not `undefined` |
 | `worker` (`sw-readonly.ts`) | `ml.current`, and whatever read-only `ml` the host hands in, `fetch` included (cache-only, over the run's own `fetch_url` reads) | the page: every route to it raises `NeedsPage` |
+| `policy` (`evalPolicy`) | `c`, the call's facts, and the pure builtins | `ml`, the DOM, `console`, the clock (`Date`, `new Date()`), `Promise`; `==` and `!=`; a field `c` does not have. See [The policy realm](#the-policy-realm) |
 
 The host tries the worker first and delegates to the page on `NeedsPage`. A survey needing both trips in the worker
 and is refused on the page, so it reaches the human in either order. Nothing lexical decides it: an alias
@@ -533,6 +535,60 @@ dialect, as on the page. A page-hosted run still evaluates on the page, where it
 Tests: `tests/readonly-current.test.mjs` (the realm, the worker's `ml`, its adversarial and halting cases),
 `tests/delegation.test.mjs` (the page leg refuses pointer reads) and `tests/run-start.test.mjs` (the routing, against
 the bundle).
+
+## The policy realm
+
+A policy (`docs/spec/POLICIES.md`) is a function over one gated call's resolved facts that answers whether the person
+needs asking. It runs on every such call, in the approval path, so it has to be pure, halt and do nothing but answer,
+which is what the dialect already is. `evalPolicy(source, facts, effect)` evaluates `source`, a script whose value is a
+function (`(c) => …`, after any `const` helpers), calls it with `c`, and maps the result: `true` is `effect` (`allow` or
+`deny`), `false` is no opinion. Every other outcome is no opinion plus `broken`, the reason the caller stores and the
+policy page shows: a parse or dialect refusal, a runtime throw, the budget (`POLICY_STEPS`, 50,000) or the call depth
+spent, and a result that is not a boolean. A broken policy fails CLOSED: an `allow` that breaks asks, a `deny` that
+breaks asks too, never allows.
+
+Two rules differ from a survey, both because a policy is where a quiet mistake becomes a grant:
+
+- **`c` refuses a field it does not have.** `c` is a frozen deep copy of the facts in which every object and array is
+  registered as a STRICT facade (`Evaluator.markStrict`). The member-read path (`readMember`, and `prop` for
+  destructuring and spread) refuses a key a strict object does not own, so an alias, a destructuring, a computed key,
+  optional chaining (`c?.argv0`) and a callback's parameter are all refused alike: nothing lexical decides it. An
+  array is strict for its non-index keys only, since `c.argv[1] === "status"` on a one-word argv has to read
+  `undefined`. Reading off `null` or `undefined` is a `TypeError` in this realm, as in JavaScript (a survey reads
+  `undefined` there), so `c.argv[9].length > 0` is broken rather than a quiet `false`.
+- **`==` and `!=` are refused**, in the evaluator keyed on the realm, and also when the policy is PARSED, so a `==` on
+  a branch most calls skip is broken on every call rather than on the one that reaches it. An ordering (`<`, `>`, `<=`,
+  `>=`) between operands of different types coerces the same way and is refused too (`c.n < "10"`).
+- **A string's typo is refused**: a read on a string of a key it does not have (`c.url.lenght`) is a refusal here,
+  while its length, indices and methods read as usual.
+
+`c.effects`, when the consumer passes `effects` (an `EffectsData`, `src/effects.ts`), is the effect set's policy view:
+`unknown`, `pairs`, `reads`, `writes`, and the two callables `has(op, kind?)` and `uses(name)`. Those are the only
+functions `c` holds; a strict object's OWN function is callable by that rule in `evalCall`, and only `evalPolicy` puts
+one there (facts that carry a function, or anything but plain objects and arrays, are refused before the policy runs).
+Every resource carries every field any resource kind has (`RESOURCE_FIELDS`), the absent ones `undefined`, so
+`c.effects.reads.every((r) => r.inRoot)` over a network read is `false`, not broken, while `r.inroot` still is. On an
+undescribed call (`effects: "unknown"`) `has` and `uses` answer `true`, `reads`/`writes` hold the `unknown` resource and
+`pairs` holds every operation on it, so a predicate that would allow answers in the direction that asks. `has` and
+`uses` throw on an operation or kind outside the algebra (`has("wirte")`), so a misspelt name is a broken policy and not
+a `deny` that never fires.
+
+What the realm leaves out: `ml`, `document`, `getComputedStyle`, `console`, `Date` and `new Date()` (the clock is not a
+fact of the call: a policy is a function of the call alone), and `Promise` (a policy is evaluated synchronously, by
+`runSync`, so an `await` is a refusal). The rest of the contract is the dialect's unchanged: no string compiled, the
+denied properties, the method gate by receiver kind, ownership (`c` is not the script's, so no write reaches it, and the
+caller's facts are copied, never frozen in place), `riskyRegex`, and halting by construction.
+
+A policy is PARSED once and evaluated many times: the tree (or the parse error) is cached by source, the last 256
+sources. Each evaluation builds a fresh evaluator and scope, so nothing one evaluation builds survives into the next.
+
+What a copy does: the strictness belongs to the facade objects, so a copy the script makes (`{ ...c }`, `Object.assign({},
+c)`, `JSON.parse(JSON.stringify(c))`) is its own plain object and reads an absent field as `undefined`, as JavaScript does.
+The rule exists to catch a typo'd field on `c`, which is how a policy names a fact; it does not follow data into the
+script's own objects.
+
+Tests: `tests/readonly-policy.test.mjs` (what a policy answers, the facade's refusals through every binding form, `==`,
+what it cannot reach, failing closed, the facts untouched, halting in a worker with a timeout).
 
 ## Extending the dialect
 

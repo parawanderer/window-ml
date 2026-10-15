@@ -47,24 +47,59 @@ export type EffectSet = {
     readonly writes: readonly Resource[];
 };
 
-const UNKNOWN_RES: Resource = Object.freeze({ kind: "unknown" });
+/** Every field any resource kind has. A policy sees each resource with ALL of them (absent ones `undefined`), so
+ *  `reads.every((r) => r.inRoot)` over a network read is false rather than a broken policy, while a misspelt field
+ *  is still refused by the policy realm. */
+export const RESOURCE_FIELDS = ["kind", "of", "path", "inRoot", "secret", "host", "name"] as const;
 
-/** Build the policy-facing view of a call's effects; duplicates are dropped and everything is frozen. */
+/** A resource as a policy reads it: every field of {@link RESOURCE_FIELDS} present, frozen. */
+function asRecord(r: Resource): Resource {
+    const out: Record<string, unknown> = {};
+    for (const f of RESOURCE_FIELDS) out[f] = (r as Record<string, unknown>)[f];
+    if (typeof out.of === "object" && out.of !== null) out.of = Object.freeze({ ...(out.of as object) });
+    return Object.freeze(out) as Resource;
+}
+
+const UNKNOWN_RES: Resource = asRecord({ kind: "unknown" });
+
+/** Build the policy-facing view of a call's effects; duplicates are dropped, every resource carries every field of
+ *  {@link RESOURCE_FIELDS}, and everything is frozen. */
 export function effectSet(data: EffectsData): EffectSet {
     if (data === "unknown") {
+        // Every operation on the top resource, so `pairs.every(…)` and `pairs.length === 0` ask too.
         const top = Object.freeze([UNKNOWN_RES]);
-        return Object.freeze({ unknown: true, pairs: Object.freeze([]), has: () => true, uses: () => true, reads: top, writes: top });
+        const pairs = Object.freeze(OPS.map((op) => Object.freeze({ op, res: UNKNOWN_RES })));
+        return Object.freeze({ unknown: true, pairs, has: (op: Op, kind?: Resource["kind"]) => { checkQuery(op, kind); return true; },
+            uses: (name: string) => { checkName(name); return true; }, reads: top, writes: top });
     }
     const pairs = Object.freeze(dedupe(data).map(freezeEffect));
     const of = (op: Op) => Object.freeze(pairs.filter((e) => e.op === op).map((e) => e.res));
     return Object.freeze({
         unknown: false,
         pairs,
-        has: (op: Op, kind?: Resource["kind"]) => pairs.some((e) => e.op === op && (kind === undefined || e.res.kind === kind)),
-        uses: (name: string) => pairs.some((e) => e.op === "use" && e.res.kind === "secret" && e.res.name === name),
+        has: (op: Op, kind?: Resource["kind"]) => { checkQuery(op, kind); return pairs.some((e) => e.op === op && (kind === undefined || e.res.kind === kind)); },
+        uses: (name: string) => { checkName(name); return pairs.some((e) => e.op === "use" && e.res.kind === "secret" && e.res.name === name); },
         reads: of("read"),
         writes: of("write"),
     });
+}
+
+/** Every operation, in the order the spec lists them. */
+export const OPS: readonly Op[] = Object.freeze(["read", "write", "exec", "use", "alloc"]);
+
+/** Every resource kind. */
+export const RESOURCE_KINDS: readonly Resource["kind"][] = Object.freeze(["heap", "fs", "net", "process", "entropy", "secret", "unknown"]);
+
+/** Refuse a question about an operation or kind the algebra does not have: `has("wirte")` would otherwise be a quiet
+ *  `false`, and a `deny` that never fires. */
+function checkQuery(op: unknown, kind: unknown): void {
+    if (!OPS.includes(op as Op)) throw new TypeError(`no operation '${String(op)}': one of ${OPS.join(", ")}`);
+    if (kind !== undefined && !RESOURCE_KINDS.includes(kind as Resource["kind"])) throw new TypeError(`no resource kind '${String(kind)}': one of ${RESOURCE_KINDS.join(", ")}`);
+}
+
+/** Refuse a secret name that is not a non-empty string. */
+function checkName(name: unknown): void {
+    if (typeof name !== "string" || !name) throw new TypeError("uses(name) takes a secret's name");
 }
 
 /** The union of several calls' effects (a pipe's stages, a fetch plus its secret); any `unknown` makes it `unknown`. */
@@ -92,10 +127,7 @@ function dedupe(effects: readonly Effect[]): Effect[] {
 }
 
 function freezeEffect(e: Effect): Effect {
-    const res = typeof (e.res as { of?: unknown }).of === "object"
-        ? Object.freeze({ ...e.res, of: Object.freeze({ ...(e.res as { of: { arg: number } }).of }) })
-        : Object.freeze({ ...e.res });
-    return Object.freeze({ op: e.op, res: res as Resource });
+    return Object.freeze({ op: e.op, res: asRecord(e.res) });
 }
 
 /** Turn each `heap(arg i)` into owned or unowned, as the interpreter knows at the call; the rest is unchanged. */

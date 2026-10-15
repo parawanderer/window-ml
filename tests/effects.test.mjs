@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { effectSet, union, effectKey, resolveHeap, fromLibraryEffect, fromProgramEffect, fromFetch, fromInstall, boundFor, covers, isReadInRoots, free, ANY_HOST } = await import("../src/effects.ts");
+const effectsModule = await import("../src/effects.ts");
+const { effectSet, union, effectKey, resolveHeap, fromLibraryEffect, fromProgramEffect, fromFetch, fromInstall, boundFor, covers, isReadInRoots, free, ANY_HOST } = effectsModule;
 
 const keys = (data) => data === "unknown" ? "unknown" : data.map(effectKey).sort();
 const fs = (path, inRoot, secret) => ({ kind: "fs", path, ...(inRoot === undefined ? {} : { inRoot }), ...(secret === undefined ? {} : { secret }) });
@@ -225,6 +226,25 @@ test("on `unknown` every question answers in the direction that asks", () => {
     assert.equal(s.uses("anything"), true);
     assert.equal(s.reads.every((r) => r.inRoot), false, "`every` over an unknown set is not vacuously true");
     assert.equal(s.writes.every((r) => r.inRoot && !r.secret), false);
+    assert.deepEqual(s.pairs.map((p) => `${p.op}:${p.res.kind}`), OPS.map((op) => `${op}:unknown`), "pairs hold every operation on the top resource");
+    assert.equal(s.pairs.every((p) => p.op === "read"), false, "so `pairs.every` asks too");
+});
+
+test("a question about an operation or kind outside the algebra throws, on a described set and on `unknown`", () => {
+    for (const s of [effectSet([]), effectSet("unknown")]) {
+        assert.throws(() => s.has("wirte"), /no operation 'wirte'/);
+        assert.throws(() => s.has("write", "files"), /no resource kind 'files'/);
+        assert.throws(() => s.uses(""), /secret's name/);
+        for (const op of OPS) for (const kind of ["heap", "fs", "net", "process", "entropy", "secret", "unknown"]) s.has(op, kind);
+    }
+});
+
+test("every resource in the view carries every field any kind has, absent ones undefined", () => {
+    const { RESOURCE_FIELDS } = effectsModule;
+    const s = effectSet([{ op: "read", res: net("a.com") }, { op: "read", res: fs("/r/a", true, false) }]);
+    for (const r of s.reads) assert.deepEqual(Object.keys(r).sort(), [...RESOURCE_FIELDS].sort());
+    assert.equal(s.reads[0].inRoot, undefined);
+    assert.equal(s.reads[1].host, undefined);
 });
 
 test("the plain-host default, a universal over the set, agrees with `free` on every single pair", () => {
