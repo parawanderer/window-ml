@@ -57,7 +57,7 @@ export interface RunAgentHostDeps {
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
     // `onStream` (opt-in streaming) is forwarded to the PAGE tool as its ctx.stream, so live output
     // (console.log / print) streams back while the delegated tool runs. Omitted → no live output.
-    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void): Promise<ToolRunResult>;
+    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number }): Promise<ToolRunResult>;
     /** A step's result as the model may read it (agent-loop.ts `forModel`; sw-scrub.ts takes the config's secrets out). */
     forModel?: AgentLoopDeps["forModel"];
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
@@ -166,7 +166,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step, ...(o.after ? { after: o.after } : {}) }),
         // Live tool output on the background path: `onStream` rides to the PAGE tool as its ctx.stream
         // (RUN_TOOL_IN_PAGE `stream` → the page posts PAGE_TOOL_STREAM chunks back, correlated by runId).
-        runTool: (name, args, onStream) => deps.delegateTool(name, args, onStream),
+        runTool: (name, args, onStream, call) => deps.delegateTool(name, args, onStream, call),
         tryReadonly: deps.tryReadonly,
         forModel: deps.forModel,
         renderFor: deps.renderFor,

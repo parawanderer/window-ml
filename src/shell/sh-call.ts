@@ -154,7 +154,8 @@ export interface ShPathFact { arg: number; given: string; path: string; inRoot: 
  */
 export interface ShFacts {
     argv: string[];
-    program: { path: string; inRoot: boolean };
+    /** `version`: what the program reported (the worker's version probe), null when it was not read. */
+    program: { path: string; inRoot: boolean; version: string | null };
     cwd: { path: string; inRoot: boolean; containsSecret?: boolean | null };
     env: { set: string[]; free: boolean };
     secrets: string[];
@@ -178,9 +179,11 @@ const secretBeneath = (containsSecret: boolean | null | undefined): boolean => c
 /**
  * The facts of one call, from the host's resolution, described again by the manifest over the resolved paths.
  * @param facts what `spawn` answered
+ * @param version the version the program reported, or null when it was not read (a manifest with a range then
+ *   describes nothing: its effects are `unknown`)
  * @returns the policy's `c`
  */
-export function shFacts(facts: HostFacts): ShFacts {
+export function shFacts(facts: HostFacts, version: string | null = null): ShFacts {
     const m = manifestFor(facts.argv[0]);
     const why: string[] = [];
     let effects: EffectsData = "unknown";
@@ -195,7 +198,7 @@ export function shFacts(facts: HostFacts): ShFacts {
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
             return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret) } : { kind: "fs", path: p.given };
         };
-        const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve });
+        const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
         effects = d.effects;
         described = d.described;
         runner = d.runner;
@@ -210,7 +213,7 @@ export function shFacts(facts: HostFacts): ShFacts {
     }
     return {
         argv: [...facts.argv],
-        program: { path: facts.program.path, inRoot: facts.program.inRoot },
+        program: { path: facts.program.path, inRoot: facts.program.inRoot, version },
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
@@ -234,7 +237,7 @@ export interface ShCardLine { label: string; value: string; warn?: boolean }
 export function shCardLines(f: ShFacts): ShCardLine[] {
     const lines: ShCardLine[] = [
         { label: "Runs", value: f.argv.map(quoteArg).join(" ") },
-        { label: "Program", value: f.program.path },
+        { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         f.sandboxed
             ? { label: "Sandbox", value: "on: writes only inside the workspace roots, no network" }
@@ -287,6 +290,11 @@ export interface ShResult {
     stdout: ShOut;
     stderr: ShOut;
     error?: string;
+    /** Who let it run: a policy (its label), the built-in default (`builtin`), or the person (`person`). */
+    approvedBy?: string;
+    /** How long the call waited for the person, when it did: a reading taken after the wait is not simultaneous with
+     *  one taken before. */
+    waitedMs?: number;
 }
 
 /**

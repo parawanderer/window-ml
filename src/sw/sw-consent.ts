@@ -18,7 +18,7 @@
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { selfApprovalFacts, senderSelfApproves } from "./sw-site-access";
 import { defineState } from "../state-registry";
-import { judgeCall, onPoliciesChanged } from "./sw-policies";
+import { judgeCall, onPoliciesChanged, type PolicyConsumer } from "./sw-policies";
 import type { EffectsData, Placement } from "../effects";
 
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
@@ -26,20 +26,27 @@ import type { EffectsData, Placement } from "../effects";
 // extension iframe). The approve/deny decision is made here and never crosses the page: the point of A.
 // Each entry keeps the resolver AND a serializable DESCRIPTOR (what's being approved) so an EXTERNAL
 // approver — the `__mlApprovals` IPC channel below — can enumerate and decide gates exactly like the UI.
-export interface PendingApprovalDescriptor {
+/** The fields every pending approval has, a step's own gate or a nested ask. */
+interface PendingApprovalBase {
     key: string; runId: string; seq: number; step: number; tool: string; arguments: Record<string, unknown>; ts: number; routing: "ui" | "both" | "external";
     /** Present only on a NESTED ask (sw-asks.ts): a call made from inside the running step `seq`; the key is then
-     *  `${runId}:${seq}#${askId}`. Every field below is optional, so a step's own gate is unchanged. */
+     *  `${runId}:${seq}#${askId}`. */
     askId?: string;
-    /** Which policies apply to the call this card asks about (sw-policies.ts), when any may decide it: `fetch` or `sh`;
-     *  anything else is judged by none. */
-    consumer?: string;
-    /** The call's facts, the policy's `c`: plain data the WORKER resolved, never the page's or the model's word. A card
-     *  whose facts lack `effects` is never judged again: it is left to the person (`rejudgePending`). */
-    facts?: Record<string, unknown>;
     /** Where the call runs, for the built-in default's bound. */
     placement?: Placement;
 }
+
+/**
+ * What one pending approval is about. A card a policy may decide names its `consumer` (`fetch`, `sh`), and then its
+ * `facts` (the policy's `c`: plain data the WORKER resolved, never the page's or the model's word) MUST carry
+ * `effects`, which the type enforces (the ruling on #719): a card without them is never judged again
+ * (`rejudgePending` leaves it to the person), so building one for a judged consumer is a mistake caught here, not a
+ * card that silently misses a policy change. Any other gate names no consumer; its facts, if any, are only shown.
+ */
+export type PendingApprovalDescriptor = PendingApprovalBase & (
+    | { consumer: PolicyConsumer; facts: Record<string, unknown> & { effects: EffectsData } }
+    | { consumer?: undefined; facts?: Record<string, unknown> }
+);
 
 // A gate is reachable by the external channel ONLY if its run OPTED IN (approvalRouting "both"/"external").
 // A default "ui" run's gate can't be silently approved from outside — the driver must declare intent.
@@ -84,7 +91,7 @@ export function rejudgePending(): number {
         // Facts without resolved effects are left to the person: a person's `allow` that never reads `c.effects` would
         // otherwise answer a call whose effects nobody resolved, the case the built-in default sends to a card.
         if ((d.consumer !== "fetch" && d.consumer !== "sh") || !d.facts || d.facts.effects === undefined) continue;
-        const j = judgeCall(d.runId, d.consumer, { ...d.facts, effects: d.facts.effects as EffectsData }, d.placement);
+        const j = judgeCall(d.runId, d.consumer, d.facts, d.placement);
         if (!j.by || j.by === "builtin" || (j.decision !== "allow" && j.decision !== "deny")) continue;
         const said = `the policy "${j.by.label}" ${j.decision === "deny" ? "refuses" : "allows"} it`;
         if (resolveApproval(key, j.decision === "deny" ? { approved: false, source: "policy", feedback: said } : { approved: true, source: "policy" })) n++;

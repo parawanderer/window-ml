@@ -95,9 +95,12 @@ export function cdpWorld(getBg, onEvaluate) {
  * - `onExecute(bg, injection, worlds)`: a user-script injection has arrived and is about to run (its call is in flight).
  * - `onEvaluate(bg, params, ctx)`: an evaluate in the CDP world is about to run.
  * - `types`: a body's content type by URL, where it is not a CSV.
+ * - `onStep(bg, event)`: a step event reached the run's tab (a nested ask arrives this way).
+ * - `onNative`, `configExtra`, `localExtra`: a fake process host (tests/fake-native-host.mjs), the settings that turn
+ *   ml.sh on, and saved local storage (policies).
  * @returns the exec results the model read, the run's routing records, its hash, the worker, and the fetches' ids
  */
-export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg } = {}) {
+export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg, onStep, onNative, configExtra = {}, localExtra = {}, ticks = 4000 } = {}) {
     const idb = new IDBFactory();
     let n = 0, bg, id;
     const worlds = new Map();
@@ -116,8 +119,9 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
     const steps = [...fetches.map((f) => ({ name: "fetch_url", args: f })), ...scripts.map((s) => ({ name: "exec", script: s }))];
     bg = loadBackground({
         siteGate: true, indexedDB: idb, userScripts,
-        config: { ...config, autoApproveReadonly: path === "readonly", cdp: path === "cdp" },
-        local: { ml_site_always: ["https://site.example"] },
+        config: { ...config, autoApproveReadonly: path === "readonly", cdp: path === "cdp", ...configExtra },
+        ...(onNative ? { onNative } : {}),
+        local: { ml_site_always: ["https://site.example"], ...localExtra },
         openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
         ...(path === "cdp" ? { onDebuggerCommand: cdpWorld(() => bg, onEvaluate) } : {}),
         onFetch: async (call) => {
@@ -134,6 +138,7 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.kind === "agent-step") await onStep?.(bg, msg.event);
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
             if (msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
@@ -144,7 +149,7 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
     onBg?.(bg);
     bg.commit?.(7, { documentId: "doc-1", url: SITE_URL });
     const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 80 });
-    for (let i = 0; i < 4000 && n <= steps.length; i++) await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < ticks && n <= steps.length; i++) await new Promise((r) => setTimeout(r, 0));
     for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 0));
     const last = bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1);
     const all = last.body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));

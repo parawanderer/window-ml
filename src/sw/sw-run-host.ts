@@ -8,7 +8,7 @@ import { evalReadonlyInWorker } from "./sw-readonly";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory } from "./sw-scrub";
+import { forModel, forModelHistory, forPage } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -55,6 +55,7 @@ import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, 
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
+import { shRead, shRun } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { GATED_BUILTINS } from "../tools/tool-registry";
@@ -710,7 +711,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
-                delegateTool: (name, args, onStream) => againIfHandedOver(async () => {
+                delegateTool: (name, args, onStream, call) => againIfHandedOver(async () => {
                     // This call's own key for the grants it mints on the tab (sw-consent.ts): another run on the same tab
                     // ending its call drops only its own.
                     const callKey = {};
@@ -740,13 +741,27 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             // Never unpinned: what it is given is the run's, so with no document to hold it to, it does not run.
                             if (!execDoc) return { result: "Error: could not tell which page the tab holds now, so this exec was not run. Run it again.", renderIn: execCodeIn(js) };
                             const reads = await preReadsFor(runId, js, true);
-                            return runIsolatedExec({
-                                tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc,
-                                // What the world may ask for while it runs: re-pipes of what it was sent, and those stored tables.
-                                serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns }),
+                            // ml.sh, for a script that names it: bound to THIS run and the step it runs in, never to anything the
+                            // script says. Each call is judged by a policy or asked of the person inside the step (sw-shell-call.ts).
+                            const shCtx = execNames(js).sh && call ? { runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId) } : undefined;
+                            let shWaited = 0;
+                            const sh = shCtx ? async (c: "run" | "read", a: unknown[]) => {
+                                const r = c === "run" ? await shRun(shCtx, a) : await shRead(shCtx, a);
+                                // The script's world shares the page's DOM: an error's text crosses scrubbed, as a page's would.
+                                if ("error" in r) return { ...r, error: (await forPage({ error: r.error })).error };
+                                const w = "ok" in r ? (r.ok as { waitedMs?: unknown } | null)?.waitedMs : undefined;
+                                if (typeof w === "number") shWaited += w;
+                                return r;
+                            } : undefined;
+                            const out = await runIsolatedExec({
+                                tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc, sh: !!sh,
+                                // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, and ml.sh.
+                                serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}) }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
                                 ...(snap && execNames(js).current ? { current: async () => withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) } : {}),
                             });
+                            // A reading taken after a wait for the person is not simultaneous with one taken before: say so.
+                            return shWaited >= 1000 ? { ...out, result: `${out.result}\n(ml.sh waited ${Math.round(shWaited / 1000)} s for the person to approve.)` } : out;
                         }
                         execNote = route.note;
                     }
@@ -1286,12 +1301,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same
                             // via the emitStep below). args are already sanitized page-side for the render.
-                            descriptor: { key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui",
+                            descriptor: ((base) =>
                                 // An uncredentialed fetch_url the worker runs is a call a policy may decide, so the card
                                 // is judged again when one changes (`rejudgePending`): its facts, resolved here.
-                                ...(tool === "fetch_url" && !(args as { credentials?: unknown }).credentials && byWorker() && runsInWorker(p, "fetch_url")
-                                    ? { consumer: "fetch" as const, facts: fetchFacts(String((args as { url?: unknown }).url ?? ""), { rendered: !!(args as { rendered?: unknown }).rendered }) }
-                                    : {}) },
+                                tool === "fetch_url" && !(args as { credentials?: unknown }).credentials && byWorker() && runsInWorker(p, "fetch_url")
+                                    ? { ...base, consumer: "fetch" as const, facts: fetchFacts(String((args as { url?: unknown }).url ?? ""), { rendered: !!(args as { rendered?: unknown }).rendered }) }
+                                    : base)({ key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui" }),
                         });
                         // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
                         // three surfaces render it identically from this one step: overlay/off in the page

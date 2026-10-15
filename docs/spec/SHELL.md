@@ -1,7 +1,8 @@
 # Spec (WIP): one executor, many places — processes through `ml.sh`
 
 **Status: draft (2026-10-13, refined 2026-10-15). Built so far: the pure core (`src/shell/`), the native port and its
-Settings ([`docs/dev/shell.md`](../dev/shell.md)); `ml.sh` itself is not callable yet.** Where processes run and how the model reaches them. The
+Settings, and `ml.sh.run`/`ml.sh.read` from an approved exec in an isolated world
+([`docs/dev/shell.md`](../dev/shell.md)). Not yet: `pipe`/`glob` forms, `ml.sh` over the wire (a Python cell).** Where processes run and how the model reaches them. The
 mechanism of a single call (typed call to argv, a manifest per program) is summarised under "One call". It rests on
 three specs: [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), which DESCRIBES a program (only the free tier waits on it),
 [`POLICIES.md`](POLICIES.md), which DECIDES whether a call needs the person, and [`EFFECTS.md`](EFFECTS.md), the
