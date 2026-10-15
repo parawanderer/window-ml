@@ -38,7 +38,10 @@ import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { forgetRunPolicies } from "./sw/sw-policies";
+import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+
+/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
+const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -541,6 +544,29 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // The site lists, for DevTools Settings and the toolbar popup. Extension pages only: a page could otherwise approve
     // itself, or raise its own agent level. `edit` changes the lists; `origin` asks what they say about one origin, as
     // its three levels; `dismissUpgradeNotice` drops the one-time notice about the whitelist's move to origins.
+    // The policy page (DevTools Settings, docs/dev/policies.md): read every policy, add a global one, edit or remove any.
+    // EXTENSION PAGES ONLY, judged by the sender the browser reports: a policy decides what runs without asking, so a page
+    // (or a content script relaying for one) that could add or widen one would be approving itself.
+    if (message.type === "POLICIES") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
+        const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
+        const effect = p.effect === "allow" || p.effect === "deny" ? p.effect : undefined;
+        if (p.op === "add") {
+            const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
+            const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
+            if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow or deny), a label and its code" }); return; }
+            addGlobalPolicy({ consumer, effect, source, label });
+        } else if (p.op === "edit") {
+            const id = str(p.id, 100);
+            if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
+        } else if (p.op === "remove") {
+            const id = str(p.id, 100);
+            if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
+        } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
+        sendResponse({ data: policyView() });
+        return;
+    }
     if (message.type === "SITE_ACCESS") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string; dismissUpgradeNotice?: boolean };

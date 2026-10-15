@@ -138,6 +138,23 @@ test("a step that has asked MAX_ASKS_PER_STEP times is refused without a card", 
     await Promise.all(all);
 });
 
+// --- a policy change and a pending ask (rejudgePending, sw-consent.ts) ---
+
+test("a policy added while an ask waits answers it only when its facts carry resolved effects; without them the person decides", async () => {
+    const { addGlobalPolicy, removePolicy } = await import("../src/sw/sw-policies.ts");
+    const { r, unhost } = run();
+    const withEffects = raiseAsk(r.runId, 2, { kind: "sh", facts: { argv: ["ls"], effects: [] }, consumer: "sh", placement: "host-sandbox" });
+    raiseAsk(r.runId, 3, { kind: "sh", facts: { argv: ["ls"] }, consumer: "sh", placement: "host-sandbox" });
+    raiseAsk(r.runId, 4, { kind: "mail", facts: { to: "x", effects: [] }, consumer: "mail" });
+    const all = addGlobalPolicy({ consumer: "sh", effect: "allow", source: "(c) => true", label: "every sh call" });
+    await tick();
+    assert.equal((await withEffects).state, "allowed", "positive control: facts with effects are judged, and the allow answers");
+    const left = keysOf(r.runId).map((k) => k.split(":")[1].split("#")[0]).sort();
+    assert.equal(JSON.stringify(left), JSON.stringify(["3", "4"]), "the ask without effects, and the one of no policy consumer, still wait");
+    removePolicy(all.id);
+    unhost();
+});
+
 // --- red team: what an answer may name ---
 
 test("an answer reaches only the ask it names exactly: a guessed id, another run's key or a malformed id resolves nothing", async () => {

@@ -48,6 +48,8 @@ export interface PolicyJudgement {
 export const GLOBAL_POLICIES_KEY = "ml_policies_global";
 /** The storage key of every session's run policies, by session hash. */
 export const RUN_POLICIES_KEY = "ml_policies_run";
+/** The storage key of what each ARCHIVED session lost: when its run policies were removed, and their labels. */
+export const ARCHIVED_POLICIES_KEY = "ml_policies_archived";
 /** Sessions whose run policies are kept; past it the oldest go. Deleted sessions take theirs with them first. */
 const RUN_POLICY_SESSIONS_MAX = 500;
 
@@ -66,6 +68,28 @@ defineState({
     read: ({ runId }) => { const l = runId ? byRun.get(runId) : undefined; return l?.length ? l.map((p) => ({ ...p })) : undefined; },
 });
 
+/** Run policies removed when their session was archived, by hash: said when the session comes back, never silent. */
+const archivedLoss = new Map<string, { at: number; labels: string[] }>();
+defineState({
+    id: "policies.archived", scope: "session", realm: "worker", audience: "model", lostOn: [],
+    exposedAs: "ml.current.policiesRemoved",
+    describe: "The run policies a session lost when it was archived, and when: told to the person and the model when it is resumed.",
+    read: ({ runId }) => { const l = runId ? archivedLoss.get(runId) : undefined; return l ? { ...l, labels: [...l.labels] } : undefined; },
+});
+
+/** Called after every change to any policy, so a card already showing is judged again (`rejudgePending`). */
+const changeListeners = new Set<() => void>();   // state: plumbing — the worker's own subscribers, registered at load
+
+/** Run `fn` after every change to any policy; returns the unsubscribe. */
+export function onPoliciesChanged(fn: () => void): () => void {
+    changeListeners.add(fn);
+    return () => changeListeners.delete(fn);
+}
+
+function changed(): void {
+    for (const fn of changeListeners) { try { fn(); } catch { /* one listener's failure is not the store's */ } }
+}
+
 /** Why each policy last broke, by id: shown against it on the policy page. */
 const brokenWhy = new Map<string, string>();   // state: cache — recomputed on the next evaluation
 
@@ -79,10 +103,14 @@ export const policiesLoaded = (): boolean => loaded;
 /** Storage has been read, so a judgement made now sees every saved policy. Until then a call asks (fails closed). */
 export const policiesReady: Promise<void> = (() => {
     try {
-        return chrome.storage.local.get([GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY]).finally(() => { loaded = true; }).then((got) => {
+        return chrome.storage.local.get([GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY, ARCHIVED_POLICIES_KEY]).finally(() => { loaded = true; }).then((got) => {
             globals.splice(0, globals.length, ...validList(got?.[GLOBAL_POLICIES_KEY], "global"));
             const runs = (got?.[RUN_POLICIES_KEY] ?? {}) as Record<string, unknown>;
             for (const [hash, list] of Object.entries(runs)) if (!byRun.has(hash)) byRun.set(hash, validList(list, "run"));
+            const lost = (got?.[ARCHIVED_POLICIES_KEY] ?? {}) as Record<string, { at?: unknown; labels?: unknown }>;
+            for (const [hash, l] of Object.entries(lost))
+                if (!archivedLoss.has(hash) && typeof l?.at === "number" && Array.isArray(l.labels) && l.labels.every((x) => typeof x === "string"))
+                    archivedLoss.set(hash, { at: l.at, labels: l.labels as string[] });
         }).catch(() => { /* storage unavailable: nothing saved is honoured, so every call asks */ });
     } catch { loaded = true; return Promise.resolve(); }   // no storage (a test harness): nothing saved to wait for
 })();
@@ -97,10 +125,13 @@ function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
 
 function saveGlobals(): void {
     try { void chrome.storage.local.set({ [GLOBAL_POLICIES_KEY]: globals }).catch(() => {}); } catch { /* storage unavailable */ }
+    changed();
 }
 function saveRuns(): void {
     while (byRun.size > RUN_POLICY_SESSIONS_MAX) byRun.delete(byRun.keys().next().value!);
-    try { void chrome.storage.local.set({ [RUN_POLICIES_KEY]: Object.fromEntries(byRun) }).catch(() => {}); } catch { /* storage unavailable */ }
+    while (archivedLoss.size > RUN_POLICY_SESSIONS_MAX) archivedLoss.delete(archivedLoss.keys().next().value!);
+    try { void chrome.storage.local.set({ [RUN_POLICIES_KEY]: Object.fromEntries(byRun), [ARCHIVED_POLICIES_KEY]: Object.fromEntries(archivedLoss) }).catch(() => {}); } catch { /* storage unavailable */ }
+    changed();
 }
 
 let seq = 0;   // state: plumbing — makes ids unique within one worker; the time prefix covers the rest
@@ -152,13 +183,61 @@ export function removePolicy(id: string): boolean {
 }
 
 /** Forget a session's run policies: the session was deleted, archived or evicted (POLICIES.md, "Scopes": removed when
- *  the session is archived, so an archived session that comes back has none). */
-export function forgetRunPolicies(runId: string): void {
+ *  the session is archived, so an archived session that comes back has none). An ARCHIVED session's loss is recorded,
+ *  with the time, so its resume says so (`archivedPolicyLoss`); a deleted session's record goes with it. */
+export function forgetRunPolicies(runId: string, why: "deleted" | "archived" = "deleted"): void {
     const list = byRun.get(runId);
-    if (!list) return;
+    if (why === "deleted") archivedLoss.delete(runId);
+    if (!list) { if (why === "deleted") saveRuns(); return; }
     for (const p of list) brokenWhy.delete(p.id);
     byRun.delete(runId);
+    if (why === "archived" && list.length) archivedLoss.set(runId, { at: Date.now(), labels: list.map((p) => p.label) });
     saveRuns();
+}
+
+/** What an archived session lost, and when, or undefined when it lost nothing. */
+export function archivedPolicyLoss(runId: string): { at: number; labels: string[] } | undefined {
+    const l = archivedLoss.get(runId);
+    return l ? { at: l.at, labels: [...l.labels] } : undefined;
+}
+
+/** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */
+export function editPolicy(id: string, patch: Partial<Pick<StoredPolicy, "source" | "effect" | "label">>): StoredPolicy | undefined {
+    const at = (list: StoredPolicy[]): number => list.findIndex((p) => p.id === id);
+    const apply = (p: StoredPolicy): StoredPolicy => ({
+        ...p,
+        ...(typeof patch.source === "string" ? { source: patch.source } : {}),
+        ...(patch.effect === "allow" || patch.effect === "deny" ? { effect: patch.effect } : {}),
+        ...(typeof patch.label === "string" ? { label: patch.label } : {}),
+    });
+    brokenWhy.delete(id);
+    const g = at(globals);
+    if (g >= 0) { globals[g] = apply(globals[g]); saveGlobals(); return { ...globals[g] }; }
+    for (const [hash, list] of byRun) {
+        const i = at(list);
+        if (i < 0) continue;
+        const next = list.map((p, k) => (k === i ? apply(p) : p));
+        byRun.set(hash, next);
+        saveRuns();
+        return { ...next[i] };
+    }
+    return undefined;
+}
+
+/** The built-in default policy, as the policy page shows it: one rule over the effect algebra, as code. */
+export const BUILTIN_POLICY = Object.freeze({
+    label: "Built-in: a call whose effects are inside what its placement bounds runs without asking",
+    source: "(c) => c.effects ⊆ B(placement) ∪ { read(fs(p)) : p in a root, not secret }   // free(), src/effects.ts",
+});
+
+/** Everything the policy page lists: the global policies, each session's, the built-in default, and why any broke. */
+export function policyView(): { global: StoredPolicy[]; runs: { hash: string; policies: StoredPolicy[] }[]; builtin: typeof BUILTIN_POLICY; broken: Record<string, string> } {
+    return {
+        global: globalPolicies(),
+        runs: [...byRun].filter(([, l]) => l.length).map(([hash, l]) => ({ hash, policies: l.map((p) => ({ ...p })) })),
+        builtin: BUILTIN_POLICY,
+        broken: Object.fromEntries(brokenWhy),
+    };
 }
 
 /**
@@ -212,10 +291,16 @@ export function rememberFetchUrls(runId: string, urls: readonly string[]): Store
     return urls.map((url) => addRunPolicy(runId, { consumer: "fetch", effect: "allow", source: fetchUrlPolicySource(url), label: `fetch ${url}`, origin: "card" }));
 }
 
-/** The snapshot with the policies that apply to the run added, on a copy, when there are any. */
-export function withPolicies<T extends object>(current: T, runId: string): T & { policies?: ReturnType<typeof policiesForModel> } {
+/** The snapshot with the policies that apply to the run added, on a copy, when there are any, and what an archive took
+ *  from it when it lost some. */
+export function withPolicies<T extends object>(current: T, runId: string): T & { policies?: ReturnType<typeof policiesForModel>; policiesRemoved?: { at: string; labels: string[] } } {
     const policies = policiesForModel(runId);
-    return policies.length ? { ...current, policies } : current;
+    const lost = archivedLoss.get(runId);
+    return {
+        ...current,
+        ...(policies.length ? { policies } : {}),
+        ...(lost ? { policiesRemoved: { at: new Date(lost.at).toISOString(), labels: [...lost.labels] } } : {}),
+    };
 }
 
 /** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. */

@@ -18,6 +18,8 @@
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { selfApprovalFacts, senderSelfApproves } from "./sw-site-access";
 import { defineState } from "../state-registry";
+import { judgeCall, onPoliciesChanged } from "./sw-policies";
+import type { EffectsData, Placement } from "../effects";
 
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
 // message the sidebar app sends (origin-authed by the shell — it only forwards a decision from the real
@@ -29,12 +31,14 @@ export interface PendingApprovalDescriptor {
     /** Present only on a NESTED ask (sw-asks.ts): a call made from inside the running step `seq`; the key is then
      *  `${runId}:${seq}#${askId}`. Every field below is optional, so a step's own gate is unchanged. */
     askId?: string;
-    /** Which policies apply to the call (`fetch`, `sh`): what a policy store re-judges a pending gate by. */
+    /** Which policies apply to the call this card asks about (sw-policies.ts), when any may decide it: `fetch` or `sh`;
+     *  anything else is judged by none. */
     consumer?: string;
-    /** The policy's `c` for the call, as plain data built in the worker from what it resolved. */
+    /** The call's facts, the policy's `c`: plain data the WORKER resolved, never the page's or the model's word. A card
+     *  whose facts lack `effects` is never judged again: it is left to the person (`rejudgePending`). */
     facts?: Record<string, unknown>;
-    /** The enforcer whose bound the built-in default policy uses (effects.ts). */
-    placement?: import("../effects").Placement;
+    /** Where the call runs, for the built-in default's bound. */
+    placement?: Placement;
 }
 
 // A gate is reachable by the external channel ONLY if its run OPTED IN (approvalRouting "both"/"external").
@@ -66,6 +70,28 @@ export function resolveApproval(key: string, decision: ApprovalDecision): boolea
     entry.resolve(decision);
     return true;
 }
+
+/**
+ * Judge every card still showing again, after a policy changed (POLICIES.md, "A change takes effect at once"): a new
+ * `deny` refuses it and a new `allow` answers it, and the card closes saying which policy did. Only a card whose
+ * descriptor carries `consumer` and `facts` is judged, the facts the worker resolved when it opened. A store not yet
+ * loaded, the built-in default and no answer leave the card for the person.
+ * @returns how many cards a policy answered
+ */
+export function rejudgePending(): number {
+    let n = 0;
+    for (const [key, { descriptor: d }] of [...pendingApprovals]) {
+        // Facts without resolved effects are left to the person: a person's `allow` that never reads `c.effects` would
+        // otherwise answer a call whose effects nobody resolved, the case the built-in default sends to a card.
+        if ((d.consumer !== "fetch" && d.consumer !== "sh") || !d.facts || d.facts.effects === undefined) continue;
+        const j = judgeCall(d.runId, d.consumer, { ...d.facts, effects: d.facts.effects as EffectsData }, d.placement);
+        if (!j.by || j.by === "builtin" || (j.decision !== "allow" && j.decision !== "deny")) continue;
+        const said = `the policy "${j.by.label}" ${j.decision === "deny" ? "refuses" : "allows"} it`;
+        if (resolveApproval(key, j.decision === "deny" ? { approved: false, source: "policy", feedback: said } : { approved: true, source: "policy" })) n++;
+    }
+    return n;
+}
+onPoliciesChanged(() => { rejudgePending(); });
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
 // The boundary for the credentialed/unbounded ops lives HERE, not in the bypassable client-side approval.

@@ -411,12 +411,12 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
 // imported from approval.ts) so this module stays DOM/chrome-free for the standalone build.
-const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external"; cancelled: boolean } => {
+const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" | "policy"; cancelled: boolean } => {
     if (d && typeof d === "object") return {
         approved: !!d.approved,
         feedback: typeof d.feedback === "string" && d.feedback.trim() ? d.feedback.trim() : null,
         arguments: d.approved && d.arguments && typeof d.arguments === "object" ? d.arguments : orig,
-        source: d.source === "external" ? "external" : "user",
+        source: d.source === "external" || d.source === "policy" ? d.source : "user",
         cancelled: !!d.cancelled,
     };
     return { approved: !!d, feedback: null, arguments: orig, source: "user", cancelled: false };
@@ -921,7 +921,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
                         // came through the external channel (a harness, an orchestrator): that is code, in
                         // milliseconds, and there is no honest label for it, so it adds none.
-                        if (!(typeof rawDecision === "object" && rawDecision?.source === "external")) waited = "human";
+                        if (!(typeof rawDecision === "object" && (rawDecision?.source === "external" || rawDecision?.source === "policy"))) waited = "human";
                         const d = normalize(rawDecision as ApprovalDecision, args);
                         // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
                         // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
@@ -941,13 +941,13 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                                 approval = "denied";
                                 // Attribute the denial accurately: a human in a browser surface, or an external
                                 // approver (the __mlApprovals IPC channel — an orchestrator / policy driver).
-                                const who = d.source === "external" ? "an external approver" : "the user";
+                                const who = d.source === "external" ? "an external approver" : d.source === "policy" ? "a policy the person set while the card was showing" : "the user";
                                 result = d.feedback
                                     ? `Denied by ${who}: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
                                     : `Denied by ${who}. Do not retry this exact call; try another approach.`;
                                 // NB: runTool is NOT called — the security invariant.
                             } else {
-                                approval = "user";
+                                approval = d.source === "policy" ? "consented" : "user";
                                 args = d.arguments;                                   // possibly gate-edited
                                 tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
                             }
