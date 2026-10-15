@@ -277,4 +277,8 @@ dialect may not own.
 - [`docs/spec/SECRET_HANDLES.md`](SECRET_HANDLES.md): the same move ("what the dialect cannot say, the model cannot
   do") applied to credentials.
 - [`docs/spec/SHELL.md`](SHELL.md): the same manifest with PROGRAMS in place of libraries (effect per program,
-  subcommand and flag), which decides the free tier of `ml.sh`.
+  subcommand and flag), which supplies the facts the free tier of `ml.sh` is decided on.
+- [`docs/spec/POLICIES.md`](POLICIES.md): what DECIDES on those facts. A manifest describes a call the same way for
+  everyone; a policy, the person's, decides whether it needs them, and the free tier is the built-in default policy.
+  The two effect vocabularies (this spec's, about calls inside the interpreter, and the shell's, about processes) are an
+  open question there.
