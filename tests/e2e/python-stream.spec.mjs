@@ -65,7 +65,9 @@ test("a run queued behind another is not charged for the wait: each script gets 
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
-        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        // The queue's timing is the property here, not the page gate: the page is on the self-approve list so its
+        // own `pythonExec` runs (site-access.spec.mjs pins the refusal for a page that is not).
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", pageApprovalDomains: [new URL(fake.url).origin] });
         const page = await ext.context.newPage();
         await page.goto(`${fake.url}/api/version`);
         await waitForMl(page);
