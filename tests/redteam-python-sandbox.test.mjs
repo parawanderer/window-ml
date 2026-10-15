@@ -509,3 +509,25 @@ json.loads("[2]")
     assert.deepEqual(again.value.seen, ["[1]", "[2]"],
         `the planting principal's own later cell must still see the patch, got ${JSON.stringify(again.value)}`);
 });
+
+// --- acceptance. an on-demand wheel still loads AFTER lockdown + strip --------------------------------
+// The lockdown runs at boot, before any cell. On-demand packages (`loadPackage` of a wheel that is
+// fetched when a script first imports it) must still load and import afterwards — the strip keeps
+// `WebAssembly` whole precisely so this works.
+
+test("acceptance: loadPackage of one wheel works after lockdown + strip", { skip }, async () => {
+    // Positive control: the interpreter is alive and locked down before the load.
+    const alive = await cell("1 + 1");
+    assert.equal(alive.error, null, `the interpreter must be alive, got: ${alive.error}`);
+    assert.equal(alive.value, 2);
+
+    // scipy is loaded on demand (not pre-imported by the prelude): its wheel loads after the strip.
+    const t0 = Date.now();
+    await py.loadPackage("scipy");
+    const loadMs = Date.now() - t0;
+    const used = await cell("import scipy\nfrom scipy import ndimage\nndimage.label([[0, 1], [1, 0]])[1]");
+    assert.equal(used.error, null, `scipy must import and run after lockdown + strip, got: ${used.error}`);
+    assert.equal(used.value, 2, "ndimage.label finds two components");
+    // Carried for the PR's cost row: the one-wheel load after boot, measured here.
+    console.log(`  loadPackage("scipy") after lockdown+strip: ${loadMs} ms`);
+});
