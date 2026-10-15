@@ -26,8 +26,9 @@ export type IsoAnswer = { ok: unknown } | { error: string };
 
 /** What the server reads through: the run's pointer resolver, and the value store. */
 export interface IsoDeps {
-    /** The run's pointer resolver now (undefined once the turn has ended). */
-    deref: () => ((ref: string, pipe?: string | string[]) => DerefRead) | undefined;
+    /** The run's pointer resolver now (undefined once the turn has ended). It may wait: the worker's reads a stored text
+     *  whole (`derefWhole`), as every other reader that crosses a message hop does. */
+    deref: () => ((ref: string, pipe?: string | string[]) => DerefRead | Promise<DerefRead>) | undefined;
     /** Which sessions hold a stored value (null: unknown to the store). */
     holders: (key: string) => Promise<string[] | null>;
     /** Read named columns of a stored value. */
@@ -79,7 +80,7 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
             const fn = deps.deref();
             if (!fn) return { error: ISO_REFUSED.ended };
             try {
-                const r = fn(read.ref, stages);
+                const r = await fn(read.ref, stages);
                 entitle(r.meta);
                 return { ok: { value: r.value, ...(r.warning ? { warning: r.warning } : {}), ...(r.meta ? { meta: r.meta } : {}) } };
             } catch (e) { return { error: (e as Error)?.message || String(e) }; }

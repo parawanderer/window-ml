@@ -149,6 +149,7 @@ const ENVELOPE = {
     pageRead: "plumbing",       // a page table or document, checked field by field (worker-page-read.ts)
     cdpType: "model",           // text, x and y are printed into the result; the verify's target is checked
     verifyRequest: "plumbing",  // checkVerifyRequest
+    textValue: "plumbing",      // read only off an envelope the worker made itself (sw-run-host.ts workerEnvelopes); a page's is ignored
 };
 
 test("every PageToolEnvelope field has a known destination in a worker-built run (a new field must be classified here)", () => {

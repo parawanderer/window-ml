@@ -77,6 +77,8 @@ export interface RunAgentHostDeps {
     contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("../log/run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
     /** Hold a stored value for this run's session (the value store; see AgentLoopOptions.claimValue). */
     claimValue?(key: string): void;
+    /** The whole of a stored text this run holds (see AgentLoopOptions.readText). */
+    readText?(key: string): Promise<string>;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];
@@ -232,6 +234,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         toolThrew: deps.toolThrew,
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, ...(cfg.origin ? { origin: cfg.origin } : {}), tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, ...(cfg.origin ? { origin: cfg.origin } : {}), tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue, readText: deps.readText }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

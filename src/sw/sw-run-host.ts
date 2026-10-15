@@ -5,7 +5,8 @@
 
 import { runBackgroundAgent } from "../agent/agent-host";
 import { evalReadonlyInWorker } from "./sw-readonly";
-import { workerReadonlyMl } from "./worker-readonly-ml";
+import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
+import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
 import { forModel, forModelHistory } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
@@ -51,8 +52,8 @@ import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue, runMayClaim, valueHolders, readStoredColumns, withHeldValuesOnly } from "./sw-values";
-import { isoServer } from "./iso-channel";
+import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
+import { isoServer, type IsoDeps } from "./iso-channel";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { GATED_BUILTINS } from "../tools/tool-registry";
@@ -112,16 +113,29 @@ function thrownKey(e: unknown): string {
 }
 
 /** Resolve the pointer reads an approved `exec` script names, against the run's store: each one's value, or the error
- *  the read raises (a MemoryFault, a bad pipe), which the page then throws where the script reads it. */
-function preReadsFor(runId: string, js: string): PreRead[] {
+ *  the read raises (a MemoryFault, a bad pipe, a stored text that was evicted), which the page then throws where the
+ *  script reads it. For an isolated world a stored text is read whole (`derefWhole`), as a survey of the same script
+ *  reads it. For the page's MAIN world it is the preview, as before: a pointer-naming script reaches the main world only
+ *  where no isolated world is available (exec-routing.ts, the owner's 2026-10-08 fallback), and a page approved for
+ *  window.ml is not thereby approved to read the whole of what a run fetched elsewhere (POINTER_VALUES.md, slice 9).
+ * @param whole whether a stored text is read whole: true only for an isolated world */
+async function preReadsFor(runId: string, js: string, whole: boolean): Promise<PreRead[]> {
     const fn = derefByRun.get(runId);
     if (!fn) return [];
-    return namedReads(expandPointers(js).code).map(({ ref, pipe }) => {
+    return Promise.all(namedReads(expandPointers(js).code).map(async ({ ref, pipe }): Promise<PreRead> => {
         try {
-            const r = fn(ref, pipe);
+            const r = whole ? await derefWhole(runId, fn, ref, pipeStages(pipe ?? null)) : fn(ref, pipe);
             return { ref, pipe, value: r.value, ...(r.warning ? { warning: r.warning } : {}), ...(r.meta ? { meta: r.meta } : {}) };
         } catch (e) { return { ref, pipe, error: (e as Error)?.message || String(e) }; }
-    });
+    }));
+}
+
+/** The run's resolver for an isolated exec's re-pipes: a stored text read whole, as the pre-reads were. */
+function wholeDerefFor(runId: string): IsoDeps["deref"] {
+    return () => {
+        const fn = derefByRun.get(runId);
+        return fn && ((ref: string, pipe?: string | string[]) => derefWhole(runId, fn, ref, pipeStages(pipe ?? null)));
+    };
 }
 
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
@@ -358,6 +372,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const cfg = await getConfig();
         return routeExec(js, await pageApproved(url), await isolationAvailable(!!cfg.cdp), { world, defaultWorld: defaultExecWorld(cfg.execDefaultWorld) });
     };
+    // The envelopes the worker made itself, by running the tool here (runLocalTool). Only these may name a stored text
+    // body (`textValue`): a page's answer is deserialized, so it can never be one of them, and a copy made on the way
+    // (a verify's) is not one either, which fails closed. state: plumbing
+    const workerEnvelopes = new WeakSet<object>();
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string, pageRouted = false): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
@@ -407,7 +425,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (byWorker() && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl, pyMedia).catch(() => { /* answered below */ });
             const local = await runLocalTool(payload, onStream);
-            if (local) return local;
+            if (local) { workerEnvelopes.add(local); return local; }
             // Nowhere else to run: a remote tool has no page side, and a worker builtin sent to the page would put what
             // it reads there and have the page send for it (site access part 5), so neither falls back to the page.
             if (p.tools.some((t) => t.name === payload.name && t.remote))
@@ -417,7 +435,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.name === "look" || payload.name === "locate") return toPage();
             return { result: `Error: "${payload.name}" could not be set up for this run. Try again.` };
         }
-        return (await runLocalTool(payload, onStream)) ?? toPage(documentId);
+        const local = await runLocalTool(payload, onStream);
+        if (local) { workerEnvelopes.add(local); return local; }
+        return toPage(documentId);
     };
     const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
     // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
@@ -709,11 +729,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                             // Never unpinned: what it is given is the run's, so with no document to hold it to, it does not run.
                             if (!execDoc) return { result: "Error: could not tell which page the tab holds now, so this exec was not run. Run it again.", renderIn: execCodeIn(js) };
-                            const reads = preReadsFor(runId, js);
+                            const reads = await preReadsFor(runId, js, true);
                             return runIsolatedExec({
                                 tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc,
                                 // What the world may ask for while it runs: re-pipes of what it was sent, and those stored tables.
-                                serve: isoServer(runId, reads, { deref: () => derefByRun.get(runId), holders: valueHolders, columns: readStoredColumns }),
+                                serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
                                 ...(snap && execNames(js).current ? { current: async () => withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) } : {}),
                             });
@@ -731,7 +751,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // those, parsed here: the page shares the tab, and an open grant lent it every URL while any exec ran.
                     // The pointer reads an approved script names, resolved here and sent with it: the page answers only
                     // those, so it cannot read the rest of the run's store while the call is in flight (named-reads.ts).
-                    const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? preReadsFor(runId, (args as { js: string }).js) : undefined;
+                    const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? await preReadsFor(runId, (args as { js: string }).js, false) : undefined;
                     if (reads) execReads.set(runId, reads);
                     // A remote tool's args LEAVE THE MACHINE, so the grant is minted for the exact call the
                     // human saw — never for the tool in general. The identity comes from the tool's declared
@@ -1031,7 +1051,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
+                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
                     } finally {
                         dropCallGrants(tabId, callKey);   // grants were for THIS approved call's sub-ops only; another run's call on the tab keeps its own
                         if (pyInWorker) grantRunPython(runId, null);
@@ -1062,6 +1082,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A pointer to a stored table: this session holds it until the session is released. The key is read off the
                 // step's render, which a page's answer writes, so only a value this run may hold is claimed (runMayClaim).
                 claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
+                // The whole of a stored text the run's pointer names, for the dereference tool. Only a value this run holds.
+                readText: (key) => readStoredText(key, runId),
                 tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
                     if (name !== "exec") return null;
                     // Every decision below reads `byWorker()`: a navigation's hand-over must be decided first, as delegateTool does.

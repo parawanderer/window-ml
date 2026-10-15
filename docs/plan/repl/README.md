@@ -90,8 +90,10 @@ test in the host repo, which must flip when K lands.
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
 kept whole (`POINTER_VALUES.md`, slices 5 and 6). So "the operation goes to the value" has no value to go to for a text
 body, and a code client (a Python cell, a survey's pipe) computes over a prefix. J is a root (it extends the value store
-the way the table slices did), taken by the fresh lane 1 session on 2026-10-15 while the lockdown merges; until it lands, a `value` answer for a
-truncated capture carries `truncated: true` and the full size, and every client surfaces it.
+the way the table slices did), taken by the fresh lane 1 session on 2026-10-15 (`POINTER_VALUES.md`, slice 9): a fetched text body past its preview is
+now stored whole. A `value` answer for a capture that was NOT stored (a page-hosted run's fetch, a body past the fetch's
+read cap, an `exec` or `python_exec` output) still carries `truncated: true` and the full size, and every client
+surfaces it.
 
 ## Status (2026-10-15, end of the first day)
 

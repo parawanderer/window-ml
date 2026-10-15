@@ -380,6 +380,9 @@ export interface PageToolEnvelope {
     /** The verify the worker is to take after this click/type/wait (a run whose vision is the worker's, asked with
      *  `verifyInWorker`): the page's word, checked field by field (worker-verify.ts `checkVerifyRequest`). */
     verifyRequest?: VerifyRequest;
+    /** The stored whole of a clipped text result (ToolResult.textValue). Read only off an envelope the worker made
+     *  itself, never off a page's answer. */
+    textValue?: string;
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

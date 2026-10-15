@@ -6,7 +6,7 @@
 // log; a background run claims the values its pointers name and releases them when its session is dropped; and the idle
 // sweep runs when the worker starts and on an alarm, because nothing else is awake to run it.
 
-import { ValueStore, ValueTooLarge } from "../pointers/value-store";
+import { ValueStore, ValueTooLarge, ValueMissing } from "../pointers/value-store";
 import { storedColumns } from "../table/table-data";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
@@ -16,7 +16,7 @@ import { defineJob } from "../job-registry";
 
 defineState({
     id: "run.values", scope: "session", realm: "worker", audience: "model", lostOn: [],
-    describe: "Large values the run holds in the value store (whole fetched tables): size, format, where each came from, and whether another session holds it too.",
+    describe: "Large values the run holds in the value store (whole fetched tables and fetched text bodies past their preview): size, format, where each came from, and whether another session holds it too.",
     read: async ({ runId }) => {
         if (!runId) return undefined;
         const rows = ((await values()?.rows().catch(() => [])) ?? []).filter((r) => r.sessions.includes(runId));
@@ -64,6 +64,32 @@ export async function storeFetchedBody(body: FetchedBody, source: string): Promi
         recordHousekeeping({ subsystem: "value-store", kind: "refuse", reason: e instanceof ValueTooLarge ? "budget" : "error", key: source, detail: { message: String((e as Error)?.message ?? e).slice(0, 200) } });
         return undefined;
     }
+}
+
+/**
+ * Store the whole of a text capture the model is shown only a preview of (fetch_url past its 4,000 characters), and return
+ * its key (docs/spec/POINTER_VALUES.md, slice 9). The same store, budget and refusal as a fetched table's body.
+ * @param text the whole text the preview was cut from
+ * @param source where it came from (the URL), for the housekeeping log and an eviction's message
+ */
+export function storeText(text: string, source: string): Promise<string | undefined> {
+    return storeFetchedBody({ bytes: text, format: "text" }, source);
+}
+
+/**
+ * The whole of a stored text, for a session that holds it. Throws the store's ValueMissing (with its reason) for one that
+ * is gone, and the same "not in the store" for one the session does not hold, so a key a run was never given reads as
+ * absent rather than as someone else's.
+ * @param key the value's key
+ * @param session the run reading it
+ */
+export async function readStoredText(key: string, session: string): Promise<string> {
+    const s = values();
+    if (!s) throw new Error("there is no value store in this context");
+    const holders = await valueHolders(key);
+    if (holders && !holders.includes(session)) throw new ValueMissing(key, null);
+    const { blob } = await s.get(key);
+    return blob.text();
 }
 
 /** A run's pointer names a stored value: hold it for that session, when `may` (given the value's holders) allows it. */
