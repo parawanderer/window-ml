@@ -36,7 +36,28 @@ test("an energy counter counts its difference, across a wrap; a source restart a
     const reset = reading(1000, { power_sources: [rapl(1000, { energy_wrap_mj: undefined })] });
     assert.deepEqual(intervals([at(0, 5000), reset]), [], "a decrease with no wrap is a restart");
     assert.deepEqual(intervals([reading(0, gpu(100)), reading(MAX_GAP_MS + 1, gpu(100))]), [], "a gap past MAX_GAP_MS");
+    close(intervals([reading(0, gpu(40)), reading(15_300, gpu(40))])[0].J.gpu, 40 * 15.3, "an idle sample 15 s apart, plus jitter, is measured");
     assert.deepEqual(reading(0, { power_sources: [rapl(1, { error: "permission denied" }), { provider: "x", scope: "moon", power_mw: 5 }] }).counters, {}, "an erroring source and an unknown scope are left out");
+});
+
+test("a wall plug's coarse counter (0.001 kWh steps) is integrated from its watts; RAPL's fine counter keeps its differences", () => {
+    // The plug's live entry, 2026-10-15 (mlbox, Tasmota): 206.3 W, Total in 3.6e6 mJ steps, read every second.
+    const plug = (mj, w) => ({ provider: "tasmota", name: "box", scope: "wall", power_mw: w * 1000, energy_mj: mj, source_time: "2026-10-15T19:21:08", at_ms: 0 });
+    const rs = [];
+    let mj = 219_600_000;
+    for (let t = 0; t <= 20; t++) {
+        if (t === 17) mj += 3_600_000;   // one counter step in 20 s at ~206 W
+        rs.push(reading(t * 1000, { power_sources: [plug(mj, 206.3), rapl(1_000_000 + t * 13_100, { power_mw: 13_100 })] }));
+    }
+    const ivs = intervals(rs);
+    assert.equal(ivs.length, 20);
+    for (const iv of ivs) {
+        close(iv.J.wall, 206.3, "every second reads the plug's watts, never 0 J or a 3.6 kJ spike");
+        close(iv.J.cpu, 13.1, "RAPL still counts its counter's difference");
+    }
+    // The counter is used as before when it moves with the readings (a plug read once every 20 s, say).
+    const slow = intervals([reading(0, { power_sources: [plug(219_600_000, 200)] }), reading(10_000, { power_sources: [plug(221_400_000, 200)] })]);
+    close(slow[0].J.wall, 1800, "a moving counter keeps its difference");
 });
 
 test("scopes nest, so they are never added across: the wall when there is one, else the system, else GPU + CPU", () => {

@@ -6,7 +6,9 @@
 //
 // Measured layers, each absent when the box does not report it, never 0: GPU board power (`supported_gpus[].power`,
 // sampled watts, integrated by trapezoid) and the box's power sources (`compute.power_sources`: an energy counter is
-// integrated by its DIFFERENCES, with a decrease read as a wrap at `energy_wrap_mj`). Scopes nest (a wall reading
+// integrated by its DIFFERENCES, with a decrease read as a wrap at `energy_wrap_mj`, unless it is COARSER than the
+// readings: a wall plug's counter moves in 0.001 kWh steps, so it stands still for seconds while the plug's watts say it
+// draws, and that source is integrated from its watts instead). Scopes nest (a wall reading
 // contains the CPU and GPUs), so they are never added across: an interval counts the wall when it has one, else a
 // whole-system reading, else GPU + CPU, and says which.
 //
@@ -23,8 +25,11 @@
 import { isOffPeak } from "../../../src/spend/price-book.ts";
 import { normModel } from "../../../src/resource/resource-model.ts";
 
-/** A longer gap between two readings is not integrated: its energy is unmeasured, not zero. */
-export const MAX_GAP_MS = 15_000;
+/** A longer gap between two readings is not integrated: its energy is unmeasured, not zero. The box samples every 15 s
+ *  when idle (every 250 ms busy), and an idle gap lands just past it: 372 of 415 idle gaps in this clone's box log were
+ *  15.0-15.5 s (2026-10-15). At 15 s every one of them was dropped, and with them most of the readings rest is found
+ *  from. 20 s keeps the idle cadence and still drops a missed sample. */
+export const MAX_GAP_MS = 20_000;
 /** Readings this far either side of a run's generations bound the stretch read for it (and find the box at rest). */
 const PAD_MS = 5 * 60_000;
 /** How long after a generation the box's draw above rest is still that generation's. */
@@ -35,13 +40,15 @@ export const REST_MS = 30_000;
 const SPLIT_MS = 10 * 60_000;
 /** An energy counter rising faster than this is a reset, not a reading (10 kW). */
 const MAX_W = 10_000;
+/** A counter standing still while its source reports more than this (W) is coarser than the readings (see `coarse`). */
+const COARSE_W = 1;
 const SCOPES = ["wall", "system", "gpu", "cpu"];
 const J_PER_KWH = 3.6e6;
 
 /**
  * One power reading from a sample frame's `info.compute`, at `t` (ms): each GPU's board power in watts by its `gpu_id`
  * (`gpuBy`) and their sum (`gpuW`), both null unless every GPU reports one; each power source as an energy counter (mJ,
- * with its wrap) or, without a counter, as watts; and where each resident model sits (`place`, from the frame's
+ * with its wrap, and its watts when the source reports them too) or, without a counter, as watts; and where each resident model sits (`place`, from the frame's
  * `ps.models` when given). A source reporting an error, or a scope this does not know, is left out.
  */
 export function reading(t, compute, models = null) {
@@ -53,7 +60,7 @@ export function reading(t, compute, models = null) {
     for (const s of Array.isArray(compute?.power_sources) ? compute.power_sources : []) {
         if (!s || s.error || !SCOPES.includes(s.scope)) continue;
         const key = `${s.provider}:${s.name ?? s.scope}`;
-        if (Number.isFinite(s.energy_mj)) counters[key] = { scope: s.scope, mj: s.energy_mj, wrap: Number.isFinite(s.energy_wrap_mj) ? s.energy_wrap_mj : null };
+        if (Number.isFinite(s.energy_mj)) counters[key] = { scope: s.scope, mj: s.energy_mj, wrap: Number.isFinite(s.energy_wrap_mj) ? s.energy_wrap_mj : null, w: Number.isFinite(s.power_mw) ? s.power_mw / 1000 : null };
         else if (Number.isFinite(s.power_mw)) watts[key] = { scope: s.scope, w: s.power_mw / 1000 };
     }
     return { t, gpuW, gpuBy, place: models ? placement(models) : null, counters, watts };
@@ -72,10 +79,32 @@ export function placement(models) {
     return out;
 }
 
+/**
+ * The power sources whose energy counter is COARSER than the readings: between two readings it stood still while the
+ * source reported drawing more than COARSE_W at both ends. A wall plug's counter (Tasmota's Total) moves in 0.001 kWh =
+ * 3.6 kJ steps, about one every 17 s at 200 W, so integrated by its differences each second reads 0 W or a 3.6 kW spike.
+ * Such a source is integrated from its watts instead. A fine counter (RAPL's, in µJ) moves every reading and keeps its
+ * differences, which are exact where sampled watts are not. Decided over all the readings, so one source is never
+ * counted both ways.
+ */
+export function coarse(readings) {
+    const out = new Set();
+    for (let i = 1; i < readings.length; i++) {
+        const a = readings[i - 1], b = readings[i], dt = b.t - a.t;
+        if (!(dt > 0) || dt > MAX_GAP_MS) continue;
+        for (const [k, c] of Object.entries(b.counters)) {
+            const p = a.counters[k];
+            if (p && c.mj === p.mj && c.w > COARSE_W && p.w > COARSE_W) out.add(k);
+        }
+    }
+    return out;
+}
+
 /** The energy (J) between each two consecutive readings, per scope: `{ from, to, J: { gpu?, cpu?, system?, wall? },
  *  gpuBy, place }`, `gpuBy` each GPU's share of `J.gpu` (null when the GPUs were not read per card at both ends). */
 export function intervals(readings) {
     const out = [];
+    const byWatts = coarse(readings);
     for (let i = 1; i < readings.length; i++) {
         const a = readings[i - 1], b = readings[i], dt = b.t - a.t;
         if (!(dt > 0) || dt > MAX_GAP_MS) continue;
@@ -90,6 +119,10 @@ export function intervals(readings) {
         for (const [k, c] of Object.entries(b.counters)) {
             const p = a.counters[k];
             if (!p) continue;
+            if (byWatts.has(k)) {
+                if (c.w != null && p.w != null) add(c.scope, ((p.w + c.w) / 2) * (dt / 1000));
+                continue;
+            }
             let d = c.mj - p.mj;
             if (d < 0 && c.wrap) d += c.wrap;
             // Still negative, or impossibly fast: the source restarted. That interval is unmeasured for it.
