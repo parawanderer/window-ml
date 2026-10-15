@@ -167,6 +167,10 @@ On every call not yet started:
   refuses it, and the card closes saying why.
 - **A run that relied on a policy is told** when its next call meets the change: the result says the call now needs the
   person (or was refused) because the policy that covered it was removed, not that the call itself changed.
+- **A store not yet loaded means ASK, free tiers included** (lane 2, 2026-10-15). After a worker wake the saved policies
+  are read asynchronously; until they are, every gated call asks, because an unloaded `deny` is an unenforced one and
+  an unloaded `allow` costs only a card. The consumer's gate (`judgeCall`) carries this rule itself, so a consumer added
+  later cannot forget it.
 
 ## Showing what was approved
 
