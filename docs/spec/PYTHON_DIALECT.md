@@ -85,8 +85,10 @@ list of CVEs look the way they do:
    that is `agg`, `apply` and `transform` with a string, `groupby(...).agg`/`transform` with strings, `eval` and
    `query`, all of which `getattr` on the string. The ruling: the aggregation names are a CLOSED VOCABULARY in the
    manifest entry (`names=`), checked against the string argument BEFORE the call by the entry, the same mechanism
-   that checks a `range` or a cost bound; an unlisted string is `NotInDialect`; a callable argument is a callback and
-   stays gated. `df.eval` and `df.query` are OUT: a string that is a program is a second language, and the dialect
+   that checks a `range` or a cost bound; an unlisted string is `NotInDialect`; a callable argument must be a
+   `CO_RESTRICTED` Python function, since only such a frame turns the gate back on inside the lift and a C callable
+   (a bound `str.format`, an `attrgetter`, a `partial`) makes no frame (lane 3's second finding, PR #721; the entry
+   walks plain containers for both rules, and a gate-restoring shim is rejected). `df.eval` and `df.query` are OUT: a string that is a program is a second language, and the dialect
    never compiles a string, in Python as in JavaScript. If the corpus shows `query` common enough to matter, the
    later answer is a parser of our own over a closed grammar of comparisons on column names, as `ml.pipe` has, never
    pandas' engine. (b) An unlifted builtin that looks a method up by name (`sorted` reaching `list.sort` on the list it

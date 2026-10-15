@@ -266,8 +266,20 @@ legitimately touch dunders (numpy, pandas) is marked `@lift`, and runs with the 
 callbacks excepted. The rule that comes with it: **a lifted leaf never resolves a name it is given.** A leaf that turns
 a string argument into an attribute lookup (`DataFrame.agg("sum")`, `apply("mean")`, `groupby(...).transform("max")`)
 declares the admitted strings as a closed vocabulary, `@names(func=[...])`, which the entry checks before the call;
-anything else is `NotInDialect`, and a callable in that position is a callback, gated as always. `DataFrame.eval` and
-`DataFrame.query` are not listed: a string that is a program is another language, and the dialect compiles no string.
+anything else is `NotInDialect`. `DataFrame.eval` and `DataFrame.query` are not listed: a string that is a program is
+another language, and the dialect compiles no string.
+
+**A callable handed to a lifted leaf is a `CO_RESTRICTED` function, or the call is refused** (lane 3, 2026-10-15, PR
+#721). Inside a lifted leaf only a restricted Python frame turns the gate back on, and a C callable makes no frame: a
+bound `str.format` (`df.a.apply("{0.__class__}".format)`), an `operator.attrgetter("__class__")` as a sort key, a bound
+method, a `functools.partial`, would run their lookups ungated inside pandas' lift. So on entry to a lifted leaf the
+entry walks the arguments, positional and keyword, into plain containers (`list`, `tuple`, `dict`, `set`; never into an
+object such as a frame), and every callable found must be a `CO_RESTRICTED` Python function, every string in a `names`
+position must be in the vocabulary, or the call is `NotInDialect` before the leaf runs. A gate-restoring shim around C
+callables is the alternative and is rejected: it is complexity in the one place that must stay simplest. The corpus
+consequence is that `df.a.apply(str)` and `.map(int)` are refused; if the count shows the idiom matters, the manifest
+grows a listed set of CALLBACK-SAFE C callables (pure, resolving no name from their arguments: `len`, `str`, `int`,
+`float`, `bool`, `abs`), admitted in that position, and nothing else.
 
 ```python
 class DataFrame:
