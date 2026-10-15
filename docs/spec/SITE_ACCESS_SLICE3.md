@@ -314,6 +314,10 @@ Each one is the `{ error }` of the request, passed through `forPage` (and `forMo
 | `resumeMessages` on a run's first turn (Q4) | Refused: an agent's first turn cannot carry an earlier conversation. |
 | The agent level revoked mid-run (Q9) | The run ends cancelled. Its result's summary reads: Cancelled: this site may no longer start agents. |
 
+Until `ml.requestAccess` takes `{ agents: true }` (PR 4) and the toolbar button can set the agent level (PR 3), the
+first two rows ship without the hint that names them: "Pass `host: "page"` to run the loop in the page." and "The person
+can allow it in DevTools Settings → Permissions." A hint names only a call or a control that can grant the level.
+
 Existing refusals that change because the whitelist becomes origins. They are rewritten to say "the list of sites that
 approve their own actions":
 

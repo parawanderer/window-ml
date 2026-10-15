@@ -10,9 +10,9 @@ import { GATED_BUILTINS, cardLine, isBuiltinTool } from "./tools/tool-registry";
 /** The refusals a page sees (and the model, when its `exec` calls `ml.agent`), SITE_ACCESS_SLICE3.md 1.7. */
 export const START_REFUSED = {
     /** `ml.agent` without `host: "page"` (a START_RUN) from a site without the agent level (Q1). */
-    noLevelStart: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Pass \`host: "page"\` to run the loop in the page, or ask with \`ml.requestAccess({ agents: true })\`.`,
+    noLevelStart: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Pass \`host: "page"\` to run the loop in the page.`,
     /** RESUME_RUN or INJECT_MESSAGE from a site without the agent level. */
-    noLevel: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Ask with \`ml.requestAccess({ agents: true })\`, or allow it from the extension's toolbar button.`,
+    noLevel: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. The person can allow it in DevTools Settings → Permissions.`,
     denied: (origin: string): string => `Refused: ${origin} is not allowed to start agents.`,
     declined: "Refused: the person declined to start this agent. Nothing ran.",
     unanswered: "Refused: nobody answered the request to start this agent. Nothing ran.",
