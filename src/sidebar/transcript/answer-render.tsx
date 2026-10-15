@@ -243,9 +243,12 @@ function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren;
         <span class={`tok-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} onAnimationEnd={() => setOpening(false)}>{node}</span>
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
-            as safe as the answer prose. It is the one part of the embed that goes to the source step. */}
-        {label ? <div class="tok-anno" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}
-            dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : null}
+            as safe as the answer prose. It is the one part of the embed that goes to the source step, so an embed the
+            model gave no caption gets its tool and step as one: without it, nothing would lead to the source. */}
+        {label
+            ? <div class="tok-anno" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}
+                dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} />
+            : <div class="tok-anno" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}>{name}</div>}
         <span class="tok-tip" role="tooltip">{tip}</span>
     </span>;
 }

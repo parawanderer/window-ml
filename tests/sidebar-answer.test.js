@@ -783,6 +783,22 @@ test("answer render (sidebar): clicking an embed's BODY does not navigate to the
     assert.ok(step.classList.contains("astep-pulse"), "a click on the caption goes to the source step");
 });
 
+test("answer render (sidebar): an embed with NO caption is captioned with its tool and step, and that caption navigates", async () => {
+    const w = await loadSidebarWorld();
+    w.window.HTMLElement.prototype.scrollIntoView = function () {};
+    const value = JSON.stringify({ n: 12, kinds: { a: 1 } });
+    await w.dispatch(agentStart("enocap", "count"));
+    await w.dispatch(agentStep("enocap", 1, { seq: 1, tool: "python_exec", token: OUT, result: value, renderOut: { type: "python-out", value } }));
+    await w.dispatch({ ...agentResult("enocap", "Counts:\n\n![](@tool:" + OUT + ":out)\n\nDone.", 1), answer: "" });
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-block");
+    const step = w.shadow.querySelector('[data-astep-seq="1"]');
+    const anno = embed?.querySelector(".tok-anno");
+    assert.match(anno?.textContent || "", /python_exec · step 1/);
+    anno.click(); await w.tick();
+    assert.ok(step.classList.contains("astep-pulse"), "the fallback caption goes to the source step");
+});
+
 test("answer render (sidebar): an embedded JSON value has the step's copy button and tree/text toggle, with quoted keys", async () => {
     const w = await loadSidebarWorld();
     const { embed } = await jsonEmbedRun(w, "ectl");
