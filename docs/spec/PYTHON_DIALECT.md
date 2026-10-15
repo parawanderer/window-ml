@@ -74,9 +74,11 @@ admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms the
 what the count surfaced:
 
 - **A generator expression is rewritten to a list comprehension in the pre-pass, in CONSUMER POSITION only**: as the
-  sole argument of `sum`, `any`, `all`, `min`, `max`, `sorted`, `list`, `tuple`, `set`, `dict`, `str.join`,
-  `enumerate` or `zip`, where the two differ only in early exit and memory, both bounded by the budget and the
-  allocation cap. That one rule takes admission to 99.1%. A genexp anywhere else is refused: there the rewrite would be
+  sole POSITIONAL argument of `sum`, `any`, `all`, `min`, `max`, `sorted`, `list`, `tuple`, `set`, `dict`, `str.join`,
+  `enumerate` or `zip`, keyword arguments beside it allowed (`key=`, `default=`, `reverse=` never receive the
+  generator), where the two differ only in early exit and memory, both bounded by the budget and the allocation cap.
+  164 of the corpus's 177 generator expressions are in that position; the rule admits 98.4% of cells (93.6% with the
+  static gate's import and builtin lists), against 99.1% if any generator expression were admitted. A genexp anywhere else is refused: there the rewrite would be
   observable, and a generator object is a suspended frame the patch's first slice does not have to get right.
 - **`type(x)` is allowed** (2.4% of cells, mostly a debugging print or `type(x) == str`), returning a receiver kind of
   its own that lists no attributes (so `__mro__`, `__subclasses__`, `__name__` are refused by the gate), is not callable,
@@ -202,6 +204,8 @@ manifest format, one vector corpus.
   or owning by reachability from the cell's namespace at the write barrier instead of by allocation.
 - **Which CPython and Pyodide versions carry the patch first**, and how the host's build is distributed (a wheel of
   the interpreter, a `uv`-managed toolchain, the container image).
+- **The first import list.** From the count's top refusers: `csv` and `PIL` admitted (both C leaves underneath, so
+  manifest entries, not a bare import allowance), `urllib` and `sys` refused.
 - **The genexp tail.** If a real share of generator expressions turns out to sit outside consumer position, a generator
   object becomes a receiver kind with no attributes and the frame bookkeeping for suspension joins the patch.
 - **How much of real pandas falls inside tier 1.** `groupby().apply`, `merge` and string accessors have data-dependent
