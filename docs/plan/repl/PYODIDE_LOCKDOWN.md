@@ -39,13 +39,28 @@ starts from main.
    as the set Pyodide needs, with a test that enumerates `globalThis` and fails on anything outside it.
 4. **No JsProxy in the Python namespace at all.** The stdout tee becomes Pyodide's JS-side `setStdout` (batched or
    raw). The later `ml` callback ([`ML_WIRE.md`](../../spec/ML_WIRE.md), lane 1's PR 2) is a message through the
-   closure-held post, never a function the cell holds.
+   closure-held post, never a function the cell holds. None means none: the injected inputs (`INJECTED_IMAGE_B64`,
+   `INJECTED_TABLES_JSON`, the prelude's `_b64`/`_tsj`) land as `JsNull` today when the harness passes a JS `null`, and
+   become Python `None`/`str` at injection time (measured by the red-team session, 2026-10-15).
 5. **Cancel the asyncio loop's pending handles before a cell's result is returned**, so nothing scheduled by one cell
    runs during the next, even with the strip in place.
+6. **The harness binds its own module functions at boot** (red-team property P5, 2026-10-15). A cell that monkeypatches
+   `ast.parse` or `json.loads` keeps the patch across the per-run RESET, since that is module state and not a namespace
+   name, and could read the next cell's source and injected tables through the wrapper's own calls. Split by principal:
+   CROSS-principal it is closed by step 1 (a worker per principal, respawned on change), and the vector's cross-principal
+   half must pass from that alone. INTRA-principal it is the same thing as the persistent per-run namespace (root C) is
+   about to make deliberate, so there is no module-state restore and no interpreter per cell. What must never depend on
+   patchable module state is the HARNESS: the wrapper's parsing, line correction, result encoding and table injection
+   (`ast`, `json`, `base64`, the stdout path) capture their own references before any cell runs and use only those. A
+   cell's patch may change what the run's own later cells compute; it can never change what the harness reports or
+   injects, which is the raw-view rule.
 
 ## Acceptance
 
-- The red-team session's vectors, which fail first and pass after, including a JsProxy-of-`globalThis` probe.
+- The red-team session's vectors (PR #698, `redteam-python-sandbox.test.mjs` under `tests/`, marked `todo` until the lockdown
+  lands), which fail first and pass after: P1 to P4, and P5 in its two halves (cross-principal: a patched function is
+  not visible after the principal changes; intra-principal: the harness's reporting is unaffected by a patched
+  `json.loads` even though the next cell's own call sees it).
 - The corpus regression number from step 2.
 - The `globalThis` enumeration test from step 3.
 - Tests run under real CPython in `dist/pyodide/` (they self-skip without it).
