@@ -312,6 +312,36 @@ test("adversarial (assignment): cannot mutate the PAGE — a DOM node or its pro
     assert.equal(doc.title, "");                       // the page is untouched
     assert.equal(doc.querySelector("#a").value, "");
 });
+test("adversarial (Object.assign): writes only into what the script built — never the page, a page object or a builtin", async () => {
+    // `Object.assign` is an allowed static whose FIRST argument is written, which the method gate (scoped by receiver,
+    // `Object`) never looked at: an auto-approved survey rewrote `document.body.innerHTML`, and assigned into the
+    // host's own `Math`, `JSON` and `Array`, which outlive the survey and which every later guard calls.
+    const doc = world();
+    const body = doc.body.innerHTML;
+    doc.appData = { n: 1 };
+    for (const js of [
+        `Object.assign(document.body, { innerHTML: "<b>x</b>" }); 1`,
+        `Object.assign(document.querySelector('#a'), { value: "x", onclick: 1 }); 1`,
+        `Object.assign(document.appData, { n: 2 }); 1`,
+        `Object.assign(Math, { pwned: 1 }); 1`,
+        `Object.assign(JSON, { stringify: (x) => "PWN" }); 1`,
+        `Object.assign(Array, { isArray: (x) => false }); 1`,
+        `Object.assign(Object, { keys: () => [] }); 1`,
+        `Object.assign(console, { log: 1 }); 1`,
+        `const m = Math; Object.assign(m, { pwned: 1 }); 1`,
+        `const a = [1]; for (const x of a) Object.assign(a, [1, 2, 3]); 1`,
+    ]) await assert.rejects(run(js, doc), outOfDialect, js);
+    for (const realm of ["worker"])
+        await assert.rejects(evalReadonly(`Object.assign(Math, { pwned: 1 }); 1`, null, undefined, undefined, { realm }), outOfDialect, realm);
+    assert.equal(doc.body.innerHTML, body, "the page is untouched");
+    assert.deepEqual(doc.appData, { n: 1 });
+    assert.equal(Math.pwned, undefined);
+    assert.equal(JSON.stringify({ a: 1 }), '{"a":1}');
+    assert.equal(Array.isArray([]), true);
+    // Into an object the script built, it is the ordinary idiom, and runs.
+    assert.deepEqual((await run(`const o = { a: 1 }; Object.assign(o, { b: 2 }, document.appData); o`, doc)).value, { a: 1, b: 2, n: 1 });
+    assert.deepEqual((await run(`Object.assign({}, { b: 2 })`, doc)).value, { b: 2 });
+});
 test("adversarial (assignment): cannot rebind a bare variable (window/document/globals) — no env corruption", async () => {
     await assert.rejects(run(`window = new Map(); 1`), outOfDialect);                       // the user's exact worry
     await assert.rejects(run(`document = new Map(); document.querySelectorAll('x')`), outOfDialect);

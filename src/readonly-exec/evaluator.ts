@@ -887,6 +887,17 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
+            // `Object.assign(target, …)` WRITES its first argument, so the target meets the same rule as `o[k] = v`: a
+            // plain object or array the script built, not one being iterated. Without it, a survey assigned into the
+            // page (`Object.assign(document.body, { innerHTML })`) and into the host's own builtins (`Math`, `JSON`,
+            // `Array`), which outlive the survey and every guard here reads.
+            if (key === "assign" && obj === Object) {
+                const target = args[0];
+                this.refuseWrite(target);
+                if (target === null || typeof target !== "object" || !this.owned.has(target) || !isWritableTarget(target))
+                    throw new Denied("Object.assign can only write into an object or array you built — never a DOM node, a page object, or a builtin");
+                this.notIterating(target, "assign into");
+            }
             this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
             // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
             // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
