@@ -95,9 +95,13 @@ truncated capture carries `truncated: true` and the full size, and every client 
 
 ## Status (2026-10-15, end of the first day)
 
-- **Lane 4 is done for this round**: root I as `window-ml-host` v0.1.0 (+ its PRs #2 to #4), root F merged (#683),
-  results in `LANE_4_RESULT_I.md` and `LANE_4_RESULT_F.md` (#687). Open: Linux sandbox enforcement is unverified; its CI
-  fix waits on Shane pushing the host repo's `ci/linux-sandbox` branch.
+- **Lane 4's first round is done**: root I as `window-ml-host` v0.1.0 (+ its PRs #2 to #5, the last adding Linux
+  enforcement in CI), root F merged (#683), results in `LANE_4_RESULT_I.md` and `LANE_4_RESULT_F.md` (#687, #694). Its
+  second round, started the same day on Shane's go: **the host's extension side**, unblocked by root A: `ml.sh` as a
+  wire call from a worker-hosted run (the plain `run`/`pipe`/`glob` forms; `execNames` gains `sh`), the facts-in
+  verdict-out exchange over native messaging, outputs as pointers read by range, every call asking, the three shell
+  capabilities, the red-team tests that no page-started type reaches the host; a new `sw-shell.ts` under `src/sw/`, a
+  pure client under `src/shell/`, one registration hook in the wire.
 - **Lane 2**: root D merged (#672, result #676); root E and the first consumer in progress. Its red-team pass found and
   fixed a hole in the shipped dialect (`Object.assign` into a foreign target, #675).
 - **Lane 3**: the corpus count and the shared vectors in PR #677; root H next.
