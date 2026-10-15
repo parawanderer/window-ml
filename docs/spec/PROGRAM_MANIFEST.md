@@ -17,7 +17,9 @@ Per program, subcommand and flag:
 | `runner` | the flags that start other programs (`find -exec`, `xargs`, `git -c core.pager`, `npm run`, `env`) | never free on the program's own word |
 | `echoes` | whether it prints its environment or its inputs (`env`, `printenv`, `set`, `curl -v`) | a secret in the env reaches stdout; refused with a secret present, scrubbed otherwise |
 | `okCodes` | exit codes that are answers, not failures (`grep` 1, `diff` 1) | `ok` and pipefail |
-| `env` | environment variables that change what it does (`PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD`) | the env whitelist |
+| `env` | environment variables that change what it does (`PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD`) | the REFUSED list, and the forced values the host sets for this program (`git`: `core.fsmonitor=false`, `core.pager=cat`, `diff.external=` through `GIT_CONFIG_COUNT`) |
+| `recursive` | whether a directory argument means everything beneath it (`rg`, `grep -r`, `find`, `ls -R`, `tar`, `du`) | the host computes `containsSecret` for such an argument ([`SHELL.md`](SHELL.md)) |
+| `configRunsCode` | for a program whose own config can make a read run code (`git`), the keys to look for | the `repoConfigRunsCode` fact |
 
 **No cost tiers.** A process is metered by the host's time limit and output cap, not by a survey's step budget: a
 survey that calls `ml.sh` waits on a promise, and the dialect's steps measure interpreter work, not the person or the
@@ -28,6 +30,8 @@ host. (The earlier sentence in `SHELL.md` charging a process to the step budget 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the
 machine has. A program manifest names the program and a version range, the host records the RESOLVED path and the
 version it reports with every call, and a program outside the range is `unknown`. A container image can pin exactly.
+The BSD coreutils on macOS (`ls`, `cat`, `wc`, `head`, `tail`, `find`) report no version at all: such a manifest has
+`range: "*"`, takes no version arguments, and lists only flags with the same meaning in GNU and BSD (2026-10-15).
 
 ## Trust
 

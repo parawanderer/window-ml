@@ -116,7 +116,26 @@ never a page. The model learns which mode a call ran in from the call's result, 
   mode publishes nothing and keeps the narrow free tier above. This is what the sandbox is FOR in Claude Code too:
   fewer prompts, with the boundary set up front instead of judged per command.
 - **The environment is scrubbed** to a whitelist in both modes; in host mode that matters more, since the host's own
-  environment is the person's login session.
+  environment is the person's login session. A call's own additions meet TWO lists (2026-10-15): REFUSED, which never
+  runs approved or not (`LD_*`/`DYLD_*`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`,
+  `PAGER` and their kind, since each turns a read into running code), and FREE, the few a call may add and still be in
+  the free tier (`LANG`, `LC_*`, `TZ`, `NO_COLOR`, `TERM=dumb`, `COLUMNS`); anything else asks.
+- **A git "read" is only as read-only as the repository's config** (lane 4 of the plan, 2026-10-15). `core.fsmonitor`,
+  `core.pager`, `core.hooksPath`, `diff.external`, a `textconv`, a `filter` driver, an alias or credential helper
+  starting with `!` make `git status` or `git diff` run a program, and no manifest can see that from argv. Repo-level
+  config is UNTRUSTED, because it arrived with the repository (a tarball, a copied tree); the person's global config is
+  theirs. Two answers, both: a BELT, the host forcing `core.fsmonitor=false`, `core.pager=cat` and an empty
+  `diff.external` through `GIT_CONFIG_COUNT` in its own base environment for every git spawn (plus
+  `GIT_OPTIONAL_LOCKS=0`, so a status writes no index), with the manifest adding `--no-pager`, `--no-ext-diff` and
+  `--no-textconv` to the read subcommands; and a FACT, `repoConfigRunsCode`, from the host reading the repository's
+  config and what its includes pull in for those keys, which the plain-host default policy requires to be false. Under
+  the sandbox the harm is bounded and the tier is what the algebra says.
+- **A recursive reader is judged on what is BENEATH its directory argument**, not on the named path alone (`rg pat .`
+  reads `root/.env`). The manifest marks recursive readers (`rg`, `grep -r`, `find`, `ls -R`, `tar`, `du`); for one, a
+  directory argument carries a `containsSecret` fact from a bounded walk by the host (past the cap it is `unknown`, and
+  the call asks), and the default policy requires it false. A `.env` in the tree asks; a person whose dotenv test suite
+  needs it free writes a WORKSPACE policy saying so. The Seatbelt profile hides credential STORES (`~/.ssh`, `~/.aws`) at
+  any depth and does not hide project `.env` files, for that reason.
 
 ## Where the script runs
 
