@@ -260,6 +260,23 @@ class DataFrame:
 `reshape` shows why return aliasing matters: a view aliases its source, so writing through it mutates an array the
 dialect may not own.
 
+**`lift` and `names` (Python only; lane 3, 2026-10-15).** Under CPython's restricted mode every allowed C callable runs
+with the gate ON, so the lookups it performs from its arguments are judged like a cell's own. A leaf whose internals
+legitimately touch dunders (numpy, pandas) is marked `@lift`, and runs with the gate lifted for its dynamic extent,
+callbacks excepted. The rule that comes with it: **a lifted leaf never resolves a name it is given.** A leaf that turns
+a string argument into an attribute lookup (`DataFrame.agg("sum")`, `apply("mean")`, `groupby(...).transform("max")`)
+declares the admitted strings as a closed vocabulary, `@names(func=[...])`, which the entry checks before the call;
+anything else is `NotInDialect`, and a callable in that position is a callback, gated as always. `DataFrame.eval` and
+`DataFrame.query` are not listed: a string that is a program is another language, and the dialect compiles no string.
+
+```python
+class DataFrame:
+    @lift; @effects("pure"); @returns("fresh")
+    @names(func=["sum", "mean", "median", "min", "max", "count", "size", "nunique", "std", "var", "first", "last"])
+    @cost(lambda self, func, axis=0: self.size)
+    def agg(self, func, axis=0): ...           # the vocabulary above is an example; the corpus count sets the real one
+```
+
 ## Open questions
 
 - **Size measures.** Which ones does an interpreter trust? `xs.length` on a host array is cheap and honest. On an
