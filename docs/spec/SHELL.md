@@ -1,9 +1,10 @@
 # Spec (WIP): one executor, many places — processes through `ml.sh`
 
-**Status: initial draft (2026-10-13), nothing built.** Where processes run and how the model reaches them. The
-mechanism of a single call (typed call to argv, a manifest per program) is summarised under "One call". It rests on two
-specs: [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), which DESCRIBES a program (only the free tier waits
-on it), and [`POLICIES.md`](POLICIES.md), which DECIDES whether a call needs the person (this is its first consumer).
+**Status: draft (2026-10-13, refined 2026-10-15), nothing built.** Where processes run and how the model reaches them. The
+mechanism of a single call (typed call to argv, a manifest per program) is summarised under "One call". It rests on
+three specs: [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), which DESCRIBES a program (only the free tier waits on it),
+[`POLICIES.md`](POLICIES.md), which DECIDES whether a call needs the person, and [`EFFECTS.md`](EFFECTS.md), the
+vocabulary both use. Every `ml` call a script makes from wherever it runs is one message ([`ML_WIRE.md`](ML_WIRE.md)).
 
 ## The constraint: the model knows one executor
 
@@ -20,6 +21,9 @@ reached as `ml.fetch`. There is no `bash` tool.
 
 A second LANGUAGE is not a second world. Python (`python_exec`) is a REPL beside JavaScript with the same `ml` in it
 (decided 2026-10-13, see "Python"), so the model knows one world reachable in two languages, and `ml.sh` is in both.
+The one namespace is a map from name to HANDLE held by the worker, each handle pointing at where its value lives (the
+page heap for `ml.state`, the Pyodide heap, the process host); where values live stays asymmetric on purpose
+([`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md)), and reading one from the other language is a dereference.
 
 ## The model of it: one namespace, values that stay home
 
@@ -79,7 +83,10 @@ never a page. The model learns which mode a call ran in from the call's result, 
 - **Workspace roots.** The person names the folders the agent works in. `cwd` stays inside them; a path argument is
   resolved (`realpath`, so `..` and symlinks cannot step out) and judged against them. The manifest marks which
   arguments are paths, so the host can resolve them; an argument the manifest does not describe is not a path the host
-  can vouch for, and the call asks.
+  can vouch for, and the call asks. What the host itself reads (the secret check, a text pipe over a held value) it
+  opens by descriptor without following symlinks, component by component on macOS, which has no `openat2`; that
+  closes the race for the host's own reads only, since the child reopens its arguments by name (see "Resolve, then
+  run").
 - **The free tier narrows to the roots.** A read-only call is free only when every path it names resolves inside a root,
   and never for a file that looks like a secret (`.env`, `*.pem`, `id_*`, a credentials file), wherever it is. Reading
   is the half of an exfiltration that the fetch gate does not see.
@@ -96,11 +103,12 @@ never a page. The model learns which mode a call ran in from the call's result, 
   everywhere else in this extension). Codex CLI is the precedent for on by default (writes confined to the workspace,
   network off). The person turns it off per workspace, knowingly; a tool that needs to write elsewhere (a package
   cache, `~/.kube`) gets that path added rather than the sandbox removed.
-- **The sandbox widens the free tier.** Inside it, an effect is bounded the way a container bounds it, so a sandboxed
-  host-mode call is judged like a container call: a write inside the roots no longer needs the person, only an effect
-  the sandbox cannot bound does (the network beyond the allowlist, a path outside the roots). Plain host mode keeps the
-  narrow free tier above. This is what the sandbox is FOR in Claude Code too: fewer prompts, with the boundary set up
-  front instead of judged per command.
+- **The sandbox widens the free tier, by definition.** An enforcer publishes the set of effects it bounds, and the free
+  tier is "the call's effects are inside that set, plus reads in the roots" ([`EFFECTS.md`](EFFECTS.md)). Seatbelt
+  publishes writes inside the roots and the network allowlist, so a sandboxed host-mode call is judged like a container
+  call: a write inside the roots no longer needs the person, only an effect the sandbox cannot bound does. Plain host
+  mode publishes nothing and keeps the narrow free tier above. This is what the sandbox is FOR in Claude Code too:
+  fewer prompts, with the boundary set up front instead of judged per command.
 - **The environment is scrubbed** to a whitelist in both modes; in host mode that matters more, since the host's own
   environment is the person's login session.
 
@@ -216,11 +224,13 @@ in each shape, scored mechanically. Nothing ran.
 Three tiers, decided per CALL, on the final argv:
 
 1. **Free** — the program's manifest says this program, subcommand and flags only read (`git diff` without `--output`,
-   `rg`, `ls`), the env is clean, and in host mode every path it names is inside a workspace root and is not a secret. Allowed in a read-only survey, charged to its step budget (the manifest's cost
-   tier). **This tier waits on** [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md); until then nothing is
-   free.
-2. **Asks, per call** — anything else, including an unannotated program. The card shows the argv, cwd and env changes
-   that will run, not the script that computed them. Approving a script is not approving every argv it can build: a
+   `rg`, `ls`), the env is clean, and in host mode every path it names is inside a workspace root and is not a secret.
+   Allowed in a read-only survey, which WAITS on the call: a process is metered by the host's time limit and output cap,
+   never by the survey's step budget, which measures interpreter work. **This tier waits on**
+   [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md); until then nothing is free.
+2. **Asks, per call** — anything else, including an unannotated program. From inside a survey or a Python dialect
+   cell the call SUSPENDS on the card and the script continues when it is answered ([`ML_WIRE.md`](ML_WIRE.md)). The
+   card shows the argv, cwd and env changes that will run, not the script that computed them. Approving a script is not approving every argv it can build: a
    script can compute `ml.sh.git.checkout(someTextFromThePage)`, and the person approved the code, not that value.
    This is the property worth having: **what was approved is exactly what runs.**
 3. **Refused** — a program the person has blocked, a call from a page-started message, or `ml.sh` from the page's world.
@@ -258,13 +268,15 @@ and that the free tier is a built-in default policy over it.
 | `cwd` | resolved, with `inRoot` |
 | `env` | the changes from the scrubbed base |
 | `paths` | each argument the manifest marks as a path: `{ arg, path, inRoot, secret }`, resolved with `realpath` |
-| `effects` | what the program's manifest says this call does (`read`, `write`, `runs-code`, `network`, or `unknown`) |
+| `effects` | what the program's manifest says this call does, as the shared set of (operation, resource) pairs ([`EFFECTS.md`](EFFECTS.md)): `read(fs)`/`write(fs)` per resolved path, `exec(process)`, `net(host)`, or `unknown` |
+| `secrets` | the handles the call carries (`env: { GITHUB_TOKEN: ml.secret("github") }`), by name, never by value |
 | `mode`, `sandboxed` | where it would run |
 | `run` | the run it belongs to (its id; a run policy sees only its own run) |
 
-**The free tier is the built-in default policy**: `(c) => c.effects === "read" && c.paths.every((p) => p.inRoot &&
-!p.secret)`. The program's manifest supplies `effects` and marks the path arguments; the person's policies sit beside the
-default. Without a manifest `effects` is `unknown` and the call asks.
+**The free tier is the built-in default policy**, the one subset rule in [`EFFECTS.md`](EFFECTS.md); on the plain host it
+reads `(c) => !c.effects.has("write") && !c.effects.has("exec") && c.effects.reads.every((r) => r.inRoot && !r.secret)`.
+The program's manifest supplies `effects` and marks the path arguments; the person's policies sit beside the default.
+Without a manifest `effects` is `unknown` and the call asks.
 
 ## What the model sees
 
@@ -281,7 +293,9 @@ default. Without a manifest `effects` is `unknown` and the call asks.
 
 **Decided (Shane, 2026-10-13): Python is a REPL beside JavaScript with the same `ml` objects in it, so `ml.sh` is
 there too.** Not a capability called from JS (`ml.py(...)`), and not a separate world: the same namespace, the same
-pointers, the same rules, in the other language.
+pointers, the same rules, in the other language. **And Python gets a read-only dialect of its own** (decided 2026-10-15,
+[`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), written in Python and run in-process with the values, because a sandbox is a
+property of a place and only a proof about the program can follow a cell to the host's CPython.
 
 ```python
 r = await ml.sh.run(["git", "log", "--oneline", "-200"])
@@ -291,17 +305,20 @@ lines = ml.pipe(r.stdout, "grep -i fix | head -20")      # runs at the host; twe
 What follows from it:
 
 - **It needs `ml` inside Pyodide first.** The Pyodide worker cannot reach the extension's objects directly, so each
-  `ml` call is a mediated callback out of the worker (the way its stdout is already teed out), then the same path to
-  the worker and the process host as a call from JavaScript. That prerequisite is the same for every `ml` member, not
-  only `ml.sh`.
+  `ml` call is one message out of the worker (the way its stdout is already teed out), then the same path to the
+  service worker and the process host as a call from JavaScript. The message is the same for every client
+  ([`ML_WIRE.md`](ML_WIRE.md)), and the prerequisite is the same for every `ml` member, not only `ml.sh`.
 - **The same values.** A process's output reaches Python as the same host-held pointer it is in JavaScript; a pointer
   made in one language is readable in the other.
-- **The same approval.** The tier is decided per call on the final argv, at the call, whatever language made it.
-  `python_exec`'s `readonly` mode (which cuts the network and JS bridges, `docs/dev/python-sandbox.md`) can make
-  free-tier calls and asks for the rest; it does not need a Python read-only dialect for that, since the decision is
-  on the argv, not on the Python that computed it.
-- **Placement, later, by the same rule.** Real CPython at the process host, with real packages, is a place a Python
-  cell could run; under "placement is unobservable" that is an optimisation, not a second Python the model addresses.
+- **The same approval.** The tier is decided per call on the final argv, at the call, whatever language made it. A
+  Python dialect cell makes free-tier calls without leaving the dialect and suspends on a card for the rest; the
+  decision is on the argv, not on the Python that computed it, and the dialect is what lets the cell run at the host at
+  all.
+- **Placement, by the same rule, up to the environment.** Real CPython at the process host, with real packages, is a
+  place a Python cell runs; the same dialect module runs there. Its numpy is not Pyodide's build, so the rule is weakened
+  to "the same result up to the recorded environment": versions pinned to the Pyodide lock, the environment stamped
+  into provenance, BLAS order named as a tolerance ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), "Placement and the
+  environment").
 
 ## Security invariants
 
@@ -309,31 +326,64 @@ What follows from it:
   `ml.sh` never runs in the page's main world. Red-team tests enumerate both, as for `ml.current.env`.
 - **The host trusts only the extension**: native messaging's `allowed_origins`, and on the hub a sealed command from a
   principal holding `desktop` ([`RUNTIME_HUB.md`](RUNTIME_HUB.md)).
-- **No secret crosses into a process**: the backend URL and API key never reach the host; the host's environment is
-  scrubbed to a whitelist, and a container sees only its mounts.
+- **No secret crosses into a process by the script's hand**: the backend URL and API key never reach the host; the
+  host's environment is scrubbed to a whitelist, and a container sees only its mounts. A credential a process NEEDS
+  (`git push`, `gh`, a cloud CLI) arrives as a handle ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), "Processes as a
+  sink"): the script names `ml.secret("github")` in `env`, the policy sees the name, and the host injects the value at
+  spawn, into the environment or a credential helper, for a program whose manifest may receive that secret. The
+  process's output is a host-held pointer, and the host scrubs the registered values from it BEFORE anything crosses or
+  a pipe runs over it; a program whose manifest says it echoes its environment is refused with a secret present. In
+  host mode the person's own credential files are on disk: a path flagged secret is never free to read, and the
+  environment the child gets is the scrubbed base, never the login session's.
 - **Approval is on the argv that runs**, never on a description of it (tier 2), and every call is logged with its argv,
   env changes, cwd, exit code and output hashes (the run log, and the provenance a signed notebook would cite).
 
 ## Slices
 
-1. **The host, attached by native messaging, both modes, every call asking.** A container, or host mode within workspace
-   roots. `ml.sh.run`, `pipe`, `glob`; outputs as host-held pointers with `ml.pipe` run at the host;
-   `shellContainer`/`shellHost`/`shellSandboxed`; the routing rule; red-team tests. Every call asking is what makes host mode safe to ship first.
-2. **The free tier**, once the library manifest exists: manifests for a handful of read-only programs (`git`, `rg`,
-   `ls`, `cat`, `wc`, `find` without its effectful flags).
+0. **Before the host**: the `ml` wire protocol with `ml` in Pyodide, the persistent namespace, the Python dialect, and
+   policies against an existing gate ([`ML_WIRE.md`](ML_WIRE.md), [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md),
+   [`POLICIES.md`](POLICIES.md)). Each lands on its own; the host arrives to a mechanism that already decides.
+1. **The host, attached by native messaging, both modes, every call asking.** A Rust connector sibling, a container or
+   host mode within workspace roots. `ml.sh.run`, `pipe`, `glob`; outputs as host-held pointers with `ml.pipe` run at
+   the host; `shellContainer`/`shellHost`/`shellSandboxed`; the routing rule; red-team tests. Every call asking is what
+   makes host mode safe to ship first.
+2. **The free tier**, once the program manifest exists ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): manifests for a
+   handful of read-only programs (`git`, `rg`, `ls`, `cat`, `wc`, `find` without its effectful flags).
 3. **The OS sandbox and standing rules** for host mode (until the sandbox lands, host mode is the plain one, every call
    asking, and `shellSandboxed` is false).
 4. **Placement**: a script naming only `ml.sh` evaluated at the host.
 5. **The host on the hub** as a desktop runtime: a shell on another machine.
 
-## The host's language: Node, for now (decided 2026-10-13)
+## The host's language: Rust, a sibling of the box connector (decided 2026-10-15, replacing Node)
 
-The host runs the text-pipe dialect and the read-only interpreter as they are, which "the operation goes to the value",
-policies and slice 4 all need, and Node already runs both (the repo's tests evaluate the interpreter under Node today).
-Anthropic's `sandbox-runtime` (the Seatbelt/bubblewrap layer Claude Code uses) is an npm package. Deno's packaging is
-cleaner, but its permission model restricts the host, not the processes it starts, so it does not replace the OS
-sandbox. Rust (the hub's language, chosen for memory per connection) would mean porting or embedding the TypeScript,
-and one host per machine does not have the hub's problem.
+The 2026-10-13 decision for Node rested on the host needing to run the TypeScript dialects (the text pipe for "the
+operation goes to the value", the read-only interpreter for policies and slice 4), which Node runs unchanged. Two things
+overturn it:
+
+- **The hub repo already has the host's skeleton in Rust.** `wmlbox` (`crates/connector` in window-ml-hub) is a native
+  program that pairs with the hub and relays, built on the `client`, `seal`, `frame` and `keys` crates. The process host
+  is another connector in that workspace, with a shell capability; it is not a port of anything. The hub's cross-language
+  test vectors (`vectors/`) are the pattern for anything the host reimplements.
+- **Native messaging wants a single binary.** Chrome starts the host from the path in its manifest, with Chrome's
+  environment and not the person's shell, so a Node script behind nvm, volta or fnm does not start. Every Node native
+  host ends up shipping a wrapper or a packed binary anyway.
+
+**The split, and why the host needs no JavaScript in its first slices.** The policy DECISION stays in the browser's
+worker, which already runs the dialect: the host resolves the facts (the `PATH` lookup, `realpath`, the manifest's
+effects, the secret flags) and sends them in; the worker evaluates the policies and answers allow, ask or deny; the host
+spawns, and enforces the roots, the environment scrub and the OS sandbox whatever the answer was. Decision near the
+person, enforcement near the power. Rust owns: both transports (native messaging, the hub); spawning, pipes, rlimits
+and the sandbox profiles (Seatbelt, bubblewrap); path resolution and the open-by-descriptor reads; the store for output
+held at the host; fact resolution; injecting secrets at spawn; spawning the host's CPython with the Python dialect module
+([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), which is Python and needs no JS engine.
+
+JavaScript reaches the host later, for two things, by two routes: the text pipe over a host-held value is a Rust port
+checked against the TypeScript tests as vectors, or an embedded QuickJS running the esbuild bundle pinned by hash; a full
+JS exec placed at the host (slice 4) runs in the container's Node, or in an embedded engine if it must be in-process. A
+JS sidecar at the host becomes necessary when the hub drives a desktop runtime with no browser attached, because the
+policies then have to be evaluated there; that is slice 5's problem, and the facts-in, verdict-out message is the same
+either way. Deno's permission model restricts the host and not the processes it starts, so it never replaced the OS
+sandbox; Anthropic's `sandbox-runtime` is the reference for the profiles, not a dependency.
 
 ## Open questions
 
@@ -341,6 +391,8 @@ and one host per machine does not have the hub's problem.
   install before slice 1 works.
 - **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
 - **Resolve, then run**: the host resolves paths for the decision and then spawns; a symlink swapped between the two is
-  a race. The OS sandbox bounds it in host mode; a container bounds it by construction.
+  a race for the CHILD'S opens, which reopen by name. The host's own reads open by descriptor without following links
+  ("Workspace roots"); the child's are bounded by the OS sandbox in host mode and by construction in a container, and
+  on the plain host the race stays open and the call asks anyway.
 - **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
   "start a process and send input" names it.

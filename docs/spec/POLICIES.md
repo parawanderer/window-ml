@@ -16,11 +16,18 @@ The remembered half has been built four times, each with its own storage, its ow
 | One-time call grants, credentialed fetches | `grants.call`, `grants.credentialedFetch` in `src/sw/sw-consent.ts` | one approved call or URL, consumed on use |
 | Host permissions granted from a card | `grantHostPattern` in `src/sidebar/ui-kit.tsx` | a Chrome host pattern a fetch or a navigate needed |
 | Pages where a run's approvals are skipped, and the Sheets grant | `pageApprovalDomains` in `src/contract/contract-config.ts`, `SheetsGrant` in `src/sidebar/settings/settings.tsx` | a domain list; a spreadsheet source |
+| A secret's scope (not built) | [`SECRET_HANDLES.md`](SECRET_HANDLES.md) | which origins, methods and paths a credential may be used against: a policy attached to the secret when it is stored |
 
 Four hand-rolled copies of one thing is the sign that the general thing is missing. A policy is that thing, and each of
-these becomes either a policy or a built-in default one. Later consumers: `ml.sh` ([`SHELL.md`](SHELL.md), the first,
-and the one this was designed against), `python_exec` in `full` mode (which today always asks), and agents acting on
-other agents' sessions (read, message, steer: a directional grant, which agent-to-agent coordination waits on).
+these becomes either a policy or a built-in default one. **The first consumer should be one that already exists**
+(decided 2026-10-15): the approved-URL grants from an `exec` card, or installing a Python package on demand
+([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), whose facts are a name, a version, a source and a hash. Shipping the store,
+the realm and the one-page listing against a real gate means `ml.sh` ([`SHELL.md`](SHELL.md), the consumer this was
+designed against) arrives to a working mechanism. Later consumers: a secret's scope, and agents acting on other agents'
+sessions (read, message, steer: a directional grant, which agent-to-agent coordination waits on).
+
+The three layers every consumer is built from (describe, decide, enforce), and why a policy is only ever the middle
+one: [`EFFECTS.md`](EFFECTS.md), "Three layers, said out loud".
 
 ## A policy is a function over the call
 
@@ -64,7 +71,21 @@ have ruled out by design, and a policy is exactly where a quiet mistake becomes 
 - A regex is unanchored unless it says otherwise: `/git/.test(c.program)` matches `/tmp/notgit`. Anchor it, or compare
   the resolved program by equality. (A regex that could backtrack without end is already refused by the dialect.)
 
-Whether the dialect should refuse `==` and `!=` inside a policy (it accepts them in a survey) is open.
+**The policy realm** (decided 2026-10-15). A policy is evaluated in a third realm of the dialect beside `page` and
+`worker` (`ReadonlyRealm` in `src/readonly-exec/policy.ts`): no `ml`, no `document`, only `c`. Two rules differ from a
+survey there:
+
+- **`c` is a facade that REFUSES an absent field.** In a survey an absent member reads as `undefined`, which is right for
+  an existence guard. In a policy it is wrong in the dangerous direction: a typo'd `deny` (`c.arg[0]`) evaluates to no
+  opinion and is silently never applied, while looking like a rule. Reading a field `c` does not have is a refusal, so
+  the policy is BROKEN and shown as broken on the policy page, never inert. (The worker's `ml` facade works the same way,
+  for the same reason.)
+- **`==` and `!=` are refused in a policy** (they stay accepted in a survey). A policy compares with `===`/`!==`.
+
+**A policy can answer from inside a script.** When a survey or a Python dialect cell makes a gated call (`ml.fetch` on a
+new URL, `ml.sh`) and no policy allows it, that ONE call suspends on a card while the script waits, and continues when
+the person answers ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"). The script does not fall out of the dialect, and the
+card shows the call's resolved facts, not the script.
 
 ## What a policy decides, and what it cannot
 
@@ -88,9 +109,13 @@ Two specs carry a consumer such as `ml.sh`, and they are separate on purpose:
   (`c.effects`) so it never has to know which `git` flags write.
 
 **Built-in defaults are policies too.** A consumer's "free" tier is the built-in default policy, sitting beside the
-person's. For a shell call: `(c) => c.effects === "read" && c.paths.every((p) => p.inRoot && !p.secret)`. So the free
-tier needs both specs: the manifest for `effects` (and the cost a survey is charged), the policy to act on it. Without a
-manifest a call's `effects` is `unknown`, no default policy matches it, and it asks: correct, only slower.
+person's, and it is ONE rule for every consumer ([`EFFECTS.md`](EFFECTS.md)): the call's effects are a subset of what
+the enforcer at its placement bounds, plus reads inside the workspace roots of paths not flagged secret. For a shell
+call on the plain host that reduces to `(c) => !c.effects.has("write") && !c.effects.has("exec") &&
+c.effects.reads.every((r) => r.inRoot && !r.secret)`; under the OS sandbox, writes inside the roots join the free set
+because Seatbelt publishes them as bounded. So the free tier needs both specs: the manifest for `effects`, the policy to
+act on it. Without a manifest a call's `effects` is `unknown`, the top element, inside no bound, and it asks: correct,
+only slower.
 
 ## Scopes, and who sets them
 
@@ -143,8 +168,13 @@ On every call not yet started:
 
 ## Showing what was approved
 
-A predicate cannot be explained back faithfully, which is the open point the idea raised ("a tree, not a string"). The
-rule: a policy the person WROTE is shown as the code they wrote. A policy the model PROPOSED is shown with its evidence:
+A predicate cannot be explained back faithfully in general, which is the open point the idea raised ("a tree, not a
+string"). The precise statement (2026-10-15): the fragment that CAN be analysed is boolean combinations of equality,
+prefix and membership atoms over the resolved facts and the effect set, all over finite domains. Inside it, which calls a
+policy admits can be enumerated exactly, so "this policy can match X" is a proof. Outside it (a regex, a string
+operation, arithmetic over lengths) breadth can only be measured. A typed-node tree is that fragment made visible, which
+is why it is more than a nicer UI; a model-proposed policy leads its card with a DERIVED breadth when it fits the
+fragment and a MEASURED one when it does not, and says which. The rule: a policy the person WROTE is shown as the code they wrote. A policy the model PROPOSED is shown with its evidence:
 the calls this run has made and the ones it would allow next, checked against it before it is granted, and a plain
 statement of its breadth (which programs it can match at all, and whether any matched call writes or reaches the
 network). A builder of typed nodes that renders to a sentence and to the same predicate is the stronger form.
@@ -168,13 +198,14 @@ own grants stops asking for what it already has, and can say which grant it reli
   descriptions (for a shell, one per effect class of each installed manifest). "Would have allowed 14 past calls
   without asking, 2 of them writes" is evidence about reach, not only about this run; it is a sample, not a proof, and
   the card says so. The dialect makes it affordable: every evaluation halts and has no effects.
-- **Refusing `==`/`!=` in a policy**, above.
 - **A model proposing a broad policy** because a broad one saves it cards: the breadth statement is the defence, which
   argues for it leading the card rather than following the evidence.
-- **One effect vocabulary, or one per consumer.** The library manifest's effects are about calls inside the
-  interpreter (`pure`, `mutates(i)`, `cache`, `reads-external`, `external`); the shell's `effects` field is about
-  processes (`read`, `write`, `runs-code`, `network`, `unknown`), and the library manifest spec does not define those
-  yet. A policy reads `c.effects`, so a person who writes one policy across consumers needs to know which vocabulary a
-  call carries, or both specs need one shared set with each consumer's terms mapped onto it.
-- **Which of today's four grant stores become policies first**, and which stay as they are (a one-time credentialed
-  fetch is consumed on use by design; it may be a built-in "always ask" rather than a policy at all).
+- **Which of today's grant stores become policies first**, and which stay as they are (a one-time credentialed fetch is
+  consumed on use by design; it may be a built-in "always ask" rather than a policy at all). The first consumer is
+  decided above; the order of the rest is not.
+- **Where a policy is evaluated when no browser is attached.** The decision lives in the browser's worker first
+  ([`SHELL.md`](SHELL.md), "The host's language"); a desktop runtime driven over the hub with no browser needs the
+  dialect at the host, and the person's policies with it.
+
+Resolved on 2026-10-15 and moved into the text above: `==`/`!=` are refused in the policy realm; the effect vocabularies
+are projections of one algebra ([`EFFECTS.md`](EFFECTS.md)).
