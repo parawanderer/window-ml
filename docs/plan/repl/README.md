@@ -125,6 +125,12 @@ surfaces it.
   lockdown plan (#690, #700, #725), the README's rows (#712), the coordinator's handover (#715).
 - **Unassigned roots**: K (registering a program; depends on I and F), the host's hub transport (behind a Cargo feature),
   the typed-node policy tree (the derived breadth).
+- **Added root L** (Shane and the coordinator, 2026-10-15 evening, after the crash): process ownership and the memory
+  bound at the host, `SHELL.md` "Every process has an owner" and `EFFECTS.md`'s `alloc` bound: the owner table as the one
+  table, a process group per spawn, kill-on-owner-loss as the default with a visible orphan list as the policy
+  alternative, a footprint watchdog (macOS) or a cgroup maximum (Linux), the footprint as a fact and a span on the
+  resource panel. Lane 4's, after `ml.sh` (4b/4c) and before the hub transport. Acceptance: a spawned sleeper dies with
+  its port; a child that allocates past the bound is killed and the run log says so; neither test reads `ps`.
 
 ## The lanes
 
