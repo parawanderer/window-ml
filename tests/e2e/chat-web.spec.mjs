@@ -2330,7 +2330,14 @@ async function longThread(page, turns, hash = `long${turns}`) {
     }, { turns, hash });
 }
 
-test("a long transcript draws its newest turns only, and 'show earlier' draws more without losing the reader's place", async () => {
+/** Scroll the open transcript to its top with a reader's own gesture (a bare scrollTop leaves the page following the newest turn). */
+async function toTop(page) {
+    await page.evaluate(() => { const t = document.querySelector(".chat-transcript"); t.dispatchEvent(new WheelEvent("wheel", { deltaY: -500, bubbles: true })); t.scrollTop = 0; });
+}
+
+// --- a long transcript: a window of the newest turns, drawn further up as the reader reaches the top ---
+
+test("a long transcript draws its newest turns only, and reaching the top draws more", async () => {
     const { page, errors } = await open(PHONE);
     const key = await longThread(page, 400);
     await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
@@ -2344,20 +2351,11 @@ test("a long transcript draws its newest turns only, and 'show earlier' draws mo
     // The oldest turns are NOT in the DOM: this is a window, not a CSS trick.
     await expect(page.locator(".chat-transcript").getByText("Answer 0", { exact: false })).toHaveCount(0);
 
-    // Growing keeps the reader where they were: the turn under the eye must not move. Read from the TOP of the
-    // window, which is where someone who is about to ask for more of the past actually is (and not following the tail).
-    const oldest = page.locator(".chat-transcript .msg.user .utext").first();
-    const text = (await oldest.textContent()).trim();   // by TEXT: after growth, "the first turn" is a different one
-    const anchor = page.locator(".chat-transcript .utext", { hasText: text }).first();
-    await anchor.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(100);
-    const before = await anchor.boundingBox();
+    // Reaching the top draws more by itself (no button where IntersectionObserver exists); that the turn under the eye
+    // does not move is chat-scroll.spec.mjs, which measures it.
     const was = await drawn();
-    await page.locator(".chat-window-edge .chat-earlier-retry").click();
+    await toTop(page);
     await expect.poll(drawn).toBeGreaterThan(was);
-    await page.waitForTimeout(100);
-    const after = await anchor.boundingBox();
-    expect(Math.abs(after.y - before.y)).toBeLessThan(60);
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -2371,7 +2369,7 @@ test("growing the window adds to the TOP: the newest turn is still drawn, whatev
     const first = await drawn();
     for (let i = 0; i < 3; i++) {
         const was = await drawn();
-        await page.locator(".chat-window-edge .chat-earlier-retry").click();
+        await toTop(page);
         await expect.poll(drawn).toBeGreaterThan(was);
     }
     expect(await drawn()).toBeGreaterThan(first);

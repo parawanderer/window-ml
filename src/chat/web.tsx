@@ -8,6 +8,7 @@ import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
 import { ChatStore } from "./chat-store";
 import { demoHost } from "./demo-world";
+import { longAgent, longChat } from "./long-session";
 import { hostServices } from "./host-services";
 import { webPlatform } from "./platform";
 import { installViewPrefs } from "./view-mode";
@@ -20,6 +21,11 @@ import { fakePairing } from "../pairing/fake-pairing";
 const host = demoHost(Date.now(), { latencyMs: Number((globalThis as { __chatFakeLatencyMs?: unknown }).__chatFakeLatencyMs) || 0 });
 // Scripting handle for the specs and for poking at the page by hand: emit events, restart a runtime, change grants.
 (globalThis as { __chatFake?: unknown }).__chatFake = host;
+// `?long=<n>` adds a chat of n turns and an agent run of n steps (long-session.ts): the transcript at a size the demo
+// world never reaches, for measuring and for watching a reload.
+const longN = Number(new URLSearchParams(globalThis.location?.search ?? "").get("long")) || 0;
+(globalThis as { __longSession?: unknown }).__longSession = { longChat, longAgent };
+if (longN > 0) for (const s of [longChat(longN), longAgent(longN)]) host.addSession(s.summary, s.events);
 const store = new ChatStore(host);
 installServices(hostServices(store, webPlatform));
 initThemeStyle();

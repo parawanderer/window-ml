@@ -83,6 +83,26 @@ message a second time.
 
 The remaining limit is memory, not time: `applied` holds every event fetched, which is what a replay needs.
 
+## A long transcript: drawn once, scrolled up by itself
+
+**A reload draws the session once.** `store.loaded` holds the keys whose history has arrived (`backfilled`, a replayed phone copy, or a resume); `SessionPane` shows "Loading..." until the key is in it, then draws the transcript in one commit and pins it to the end in a layout effect of that same commit. Before this the pane drew the events as they came and the first painted frame sat at the top, then jumped to the end (measured: scrollTop 0 -> 12,207 of a 12,911 px transcript). A fresh subscription that never gets `backfilled` is drawn after 4 s anyway (`LOADED_CEILING_MS`). The wait applies only to a fresh subscription: a resume or a cached copy is drawn at once.
+
+**History never animates.** `justArrived` (just-arrived.ts) is a clock test, so a session whose last step is under 4 s old animated that step (and folded its streak) on a reload. Everything mounted in the first paint is now history whatever its stamp: `SessionPane` provides `HistoryPaint` (history-paint.ts) for the first frame after the transcript is drawn, and `AgentTurn` and `StepStreak` read it at mount. The DevTools panel never provides it, so it is unchanged. The reproduction is `tests/e2e/chat-scroll.spec.mjs`, which fails on the build before the change.
+
+**Measuring a long session.** `?long=<n>` on the web build adds a chat of n turns and an agent run of n steps (`long-session.ts`: code, math, tables in some chat turns; dataframes, plots and thoughts in the run's steps). `node tests/e2e/chat-scroll-bench.mjs` (env: `N`, `KIND=chat|agent`, `WIDTH`, `RUNS`, `CV=1`, `E2E_DIST_WEB`) prints the median of RUNS in real Chromium; the header of the file says what each number times. 1000 turns, desktop, median of 3, fake host with no latency:
+
+| | chat 1000 turns | agent 1000 steps |
+| --- | --- | --- |
+| nodes in the transcript, first paint (window of 50) | 3,253 | 320 |
+| nodes in the transcript once everything is drawn | 64,811 | 5,854 |
+| time to a settled first paint | 220 ms | 169 ms |
+| scroll up through all of it: script / layout / style | 5 / 72 / 71 ms | 6 / 11 / 17 ms |
+| JS heap once everything is drawn | 26 MB | 9.5 MB |
+
+The same climb on the build before this change (the button, clicked 18 times by the script) measured 49 / 71 / 119 ms and a settled first paint of 226 ms: the same layout, with less script and style on the sentinel path that is probably the harness's clicks rather than a gain. This change is not a performance change; it moves where the cost is paid from a click to the scroll.
+
+**`content-visibility: auto` on the turns was measured and rejected.** With `contain-intrinsic-size: auto 260px` on `.msg`, `.aturn` and `.astreak`, a pass back down through the 1000-turn chat spent 991 ms in layout (0 ms without it) and 336 ms in style (30 ms), and 2,618 ms of layout at 390 px wide; first paint settled 80 ms later (307 ms against 220 ms). The estimate is wrong for most turns, so each one is laid out again at its real height as it scrolls into view, and the scroll height under the reader keeps changing. On the agent run (folded streaks, small) it was a wash (35 ms of layout, nothing gained). It also would not have cut the node count. Real virtualization (unmounting far turns behind a measured spacer) was not built: at 1000 turns the unvirtualized worst case is 65k nodes, 26 MB and about 150 ms of layout and style for the whole climb, which the reader pays only by scrolling to the start; the decision to build it is separate from this change.
+
 ## The stream rules
 
 `SessionFeed` keeps an epoch and the SET of cursors applied in it, and drops, in this order: a message about another

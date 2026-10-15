@@ -122,6 +122,19 @@ test("store: reopening resumes from its position, so nothing is applied twice", 
     store.dispose();
 });
 
+// --- a session is drawn once its history is in ---
+
+test("store: a session is `loaded` once its history has arrived, and not before, so the page draws it once", async () => {
+    const { fake, store } = world();
+    const key = "laptop:aaaa0001";
+    fake.latencyMs = 25;
+    store.open(key);
+    assert.equal(store.loaded.value.has(key), false, "opened, nothing delivered yet");
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(store.loaded.value.has(key), true, "`backfilled` landed");
+    store.dispose();
+});
+
 test("store: a restart that kept history resets the reduced session and rebuilds it from the backfill", async () => {
     const { fake, store } = world();
     store.open("laptop:aaaa0001");

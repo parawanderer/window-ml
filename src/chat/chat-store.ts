@@ -18,6 +18,9 @@ import type { CachedSession, EventCache } from "./event-cache";
 
 /** How long an open waits for the phone's copy of a session before opening it the ordinary way. */
 const CACHE_LOAD_MS = 1500;
+
+/** How long a fresh subscription may go without `backfilled` before its transcript is drawn anyway. */
+const LOADED_CEILING_MS = 4000;
 import { speaksOurContract } from "./grants";
 import type { MlDebugEvent } from "../contract/contract-debug";
 
@@ -61,6 +64,7 @@ export class ChatStore {
     private readonly _index = signal<ReadonlyMap<SessionKey, SessionSummary>>(new Map());
     private readonly _truncated = signal<ReadonlySet<SessionKey>>(new Set());
     private readonly _earlier = signal<ReadonlyMap<SessionKey, EarlierState>>(new Map());
+    private readonly _loaded = signal<ReadonlySet<SessionKey>>(new Set());
     /**
      * The raw events applied for a session that can still page back, oldest first. Paging REPLAYS rather than
      * prepending: the reduced session is cleared and the older page and these are applied again in history order, so
@@ -108,6 +112,13 @@ export class ChatStore {
     get index(): ReadonlySignal<ReadonlyMap<SessionKey, SessionSummary>> { return this._index; }
     /** sessions whose runtime no longer holds their oldest events */
     get truncated(): ReadonlySignal<ReadonlySet<SessionKey>> { return this._truncated; }
+    /**
+     * Sessions whose history has finished arriving: the host said `backfilled` (or a copy was replayed, or the store
+     * already held it). A transcript drawn before this lands event by event as they come, which on a reload is a page
+     * of turns appearing one after another with the scroll position jumping under them; the page waits for this and
+     * draws the session once.
+     */
+    get loaded(): ReadonlySignal<ReadonlySet<SessionKey>> { return this._loaded; }
     /** Where each open session's transcript begins, for one that could page back. Absent: nothing to page. */
     get earlier(): ReadonlySignal<ReadonlyMap<SessionKey, EarlierState>> { return this._earlier; }
 
@@ -174,6 +185,7 @@ export class ChatStore {
             this.setEarlier(key, { from: c.earlier.from, more: true, truncated: false, loading: false });
         }
         this.setTruncated(key, c.truncated);
+        this.setLoaded(key, true);
         this.subscribe(key, id, f);
     }
 
@@ -197,6 +209,10 @@ export class ChatStore {
     /** Subscribe to a session's events through its feed, resuming from the feed's position when it has one. */
     private subscribe(key: SessionKey, id: SessionId, f: SessionFeed): void {
         const since = f.position;
+        // A resume adds to a transcript already held, so there is nothing to wait for. A fresh subscription waits for
+        // `backfilled`, with a ceiling: a host that never sends one must not leave the session on "Loading…".
+        if (since) this.setLoaded(key, true);
+        else setTimeout(() => { if (this.openKey.value === key && sessionMap.has(key)) this.setLoaded(key, true); }, LOADED_CEILING_MS);
         if (this.cache && !this.seen.has(key)) this.seen.set(key, { events: [], earlier: null, truncated: false });
         // A fresh subscription collects from its first event: `backfilled`, which says whether paging is possible,
         // arrives after the events it would have to replay. A resume adds to what is already held, if anything.
@@ -211,6 +227,7 @@ export class ChatStore {
                     this.saveSoon(key);
                     break;
                 case "reset":
+                    this.setLoaded(key, false);
                     this.forgetReduced(key);
                     this.applied.set(key, []);
                     this.setEarlier(key, null);
@@ -218,6 +235,7 @@ export class ChatStore {
                     if (this.seen.has(key)) this.seen.set(key, { events: [], earlier: null, truncated: false });
                     break;
                 case "backfilled": {
+                    this.setLoaded(key, true);
                     this.setTruncated(key, act.truncated);
                     const s = this.seen.get(key);
                     if (s) {
@@ -240,6 +258,7 @@ export class ChatStore {
                     break;
                 }
                 case "gone":
+                    this.setLoaded(key, false);
                     this.removeSession(key, true);
                     this.seen.delete(key);
                     void this.cache?.drop(key).catch(() => undefined);
@@ -364,6 +383,13 @@ export class ChatStore {
     private reduce(runtime: RuntimeId, event: MlDebugEvent): void {
         const offset = this.runtime(runtime)?.clockOffsetMs ?? 0;
         onDebug(offset ? { ...event, ts: event.ts - offset } : event, runtime);
+    }
+
+    private setLoaded(key: SessionKey, loaded: boolean): void {
+        if (loaded === this._loaded.value.has(key)) return;
+        const next = new Set(this._loaded.value);
+        if (loaded) next.add(key); else next.delete(key);
+        this._loaded.value = next;
     }
 
     private setTruncated(key: SessionKey, truncated: boolean): void {
