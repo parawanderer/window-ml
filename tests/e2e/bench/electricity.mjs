@@ -25,8 +25,11 @@
 import { isOffPeak } from "../../../src/spend/price-book.ts";
 import { normModel } from "../../../src/resource/resource-model.ts";
 
-/** A longer gap between two readings is not integrated: its energy is unmeasured, not zero. */
-export const MAX_GAP_MS = 15_000;
+/** A longer gap between two readings is not integrated: its energy is unmeasured, not zero. The box samples every 15 s
+ *  when idle (every 250 ms busy), and an idle gap lands just past it: 372 of 415 idle gaps in this clone's box log were
+ *  15.0-15.5 s (2026-10-15). At 15 s every one of them was dropped, and with them most of the readings rest is found
+ *  from. 20 s keeps the idle cadence and still drops a missed sample. */
+export const MAX_GAP_MS = 20_000;
 /** Readings this far either side of a run's generations bound the stretch read for it (and find the box at rest). */
 const PAD_MS = 5 * 60_000;
 /** How long after a generation the box's draw above rest is still that generation's. */

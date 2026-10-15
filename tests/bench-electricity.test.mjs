@@ -36,6 +36,7 @@ test("an energy counter counts its difference, across a wrap; a source restart a
     const reset = reading(1000, { power_sources: [rapl(1000, { energy_wrap_mj: undefined })] });
     assert.deepEqual(intervals([at(0, 5000), reset]), [], "a decrease with no wrap is a restart");
     assert.deepEqual(intervals([reading(0, gpu(100)), reading(MAX_GAP_MS + 1, gpu(100))]), [], "a gap past MAX_GAP_MS");
+    close(intervals([reading(0, gpu(40)), reading(15_300, gpu(40))])[0].J.gpu, 40 * 15.3, "an idle sample 15 s apart, plus jitter, is measured");
     assert.deepEqual(reading(0, { power_sources: [rapl(1, { error: "permission denied" }), { provider: "x", scope: "moon", power_mw: 5 }] }).counters, {}, "an erroring source and an unknown scope are left out");
 });
 
