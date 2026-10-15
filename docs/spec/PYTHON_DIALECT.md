@@ -45,7 +45,8 @@ Where each property of the dialect lives:
 | membership | a Python-side pre-pass, unchanged | `ast.parse`, a WHITELIST of node types (the one ratchet), `compile` with a new code flag, `CO_RESTRICTED`; an unlisted node is `NotInDialect` before anything runs |
 | the gate | a thread-state flag with DYNAMIC extent | set on entering a restricted frame; checked in `PyObject_GetAttr`, `PyObject_SetAttr`, `PyObject_GetItem`, `PyObject_SetItem`, `PyObject_Call` and `IMPORT_NAME`, one branch per abstract call, against the kind tables (methods allowed per receiver kind, dunders refused outright, which cuts the `__class__` → `__subclasses__` chain at its root) |
 | C leaves | the flag is LIFTED for the dynamic extent of a manifest-approved native call | numpy's internals legitimately touch dunders; the manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)) is what approves the call and says what it returns |
-| callbacks | the flag is set again whenever a restricted frame is entered, whoever calls it | a `lambda` handed to `df.apply` runs restricted inside pandas' C loop; the manifest's `@calls` falls out of this instead of being an annotation the interpreter has to honour |
+| callbacks | inside a lifted leaf, the gate also fires when a `CO_RESTRICTED` frame sits between the current frame and the lift barrier | a `lambda` handed to `df.apply` runs restricted inside pandas' C loop; the manifest's `@calls` falls out of this instead of being an annotation the interpreter has to honour. No per-frame depth counting: the state is set for the C extent of an ENTRY and the walk happens only inside a lifted leaf, up to its barrier |
+| entries | `_restricted.run(code, ns)` for a cell, `_restricted.call(fn, …)` for a registered command | restriction is a property of the ENTRY, not of a function's callers: a dialect-defined `def` called bare from full-mode Python or from the host's own code runs unrestricted, which escalates nothing since that caller already holds full capability. The one rule that follows: anything invoking a dialect-defined function AS A COMMAND on the strength of tier 3 ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Two kinds of command") goes through `_restricted.call`, because the proof holds only while the body runs restricted |
 | the step budget | a counter at the eval breaker | CPython already checks it on backward jumps and calls, which is where loops and recursion are; a few lines in `ceval`. The halting rules below still refuse the unbounded forms statically, so a refusal happens BEFORE running where it can |
 | ownership | an allocation hook under the flag, plus the manifest's return marking | an object allocated while restricted is owned; a leaf's `fresh` return is marked owned, `alias(i)` inherits argument i's, `internal` is never owned (a view from `reshape`). A side set keyed by pointer, with removal on dealloc, so the object layout is unchanged |
 | rollback | an undo log at the write barrier | every restricted write records container, key and old value, and a refusal replays it; a C leaf marked `mutates(i)` on a value from an earlier cell gets a copy first, or a refusal |
@@ -58,7 +59,17 @@ list of CVEs look the way they do:
 1. **The gate covers the C paths.** `str.format` walking `"{0.__class__}"`, `getattr`, `operator.attrgetter`, pickle:
    all of them go through `PyObject_GetAttr`. An evaluator or an AST rewrite guards the Python-visible paths and has to
    ENUMERATE them; the abstract layer is a small, stable set of entry points. Enumerating entry points beats enumerating
-   tricks.
+   tricks. **With one condition the first draft missed** (lane 3, 2026-10-15): CPython 3.11+'s specializing interpreter
+   rewrites hot `LOAD_ATTR`, `STORE_ATTR`, subscript and `CALL` instructions into about forty-five specialized forms that
+   do the access inline and never call the abstract function, and `CALL_LIST_APPEND`/`STORE_SUBSCR_DICT` skip the write
+   barrier too; a library warmed up before a run holds already-specialized instructions. So the honest claim is: every
+   access goes through the abstract layer BECAUSE the build has specialization off (`ENABLE_SPECIALIZATION`, and the
+   free-threading variant, off; the tier-2 interpreter and the JIT off). The build switch is part of the security
+   argument, the patched interpreter ASSERTS it at runtime through `_restricted` and the vector suite's first test
+   checks it, and a warm-library vector (specialize a pure-Python function, then run it restricted and watch the gate
+   fire) guards it forever. Per-form guards in the specialized instructions (deopt when restricted) are the later
+   optimisation if the measured cost of the switch matters; the same vectors then prove they lose nothing. The cost is
+   measured on the corpus's own cells, not on a benchmark suite.
 2. **Tier 3 is the default.** A pure-Python library function called from a restricted frame simply runs under the gates,
    at native speed, with no manifest: it stays inside them or raises `NotInDialect`. Only C leaves need manifest
    entries, which is where the library manifest spec was always going to earn its keep ("interpret my body" costs
