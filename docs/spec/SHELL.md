@@ -294,7 +294,7 @@ Without a manifest `effects` is `unknown` and the call asks.
 **Decided (Shane, 2026-10-13): Python is a REPL beside JavaScript with the same `ml` objects in it, so `ml.sh` is
 there too.** Not a capability called from JS (`ml.py(...)`), and not a separate world: the same namespace, the same
 pointers, the same rules, in the other language. **And Python gets a read-only dialect of its own** (decided 2026-10-15,
-[`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), written in Python and run in-process with the values, because a sandbox is a
+[`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), as a restricted mode patched into CPython itself, because a sandbox is a
 property of a place and only a proof about the program can follow a cell to the host's CPython.
 
 ```python
@@ -315,7 +315,7 @@ What follows from it:
   decision is on the argv, not on the Python that computed it, and the dialect is what lets the cell run at the host at
   all.
 - **Placement, by the same rule, up to the environment.** Real CPython at the process host, with real packages, is a
-  place a Python cell runs; the same dialect module runs there. Its numpy is not Pyodide's build, so the rule is weakened
+  place a Python cell runs; the same patched interpreter runs there. Its numpy is not Pyodide's build, so the rule is weakened
   to "the same result up to the recorded environment": versions pinned to the Pyodide lock, the environment stamped
   into provenance, BLAS order named as a tolerance ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), "Placement and the
   environment").
@@ -374,8 +374,8 @@ effects, the secret flags) and sends them in; the worker evaluates the policies 
 spawns, and enforces the roots, the environment scrub and the OS sandbox whatever the answer was. Decision near the
 person, enforcement near the power. Rust owns: both transports (native messaging, the hub); spawning, pipes, rlimits
 and the sandbox profiles (Seatbelt, bubblewrap); path resolution and the open-by-descriptor reads; the store for output
-held at the host; fact resolution; injecting secrets at spawn; spawning the host's CPython with the Python dialect module
-([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), which is Python and needs no JS engine.
+held at the host; fact resolution; injecting secrets at spawn; spawning the host's CPython, the patched build with the restricted mode
+([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)), which needs no JS engine.
 
 JavaScript reaches the host later, for two things, by two routes: the text pipe over a host-held value is a Rust port
 checked against the TypeScript tests as vectors, or an embedded QuickJS running the esbuild bundle pinned by hash; a full

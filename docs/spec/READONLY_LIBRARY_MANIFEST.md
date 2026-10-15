@@ -101,8 +101,9 @@ any script's. Effects come for free, by construction: a library function that wr
 write, as a script would be. Only the NATIVE LEAVES the body reaches need a manifest entry, the way JS builtins sit
 under JS code and C extensions under Python.
 
-This tier is the only one that verifies itself. Its cost is the interpretation slowdown: the JS dialect measures
-about 3.2M steps/s, far below native speed. Issue
+This tier is the only one that verifies itself. Its cost in JS is the interpretation slowdown: the JS dialect measures
+about 3.2M steps/s, far below native speed. In Python it costs nothing, because the gate is in the runtime
+([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)): any pure-Python body reached from a restricted frame is this tier by default. Issue
 [#277](https://github.com/parawanderer/window-ml/issues/277) (a bytecode/WASM compiler for the evaluator) is what
 would shrink that gap, and its ahead-of-time resolution of property names to integer ids is the natural place to
 compile a manifest into: a manifest entry becomes a row in the same table as the built-in whitelist.
@@ -202,9 +203,10 @@ it exists everything built is JavaScript. (`python_exec`'s `mode: "readonly"` sh
 sandbox's network and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and
 tracks no ownership; the dialect replaces it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
 few native libraries to worry about, while in Python every useful cell is numpy or pandas, so these examples are the
-ones that matter first. The parser is `ast.parse`, the evaluator runs in-process with the values, and the native leaves
-are C extensions, as builtins are in JS. Tier 1 is the practical tier for them (no charge hook inside a C loop); tier 3
-is richer than in JS, because much of the stdlib is pure Python the interpreter can step into.
+ones that matter first. The parser is `ast.parse`, the evaluator is CPython itself under a restricted mode the fork adds,
+and the native leaves are C extensions, as builtins are in JS. Tier 1 is the practical tier for them (no charge hook
+inside a C loop); tier 3 is the DEFAULT, because pure-Python code called from a restricted frame simply runs under the
+gates at native speed, with no manifest and no interpretation cost.
 
 Inline, as decorators in a pure-Python library:
 
