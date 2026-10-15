@@ -848,7 +848,7 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate } = {}) {
     let turns = 0, bg, evicted = false;
     const calls = [first ?? { name: "fetch_url", args }, ...then];
     const gates = [];
@@ -876,6 +876,8 @@ async function attackRun(args, { then = [], siteGate = true, atApproval, inPage,
                     return undefined;
                 }
                 gates.push(msg.event.tool);
+                // `atGate` answers the card itself (or leaves it showing) instead of the person approving it.
+                if (atGate) { await atGate(bg, msg.event); return undefined; }
                 void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true, ...(persist ? { persist: true } : {}) } });
                 if (atApproval) await atApproval(bg);
             }
@@ -949,6 +951,46 @@ test("a survey reads the policies that apply to its run as ml.current.policies",
     });
     assert.match(toolResults[0] ?? "", /never x\.example/, `the survey saw the policy; got ${(toolResults[0] ?? "").slice(0, 300)}`);
 });
+
+// --- the policy page (POLICIES): only extension pages, and a change re-judges a card already showing ---
+
+/** The Settings panel, as the browser describes an extension page sending a message. */
+const EXT_PAGE = { url: "chrome-extension://test/sidebar.html" };
+
+test("RED TEAM: a page cannot read, add, edit or remove a policy through POLICIES; an extension page can", T, async () => {
+    const bg = loadBackground({ config, openTabs: [SITE], siteGate: true, local: SITE_APPROVED });
+    const add = { op: "add", effect: "allow", label: "everything", source: "(c) => true" };
+    for (const payload of [{}, add, { op: "remove", id: "x" }, { op: "edit", id: "x", effect: "allow" }]) {
+        const r = await bg.send({ type: "POLICIES", payload }, RUN_TAB);
+        assert.equal(r?.error, "refused", `a page's ${JSON.stringify(payload)} was answered: ${JSON.stringify(r)}`);
+    }
+    const listed = await bg.send({ type: "POLICIES", payload: {} }, EXT_PAGE);
+    assert.equal(listed.data.global.length, 0, "nothing the page sent was stored");
+    const added = await bg.send({ type: "POLICIES", payload: add }, EXT_PAGE);
+    assert.equal(added.data.global.length, 1);
+    const id = added.data.global[0].id;
+    assert.equal((await bg.send({ type: "POLICIES", payload: { op: "edit", id, effect: "deny" } }, EXT_PAGE)).data.global[0].effect, "deny");
+    assert.equal((await bg.send({ type: "POLICIES", payload: { op: "remove", id } }, EXT_PAGE)).data.global.length, 0);
+    assert.match((await bg.send({ type: "POLICIES", payload: { op: "add", effect: "maybe", label: "x", source: "(c) => true" } }, EXT_PAGE)).error, /effect/);
+    assert.ok(listed.data.builtin.source.includes("free"), "the built-in default is listed as code");
+});
+
+for (const [effect, ran] of [["allow", true], ["deny", false]]) {
+    test(`a ${effect} policy added while a fetch_url card is showing answers that card, which closes saying which policy`, T, async () => {
+        const { gates, toolResults, fetched, steps } = await attackRun({ url: OTHER }, {
+            local: SITE_APPROVED,
+            atGate: async (bg) => {
+                await bg.send({ type: "POLICIES", payload: { op: "add", effect, label: `${effect} other`, source: '(c) => c.host === "other.example"' } }, EXT_PAGE);
+            },
+        });
+        assert.deepEqual(gates, ["fetch_url"], "the card opened");
+        assert.equal(fetched.length, ran ? 1 : 0);
+        const step = steps.find((e) => e.tool === "fetch_url");
+        assert.equal(step?.approval, ran ? "consented" : "denied");
+        if (ran) assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/);
+        else assert.match(toolResults[0] ?? "", /a policy the person set while the card was showing: the policy "deny other" refuses it/);
+    });
+}
 
 test("RED TEAM: a page-started FETCH_URL on the run's tab does not get the run's remembered URL", T, async () => {
     // Before run policies, "remember" wrote the TAB's consent ledger, which the page's own FETCH_URL read: a URL the

@@ -138,10 +138,33 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
 - Run policies are a worker-memory map backed by storage. A write goes to storage without awaiting; a failed write is
   lost until the next one.
 
+## The policy page, and a change taking effect at once
+
+- **`POLICIES`** (`background.ts`) is how the policy page reads and changes the store: `{}` reads, `{ op: "add" }` adds a
+  GLOBAL policy, `{ op: "edit" | "remove", id }` changes any. It answers `policyView()`: the global policies, each
+  session's, the built-in default as code, and why any broke. EXTENSION PAGES ONLY (`isExtensionSender`, the sender the
+  browser reports): a page, or a content script relaying for one, that could add or widen a policy would be approving
+  itself. A run policy is added only by an approval card's "remember", never from the page.
+- **The page** is the `Policies` section of DevTools Settings, Permissions tab (`settings.tsx`): one `PolicyRow` per
+  policy (effect, label, source as code, an inline editor, remove), the reason a broken one decides nothing, the
+  built-in default read-only, and each session's run policies under its hash. It re-reads on `chrome.storage.onChanged`
+  for the store's keys, which it duplicates rather than import worker code (a test holds the two lists together).
+- **A card already showing is judged again** on every change (`onPoliciesChanged` → `rejudgePending`, `sw-consent.ts`).
+  Only a pending entry whose descriptor carries `consumer` and `facts` is judged: the facts the WORKER resolved when the
+  card opened (the `fetch_url` card of a run whose fetch the worker runs, today). A new `deny` closes it as refused, a
+  new `allow` as answered, both with `source: "policy"` on the decision, which only the worker sets (every resolver
+  that takes a person's or an orchestrator's answer builds its own decision). The model reads "Denied by a policy the
+  person set while the card was showing: the policy "…" refuses it".
+- **What an archive took is said, never silent.** Archiving a session removes its run policies and records which and
+  when (`archivedPolicyLoss`, storage key `ml_policies_archived`). When the session is resumed, the note's `dropped`
+  names them with the time, and the model reads them as `ml.current.policiesRemoved`. Deleting the session drops the
+  record too.
+
 ## Not built yet
 
-These are planned as a second PR on the store ("3b"):
-
-- A Settings page that lists every policy, with edit and delete, and broken ones marked with `brokenReason`.
-- Re-judging an approval card that is already showing when a policy changes.
-- A model PROPOSING a run policy, as a card that shows its measured breadth.
+- A model PROPOSING a run policy, as a card that shows its breadth, computed by the worker over the run's log (3c: a
+  new tool, so the tool registry and its own red-team pass).
+- Telling a run that RELIED on a removed policy, on its next call, that the call now asks because the policy went
+  (`POLICIES.md`, "A change takes effect at once"). The call asks; the reason is not said yet.
+- A page-built run's card is not judged again when a policy changes: its descriptor carries no facts, because its
+  fetch runs in the page and an `allow` cannot answer it (see Traps). A `deny` would; it is left for the run's next call.

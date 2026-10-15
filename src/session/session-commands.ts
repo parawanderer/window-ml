@@ -115,6 +115,8 @@ export interface CommandDeps {
     adoptSession(tabId: number, hash: string, history: SessionHistory): Promise<PageOutcome | "adopted">;
     /** The labels of the run policies a session carries across a resume (sw-policies.ts), for the note's `kept`. */
     runPolicyLabels?(hash: string): string[];
+    /** The run policies a session LOST when it was archived, and when (sw-policies.ts), for the note's `dropped`. */
+    archivedPolicyLoss?(hash: string): { at: number; labels: string[] } | undefined;
     /** note in the session's own transcript that it has been picked up on another page */
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[]; kept?: string[] }): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
@@ -441,6 +443,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             // reader trusts (the divider and the exports; the model does not read the note).
             const at = deps.now();
             const kept = deps.runPolicyLabels?.(s.id.hash) ?? [];
+            // An archive took its run policies (POLICIES.md, "Scopes"): said here, never silent.
+            const lost = deps.archivedPolicyLoss?.(s.id.hash);
+            const dropped: string[] = [...RESUME_DROPS, ...(lost ? [`its run policies, removed when the session was archived (${new Date(lost.at).toISOString()}): ${lost.labels.join("; ")}`] : [])];
             deps.noteResumed(s.id.hash, t.tabId, {
                 // ONE resume, not one session: the index de-duplicates a note by its id, because two surfaces can
                 // report the same resume, and a session resumed twice would otherwise show one divider for both.
@@ -448,7 +453,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 url: t.url,
                 ...(summary.page?.url ? { fromUrl: summary.page.url } : {}),
                 afterMs: Math.max(0, at - summary.lastTs),
-                dropped: [...RESUME_DROPS],
+                dropped,
                 ...(kept.length ? { kept } : {}),
             });
             // AND CARRY IT ON, when a budget said to. The page holds the run again by here, so this is the ordinary

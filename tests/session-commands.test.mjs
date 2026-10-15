@@ -458,6 +458,18 @@ test("session.resume lists the run policies the session carries across, by label
     assert.ok(withKept.dropped.some((d) => /approval grants other than the run's policies/.test(d)));
 });
 
+test("session.resume of a session an archive took run policies from says so, with when and which, among what it lost", async () => {
+    const at = Date.UTC(2026, 9, 1, 12);
+    const w = world({ archivedPolicyLoss: (hash) => (hash === "aaaa0021" ? { at, labels: ["fetch https://a.example/x"] } : undefined) });
+    endedRun(w, "aaaa0021");
+    endedRun(w, "aaaa0022");
+    await w.run({ type: "session.resume", session: sid("aaaa0021"), target: { kind: "tab", tabId: TAB } });
+    await w.run({ type: "session.resume", session: sid("aaaa0022"), target: { kind: "tab", tabId: TAB } });
+    const [lost, untouched] = w.named("noteResumed").map((c) => c[3]);
+    assert.ok(lost.dropped.some((d) => d.includes("removed when the session was archived (2026-10-01T12:00:00.000Z)") && d.includes("fetch https://a.example/x")), JSON.stringify(lost.dropped));
+    assert.ok(!untouched.dropped.some((d) => /archived/.test(d)));
+});
+
 test("resuming the same session twice is two notes, because it is two resumes", async () => {
     // The index de-duplicates a resume note by its id. A note identified by the SESSION would mean a session that
     // moved page twice showed one divider for both moves, with the second silently dropped.

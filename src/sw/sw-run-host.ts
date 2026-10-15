@@ -1228,7 +1228,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same
                             // via the emitStep below). args are already sanitized page-side for the render.
-                            descriptor: { key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui" },
+                            descriptor: { key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui",
+                                // An uncredentialed fetch_url the worker runs is a call a policy may decide, so the card
+                                // is judged again when one changes (`rejudgePending`): its facts, resolved here.
+                                ...(tool === "fetch_url" && !(args as { credentials?: unknown }).credentials && byWorker() && runsInWorker(p, "fetch_url")
+                                    ? { consumer: "fetch" as const, facts: fetchFacts(String((args as { url?: unknown }).url ?? ""), { rendered: !!(args as { rendered?: unknown }).rendered }) }
+                                    : {}) },
                         });
                         // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
                         // three surfaces render it identically from this one step: overlay/off in the page
