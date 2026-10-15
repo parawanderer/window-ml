@@ -51,6 +51,7 @@ export type BackgroundMessageType =
     | "DUMP_EVENTS"   // ml.__events(): the raw inputs the resource panel derives its timeline from
     | "DUMP_LOADS"   // ml.__loads(): one record per model load, collected for tuning the VRAM predictor
     | "DUMP_HOUSEKEEPING"   // ml.__housekeeping() + the DevTools panel: the housekeeping log (housekeeping.ts)
+    | "SHELL_STATUS"   // extension pages only: the process host behind ml.sh, for Settings (sw-shell.ts); `refresh` measures it now
     | "DUMP_JOBS"   // extension pages only: every background job's status, for the Background work section (job-registry.ts)
     | "DUMP_RUN_LOG"   // extension pages only: one run's mechanics, for the Execution log panel (run-log.ts)
     | "SESSION_STORAGE_STATS"   // extension pages only: where the saved-session store's bytes go (session-storage-stats.ts)

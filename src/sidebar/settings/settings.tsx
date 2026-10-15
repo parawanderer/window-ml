@@ -29,6 +29,8 @@ import { convertStored } from "../code/code-theme-css";
 import { IconCheck } from "../icons";
 import { Disclosure } from "../disclosure";
 import { toHost } from "../parent-channel";
+import { ShellSectionBody } from "./shell-section";
+import { Lbl } from "./settings-label";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */
@@ -299,13 +301,6 @@ function roleModel(key: keyof MlConfig): string {
     if (key === "groundingModel" && config.value.groundingEnabled && !raw) return detectGroundingModel(models.value);
     return raw;
 }
-
-// Field label with an optional hover tooltip. Left-anchored (.left) so it opens
-// rightward into the panel — far-left labels would clip a centered pop.
-const Lbl = ({ children, tip }: { children: string; tip?: string }) =>
-    tip
-        ? <span class="tt">{children}<span class="tt-pop left" role="tooltip">{tip}</span></span>
-        : <span>{children}</span>;
 
 // --- model liveness test (per model) ---
 // `model` records which model this result is for, so a row auto-invalidates (shows
@@ -1810,6 +1805,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => setField("agentSeesFocus", e.target.checked)} />
                     <Lbl tip={TIP.agentSeesFocus}>Tell the agent where you are</Lbl>
                 </label>
+                </Section>
+
+                <Section id="shell" title="Programs (ml.sh)">
+                <ShellSectionBody c={c} setField={setField} />
                 </Section>
 
                 <Section id="introspection" title="The agent reading its own run (ml.current)">

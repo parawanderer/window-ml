@@ -57,6 +57,7 @@ import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
+import { refreshShell, shellStatus } from "./sw/sw-shell";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -932,6 +933,14 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     } else if (message.type === "DUMP_JOBS") {
         // The Background work section: what each self-acting job is doing now. Extension pages only (sw-housekeeping.ts).
         handleJobsDump(sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "SHELL_STATUS") {
+        // The process host as the Settings page shows it (sw-shell.ts). Extension pages only: measuring it with
+        // `refresh` starts the host process, which nothing a page sends may cause.
+        if (!isExtensionSender(sender)) { sendResponse({ error: "Refused" }); return true; }
+        const refresh = (message.payload as { refresh?: unknown } | undefined)?.refresh === true;
+        (refresh ? refreshShell() : Promise.resolve(shellStatus())).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "SESSION_TITLE") {

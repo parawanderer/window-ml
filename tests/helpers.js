@@ -117,8 +117,12 @@ function streamResponse(lines, { status = 200 } = {}) {
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts, onTabsGet, holdRestore }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts, onTabsGet, holdRestore, onNative }) {
     const calls = [];
+    // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
+    // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
+    // returned function receives what the worker posts. Without it, every connect fails the way an uninstalled host does.
+    const nativeConnects = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
     const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
@@ -262,6 +266,31 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 onMessage: { addListener: (fn) => listeners.push(fn) },
                 onConnect: { addListener: (fn) => connectListeners.push(fn) },
                 onUserScriptMessage: { addListener: (fn) => userScriptListeners.push(fn) },
+                lastError: undefined,
+                connectNative: (name) => {
+                    nativeConnects.push(name);
+                    const onMsg = [], onDisc = [];
+                    let closed = false;
+                    const close = (why) => {
+                        if (closed) return;
+                        closed = true;
+                        setTimeout(() => {
+                            context.chrome.runtime.lastError = why ? { message: why } : undefined;
+                            for (const fn of onDisc) fn();
+                            context.chrome.runtime.lastError = undefined;
+                        }, 0);
+                    };
+                    const end = { send: (m) => { if (!closed) setTimeout(() => { for (const fn of onMsg) fn(JSON.parse(JSON.stringify(m))); }, 0); }, close };
+                    const receive = onNative ? onNative(name, end) : null;
+                    if (!receive) close("Specified native messaging host not found.");
+                    return {
+                        name,
+                        postMessage: (m) => { if (closed) throw new Error("Attempting to use a disconnected port object"); receive?.(JSON.parse(JSON.stringify(m))); },
+                        disconnect: () => { closed = true; },
+                        onMessage: { addListener: (fn) => onMsg.push(fn) },
+                        onDisconnect: { addListener: (fn) => onDisc.push(fn) },
+                    };
+                },
                 // The PYTHON_EXEC handler relays PY_RUN to the offscreen doc via runtime.sendMessage —
                 // capture the payload (esp. `hardened`) so tests can assert what the sandbox is told to run.
                 sendMessage: async (msg) => {
@@ -378,6 +407,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 
     return {
         calls,
+        nativeConnects,
         captures,
         tabMessages,
         tabsCreated,

@@ -132,6 +132,7 @@ export class HostClient {
     private readonly done = new Map<string, HostDone>();   // state: plumbing — done events nobody has claimed yet
     private readonly waiters = new Map<string, { resolve: (d: HostDone) => void; reject: (e: Error) => void }[]>();   // state: plumbing
     private closed: HostError | null = null;
+    private readonly closeListeners: ((e: HostError) => void)[] = [];
 
     constructor(private readonly port: HostPort) {
         port.onMessage((m) => this.receive(m));
@@ -172,6 +173,16 @@ export class HostClient {
         for (const ws of this.waiters.values()) for (const w of ws) w.reject(this.closed);
         this.waiters.clear();
         this.done.clear();
+        for (const l of this.closeListeners.splice(0)) { try { l(this.closed); } catch { /* a listener's own problem */ } }
+    }
+
+    /**
+     * Be told once when the port closes (at once, if it already has).
+     * @param cb the listener
+     */
+    onClosed(cb: (e: HostError) => void): void {
+        if (this.closed) cb(this.closed);
+        else this.closeListeners.push(cb);
     }
 
     /**

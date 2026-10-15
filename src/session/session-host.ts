@@ -138,6 +138,14 @@ export interface RuntimeCapabilities {
     /** Where a run that asked for an EMPTY TAB would go on this runtime, and whether it may go there. Sent again
      *  whenever the answer changes (a grant, a settings edit), so a client never polls and never guesses. */
     blankStart?: BlankStartCapability;
+    /** `ml.sh` can run programs on this machine's real filesystem, inside the workspace roots, through the process host
+     *  (docs/spec/SHELL.md, "What the model sees"). Booleans, not one detailed object, since a detailed capability reaches
+     *  the model as a bare `true`; the roots are not a capability. */
+    shellHost?: boolean;
+    /** Calls on the real filesystem run under the OS sandbox (writes only in the roots, no network). */
+    shellSandboxed?: boolean;
+    /** A container runner is available for `ml.sh`. None exists yet, so no runtime sets it. */
+    shellContainer?: boolean;
     /**
      * What needs someone's hand on this runtime, as codes: `no-model`, `backend-unreachable`, `site-access`,
      * `tab-groups`, `no-utility-model`, `archive-folder-lapsed`, `archive-folder-unsupported`. Codes and not sentences:
