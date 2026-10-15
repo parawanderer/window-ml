@@ -71,6 +71,11 @@ Edges (what waits on what):
 Not a root, and not started this round: `mode` removal, the Pyodide build, the host's extension side, package install,
 secrets, placement, the hub desktop runtime.
 
+**Added 2026-10-15: K. registering a program** ([`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md), "Registering a
+program"): the sandbox profile derived from a manifest's claims (the description as the envelope), hash pinning of a
+resolved program, a manifests directory with workspace and global scope, drafting a manifest from `--help` or completion
+files as a card with evidence, and the registration page. Depends on I and F; unassigned this round.
+
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
 kept whole (`POINTER_VALUES.md`, slices 5 and 6). So "the operation goes to the value" has no value to go to for a text
