@@ -1,8 +1,9 @@
 # Spec (WIP): one executor, many places — processes through `ml.sh`
 
 **Status: initial draft (2026-10-13), nothing built.** Where processes run and how the model reaches them. The
-mechanism of a single call (typed call to argv, a manifest per program) is summarised under "One call"; its open
-dependency is [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), which only the free tier waits on.
+mechanism of a single call (typed call to argv, a manifest per program) is summarised under "One call". It rests on two
+specs: [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), which DESCRIBES a program (only the free tier waits
+on it), and [`POLICIES.md`](POLICIES.md), which DECIDES whether a call needs the person (this is its first consumer).
 
 ## The constraint: the model knows one executor
 
@@ -82,8 +83,9 @@ never a page. The model learns which mode a call ran in from the call's result, 
 - **The free tier narrows to the roots.** A read-only call is free only when every path it names resolves inside a root,
   and never for a file that looks like a secret (`.env`, `*.pem`, `id_*`, a credentials file), wherever it is. Reading
   is the half of an exfiltration that the fetch gate does not see.
-- **Standing rules**, which are policies (below): "always allow `npm test` in this repo" is a predicate over a
-  structured argv plus a root, exact in a way a string pattern over shell text cannot be.
+- **Standing rules**, which are policies ("Policies" below, and [`POLICIES.md`](POLICIES.md)): "always allow `npm test`
+  in this repo" is a predicate over a structured argv plus a root, exact in a way a string pattern over shell text cannot
+  be.
 - **An OS sandbox, on by default (decided 2026-10-13).** Between a container and nothing: the host spawns each process
   under the OS's own sandbox (Seatbelt on macOS, bubblewrap on Linux) with writes confined to the roots and the
   network to an allowlist, keeping the person's tools and native speed. Both halves are needed, for the reason
@@ -223,28 +225,19 @@ Three tiers, decided per CALL, on the final argv:
    This is the property worth having: **what was approved is exactly what runs.**
 3. **Refused** — a program the person has blocked, a call from a page-started message, or `ml.sh` from the page's world.
 
-**The card has two answers: allow this call, or deny it (with a note).** Never a menu of guessed generalisations
-("allow `git` commands", "allow `git -C …` in this folder", "for this session", …), which is what makes approving shell
-commands elsewhere miserable (Shane, 2026-10-13). Those menus exist because the tool has to guess how to widen a shell
-STRING, and it hands the guess to the person mid-task, under fatigue, with the broad option one click from the narrow
-one. Here widening is never a button on a call:
-
-- **It is a policy**, written deliberately: by the person in Settings, or proposed by the model as ONE card that says
-  what it will match and shows the evidence ("Policies" below). One approval of a stated rule instead of a choice among
-  five guessed ones.
-- **A card may link to "make a rule from this"**, which opens the policy editor with a predicate built from the call's
-  resolved facts, as code, for the person to narrow or widen. Writing it is a separate act from answering the card,
-  and the card is answered either way.
-- **Fewer cards is the job of the tiers**, not of the card: the manifest, the sandbox and the person's policies decide
-  most calls before a card exists.
+**The card has two answers: allow this call, or deny it (with a note)**, never a menu of guessed generalisations;
+widening is a policy, written deliberately, and a card may link to "make a rule from this" (Shane, 2026-10-13). The
+design and the reasons: [`POLICIES.md`](POLICIES.md), "Widening is a policy, never a button on a card".
 
 So the manifest blocks only the free tier. A first build where every call asks is useful, and correct, without it.
 
-## Policies: "run this without asking me"
+## Policies: what a shell call gives one
 
-**A policy is a function over the call, evaluated by the read-only dialect** (Shane, 2026-10-13). The person can say
-"anything matching this runs without asking", globally or for one run, and say it as code over the call's arguments, not
-as a regex over a command line.
+"Run this without asking me" is a POLICY: a function over the call in the read-only dialect, answering `allow`, `deny`
+or nothing, set globally, per workspace or per run, listed on one page, and never changing what the container, the OS
+sandbox and the roots enforce. The mechanism is shared with every other gated call and is specified in
+[`POLICIES.md`](POLICIES.md); `ml.sh` is its first consumer. What is particular to the shell is what a policy is given,
+and that the free tier is a built-in default policy over it.
 
 ```js
 // Global, set by the person: read-only git anywhere in my roots, except the flags that write or run code.
@@ -269,65 +262,9 @@ as a regex over a command line.
 | `mode`, `sandboxed` | where it would run |
 | `run` | the run it belongs to (its id; a run policy sees only its own run) |
 
-**Why the read-only dialect.** A policy runs on every call, in the approval path, so it must be pure, must halt, and
-must be unable to do anything but answer. The dialect is exactly that: it is the whitelist, it never compiles a string,
-it has a step budget, and it already has the halting and adversarial tests. A policy that throws, runs out of budget or
-reaches outside the dialect is **no opinion**, so the call asks: a broken policy fails closed.
-
-**What it decides, and what it cannot.**
-
-- A policy answers `allow`, `deny`, or nothing. `deny` wins over `allow` across policies; nothing means the tiers above
-  decide. **"Always reject" is a policy like any other** (Shane, 2026-10-13): a call it matches is refused without a
-  card, and the model is told which policy refused it, so it can stop trying rather than rephrase.
-- It changes only **whether the person is asked**, never what is enforced: the container, the OS sandbox and the
-  workspace roots bound the call whatever a policy says.
-- It never reaches the refused tier: a call from a page, or `ml.sh` from the page's world, is refused before any policy
-  runs.
-
-**The tiers are policies too.** The free tier ("the manifest says `read`, every path is inside a root and not a
-secret")
-is the built-in default policy: `(c) => c.effects === "read" && c.paths.every((p) => p.inRoot && !p.secret)`. The person's
-policies sit beside it. The manifest DESCRIBES a program (shipped or installed, pinned by hash); a policy DECIDES (the
-person's choice). A policy can lean on the manifest's facts (`c.effects`) so it never has to know which `git` flags write.
-
-**Scopes and who sets them.**
-
-| Scope | Set by | Lives |
-| --- | --- | --- |
-| global | the person, in DevTools Settings | until removed |
-| workspace | the person, for one set of roots | with the workspace |
-| run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session: it **survives a resume, and a fork inherits it** (decided 2026-10-13), listed with each session until removed |
-
-The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
-a page never can. A policy reached over the hub is set by a principal holding `approve`.
-
-**One page lists every policy**, global, workspace and each session's, one line per policy (Shane, 2026-10-13). Each
-line can be edited or deleted on its own, which is the reason for building policies from typed nodes: a line is a
-readable sentence, not a blob of code to diff. Global (persistent) policies are edited there the same way as a run's.
-The model can PROPOSE removing several at once ("these five no longer match anything this session does"), as one card
-the person confirms; removing narrows what runs without asking, so it cannot escalate, but it is still the person's
-list.
-
-**A change takes effect at once**, on every call not yet spawned:
-
-- **A removed `allow`** turns the calls it covered back into asking (or refused, when an `always reject` now matches).
-  A call is judged at the moment it is spawned, so a script mid-loop meets the change on its next call.
-- **A process already running is not killed** by a removal: the decision was right when it was made. The person can
-  cancel it, as any running call.
-- **A card already showing** is re-judged when a policy changes: a new `allow` answers it, a new `always reject`
-  refuses it, and the card closes saying why.
-- **A run that relied on a policy is told** when its next call meets the change: the result says the call now needs the
-  person (or was refused) because the policy that covered it was removed, not that the call itself changed.
-
-**Showing what was approved.** This is the open point the grant-policy idea raised ("a tree, not a string": a predicate
-cannot be explained back faithfully). The rule here: a policy the person WROTE is shown as the code they wrote. A policy
-the model PROPOSED is shown with its evidence: the calls this run has made and the ones it would allow next, checked
-against it before it is granted, and a plain statement of its breadth (which programs it can match at all, and whether
-any matched call writes or reaches the network). A builder of typed nodes that renders to a sentence and to the same
-predicate is the stronger form, and is left to that work.
-
-**Every allowed call says which policy allowed it**, in the run log and on the call's row, and a run's policies are
-readable by the model without approval, since reading what you may do is not an escalation.
+**The free tier is the built-in default policy**: `(c) => c.effects === "read" && c.paths.every((p) => p.inRoot &&
+!p.secret)`. The program's manifest supplies `effects` and marks the path arguments; the person's policies sit beside the
+default. Without a manifest `effects` is `unknown` and the call asks.
 
 ## What the model sees
 
