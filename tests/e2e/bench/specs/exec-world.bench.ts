@@ -99,7 +99,10 @@ export default defineBench({
             succeeded: ({ answer }) => hasAmount(answer, ANSWERS.store),
         },
         {
-            // Isolation should win: the page patches its own getters and JSON.stringify, so a page-world read is wrong.
+            // The page patches its own text getters and JSON.stringify, so any read in its world is 13.00 high per row. An
+            // isolated exec reads the truth, but the DOM tools and python_exec's page tables read through the page's world
+            // too (the MiMo pilot of 2026-10-15 summed python's table: 1423.70 in the isolated arm). So this measures whether
+            // an isolated DEFAULT protects a run from a lying page at all, not only whether exec does.
             id: "tampered-ledger",
             regression: NOT_SUITE,
             start: "/exec-world-tampered",

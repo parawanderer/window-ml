@@ -493,7 +493,7 @@ test("isRateLimit: a provider's rate limit however it arrives (Open WebUI passes
 
 // --- exec's world: a page global missing, and the retry in the page's world ---
 
-test("execWorld: a missing page global retried with world \"page\" counts once; a retry in the same world does not", () => {
+test("execWorld: a switch to world \"page\" after a world-less exec counts once; a retry in the same world does not", () => {
     const ev = [
         start(),
         ...step(1, "exec", { js: "store.getState()" }, "ReferenceError: store is not defined"),
@@ -502,12 +502,12 @@ test("execWorld: a missing page global retried with world \"page\" counts once; 
         ...step(4, "exec", { js: "window.__APP__?.cart" }, "undefined"),
         end("done"),
     ];
-    assert.deepEqual(execWorld(ev), { calls: 4, misses: 2, pageRetries: 1, readonly: 0, gated: 0 });
+    assert.deepEqual(execWorld(ev), { calls: 4, misses: 2, pageRetries: 1, pageAsks: 1, readonly: 0, gated: 0 });
 });
 
 test("execWorld: a run with no exec is blank, not zero, so a report averages over the runs that used it", () => {
     const ev = [start(), ...step(1, "findByText", { text: "x" }, "found"), end("done")];
-    assert.deepEqual(execWorld(ev), { calls: null, misses: null, pageRetries: null, readonly: null, gated: null });
+    assert.deepEqual(execWorld(ev), { calls: null, misses: null, pageRetries: null, pageAsks: null, readonly: null, gated: null });
     const m = measureRun({ events: ev });
     assert.equal(COLUMNS.find((c) => c.key === "pageRetries").get(m), null);
     assert.equal(COLUMNS.find((c) => c.key === "execCalls").get({}), null, "a measurement stored before the metric existed reads blank");
@@ -525,4 +525,18 @@ test("execWorld: a survey answered as read-only is not gated; one the gate appro
     assert.equal(w.readonly, 1);
     assert.equal(w.gated, 2);
     assert.equal(COLUMNS.find((c) => c.key === "execGated").get({ execWorld: w }), 2);
+});
+
+test("execWorld: a SILENT miss counts too: the switch to the page's world follows a read that just found nothing", () => {
+    const ev = [
+        start(),
+        ...step(1, "exec", { js: "Object.keys(window).filter((k) => /app/i.test(k))" }, "console: | onappinstalled"),
+        ...step(2, "exec", { js: "Object.keys(window).filter((k) => /app/i.test(k))", world: "page" }, "page-writable (ran in page world): | __APP__"),
+        ...step(3, "exec", { js: "window.__APP__.cart.total", world: "page" }, "520.69"),
+        end("done"),
+    ];
+    const w = execWorld(ev);
+    assert.equal(w.misses, 0, "nothing errored");
+    assert.equal(w.pageRetries, 1, "one switch, not one per page exec");
+    assert.equal(w.pageAsks, 2);
 });
