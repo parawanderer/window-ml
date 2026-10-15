@@ -65,6 +65,28 @@ separates cells, so only the offscreen document, not the worker, may assert whic
 - The red-team pass is the lockdown's acceptance test plus one for the channel: a cell cannot reach the worker's `post`
   or the stdout sink as a callable, and an answer is never a `JsProxy`.
 
+## What root A learned that `ML_WIRE.md` does not say (read before building)
+
+- **The `run` id is checked against the client the worker opened, never read as authority.** `openWireClient`
+  (`sw-ml-wire.ts`) binds `{ from, run, realm }` to a `mlw-<uuid>` handle; `serveWireCall` (`ml-wire-serve.ts`) refuses
+  any other `run`, a `null` included, without saying whether it exists. A page-started cell is bound to no run, so it has
+  no `dereference` — do not try to give it one by run id.
+- **The members come from one place.** `workerReadonlyMl` through `mlFacade` with realm `worker`, cut to
+  `ML_READONLY_METHODS`. Do not copy the list; adding a member there is what adds it here. `queryAll`/`a11y` (the page
+  readers) are absent by that cut.
+- **Bytes cross the offscreen↔worker hop as `{ $bytes: base64 }`, not a buffer.** `chrome.runtime` messages are JSON.
+  Only the Pyodide-worker↔offscreen hop can transfer an `ArrayBuffer` (the `injectStoredTable` path). `ML_WIRE.md`'s "as
+  Arrow or a buffer" is true only of that inner hop.
+- **No `dereference` answer reaches `WIRE_VALUE_CAP` today**, so the `pointer` answer is unexercised from the worker. The
+  pointer store holds the model-sized text; a whole large TEXT body lives nowhere a cell can read it (a table's whole
+  does, under `meta.value`). A truncated `value` must therefore carry `truncated: true` + full size, surfaced in the
+  facade (above). Whole text captures are a separate root under the pointer-values work, not PR 2's.
+- **`ask` is built but unexercised:** no member is gated, so the first gated member (a live `fetch`, `chat`, `click` in
+  `full`) is what first drives the suspend/`ML_ANSWER` path end to end. The core already enforces: member runs only if
+  the client is open when decided, 5-minute cap then `Denied`.
+- **`ML_CALL` is not in `HANDLE_MAP`** and must never be added: a page relaying it would be a hole. The red-team file
+  (`tests/redteam-ml-wire.test.mjs`) enumerates this; extend it, do not loosen it.
+
 ## Docs
 
 `docs/dev/python-sandbox.md` gets the `ml`-in-Python section; `python-tool.ts`'s description says `ml` is there.
