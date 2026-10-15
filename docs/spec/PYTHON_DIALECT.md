@@ -124,8 +124,13 @@ what the count surfaced:
   static gate's import and builtin lists), against 99.1% if any generator expression were admitted. A genexp anywhere else is refused: there the rewrite would be
   observable, and a generator object is a suspended frame the patch's first slice does not have to get right.
 - **`type(x)` is allowed** (2.4% of cells, mostly a debugging print or `type(x) == str`), returning a receiver kind of
-  its own that lists no attributes (so `__mro__`, `__subclasses__`, `__name__` are refused by the gate), is not callable,
-  and supports `is`, `==` and `repr`. The three-argument `type(name, bases, dict)` is refused outright.
+  its own that lists no attributes (so `__mro__`, `__subclasses__`, `__name__` are refused by the gate) and supports
+  `is`, `==` and `repr`. The three-argument `type(name, bases, dict)` is refused outright. "Not callable" was the first
+  wording and cannot be implemented (lane 3, 2026-10-15): `type(1)` IS the `int` object, the same one the builtin name
+  binds, so `type(1)(5)` cannot be told from `int(5)`, and a proxy type object would break `type(x) is str`, one of the
+  two corpus uses. The property that matters holds without it: a call through `type(x)` is judged at the call gate by
+  the class's identity like any other call, so it reaches no constructor the manifest does not list. The vectors say
+  exactly that: `type(box)()` and `type(df)()` refused, `type(1)(5) == 5` a value.
 - **A kind may carry a DYNAMIC attribute rule from its manifest**: the DataFrame kind's `dynamic: columns` lets `df.Region`
   resolve when `Region` is a column, by a predicate registered beside the table and run with the depth lifted like any
   approved leaf, returning `alias(0)`. Never a dunder, never a name in the kind's static method set (`df.sum` is the
