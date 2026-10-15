@@ -58,6 +58,12 @@ separate program, the **process host**, which the browser runtime reaches and wh
 One program, two transports. The hub form is the "desktop runtime holds a shell" the hub spec already names; the
 native form is the same thing attached to one browser.
 
+**A hub is not an execution environment, and an execution environment is not a hub** (Shane, 2026-10-15). The host
+builds and runs with NO hub code: native messaging alone is a complete product, and the hub transport is an optional
+build feature that pulls the hub's client crates in. The hub, for its part, knows nothing of shells or processes beyond
+relaying sealed commands to a runtime that declared the capability. In code: the host is its own repository, built the
+way `wmlbox` is built, not living beside it. The plan for building it: [`docs/plan/repl/`](../plan/repl/README.md).
+
 ### Two modes: a container, or the real filesystem
 
 **Both are supported (Shane, 2026-10-13).** A container is the safe default for work that can be isolated. Working on
@@ -339,6 +345,8 @@ What follows from it:
   env changes, cwd, exit code and output hashes (the run log, and the provenance a signed notebook would cite).
 
 ## Slices
+
+The order across every spec this one depends on, and the sessions building them: [`docs/plan/repl/`](../plan/repl/README.md).
 
 0. **Before the host**: the `ml` wire protocol with `ml` in Pyodide, the persistent namespace, the Python dialect, and
    policies against an existing gate ([`ML_WIRE.md`](ML_WIRE.md), [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md),
