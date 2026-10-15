@@ -509,9 +509,9 @@ export const sessionStore = (() => {
             onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
             // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
             onEvicted: (e) => {
-                // Deleted outright (no archive to move it to): its run policies go with it. Archived, it can come back,
-                // and keeps them.
-                if (e.outcome === "deleted") forgetRunPolicies(e.hash);
+                // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
+                // session that comes back starts with none. `kept` (the move failed) leaves them.
+                if (e.outcome === "deleted" || e.outcome === "archived") forgetRunPolicies(e.hash);
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },

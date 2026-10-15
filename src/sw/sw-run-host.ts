@@ -28,7 +28,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, policiesLoaded } from "./sw-policies";
+import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies } from "./sw-policies";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
@@ -1247,8 +1247,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // refuses any run's fetch; an `allow` answers only a fetch the worker itself runs, since only there does
                 // the fetch's own choke point (worker-tools.ts `consented`) consult the same policies.
                 fetchPolicy: (url, o) => {
-                    if (!policiesLoaded()) return "unknown";
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
+                    if (j.decision === "ask") return "unknown";   // not loaded yet: the call asks, free tiers included
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "fetch_url" } });
                     if (!j.decision || !j.by || j.by === "builtin") return undefined;
                     if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;
