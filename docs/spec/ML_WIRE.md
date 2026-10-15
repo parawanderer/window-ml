@@ -31,7 +31,11 @@ pointer store, the run's `current` snapshot).
 ```
 
 `client` is the handle the server issued when it started the code making the call (built: one per Python cell); the
-server answers by it and the verified sender together, and checks `run` against it. An `ask`'s final answer is a later
+server answers by it and the verified sender together, and checks `run` against it. **The step an ask rides is a fact
+of the handle, never of the message** (ruling, 2026-10-15, lane 4's `ml.sh` over the wire): the server recorded which
+run and which step started the client when it issued the handle, so a nested ask raised for a wire call attaches to
+that step with nothing in the request naming it; a request that did name a step would be the sender-never-message rule
+broken. The opener that issues a handle records the step with it. An `ask`'s final answer is a later
 `ML_ANSWER` push carrying the same `client` and `seq`.
 
 **What crosses.** Plain JSON; bytes as Arrow (the one copy, as `injectStoredTable` makes today), carried as a transferred
