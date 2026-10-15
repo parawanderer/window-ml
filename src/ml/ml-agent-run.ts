@@ -105,7 +105,7 @@ import { validateArgs } from "../tools/validate";
  *   `elements` is the live DOM node(s) the model designated via an
  *   `answer`-capable tool: pass `answer: true` for the default kit to include one (empty otherwise).
  */
-export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, answer = false, images = [], origin = null, _control = null, _display = null, _onSession = null }: {
+export const agent = async function(this: MlApi, task: string, { host = null, tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, answer = false, images = [], origin = null, _control = null, _display = null, _onSession = null }: {
     tools?: MlTool[] | null;
     extraTools?: MlTool[];
     serverTools?: string[];
@@ -140,6 +140,9 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     _display?: import("../contract/contract-run").PromptDisplay | null;   // internal: how the UI shows `task` when it is not what the person typed (a right-clicked element folded in)
     _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
     _onSession?: ((hash: string) => void) | null;   // internal: called once, with the hash, the moment the FIRST turn mints it (a UI that started this run needs to know which session it got)
+    /** `"page"`: run the loop in this page as plain `window.ml` use (docs/spec/SITE_ACCESS_SLICE3.md, Q1). Absent: the
+     *  worker hosts it, which needs the site's agent level. */
+    host?: "page" | null;
 } = {}): Promise<AgentResult> {
     // Resume a run held in this tab: reuse its stored loop (same toolset/system/model +
     // accumulated messages), appending `task` as a follow-up user turn under the SAME hash,
@@ -169,17 +172,19 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // WHICH LOOP HOSTS THIS RUN, decided before the prompt is announced (below): a run the page hosts has no
     // `ml.current`, so its prompt must not offer it, and the log must carry the prompt the model actually got.
     const surface = agentCfg?.debugMode;
-    const hasApprovalTool = toolset.some(t => !!t.requiresApproval);
-    // Off-mode closure: with no debug surface, a privileged run on a NON-whitelisted origin still
-    // routes to the unforgeable background gate — the shell mounts an acrylic corner CARD (shell.ts
-    // + app.tsx CardApp) that renders the pending approval and returns the decision via the same
-    // origin-authed SET_APPROVAL. A WHITELISTED origin (the user trusts this domain to self-gate) or
-    // a run with no privileged tool (nothing to gate) falls through to the in-page loop below.
-    const bgSurface: "overlay" | "devtools" | "off" | null =
-        (surface === "overlay" || surface === "devtools") ? surface
-            : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
+    // With no debug surface, a worker-hosted run's gates show in the shell's corner CARD (shell.ts + app.tsx CardApp),
+    // which returns the decision through the same origin-authed SET_APPROVAL.
+    // WHERE THE LOOP RUNS (docs/spec/SITE_ACCESS_SLICE3.md, Q1). `host: "page"` is the page's own loop, plain window.ml
+    // use: it gets no more than the page has, and its gates are the caller's `approve`. Otherwise the worker hosts it, which
+    // needs the site's agent level (each start may show the person a card). A site on the self-approval list keeps its own
+    // loop when no debug surface is on, as before: it answers its own gates, and its `approve` is the point of the list.
+    const pageLoop = host === "page" || (host == null && !!agentCfg?.pageApprovalAllowed && surface !== "overlay" && surface !== "devtools");
+    const bgSurface: "overlay" | "devtools" | "off" | null = pageLoop ? null
+        : (surface === "overlay" || surface === "devtools") ? surface : "off";
     if (!bgSurface) systemPrompt = withoutCurrentClause(systemPrompt, toolset);
-    if (env) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
+    // A run the extension hosts gets its page context from the extension, which reads it from the browser rather than
+    // from this page (docs/spec/SITE_ACCESS_SLICE3.md: a page's own context lines would be taken for its instructions).
+    if (env && !bgSurface) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
     // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
     // `answerSet.elements()` / `.media()` / `.toMarkdown()` at assembly. (Was two accumulator arrays.)
     // Debug sidebar: announce the run + each step. Its own session hash
@@ -223,17 +228,11 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
     else if (task || turnImages.length) emitDebug({ kind: "agent-say", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, text: task, images: turnImages.length ? turnImages : undefined, ...(_display ? { display: _display } : {}) });
 
-    // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
-    // origin (unforgeable by the page — a page-set window.confirm or a hostile approve() can't
-    // grant it). We route when EITHER a debug surface is active (overlay → the in-page iframe app;
-    // devtools → the panel app) OR the run has a requiresApproval tool AND this origin is NOT on
-    // the user's page-approval whitelist. The page built the toolset + system prompt above and
-    // registers the LIVE tools under runHash; the background delegates each call back via
-    // RUN_TOOL_IN_PAGE and gates approval through the surface (in `off` mode, a minimal modal the
-    // content-script shell draws). A WHITELISTED origin (agentCfg.pageApprovalAllowed — the user
-    // explicitly trusts this domain to self-gate) falls through to the in-page loop below, as does
-    // a run with no privileged tool (nothing to gate). Caveats (v1): the caller's
-    // `approve`/`onStep`/`logDebug` and rich tool renders don't apply on the background path.
+    // ── Design A: the BACKGROUND loop, so the approval gate lives at the extension origin (unforgeable by the page: a
+    // page-set window.confirm or a hostile approve() can't grant it). Every run that is not the page's own loop
+    // (`pageLoop` above) goes there. The page built the toolset + system prompt above and registers the LIVE tools under
+    // runHash; the background delegates each call back via RUN_TOOL_IN_PAGE and gates approval through the surface.
+    // Caveats (v1): the caller's `approve`/`onStep`/`logDebug` and rich tool renders don't apply on the background path.
     // A run that can call python_exec starts Pyodide now, in parallel with the model's first turn, so the
     // first call does not pay the multi-second cold start. Both hosting paths pass through here.
     if (toolset.some(t => t.name === "python_exec"))
@@ -279,6 +278,14 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             },
         });
         enterAgentRun();   // suppress orphan chat sessions from a delegated tool's internal ml.chat
+        // What the page added to the history since the worker last answered (a say() while idle, a steer that arrived
+        // after the last step) is sent as part of THIS turn's text: the worker continues its own copy of the history, never
+        // the page's (Q4). Only a first turn carries a history, and only one that is more than such messages (a fork's),
+        // which the worker refuses.
+        const added = control.messages.slice(control.synced ?? 0);
+        const addedText = added.every((m) => m.role === "user") ? added.map((m) => (typeof m.content === "string" ? m.content : "")).filter(Boolean) : [];
+        const turnTask = [...addedText, task].filter(Boolean).join("\n\n");
+        const pageHistory = firstTurn && added.some((m) => m.role !== "user") ? control.messages : undefined;
         try {
             const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                 ...startPayload(asm, {
@@ -290,9 +297,8 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                     navigate, crossOrigin, approvalRouting,
                     page: { origin: location.origin, url: location.href, title: document.title || undefined },
                 }),
-                // A handle's prior history (empty on the first turn) → the background CONTINUES it,
-                // so control.messages stays authoritative across turns even on the background path.
-                resumeMessages: control.messages.length ? control.messages : undefined,
+                task: turnTask, env,
+                ...(pageHistory ? { resumeMessages: pageHistory } : {}),
                 // Offsets so the background's emitted step/seq continue past prior turns (the sidebar's
                 // turn groups stay distinct on the background path too — otherwise turn N's step 1
                 // collides with turn 1's and the chat log scrambles).
@@ -300,7 +306,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             }, (result, data) => {
                 // Sync the run's final history back into the handle (page-authoritative). This is why
                 // a.messages populates + a follow-up run()/say() continues, on the background path too.
-                if (data && Array.isArray(data.messages)) control.messages = data.messages as NeutralMessage[];
+                if (data && Array.isArray(data.messages)) { control.messages = data.messages as NeutralMessage[]; control.synced = control.messages.length; }
                 // Advance the bases past THIS turn's step/seq so the next turn's offset is right.
                 if (data && typeof data.stepCount === "number") control.stepBase += data.stepCount;
                 if (data && typeof data.seqCount === "number") control.seqBase += data.seqCount;

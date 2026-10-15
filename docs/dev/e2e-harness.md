@@ -144,6 +144,15 @@ as in AGENTS.md — they are all under `src/`.
   decision (`resolve(key, …)`), all driven from the SW realm with the page walled off. Deterministic
   (fake-LLM, no model/key). Pace it with `PACE`/`HOLD` (ms). The automated assertions of the same flow
   are `approval.spec.mjs`.
+- **`agent-level-demo.mjs`** — a **narrated demo, not a test** of a site starting the extension's agent (site access
+  slice 3, PR 2): `npm run build && node --import tsx tests/e2e/agent-level-demo.mjs`. Seven beats on one site
+  (`forum.test`, the hostile-site fixture) in the overlay: the start card on "Ask each time", its lines walked; Allow,
+  and the run goes; a page-sent turn named with the site; the page turn budget's "keep going" card, declined, then the
+  site waiting for the person; DevTools Settings set to "Always" and a start with no card; "Denied" and the page's
+  refusal; a page the agent's own navigation reached, refused and recorded in the run's steps. Fake LLM, headful;
+  `HEADLESS=1 HOLD=0` runs it unattended, `PACE` sets the beat. Each beat fails loudly if it did not happen.
+  Screenshots land in `tests/e2e/artifacts/agent-level-demo/`. The assertions are `redteam-agent-level.test.mjs` and
+  `site-access.spec.mjs`, attack 19.
 - **`resource-demo.mjs` / `resource-panel.spec.mjs`** — the VRAM/RAM panel against a scripted fake BOX.
   `fake-llm.mjs` fakes the box as well as the model: **`setResident()`** drives `/api/ps` and
   **`setCapacity()`** drives `/api/info`, both settable mid-run, so a demo or spec can make models load, move

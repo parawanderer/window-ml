@@ -116,6 +116,15 @@ window.addEventListener("message", (e: MessageEvent) => {
         void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: approvalPayload(d) }).catch(() => {});
         return;
     }
+    // A start card's answer, from the real panel-app iframe (the e.source check above): forwarded as SET_START_APPROVAL.
+    if (d.__mlSidebarApp === "startDecision" && typeof d.requestId === "string" && (d.decision === "allow" || d.decision === "always" || d.decision === "deny")) {
+        // An ask the worker no longer holds (it restarted, the ask timed out) is shown expired, not left waiting.
+        const id = d.requestId as string;
+        void chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: id, decision: d.decision } })
+            .then((r: { data?: boolean } | undefined) => { if (r?.data !== true) frame.contentWindow?.postMessage({ __mlStartExpired: id }, "*"); },
+                () => frame.contentWindow?.postMessage({ __mlStartExpired: id }, "*"));
+        return;
+    }
     if (typeof d.__mlLightbox === "string") { showLightbox(d.__mlLightbox); return; }
     // Hover-highlight reverse channel: the app asks to outline a page element/point on hover. The panel
     // can't touch the inspected page, so relay to the background → that tab's content-script shell, which

@@ -235,7 +235,7 @@ test("a page START_RUN and RESUME_RUN naming remote, scopes and ui stamp no orig
         config, openTabs: [{ id: 7, url: SITE, title: "Site" }],
         onFetch: async (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
-            if (call.body.messages?.some((m) => m.content === "FORGED TURN")) await held;
+            if (call.body.messages?.some((m) => String(m.content).endsWith("FORGED TURN"))) await held;
             return jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_t, msg) => (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),

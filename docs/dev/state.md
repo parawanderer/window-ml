@@ -72,7 +72,12 @@ page-hosted one. Several stores exist once per host.
 | One credentialed fetch | `credFetchGrants` | one use |
 | Remembered `confirm()` decisions | `approveOnce.remembered` (`ml-agent-handle.ts`, page) | the gate |
 | `window.ml` on an origin | `ml_site_always` / `ml_site_denied` (local), `ml_site_session` (session storage); declared `site.levels` (`sw-site-access.ts`) | persistent / browser session |
-| Starting agents, per origin (`ask`, `always`, `denied`; stored, not enforced until the start card) | `ml_site_agents`: local, or session storage for an origin allowed only this session | persistent / browser session |
+| Starting agents, per origin (`ask`, `always`, `denied`), enforced on every page START_RUN, RESUME_RUN and INJECT_MESSAGE | `ml_site_agents`: local, or session storage for an origin allowed only this session | persistent / browser session |
+| A site's agent the person allowed on its start card: the run's tab, origin, step budget, page turns used, and what it is bound to | `ml_start_approved` (session storage); declared `run.startApproval` (`sw-start-approval.ts`). Dropped when the site or its level is revoked, and when the tab closes | the browser session |
+| A start card waiting for the person | `pending` (`sw-start-approval.ts`); declared `run.startAsk`. An eviction loses it, which refuses the start | until answered, or 3 minutes |
+| A site's declined or unanswered starts, which quiet it at three | `ml_start_denials` (session storage); declared `site.startDenials` | the browser session, or until its level changes |
+| The pages and tabs a running agent opened, each with the run that opened it (Q17) | `ml_agent_opened` (session storage); declared `site.agentOpened` (`sw-start-approval.ts`) | the browser session, or until the tab closes |
+| A message the person sent a page-built run, waiting for the page to relay it as the person's turn | `personTurns` (`sw-start-approval.ts`); declared `run.personTurn` | two minutes, or one use (memory) |
 | Approving its own actions (implies window.ml and agents `always`) | `ml_site_selfapprove` (local, origins), read by `selfApproves` (`levelsFor`): `senderTrust`, `pageApprovalAllowed`, the gate. Migrated once from the old sync `pageApprovalDomains` (`ml_site_schema: 2`) | persistent |
 | Auto-approve settings | `MlConfig` (sync) | persistent |
 
@@ -144,7 +149,7 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.startAsk`, `run.startApproval`, `run.personTurn`, `site.startDenials`, `site.agentOpened`, `site.notStarted` (`sw-start-approval.ts`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
 not overall: both hosts declare the same member of a run. Each realm

@@ -410,6 +410,7 @@ test("every event kind the index accepts has been considered for de-duplication"
         "agent-cap",     // last write wins: a cap is a number, not an occurrence
         "agent-say",     // paired with agent-say-seen, which is the one that can arrive twice
         "chat-error",    // ends a turn opened by `chat`, which is itself de-duplicated
+        "agent-site-say", // the worker's own record of one turn a site sent, written once per turn
     ]);
     const duplicate = src.slice(src.indexOf("private isDuplicate"), src.indexOf("private fold"));
     for (const kind of known) {

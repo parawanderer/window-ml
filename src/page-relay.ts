@@ -64,3 +64,8 @@ export const PAGE_STARTED_TYPES: ReadonlySet<string> = new Set<string>([
  *  used to be allowed what the run's in-page tools sent, `RUN_TAB_TYPES`; site access part 5 moved those tools to the
  *  worker and dropped it.) */
 export const RUN_CONTROL_TYPES: ReadonlySet<string> = new Set<string>(["START_RUN", "RESUME_RUN", "INJECT_MESSAGE", "PAGE_CANCEL_RUN"]);
+
+/** The page-started types the agent level gates (docs/spec/SITE_ACCESS_SLICE3.md, PR 2): starting a run the worker
+ *  hosts, continuing it, and steering it. A site that may use window.ml but not start agents is refused them
+ *  (`agentRefusal`); its own cancel (`PAGE_CANCEL_RUN`) stays allowed. */
+export const AGENT_LEVEL_TYPES: ReadonlySet<string> = new Set<string>(["START_RUN", "RESUME_RUN", "INJECT_MESSAGE"]);

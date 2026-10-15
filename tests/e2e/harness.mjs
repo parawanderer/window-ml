@@ -167,16 +167,22 @@ export async function configureExtension(/** @type {any} */ sw, /** @type {Recor
 
 /**
  * Put an origin on the extension's approved list ("always"), as a person allowing the site from the toolbar would.
- * Every page-started message is refused for an origin that is not on it (docs/spec/SITE_ACCESS.md).
+ * Every page-started message is refused for an origin that is not on it (docs/spec/SITE_ACCESS.md). It may also start
+ * agents without a card (`agents: "always"`), since a spec that calls `ml.agent` is about the run, not the agent level;
+ * pass another level, or `null` for none, for a spec about the level itself.
  * @param {any} sw the extension's service worker
  * @param {string} origin e.g. `http://127.0.0.1:43210`
+ * @param {{ agents?: "ask" | "always" | "denied" | null }} [opts]
  */
-export async function approveOrigin(sw, origin) {
-    await sw.evaluate(async (/** @type {string} */ o) => {
-        const got = await chrome.storage.local.get("ml_site_always");
+export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
+    await sw.evaluate(async (/** @type {[string, string | null]} */ [o, level]) => {
+        const got = await chrome.storage.local.get(["ml_site_always", "ml_site_agents"]);
         const list = Array.isArray(got.ml_site_always) ? /** @type {string[]} */ (got.ml_site_always) : [];
         if (!list.includes(o)) await chrome.storage.local.set({ ml_site_always: [...list, o] });
-    }, origin);
+        const levels = /** @type {Record<string, string>} */ (got.ml_site_agents && typeof got.ml_site_agents === "object" ? got.ml_site_agents : {});
+        if (level && levels[o] !== level) await chrome.storage.local.set({ ml_site_agents: { ...levels, [o]: level } });
+        if (!level && o in levels) { const { [o]: _drop, ...rest } = levels; await chrome.storage.local.set({ ml_site_agents: rest }); }
+    }, [origin, agents]);
 }
 
 /**

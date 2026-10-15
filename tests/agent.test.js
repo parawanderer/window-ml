@@ -1822,6 +1822,36 @@ test("[HOLE→design-A] a hostile CALLER's approve:()=>true can NOT self-approve
     assert.ok(world.runtimeCalls.some(c => c.type === "START_RUN"), "the privileged run routed to the unforgeable background gate");
 });
 
+// --- where the loop runs (docs/spec/SITE_ACCESS_SLICE3.md, Q1) ---
+
+test("Q1: ml.agent without host is a worker run (START_RUN) on a site that does not self-approve, even with no gated tool and no debug surface", async () => {
+    const world = loadPageWorld({ config: { pageApprovalAllowed: false }, onRuntimeMessage: scriptedModel([reply("done")]) });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
+    await world.ml.agent("x", { tools: [ping], vision: false }).catch(() => null);
+    assert.ok(world.runtimeCalls.some(c => c.type === "START_RUN"), "the run was not handed to the worker");
+    assert.ok(!world.runtimeCalls.some(c => c.type === "FETCH_LLM"), "the page called the model itself");
+});
+
+test("Q1: ml.agent({ host: \"page\" }) runs the loop in the page as plain window.ml use: no START_RUN, its model calls are FETCH_LLM, its gates are the caller's", async () => {
+    const world = loadPageWorld({ config: { pageApprovalAllowed: false }, onRuntimeMessage: scriptedModel([toolCall("danger", {}, "c1"), reply("done")]) });
+    let ran = false;
+    const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => { ran = true; return "ran"; } });
+    const res = await world.ml.agent("x", { host: "page", tools: [danger], vision: false, approve: () => true });
+    assert.equal(res.summary, "done");
+    assert.ok(!world.runtimeCalls.some(c => c.type === "START_RUN"), "a page-hosted run went to the worker");
+    assert.ok(world.runtimeCalls.some(c => c.type === "FETCH_LLM"));
+    assert.equal(ran, true, "the page's own tool, gated by the page's own approve: nothing the page could not do itself");
+});
+
+test("Q1: a self-approving site keeps its own loop when no debug surface is on; with host unset and a surface on, the worker hosts it", async () => {
+    const own = loadPageWorld({ config: { pageApprovalAllowed: true }, onRuntimeMessage: scriptedModel([reply("done")]) });
+    await own.ml.agent("x", { tools: [own.ml.defineTool({ name: "ping", run: () => "pong" })], vision: false });
+    assert.ok(!own.runtimeCalls.some(c => c.type === "START_RUN"));
+    const surfaced = loadPageWorld({ config: { pageApprovalAllowed: true, debugMode: "overlay" }, onRuntimeMessage: scriptedModel([reply("done")]) });
+    await surfaced.ml.agent("x", { tools: [surfaced.ml.defineTool({ name: "ping", run: () => "pong" })], vision: false }).catch(() => null);
+    assert.ok(surfaced.runtimeCalls.some(c => c.type === "START_RUN"));
+});
+
 test("agent surfaces the model's reasoning as thought events and transcript entries", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([

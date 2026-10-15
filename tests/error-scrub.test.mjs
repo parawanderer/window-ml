@@ -339,11 +339,6 @@ test("page: an error written under the old URL is scrubbed after the URL changes
 
 test("model: a resumed history written before the scrub (a raw URL in a tool result) reaches the model scrubbed", T, async () => {
     const sent = [];
-    const bg = loadBackground({ config, onFetch: (call) => {
-        if (call.url.endsWith("/api/models")) return modelList();
-        sent.push(JSON.stringify(call.body.messages));
-        return jsonResponse({ choices: [{ message: { content: "done" } }] });
-    } });
     // The shape a session saved by the pre-#620 worker holds: the tool's error text as it was written.
     const old = [
         { role: "system", content: "SYS" },
@@ -352,7 +347,14 @@ test("model: a resumed history written before the scrub (a raw URL in a tool res
         { role: "tool", tool_call_id: "c1", content: `Error: Couldn't reach the server at ${URL_} (key ${KEY})` },
         { role: "assistant", content: `The server at ${ORIGIN} is down.` },
     ];
-    const res = await bg.send({ type: "START_RUN", payload: { runId: "resume-old", task: "again", systemPrompt: "SYS", tools: [], model: "default-model", think: null, maxSteps: 3, surface: "off", resumeMessages: old } }, structuredClone(PAGE));
+    // Held by the worker (a page's own copy of a history is never what a run continues, SITE_ACCESS_SLICE3.md Q4).
+    const p = { runId: "resume-old", task: "read the doc", systemPrompt: "SYS", tools: [], model: "default-model", think: null, maxSteps: 3, surface: "off", autoApprovePython: false, autoApproveReadonly: false, pageOrigin: "https://site.example" };
+    const bg = loadBackground({ config, local: { "ml_bgrun_resume-old": { p, tabId: 7, messages: old, version: "9.9.9", ts: Date.now() } }, onFetch: (call) => {
+        if (call.url.endsWith("/api/models")) return modelList();
+        sent.push(JSON.stringify(call.body.messages));
+        return jsonResponse({ choices: [{ message: { content: "done" } }] });
+    } });
+    const res = await bg.send({ type: "RESUME_RUN", payload: { runId: "resume-old", task: "again" } }, structuredClone(PAGE));
     assert.ok(res.data, JSON.stringify(res).slice(0, 300));
     assert.ok(sent.length, "the model was called");
     assert.deepEqual(leaksIn(sent), [], sent[0].slice(0, 600));

@@ -7,7 +7,8 @@
 // page says is read.
 
 import { type AgentLevel, type SenderFacts, type SiteEdit, type SiteLevels, type SiteLists, SITE_ACCESS_KEYS, SITE_SCHEMA, SITE_SCHEMA_KEY, applyEdit, grantableOrigin, levelsFor, migrateSiteLists, originOf, selfApproves } from "../site-access";
-import { PAGE_STARTED_TYPES } from "../page-relay";
+import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES } from "../page-relay";
+import { START_REFUSED } from "../agent-start";
 import { defineState } from "../state-registry";
 
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -220,6 +221,25 @@ export async function pageRefusal(type: unknown, sender: chrome.runtime.MessageS
     return decision === "denied"
         ? `Refused: ${g.origin} is not allowed to use window.ml.`
         : `Refused: ${g.origin} is not approved to use window.ml. Allow it from the extension's toolbar button.`;
+}
+
+/**
+ * The agent level's gate, applied by the router after `pageRefusal` to the types that start, continue or steer a run
+ * (`AGENT_LEVEL_TYPES`). A site whose agent level is off or denied is refused here; one on "ask" or "always" goes on to
+ * the start card's gate (sw-start-approval.ts `gatePageTurn`), which reads the level again. Reads only `sender`.
+ * @param type the message type
+ * @param sender the browser's facts about who sent it
+ * @returns null to allow, or the refusal
+ */
+export async function agentRefusal(type: unknown, sender: chrome.runtime.MessageSender): Promise<string | null> {
+    if (typeof type !== "string" || !AGENT_LEVEL_TYPES.has(type)) return null;
+    if (sender.tab == null || isExtensionSender(sender)) return null;
+    const g = grantableOrigin(senderFacts(sender));
+    if ("refused" in g) return `Refused: ${g.refused}.`;
+    const level = (await siteLevels(g.origin)).agents;
+    if (level === "denied") return START_REFUSED.denied(g.origin);
+    if (level === "off") return type === "START_RUN" ? START_REFUSED.noLevelStart(g.origin) : START_REFUSED.noLevel(g.origin);
+    return null;
 }
 
 /** Whether a message or port comes from one of the extension's OWN pages or frames (the sidebar app, the popup, the

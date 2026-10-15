@@ -28,6 +28,8 @@ import {
 import { ApprovalBody } from "./card-approval";
 import { ShowWork } from "./card-showwork";
 import { ComposerCard } from "./card-composer";
+import { hostOf } from "../../agent-start";
+import { StartAskBody, StartAskFoot, StartAskExpired, SiteWaitPrompt, startAskPending, startAskExpired } from "./card-start";
 import { toHost } from "../parent-channel";
 import { promptLine } from "../../contract/contract-run";
 
@@ -229,10 +231,14 @@ export function CardApp() {
     const hash = run?.hash;
     const showWork = !!hash && cardShowWorkHash.value === hash;   // active run's trace open? (subscribe → re-measure height on toggle)
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
-    const pending = !!pendingStep;
     // A NESTED ask inside the running step, when that is what waits (the step's own gate is not): answered by its id,
     // drawn by the transcript's ask card, which carries its own buttons.
     const pendingAsk = run && pendingStep && !pendingStep.awaitingApproval ? pendingAskOf(run.hash, pendingStep) : undefined;
+    // A site's start card (card-start.tsx) is an approval too, and waits behind an open tool gate of the same run.
+    const asking = !pendingStep && startAskPending(run ?? undefined);
+    const pending = !!pendingStep || asking;
+    // The other asks waiting on this card: the pill and the head say how many (1.1, "Queued behind a pending tool approval").
+    const moreWaiting = runs.filter((s) => s.hash !== run?.hash && runIsPending(s)).length + (pendingStep && startAskPending(run ?? undefined) ? 1 : 0);
     // Terminal ONLY when the run isn't mid-turn: a follow-up run() keeps the PRIOR summary set, so without
     // the status guard `done` would stay true and the card would show the stale answer instead of collapsing
     // to the working orb. status flips to "pending" on a new turn (optimistically in CardReply, and on any
@@ -280,6 +286,7 @@ export function CardApp() {
     const streamingAnswer = !!run?.liveStream?.content && !quiet && !silent;
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : steering ? "expanded"                                // steering a live run: open the card for the inline steer box
+        : asking && isCardCollapsed(run!.hash) ? "toast"       // a start card the person minimised: the pill says who asks (1.1)
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
         : streamingAnswer ? "expanded"                         // the answer is streaming in → open the card to show it live
             : (tabs && anyContent) ? (cardDetail.value ? "expanded" : "toast")   // multi-run with content: tabbed detail ⇄ calm summary toast (one card-level toggle)
@@ -320,6 +327,8 @@ export function CardApp() {
     // isn't the open one). "Show work" open → ask the shell to slide the card to the drag limit (room for the
     // whole trace); closed → release it (snap back to fit). Driven by the ACTIVE run's derived open state.
     useEffect(() => { toHost({ __mlSidebarCardExpand: showWork }); }, [showWork]);
+    // A start card asks the shell for a solid container while it is up: its occlusion check reads frost as cover.
+    useEffect(() => { toHost({ __mlSidebarCardSolid: asking }); }, [asking]);
     // Report our natural CONTENT height so the shell can FIT the card (a cross-origin iframe can't
     // auto-size). We sum the card's children — head + body(scrollHeight = full content) + foot — NOT
     // documentElement.scrollHeight: the app fills the iframe (height:100%), so measuring the container
@@ -400,7 +409,9 @@ export function CardApp() {
         if (!run || !pendingStep || pendingStep.seq == null) return;
         const h = run.hash, seq = pendingStep.seq;
         const canKeep = hasPersistGrants(pendingStep.grants);
-        toHost({ __mlSidebarCardFocus: true });
+        // Not for a run a SITE started (Q15): the page decides when its gates appear, and could raise one as the person
+        // presses Enter in its own form. Its gates take a click, or Enter with focus already in the card.
+        if (run.person) toHost({ __mlSidebarCardFocus: true });
         const decideKey = (ok: boolean, persist = false) => {
             if (pendingAsk) { decidedSteps.add(askKey(h, seq, pendingAsk.id)); sendApproval(h, seq, ok, false, undefined, pendingAsk.id); rev.value++; return; }
             decidedSteps.add(stepKey(h, seq)); clearHighlight(); void decideGate(pendingStep, h, seq, ok, persist); rev.value++;
@@ -462,6 +473,7 @@ export function CardApp() {
     const onClose = (e: Event) => {
         e.stopPropagation();
         if (pendingStep) decide(false);          // × on a pending gate = a fast Deny
+        else if (asking) { /* a start card is answered with its own buttons only (they arm after a second) */ }
         else dismissCardRun(run.hash);           // × on a finished card = dismiss (drops it from the tab strip)
     };
     // Dismiss on POINTERDOWN (not click/pointerup): if the pointer wobbles between the × and the toast body,
@@ -509,8 +521,9 @@ export function CardApp() {
                 <div class="card-toast" role="button" title="Click to review · drag or right-click to move" onPointerDown={startCardDrag} onClick={e => { if (!(e.target as HTMLElement).closest(".card-x")) setCardCollapsed(run.hash, false); }} onContextMenu={cardCtxMenu}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
-                        <span class="card-toast-head">{headline}</span>
-                        <span class="card-toast-sub">{title}</span>
+                        {/* A minimised start card says who asks; the asks waiting behind it are counted here (1.1). */}
+                        <span class="card-toast-head">{asking && run.startAsk ? `${hostOf(run.startAsk.ask.origin)} wants to start an agent` : headline}</span>
+                        <span class="card-toast-sub">{moreWaiting ? `${moreWaiting} more waiting` : title}</span>
                     </span>
                     <button class="card-x" aria-label="Dismiss" onPointerDown={onCloseDown} onClick={e => e.stopPropagation()}>✕</button>
                 </div>
@@ -531,11 +544,15 @@ export function CardApp() {
                     ? <button class="card-icon" aria-label={cardMaximizedHash.value === run.hash ? "Minimise" : "Maximise"} title={cardMaximizedHash.value === run.hash ? "Minimise" : "Maximise"}
                         onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = cardMaximizedHash.value === run.hash ? "" : run.hash; }}>{cardMaximizedHash.value === run.hash ? "⤡" : "⤢"}</button>
                     : null}
-                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
+                {pending && !asking ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; }}>✕</button>
             </div>
             <div class="card-body">
-                {pending && pendingStep
+                {asking && run.startAsk
+                    ? <StartAskBody ask={run.startAsk.ask} />
+                    : startAskExpired(run) && run.startAsk?.askOnly
+                    ? <StartAskExpired />
+                    : pending && pendingStep
                     ? pendingAsk ? <AskList st={pendingStep} hash={run.hash} live /> : <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
                     : !done
                         // A working run browsed via a tab (multi-run detail): show a live "Working…" line + its
@@ -590,7 +607,9 @@ export function CardApp() {
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
-            {pending && pendingStep && !pendingAsk
+            {asking && run.startAsk
+                ? <div class="card-foot card-foot-appr"><StartAskFoot ask={run.startAsk.ask} /></div>
+                : pending && pendingStep && !pendingAsk
                 ? (() => {
                     const showGrants = hasPersistGrants(pendingStep.grants);
                     return <div class="card-foot card-foot-appr">
@@ -602,7 +621,7 @@ export function CardApp() {
                         </div>
                     </div>;
                   })()
-                : done ? <CardReply hash={run.hash} />
+                : done && !(startAskExpired(run) && run.startAsk?.askOnly) ? <><SiteWaitPrompt s={run} /><CardReply hash={run.hash} /></>
                     : steering ? <CardSteer hash={run.hash} onClose={() => { cardSteerHash.value = ""; }} />
                         : null}
         </div>

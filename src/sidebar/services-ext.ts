@@ -58,6 +58,8 @@ export const extensionServices: SidebarServices = {
     bench: true,
     // The shell forwards it to the background as SET_APPROVAL, having checked it came from this iframe.
     answerApproval: (hash, seq, decision, persist, feedback, ask) => toHost({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback, ...(ask !== undefined ? { ask } : {}) }),
+    // The shell, or the DevTools panel, forwards it as SET_START_APPROVAL, having checked it came from this frame.
+    answerStart: (requestId, decision) => toHost({ __mlSidebarApp: "startDecision", requestId, decision }),
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
     sendToSession: async (hash, text, images) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
     cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),

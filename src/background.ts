@@ -37,22 +37,27 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
-import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
+import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/sw-policies";
 
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
+import { pageInject } from "./sw/sw-page-turn";
+import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart } from "./sw/sw-start-approval";
+import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES } from "./page-relay";
+import type { SiteRunEvent } from "./contract/contract-debug";
+import { START_REFUSED } from "./agent-start";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { pageRebuild } from "./agent/run-assembly";
-import { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
+import { RUN_CONTROL_TYPES } from "./page-relay";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
-import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
+import { eventSession, pageMayWrite, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
@@ -180,7 +185,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
 // local origins, and the agent level, in slice 3 (sw-site-access.ts `migrateSiteAccess`). Every reader waits for it too.
 void siteSchemaReady();
 if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
-    chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) void handOverOnRevoke(); });
+    chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) { void handOverOnRevoke(); void dropRevoked(); } });
     // And once at startup, for a change this worker never heard: made while it was evicted, its runs then restored.
     void handOverOnRevoke().catch(() => []);
 }
@@ -225,7 +230,7 @@ function dropPrintDoc(key: string): void {
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
     if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
-    void pageRefusal(message.type, sender).then((refusal) => {
+    void pageRefusal(message.type, sender).then(async (refusal) => refusal ?? (AGENT_LEVEL_TYPES.has(message.type) ? await navigationRefusal(message, sender) ?? await agentRefusal(message.type, sender) : null)).then((refusal) => {
         if (refusal) { sendResponse({ error: refusal }); return; }
         // Every answer to a page goes through `forPage`: an error's text never carries the server's URL, the key or the
         // model filter (sw-scrub.ts). The person's own surfaces are extension pages and take the branch above.
@@ -239,6 +244,31 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     });
     return true;
 });
+
+/**
+ * The navigation rule for the agent level (docs/spec/SITE_ACCESS_SLICE3.md, Q17): a page a running agent's navigation
+ * reached never starts, continues or steers an agent. Its START_RUN is recorded and shown in that run's step list as one
+ * quiet line; nothing reaches the driver model and no card is raised. Reads only `sender`.
+ * @param message the page's message
+ * @param sender the browser's facts about who sent it
+ * @returns the refusal, or null
+ */
+async function navigationRefusal(message: { type?: unknown; payload?: { runId?: unknown; task?: unknown; text?: unknown; images?: unknown } }, sender: chrome.runtime.MessageSender): Promise<string | null> {
+    const tabId = sender.tab?.id;
+    if (tabId == null) return null;
+    // What a run opened before an eviction is read back first, and a run's end recorded: a message that wakes the worker,
+    // or that comes the moment a run ends, is judged on it.
+    await navigationSettled(tabId);
+    // The person's own message for a run, relayed by the page that run opened (the run's handle lives in the page): theirs,
+    // not the page's. Only exactly the text the person sent through the extension (sw-start-approval.ts `notePersonTurn`).
+    const p = message.payload;
+    const runId = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined, p?.runId);
+    if (runId == null) return null;
+    // Spent here, once: a page that sends the person's text twice gets one person's turn and one refusal.
+    if (await claimPersonTurn(message)) return null;
+    if (message.type === "START_RUN") recordNotStarted(tabId, runId, originOf(sender.origin ?? sender.url ?? sender.tab?.url) ?? "");
+    return START_REFUSED.openedByAgent;
+}
 
 /**
  * What the worker knows about its part in a page-sent event's session, for `pageMayWrite` (event-admission.ts). A run
@@ -367,6 +397,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const key = approvalKey(p.runId, p.seq, p.ask);
         if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
         return;   // fire-and-forget
+    }
+    // The person's answer to a start card (sw-start-approval.ts). Like SET_APPROVAL it reaches here only from the
+    // extension's own surfaces: the content-script shell forwards it for a message from the card's frame over its private
+    // port, the DevTools panel sends it itself. It is in neither HANDLE_MAP nor PAGE_RELAYED_EXTRA, so a page cannot
+    // send it, and a shell's answer only counts for an ask on its own tab.
+    if (message.type === "SET_START_APPROVAL") {
+        const p = (message.payload || {}) as { requestId?: unknown; decision?: unknown };
+        // Answered, so the surface can say "expired" for an ask this worker no longer holds (an eviction, a timeout).
+        sendResponse({ data: resolveStart(p.requestId, p.decision, isExtensionSender(sender) ? undefined : sender.tab?.id ?? -1) });
+        return;
     }
     if (message.type === "CONTENT_READY") {
         // Cross-page persistence: a fresh document loaded in a tab. If it still hosts live cross-page run(s),
@@ -531,6 +571,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // at the next step boundary. Only the OWNING tab may steer; an unknown/finished run is a no-op (the
         // page's run()-flush safety net picks up anything that lands too late).
         const p = message.payload as InjectMessagePayload;
+        // A page's steer, or its wait for the person, is a turn of the site's own (sw-page-turn.ts `pageInject`): gated by
+        // the start card's rules, shown with the site's name, and never stamped as typed on an extension surface.
+        if (sender.tab?.id != null && !isExtensionSender(sender)) { pageInject(p, sender, personClaimed(message)).then(sendResponse, () => sendResponse({ data: false })); return true; }
         const inbox = runInboxes.get(p.runId);
         const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
         if (injected) inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) });
@@ -910,7 +953,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             sendResponse({ data: {
                 capturedAt: Date.now(),
                 tabId: tabId ?? null,
-                debug: tabId != null ? (debugBuffer.get(tabId) || []).filter((ev) => workerClaimOf(ev) !== "owns") : [],
+                // Nor a start card's notice: it names the ask a decision is keyed by, which is the person's to answer.
+                debug: tabId != null ? (debugBuffer.get(tabId) || []).filter((ev) => workerClaimOf(ev) !== "owns" && !WORKER_ONLY_KINDS.has((ev as { kind?: string })?.kind as SiteRunEvent["kind"])) : [],
                 frames: recentFrames(),
                 stream: resourceStreamStatus(),
                 ps: await listLoadedModels().catch(() => null),
@@ -1163,6 +1207,9 @@ function cancelBackgroundRun(runId: string): boolean {
     }
     return !!ctl || gates > 0;
 }
+
+// A site's agent cancelled because the site lost the agent level while it ran (Q9) is stopped like the Stop button.
+configureStartApproval({ cancelRun: (runId) => { cancelBackgroundRun(runId); } });
 
 // The chat page's commands reach the runs through these; everything else they need is the browser's (sw-sessions.ts).
 configureSessionCommands({

@@ -5,7 +5,8 @@
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
-import type { MlDebugEvent } from "../contract/contract-debug";
+import type { MlDebugEvent, SiteRunEvent } from "../contract/contract-debug";
+import { WORKER_ONLY_KINDS } from "../event-admission";
 import { isBackendUnreachable } from "../contract/contract-server";
 import { services } from "./services";
 import { truncate, lastUser, rollupStatus } from "./format";
@@ -118,18 +119,77 @@ export function awaitingStart(key: string): boolean {
     return !sessionMap.has(key) && !!orphanAgentEvents.get(key)?.length;
 }
 
+/**
+ * Mark a start card's ask expired: the worker no longer holds it (it restarted, or the ask ran out), so the card says so
+ * rather than waiting on an answer nothing will take.
+ * @param requestId the ask
+ */
+export function expireStartAsk(requestId: string): void {
+    for (const s of sessionMap.values()) {
+        if (s.startAsk?.ask.requestId !== requestId || s.startAsk.outcome) continue;
+        s.startAsk = { ...s.startAsk, outcome: "expired" };
+        if (s.startAsk.askOnly) { s.status = "err"; s.ended = true; s.cancelled = true; s.summary = ""; }
+        rev.value++;
+    }
+}
+
+/**
+ * The worker's notices about a SITE's agent (contract-debug.ts `SiteRunEvent`). The shell and the panel pass these
+ * only when they came from the worker (event-admission.ts `WORKER_ONLY_KINDS`). A start card makes a session of its own
+ * when the run has none yet (an off-mode start, before anything ran); the rest wait for the run's start like a step.
+ * @param ev the notice
+ * @param key the session's key
+ * @param runtime the runtime, for a client that reduces several
+ */
+function onSiteRunEvent(ev: SiteRunEvent, key: string, runtime?: string): void {
+    let s = sessionMap.get(key);
+    if (ev.kind === "agent-start-ask") {
+        if (!s) {
+            s = { hash: key, ...(runtime ? { runtime } : {}), model: ev.ask.model, tag: "session", kind: "agent", createdTs: ev.ts, lastTs: ev.ts, status: "pending",
+                turns: [], steps: [], task: ev.ask.task, maxSteps: ev.ask.budget, site: ev.ask.origin,
+                config: { system: null, model: ev.ask.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false } } as import("./store").Session;
+            sessionMap.set(key, s);
+            s.startAsk = { ask: ev.ask, ts: ev.ts, askOnly: true };
+        } else s.startAsk = { ask: ev.ask, ts: ev.ts };
+        s.site = ev.ask.origin; s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
+        return;
+    }
+    if (ev.kind === "agent-start-decided") {
+        if (!s?.startAsk || s.startAsk.ask.requestId !== ev.requestId) return;
+        // A refused start that made its own session leaves nothing behind; an expired one says so until dismissed.
+        if (ev.outcome === "denied" && s.startAsk.askOnly) { sessionMap.delete(key); rev.value++; return; }
+        s.startAsk = { ...s.startAsk, outcome: ev.outcome };
+        if (s.startAsk.askOnly && ev.outcome === "expired") { s.status = "err"; s.ended = true; s.cancelled = true; s.summary = ""; }
+        s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
+        return;
+    }
+    if (!s) { queueOrphan(key, ev as unknown as MlDebugEvent); return; }
+    if (ev.kind === "agent-site") s.site = ev.site;
+    else if (ev.kind === "agent-person") s.person = true;
+    else if (ev.kind === "agent-site-say") {
+        const seen = !!(ev.sayId && steerSeen.has(ev.sayId));
+        s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), id: ev.sayId, seen, site: ev.site }];
+        s.status = "pending"; s.ended = false; s.siteWait = undefined;
+    } else if (ev.kind === "agent-wait") s.siteWait = { prompt: ev.prompt, site: ev.site, ts: ev.ts };
+    else if (ev.kind === "agent-note") s.notes = [...(s.notes || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }];
+    s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
+}
+
 /** THE REDUCER: one `__mlDebug` event → the session model the whole panel reads. Must CONVERGE whatever
  *  the order — a cross-page run's replay and its live fan arrive interleaved — so it patches by `seq`
  *  rather than appending, and never recreates or re-seals a session it has already seen. */
-export function onDebug(ev: MlDebugEvent, runtime?: string): void {
+export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): void {
     // WHICH SESSION. The sidebar reduces one browser's sessions, so a session is its bare hash. A client that
     // reduces several RUNTIMES' events (the chat page, docs/spec/SESSION_CONTRACT.md) passes the runtime, and the
     // session's key becomes `runtime:hash`: hashes are unique only within a runtime, and every map keyed by a
     // session (steps, asides, decided gates, summaries) then keeps two runtimes apart without knowing about them.
-    const key = runtime ? `${runtime}:${ev.session.hash}` : ev.session.hash;
+    const key = runtime ? `${runtime}:${input.session.hash}` : input.session.hash;
+    if (WORKER_ONLY_KINDS.has(input.kind as SiteRunEvent["kind"])) { onSiteRunEvent(input as SiteRunEvent, key, runtime); return; }
+    const ev = input as MlDebugEvent;
     // --- ml.agent runs (own session kind) ---
     if (ev.kind === "agent") {
         const prev = sessionMap.get(key);
+        if (prev?.startAsk?.askOnly) prev.startAsk = { ...prev.startAsk, askOnly: false };
         // A cross-page re-adopt REPLAYS this start event. If the session already exists — from the run's first
         // life, OR because a live agent-step/agent-result raced ahead of the replay onto the fresh document —
         // do NOT recreate it: that would wipe the steps/answer/ended state the live events populated, leaving a
@@ -280,6 +340,7 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         // from the drained-id set, so a "seen" event that raced ahead of this bubble already counts.
         const seen = !!(ev.sayId && steerSeen.has(ev.sayId));
         s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), images: ev.images, id: ev.sayId, seen, ...(ev.display ? { display: ev.display } : {}) }];
+        s.siteWait = undefined;
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
         return;
     }

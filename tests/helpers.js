@@ -117,7 +117,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts, onTabsGet, holdRestore, onNative }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -138,6 +138,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
     const committedListeners = [];   // chrome.webNavigation.onCommitted listeners; fired by bg.commit(tabId, …)
+    const targetListeners = [];      // chrome.webNavigation.onCreatedNavigationTarget listeners; fired by bg.openedFrom(…)
     const sameDocListeners = { history: [], fragment: [] };   // onHistoryStateUpdated / onReferenceFragmentUpdated; fired by bg.sameDocumentNav
     const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     /** The tab's top-frame document now: the last committed, else an open tab's first (`doc-<tabId>`). */
@@ -154,6 +155,17 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
+    // Every origin a test seeds as allowed may also start agents without a card (`siteAgents`), unless the seed names
+    // its level: the tests here predate the agent level (SITE_ACCESS_SLICE3.md, PR 2) and are about what a run does.
+    // `siteAgents: null` keeps the seed as written (the upgrade fixtures, the agent level's own tests).
+    if (siteAgents) {
+        const seeded = [...(Array.isArray(local.ml_site_always) ? local.ml_site_always : []), ...(Array.isArray(session.ml_site_session) ? session.ml_site_session : [])];
+        if (seeded.length) {
+            const agents = { ...(local.ml_site_agents || {}) };
+            for (const o of seeded) if (typeof o === "string" && !(o in agents) && !(session.ml_site_agents && o in session.ml_site_agents)) agents[o] = siteAgents;
+            localStore.ml_site_agents = agents;
+        }
+    }
     /** Put a page sender's origin on the approved list, as a person allowing the site would (see `send` below). */
     const approveSender = (sender) => {
         if (!sender?.tab) return;
@@ -166,6 +178,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         if (!/^https?:/.test(o)) return;
         const list = localStore.ml_site_always || (localStore.ml_site_always = []);
         if (!list.includes(o)) list.push(o);
+        // And lets it start agents without a card, as the tests here predate the agent level (SITE_ACCESS_SLICE3.md,
+        // PR 2): they are about what a run does, not whether the site may start one. tests/redteam-agent-level.test.mjs
+        // is where the level is tested, with `siteGate: true`.
+        if (!siteAgents) return;
+        const agents = localStore.ml_site_agents || (localStore.ml_site_agents = {});
+        if (!(o in agents)) agents[o] = siteAgents;
     };
     /** storage.onChanged's `changes` for a write of `obj` over `store`. */
     const changesOf = (store, obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, { oldValue: store[k], newValue: v }]));
@@ -218,6 +236,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             // the harness on its own, so a test that never commits sees no document at all.
             webNavigation: {
                 onCommitted: { addListener: (fn) => committedListeners.push(fn), removeListener: (fn) => { const i = committedListeners.indexOf(fn); if (i >= 0) committedListeners.splice(i, 1); } },
+                onCreatedNavigationTarget: { addListener: (fn) => targetListeners.push(fn) },
                 // Like the browser, a live tab always has a top-frame document: the last one committed, else its first.
                 getFrame: async ({ tabId, frameId }) => (frameId === 0 && docOf(tabId) ? { documentId: docOf(tabId), frameId: 0, ...(urlOf(tabId) ? { url: urlOf(tabId) } : {}) } : null),
                 // A same-document navigation (pushState, a fragment) keeps the document: fired by bg.sameDocumentNav only.
@@ -440,6 +459,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             if (frameId === 0) { committedDocs.set(tabId, documentId); committedUrls.set(tabId, url); }
             for (const fn of [...committedListeners]) fn({ tabId, frameId, documentId, url, ...extra });
         },
+        /** A tab opened FROM another tab's page (a link into a new tab, `window.open`): webNavigation.onCreatedNavigationTarget. */
+        openedFrom: (sourceTabId, tabId, url = "https://page.test/") => { for (const fn of [...targetListeners]) fn({ sourceTabId, sourceFrameId: 0, tabId, url }); },
         /** A prerendered document becoming the tab's top frame (activation): the browser fires no main-frame commit
          *  for it (its commit was reported earlier, with the prerender's own non-zero frameId); getFrame names it. */
         activate: (tabId, { documentId, url }) => { committedDocs.set(tabId, documentId); committedUrls.set(tabId, url); },

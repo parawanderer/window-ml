@@ -242,14 +242,14 @@ test("GAIN blocked — a page cannot write ml_site_agents or ml_site_selfapprove
     const local = { ml_site_always: ["https://evil.example", "https://victim.example"], ml_site_agents: { "https://victim.example": "ask" }, ml_site_selfapprove: ["https://friend.example"], ml_site_schema: 2 };
     const sender = () => ({ tab: { id: 9, url: "https://evil.example/attack" }, url: "https://evil.example/attack", origin: "https://evil.example", frameId: 0 });
     for (const type of ["SITE_ACCESS", ...PAGE_STARTED_TYPES]) for (const edit of edits) {
-        const bg = loadBackground({ config: baseConfig(), siteGate: true, local: structuredClone(local), onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+        const bg = loadBackground({ config: baseConfig(), siteGate: true, siteAgents: null, local: structuredClone(local), onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
         await Promise.race([bg.send({ type, payload: { edit, origin: edit.origin, tools: [], messages: [{ role: "user", content: "hi" }] } }, sender()), tick()]);
         await tick();
         assert.deepEqual([bg.localStore.ml_site_agents, bg.localStore.ml_site_selfapprove], [local.ml_site_agents, local.ml_site_selfapprove], `${type} ${JSON.stringify(edit)}`);
         assert.equal(bg.sessionStore.ml_site_agents, undefined, `${type} ${JSON.stringify(edit)}: the session half`);
     }
     // Positive control: the extension's own Settings page writes both.
-    const bg = loadBackground({ config: baseConfig(), siteGate: true, local: structuredClone(local) });
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, siteAgents: null, local: structuredClone(local) });
     const settings = { url: "chrome-extension://test/sidebar.html" };
     await bg.send({ type: "SITE_ACCESS", payload: { edit: edits[1] } }, settings);
     await bg.send({ type: "SITE_ACCESS", payload: { edit: edits[2] } }, settings);

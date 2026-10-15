@@ -26,6 +26,7 @@ export interface AgentControl {
     stepBase: number;             // monotonic STEP base so turn groups stay distinct in the sidebar across turns
     bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
     tokens?: import("../pointers/token-pipe").TokenStore;   // the SESSION's `@tool:` pointer store — spans every turn (see AgentLoopOptions.tokenStore)
+    synced?: number;              // a worker-hosted run: how much of `messages` the worker returned, so what was added since is sent as this turn's text
 }
 
 // Monotonic id per mid-run steer (a.say()), so the "seen" indicator can key an `agent-say-seen` event
@@ -117,6 +118,14 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
             this.messages.push({ role: "user", content: text });
             console.info("ml.agent: no run in flight — say() queued the message into history; call run() to have the agent process it.");
         }
+    }
+
+    /** End the page's part of the turn and hand the conversation to the person (docs/spec/SITE_ACCESS_SLICE3.md, Q2b):
+     *  the worker stops the run and shows `prompt`, labelled as this site's, over the reply box. What the person types
+     *  comes back through this page as their own turn. Only for a run the extension hosts. */
+    async waitForPerson(prompt: string): Promise<void> {
+        if (!this.bg || !this.hash) throw new Error("ml.createAgent: waitForPerson needs a run the extension hosts.");
+        await makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text: "", waitForPerson: String(prompt ?? "") });
     }
 
     cancel(): void {

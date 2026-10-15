@@ -94,12 +94,12 @@ const START_FIELDS: Record<string, Check> = {
     resumeMessages: optional(listOf(RUN_PAYLOAD_LIMITS.resumeMessages, message)), images: optional(listOf(RUN_PAYLOAD_LIMITS.images, str)),
     stepBase: optional(count), seqBase: optional(count), labelMatch: optional(oneOf(LEXICAL_METRICS)), surface: optional(oneOf(["overlay", "devtools", "off"])),
     pageOrigin: optional(str), pageUrl: optional(str), pageTitle: optional(str),
-    crossOrigin: optional(bool), crossPage: optional(bool), rebuild: optional(rebuild),
+    crossOrigin: optional(bool), crossPage: optional(bool), rebuild: optional(rebuild), env: optional(bool),
 };
 const START_REQUIRED = ["runId", "task", "systemPrompt", "tools"] as const;
 
 const RESUME_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), task: str };
-const INJECT_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), text: str, sayId: optional(str), origin: optional(obj) };
+const INJECT_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), text: str, sayId: optional(str), origin: optional(obj), waitForPerson: optional(str) };
 const CANCEL_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at) };
 
 const FIELDS: Record<string, [Record<string, Check>, readonly string[]]> = {

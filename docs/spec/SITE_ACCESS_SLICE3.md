@@ -79,7 +79,7 @@ Notes on the text below:
 | Only when the site sent `system` or `systemAppend` | The site also wrote instructions the model reads before the task. **Show** |
 | Their disclosure | The same quote style, labelled "Instructions, in the site's own words" |
 | Label above the tool list | It can: |
-| Tool lines | One fixed sentence for each builtin the run has (below). The site's tool descriptions are never shown |
+| Tool lines | One fixed sentence for each builtin the run has (below). A site's own tools' descriptions are shown as the site's instructions (S2, owner, 2026-10-14) |
 | Model line | Model: `{model}` (the model the worker resolved, after the filter) |
 | Budget line | Up to {n} steps a turn (Q2) |
 | Page turn line | The site may send up to {m} more messages to this agent before it asks again (Q2) |
@@ -88,6 +88,11 @@ Notes on the text below:
 | Review | The card lets the person review every parameter the site set, the system prompt included (Q4). Page-side content in the system prompt is kept small |
 | Info control (`aria-label`) | What these choices do |
 | Buttons, left to right | **Deny** · **Allow this agent** (Q16; the spec's "Allow once") · **Always allow agents from {host}** |
+
+**S2 (owner, 2026-10-14):** a site-defined tool's description and parameters are instructions the model reads, so they
+count as the site's instructions: quoted in the instructions disclosure, labelled as the site's own words, and a changed
+one asks again (Q3, with the SHA-256 binding). A tool named like a builtin always reads to the model as the extension's
+own: its description and parameter descriptions are the extension's, never the page's.
 
 The tool lines, keyed by builtin name. A name the worker does not recognise as a builtin counts as one of the site's own
 tools.
@@ -308,6 +313,10 @@ Each one is the `{ error }` of the request, passed through `forPage` (and `forMo
 | A run id another site started | Refused: run "{id}" was started by another site. |
 | `resumeMessages` on a run's first turn (Q4) | Refused: an agent's first turn cannot carry an earlier conversation. |
 | The agent level revoked mid-run (Q9) | The run ends cancelled. Its result's summary reads: Cancelled: this site may no longer start agents. |
+
+Until `ml.requestAccess` takes `{ agents: true }` (PR 4) and the toolbar button can set the agent level (PR 3), the
+first two rows ship without the hint that names them: "Pass `host: "page"` to run the loop in the page." and "The person
+can allow it in DevTools Settings → Permissions." A hint names only a call or a control that can grant the level.
 
 Existing refusals that change because the whitelist becomes origins. They are rewritten to say "the list of sites that
 approve their own actions":
@@ -622,8 +631,10 @@ The framing:
   - A tool line comes from a fixed table keyed by the builtin's name.
   - `pageStartPayload` already forces `requiresApproval` on gated builtins and server tools, so a custom tool named
     `exec` is still gated.
-  - What the page calls its own tools never reaches the card. They are counted ("{n} tools the site defined"), because
-    they run as the page's own code and get nothing the page lacks.
+  - What the page calls its own tools is counted in the tool lines ("{n} tools the site defined"), because they run as
+    the page's own code and get nothing the page lacks. Their descriptions are the site's instructions, shown in the
+    instructions disclosure (S2, owner, 2026-10-14), and a tool named like a builtin reads to the model as the
+    extension's own.
 - **The model and budgets are the worker's values.** The model is the one resolved after the model filter. The per-turn
   budget is `stepBudget`'s value, capped at 200. The page turn budget is the worker's own number, never the page's.
 - **A page-sent turn cannot pass for the person's** (Q2a). The worker marks it "Message from the page ({origin}):

@@ -282,7 +282,7 @@ test("a page RESUME_RUN with an origin carries the run's own: its follow-up is n
         config, openTabs: [{ id: 7, url: SITE, title: "Site" }],
         onFetch: async (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
-            if (call.body.messages?.some((m) => m.content === "FORGED TURN")) await held;
+            if (call.body.messages?.some((m) => String(m.content).endsWith("FORGED TURN"))) await held;
             return jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_t, msg) => (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),

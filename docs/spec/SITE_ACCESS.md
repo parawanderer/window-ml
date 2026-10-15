@@ -382,6 +382,25 @@ API.
 
 Recorded as each slice lands, with the reason.
 
+- **Slice 3, PR 2: where an agent's loop runs is explicit (Q1).** `ml.agent({ host: "page" })` is the page's own loop,
+  plain window.ml use with no server tools; without it the run is the worker's and needs the agent level. The one
+  exception kept is a self-approving site with no debug surface, whose own loop and `approve` are what the list is for.
+- **Slice 3, PR 2: one approval per conversation, bounded (Q2, Q2a, Q2b).** Turns are per-turn budgets; the page's
+  own turns draw from a page turn budget (10) the card states, past which the site asks to keep going. A turn the
+  person sends through the extension is relayed by the page (its handle lives there), so the worker notes it first and
+  takes the page's copy of exactly that text as the person's. A page's turns reach the model marked as the page's. A
+  page may end its turn waiting for the person (`waitForPerson`).
+- **Slice 3, PR 2: a later turn that widens what was allowed asks again (Q3)**, and a first turn's page-written history
+  is refused while a later turn's is replaced by the worker's (Q4). The spec bound the approval to the session only.
+- **Slice 3, PR 2: revoking the agent level cancels the site's live runs (Q9)**, where revoking the site hands them to
+  the worker (#621).
+- **Slice 3, PR 2: a page a running agent opened never starts an agent (Q17).** Its start is recorded and shown as one
+  quiet line in the driving run's steps; `requestAccess`'s record of the same is PR 4's.
+- **Slice 3, PR 2: the start card shows on the HUD card, the overlay sidebar and the DevTools panel only (Q7).** The
+  chat page and the phone cannot show it yet: the ask is a live notice that never enters the session index the chat
+  page reads, and the phone would need it in the hub's gate protocol. A site's agent helps with the page the person is
+  looking at, while the chat page is for talking to the model, so it has no natural place for the ask yet.
+
 - **Slice 0 exists.** It was not in the original spec; see [above](#runs-the-user-starts-are-built-in-the-worker-slice-0).
 - **A page may not start a turn in, resume or steer a run the worker built** (`isWorkerRun`, refused at the router),
   even knowing its id. Found while building slice 0: the id reaches the page in the run's own debug events, so without

@@ -290,50 +290,81 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         function: { name: t.name, description: t.description, parameters: t.parameters }
     }));
     const hasCap = (cap: "vision" | "answer") => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
-    let systemPrompt = system || AGENT_SYSTEM;
-    if (!system) {
-        // Adapt the default prompt to what the toolset can actually do.
-        systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
-        if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
-        if (toolTokens) systemPrompt += tooltokensClause(!!byName.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
-        // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
-        // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
-        if (toolset.some(t => SHADOW_TRIGGER_TOOLS.includes(t.name))) {
-            // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
-            // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
-            systemPrompt += shadowClause(toolset.map(t => t.name), pierceClosed) + IFRAME_CLAUSE;
-            if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
-        }
-        if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
-        // The pipe dialect, ONCE, when anything in this toolset actually takes a `pipe`. Detected
-        // from the SCHEMA rather than a list of tool names, so a new tool that grows a `pipe`
-        // parameter is covered without anyone remembering this line — and a toolset with none of
-        // them pays nothing. The tool and its dialect always arrive together, which is what lets
-        // the parameters themselves be one sentence pointing here.
-        if (toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe))
-            systemPrompt += PIPE_CLAUSE;
-        // Deterministic-compute clause. python_exec is the better calculator; when it's
-        // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
-        // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
-        if (toolset.some(t => t.name === "python_exec")) systemPrompt += PYTHON_CLAUSE;
-        else if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
-        // exec (JS) style: functional idioms + ml.range instead of loops/mutation. Independent of the
-        // compute clause above (applies even alongside python_exec, since it's about exec JS specifically).
-        // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
-        if (selfIntro && autoRO && toolset.some(t => t.name === "exec")) systemPrompt += currentClause(toolset.some(t => t.name === "agent_api_docs"));
-        // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
-        // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
-        if (unattended) systemPrompt += UNATTENDED_CLAUSE;
-        // Navigation disabled: say so upfront (no navigate tool + a nav ends the run) so the model
-        // reports back instead of clicking a link and silently dying.
-        if (!navigate) systemPrompt += NAV_OFF_CLAUSE;
-    }
-    if (systemAppend) systemPrompt += `\n\nTask-specific notes:\n${systemAppend}`;
+    const names = toolset.map(t => t.name);
+    const systemPrompt = composeSystemPrompt({
+        system, systemAppend, names, vision: hasCap("vision"), toolTokens, answer: !!byName.answer, pierceClosed,
+        pipe: toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe),
+        current: !!(selfIntro && autoRO), unattended, navigate,
+    });
 
     return {
         toolset, byName, toolDefs, systemPrompt, task, pendingImages, turnImages, agentCfg, runModel, driverSees,
         runVisionModel, runGroundingModel, runGroundingRange, autoRO, autoPy, autoSOA, autoSelfSrc, selfIntro, labelMatch, pierceClosed, cdpOn,
     };
+}
+
+/** What decides a run's stock system prompt: its tools and the few options that change what the model is told. */
+export interface PromptFacts {
+    /** REPLACES the preamble and every clause. */
+    system?: string | null;
+    /** Appended under "Task-specific notes". */
+    systemAppend?: string | null;
+    /** The run's tool names. */
+    names: readonly string[];
+    vision?: boolean; toolTokens?: boolean; answer?: boolean; pierceClosed?: boolean;
+    /** A tool takes a `pipe`. */
+    pipe?: boolean;
+    /** Its read-only surveys may read `ml.current`. */
+    current?: boolean;
+    unattended?: boolean; navigate?: boolean;
+}
+
+/**
+ * A run's system prompt, from its facts: the preamble adapted to what the toolset can do, then the run's own notes.
+ * Pure, and the one place the composition lives, so what the worker recognises as the extension's own text
+ * (site-instructions.ts) is tested against every composition there is.
+ * @param f the facts
+ * @returns the prompt, before the page's context is added
+ */
+export function composeSystemPrompt(f: PromptFacts): string {
+    const has = (n: string): boolean => f.names.includes(n);
+    let systemPrompt = f.system || AGENT_SYSTEM;
+    if (!f.system) {
+        // Adapt the default prompt to what the toolset can actually do.
+        systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
+        if (f.vision) systemPrompt += VISION_CLAUSE;
+        if (f.toolTokens) systemPrompt += tooltokensClause(!!f.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
+        // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
+        // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
+        if (f.names.some(n => SHADOW_TRIGGER_TOOLS.includes(n))) {
+            // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
+            // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
+            systemPrompt += shadowClause(f.names, f.pierceClosed) + IFRAME_CLAUSE;
+            if (has("exec")) systemPrompt += SHADOW_EXEC_NOTE;
+        }
+        if (has("agent_api_docs")) systemPrompt += SELF_CLAUSE;
+        // The pipe dialect, ONCE, when anything in this toolset actually takes a `pipe`. Detected
+        // from the SCHEMA rather than a list of tool names, so a new tool that grows a `pipe`
+        // parameter is covered without anyone remembering this line — and a toolset with none of
+        // them pays nothing. The tool and its dialect always arrive together, which is what lets
+        // the parameters themselves be one sentence pointing here.
+        if (f.pipe) systemPrompt += PIPE_CLAUSE;
+        // Deterministic-compute clause. python_exec is the better calculator; when it's
+        // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
+        // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
+        if (has("python_exec")) systemPrompt += PYTHON_CLAUSE;
+        else if (has("exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
+        // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
+        if (f.current && has("exec")) systemPrompt += currentClause(has("agent_api_docs"));
+        // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
+        // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
+        if (f.unattended) systemPrompt += UNATTENDED_CLAUSE;
+        // Navigation disabled: say so upfront (no navigate tool + a nav ends the run) so the model
+        // reports back instead of clicking a link and silently dying.
+        if (f.navigate === false) systemPrompt += NAV_OFF_CLAUSE;
+    }
+    if (f.systemAppend) systemPrompt += `\n\nTask-specific notes:\n${f.systemAppend}`;
+    return systemPrompt;
 }
 
 /**

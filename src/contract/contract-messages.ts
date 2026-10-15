@@ -161,6 +161,9 @@ export interface StartRunPayload {
      *  background streams it to the card as usual; the card reads this and suppresses itself. Approvals
      *  still surface (privileged consent can't be silenced). */
     silent?: boolean;
+    /** The run wants the page's context in its system prompt (`ml.agent`'s `env`, default true). For a run a page starts,
+     *  the worker writes that context itself from the browser's facts, never the page's copy. */
+    env?: boolean;
     /** A createAgent handle's prior history: when present, the background CONTINUES it (appends `task`)
      *  instead of building a fresh system+task — so the page-side control.messages stays authoritative
      *  across turns (the run's final history rides back in the response). Empty/absent → a fresh first turn
@@ -276,6 +279,9 @@ export interface ResumeRunPayload {
 export interface InjectMessagePayload {
     runId: string;
     text: string;
+    /** The page ends its turn waiting for the person (`handle.waitForPerson`): the run stops and this prompt is shown,
+     *  labelled as the site's, above the reply box. `text` is then empty. */
+    waitForPerson?: string;
     /** A stable id for this steer message, minted page-side, so the SW can fan an `agent-say-seen`
      *  event (the "seen" indicator) keyed to the same bubble when the loop actually drains it. */
     sayId?: string;

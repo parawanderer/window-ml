@@ -31,6 +31,7 @@ import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { defineTool } from "../ml/ml-tool-factories";
+import { notePersonTurn } from "./sw-start-approval";
 
 /**
  * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
@@ -183,7 +184,12 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     if (!isWorkerRun(hash)) {
         const here = originOf(await chrome.tabs.get(tabId).then((t) => t.url, () => undefined));
         const decision = here ? await siteDecision(here) : "unknown";
-        if (decision === "always" || decision === "session") return null;
+        if (decision === "always" || decision === "session") {
+            // The page relays it, as the run's handle lives there: its copy of exactly this text is the person's turn,
+            // not one of the site's (docs/spec/SITE_ACCESS_SLICE3.md, Q2). Framed as the page frames it (injected.ts).
+            await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
+            return null;
+        }
         makeWorkerRun(hash);
     }
     const surface = promptSurfaceOf(body.surface);
