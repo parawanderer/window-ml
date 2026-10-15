@@ -613,7 +613,7 @@
   },
   {
     "name": "py: a copy of an injected table is the cell's",
-    "py": "d = df.copy()\nd[\"new\"] = 1\nreturn int(d.shape[1])",
+    "py": "d = df.copy()\nd[\"new\"] = 1\nreturn len(d.keys())",
     "env": "table",
     "expect": {
       "value": 4
