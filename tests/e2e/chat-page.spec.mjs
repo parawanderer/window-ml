@@ -580,7 +580,7 @@ test("the run state panel lists every declared member of the open run, what each
         // A message row has ml.current's own field names, so a copied path names what the model reads.
         await messages.locator(".jt-clickable").first().click();
         await messages.locator(".jt-clickable").nth(1).click();
-        await expect(messages.locator(".jt-row", { hasText: "content:" }).first()).toBeVisible();
+        await expect(messages.locator(".jt-row", { hasText: '"content":' }).first()).toBeVisible();
         await messages.locator(".jt-clickable").first().click();
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
@@ -647,7 +647,7 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         await expect(gates).toContainText('"exec"');
         // The start origin is consented from the first step: navigating and fetching there never asks.
         const turn = await open("grants.turn");
-        await turn.getByRole("button", { name: /origins:/ }).click();
+        await turn.getByRole("button", { name: /"origins":/ }).click();
         await expect(turn).toContainText(new URL(site.url).origin);
         await expect(turn.locator(".rstate-aud")).toHaveText("you only");
         // THE PAGE'S OWN STATE, asked of the tab the run is on: its answer set is held there while the turn runs (empty
@@ -773,8 +773,8 @@ test("the run state panel joins the run's pointers to the stored values behind t
         await expect(pointers).toContainText('"fetch_url"');
         await expect(pointers).toContainText('"the orders"');
         // The tool result the model was handed names it, so the context still MENTIONS it.
-        await expect(pointers.locator(".jt-row", { hasText: "linked:" })).toContainText("true");
-        const stored = (await pointers.locator(".jt-row", { hasText: "stored:" }).textContent()).match(/"([^"]+)"/)?.[1];
+        await expect(pointers.locator(".jt-row", { hasText: '"linked":' })).toContainText("true");
+        const stored = (await pointers.locator(".jt-row", { hasText: '"stored":' }).textContent()).match(/"stored":\s*"([^"]+)"/)?.[1];
         expect(stored, "the pointer names the stored body it previews").toBeTruthy();
 
         // The stored body, joined by its key: the same key, with where it came from.
@@ -877,7 +877,7 @@ test("the run state panel folds a group to a count, and copies a member's value,
         // ...and any row's value or PATH from a right-click. The path is the expression that reaches it, rooted where
         // the member lives, so it pastes into a watch or the console as is.
         await init.locator(".jt-clickable").first().click();
-        const task = init.locator(".jt-row", { hasText: "task:" });
+        const task = init.locator(".jt-row", { hasText: '"task":' });
         await task.click({ button: "right" });
         // The row the menu is about is marked while the menu is open, and only then.
         await expect(task).toHaveClass(/ctx-target/);
