@@ -1,6 +1,6 @@
 {
-  "commit": "b1840bcb8f89aac6fb04dc09d893a2d44271bf26",
-  "extracted_at": "2026-10-15T12:04:23+00:00",
+  "commit": "819743f656beaae8eb8feeb48a7fef71e6e0bdd8",
+  "extracted_at": "2026-10-15T17:34:32+00:00",
   "rows": [
     {
       "cells_after_dedupe": {
@@ -18,7 +18,9 @@
       "clones": [
         "window-ml",
         "window-ml-bench",
+        "window-ml-chat-scroll",
         "window-ml-chatpage",
+        "window-ml-embeds",
         "window-ml-host",
         "window-ml-hub",
         "window-ml-hub-v0.4.3",
@@ -27,12 +29,13 @@
         "window-ml-repl",
         "window-ml-repl-lane1",
         "window-ml-repl-lane2",
+        "window-ml-repl-lane2-706",
         "window-ml-repl-lane3",
         "window-ml-repl-lane4"
       ],
       "files_scanned": {
         "run.json": 2784,
-        "run.md": 893,
+        "run.md": 900,
         "store_fetched": 98,
         "store_listed": 2514,
         "zip": 32
