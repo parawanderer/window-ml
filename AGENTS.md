@@ -384,7 +384,9 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
   go through `sw-scrub.ts`; only extension pages and the run log's `key` keep the raw text. → site-access.md
 
 - **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`, or
-  the page is not approved (`exec-routing.ts`): never hand either to the page's main world. → site-access.md
+  the page is not approved (`exec-routing.ts`): never hand either to the page's main world. With neither isolated
+  world available, `ml.current` and `ml.sh` and an unapproved page are REFUSED; a pointer script on an approved page
+  falls back to the main world with a note (owner's decision). → site-access.md
 
 - **Config overrides (URL/key) are accepted only from the popup.** Page-relayed
   messages have `sender.tab` set; `background.js` strips overrides when it's set,
