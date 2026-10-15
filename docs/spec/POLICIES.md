@@ -166,7 +166,14 @@ On every call not yet started:
 - **A card already showing** is re-judged when a policy changes: a new `allow` answers it, a new `always reject`
   refuses it, and the card closes saying why.
 - **A run that relied on a policy is told** when its next call meets the change: the result says the call now needs the
-  person (or was refused) because the policy that covered it was removed, not that the call itself changed.
+  person (or was refused) because the policy that covered it was removed, not that the call itself changed. Not built
+  as of 2026-10-15 (lane 2): the call asks, and the reason is not said. It stays in the spec as the intended behaviour.
+- **Re-judging reads only resolved facts** (ruling, 2026-10-15). A showing card is re-judged only when its descriptor
+  carries the consumer's resolved facts, effects included; a descriptor without them is left to the person, never judged
+  with `effects` read as `unknown`. Reading it as the top element is right for the built-in default, which allows no
+  unknown, but a person's `allow` that never looks at `c.effects` would then answer a call whose effects were never
+  resolved, which is the case the universal default exists to send to a card. Today the consumers re-judged are `fetch`
+  and `sh`; the descriptor type makes `effects` required for both (lane 4's seam).
 - **A store not yet loaded means ASK, free tiers included** (lane 2, 2026-10-15). After a worker wake the saved policies
   are read asynchronously; until they are, every gated call asks, because an unloaded `deny` is an unenforced one and
   an unloaded `allow` costs only a card. The consumer's gate (`judgeCall`) carries this rule itself, so a consumer added
@@ -192,6 +199,18 @@ policies"), off by default. The two answer different questions: a call is always
 but WHICH calls it allows cannot be read off the code, since that is a question over every possible input, with regexes
 and string operations inside. A tree small enough to analyse can answer it; code cannot, so the breadth shown for a code
 policy is measured, never derived.
+
+**How a measured breadth is probed** (lane 2's red team, 2026-10-15, and the ruling on it). The worker runs the proposal
+over this run's own calls and over PROBE URLs on hosts the run never used, and the card leads with both counts. The red
+team showed that constant probes are excluded by name (`c.host !== "<probe>"`) and the probes were made random per
+proposal. Random names are not enough: the dialect has `startsWith`, `endsWith` and `split`, so a policy can exclude
+probes by SHAPE (`!c.host.endsWith(".invalid")`) and still match every real site. The rule is that the probe set carries
+no fixed marker a policy could key on: random labels of random length under common public suffixes (`.com`, `.org`,
+`.net`) as well as the reserved ones, a SIBLING of each host the proposal matched (same public suffix, a different random
+label; a policy written for `shop.com` that also admits `<random>.com` reaches past the run), a path and a scheme variant
+of a matched URL, plus loopback and a private address, which stay fixed because reaching them is always past any site. A
+zero-stray result is reported as "matched none of the N unrelated sites it was tried on", never as "reaches no other
+site": outside the decidable fragment a measurement is a sample, and the card says so.
 
 **Every allowed call says which policy allowed it**, in the run log and on the call's row, and a run's policies are
 readable by the model without approval, since reading what you may do is not an escalation. Where that lands
