@@ -180,7 +180,7 @@ words, the crop box, and expected-vs-actual. The workflow also writes a pointer 
 
 | Job | Catches |
 | --- | --- |
-| `test` (Node 22/24/26) | `npm run typecheck` + the whole fast suite, including real-CPython tests when the pyodide wheels cache hits |
+| `test (node 26)` | `npm run typecheck` + the whole fast suite, including real-CPython tests when the pyodide wheels cache hits |
 | `build` | that `dist/` still builds, and uploads a loadable extension |
 | `e2e (N/3)` | the built extension in a real Chromium — navigation, the SW lifecycle, layout, anything jsdom cannot represent. One third of the suite each (`--shard=N/3`); read the failing SHARD's log, not the `e2e` job's |
 | `e2e` | the three shards' verdict in one check: red if any shard was not green. Its own log only says which result it saw |
