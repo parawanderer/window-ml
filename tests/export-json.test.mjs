@@ -379,3 +379,13 @@ test("a session that never moved page says nothing about resumes", () => {
     assert.equal("resumes" in sessionToJson(agentSession()).session, false);
     assert.equal("resumes" in sessionToJson(agentSession({ resumes: [] })).session, false);
 });
+
+test("a step's nested asks export with their facts, how each ended and when", () => {
+    const asks = [{ id: "a0123456789abcdef01234567", kind: "sh", facts: { argv: ["git", "status"], sandboxed: true }, state: "denied", raisedAt: 1_700_000_002_100, answeredAt: 1_700_000_004_100, note: "not now" }];
+    const s = agentSession();
+    s.steps[1] = { ...s.steps[1], asks };
+    const doc = sessionToJson(s);
+    assert.deepEqual(doc.session.steps[1].asks, asks);
+    assert.equal(doc.session.steps[0].asks, undefined, "a step that asked nothing carries no field");
+});
+

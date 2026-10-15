@@ -59,6 +59,7 @@ import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
+import { hostAsks, stepAsks } from "./sw-asks";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -425,7 +426,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // no surface ever learns it did (the observer/HUD sat on "running"). See emitLifecycle below.
     let hasNavigated = false;
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
-    const settle = (): void => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks)
+    let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
+    const settle = (): void => { unhostAsks?.(); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks)
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -479,6 +481,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // curated view of the same data; devtools fans to the panel. The card mounts itself lazily on the
         // first of these (which reach the shell over chrome.runtime, never the page) and self-reveals for a pending gate / the
         // final answer, so a no-approval off run streams to a hidden, cheap-to-mount card.
+        // The last event of each step that carried its tool, by RAW seq: a nested ask re-emits it with the step's asks, so
+        // the ask rides the event every surface already renders (sw-asks.ts). A turn's own; gone with it.
+        const lastStepEv = new Map<number, Record<string, unknown>>();   // state: plumbing — one turn's step events, for re-emitting a step with its asks
         const emitStep = (ev: Record<string, unknown>): void => {
             // Once the run is aborted (CANCEL_RUN), stop fanning steps: an in-flight tool's DONE resolves
             // AFTER the abort (the page tool round-trip isn't cancellable), and a straggler landing after the
@@ -493,9 +498,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (rawSeq != null && rawSeq > runMaxSeq) runMaxSeq = rawSeq;
             const step = stepBase + rawStep;
             const seq = rawSeq != null ? seqBase + rawSeq : rawSeq;
+            if (rawSeq != null && ev.tool != null) { const { asks: _asks, ...rest } = ev; lastStepEv.set(rawSeq, rest); }
+            // A step that raised asks carries them on every later event too (its DONE included), so no surface, export
+            // or saved session sees the step without what it asked.
+            const asks = seq != null && ev.asks === undefined && ev.tool != null ? stepAsks(runId, seq) : undefined;
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
-                session: { hash: runId, turn: step }, ...ev, step, localStep: rawStep, seq,
+                session: { hash: runId, turn: step }, ...ev, ...(asks?.length ? { asks } : {}), step, localStep: rawStep, seq,
                 // Running delegated-sub-call tally for the SESSION (seeded from the stored run's, so it carries across
                 // turns), so the UI "+N sub" chip works on the background path too (the page path attaches
                 // subcallUsage() the same way). Omit when nothing delegated.
@@ -523,6 +532,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             ingestSessionEvent(event, { tabId, trusted: true });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
+        // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
+        unhostAsks = hostAsks({
+            runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
+            emit: (seq, asks) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }); },
+            stepOf: (seq) => stepBase + (Number(lastStepEv.get(seq - seqBase)?.step) || 0),
+            running: (seq) => !!lastStepEv.get(seq - seqBase)?.pending,
+        });
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
          *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
          *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */

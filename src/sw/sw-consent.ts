@@ -24,7 +24,18 @@ import { defineState } from "../state-registry";
 // extension iframe). The approve/deny decision is made here and never crosses the page: the point of A.
 // Each entry keeps the resolver AND a serializable DESCRIPTOR (what's being approved) so an EXTERNAL
 // approver — the `__mlApprovals` IPC channel below — can enumerate and decide gates exactly like the UI.
-export interface PendingApprovalDescriptor { key: string; runId: string; seq: number; step: number; tool: string; arguments: Record<string, unknown>; ts: number; routing: "ui" | "both" | "external"; }
+export interface PendingApprovalDescriptor {
+    key: string; runId: string; seq: number; step: number; tool: string; arguments: Record<string, unknown>; ts: number; routing: "ui" | "both" | "external";
+    /** Present only on a NESTED ask (sw-asks.ts): a call made from inside the running step `seq`; the key is then
+     *  `${runId}:${seq}#${askId}`. Every field below is optional, so a step's own gate is unchanged. */
+    askId?: string;
+    /** Which policies apply to the call (`fetch`, `sh`): what a policy store re-judges a pending gate by. */
+    consumer?: string;
+    /** The policy's `c` for the call, as plain data built in the worker from what it resolved. */
+    facts?: Record<string, unknown>;
+    /** The enforcer whose bound the built-in default policy uses (effects.ts). */
+    placement?: import("../effects").Placement;
+}
 
 // A gate is reachable by the external channel ONLY if its run OPTED IN (approvalRouting "both"/"external").
 // A default "ui" run's gate can't be silently approved from outside — the driver must declare intent.

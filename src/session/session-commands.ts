@@ -15,6 +15,7 @@ import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
+import { approvalKey } from "../approval-key";
 
 /** What a page said it did with a relayed session action. `no-answer`: it did not reply in time. */
 export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" | "none" | "no-answer";
@@ -611,7 +612,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const decision = c.decision === "approve"
                 ? { approved: true as const, ...(c.persist ? { persist: true } : {}) }
                 : { approved: false as const, ...(typeof c.feedback === "string" && c.feedback ? { feedback: c.feedback.slice(0, 2000) } : {}) };
-            return ok({ resolved: deps.resolveApproval(`${s.id.hash}:${c.seq}`, decision) });
+            // A nested ask is answered by its id beside the seq; a malformed id resolves nothing, not the step's own gate.
+            const key = approvalKey(s.id.hash, c.seq, c.ask);
+            if (!key) return fail("invalid", "an ask id is a and 24 hex digits");
+            return ok({ resolved: deps.resolveApproval(key, decision) });
         },
 
         "page.highlight": async (c) => {

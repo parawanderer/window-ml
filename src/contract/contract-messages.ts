@@ -248,6 +248,8 @@ export interface SetApprovalPayload {
     /** button #3: on a positive decision, ALSO persist the gated call's static egress grants for the
      *  session (the background re-derives them from the call — this is just the "remember it" intent). */
     persist?: boolean;
+    /** The NESTED ask inside step `seq` this answers (src/sw/sw-asks.ts); absent for the step's own gate. */
+    ask?: string;
 }
 
 /** CANCEL_RUN payload — abort a background-hosted run by id (the HUD's "Cancel agent run"). Harmless

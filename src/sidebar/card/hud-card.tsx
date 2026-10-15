@@ -14,7 +14,8 @@ import { residentNow } from "../resource/panel-facts";
 import { orbStatus } from "../transcript/orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
 import { exportSession, printSession } from "../export/export";
 import { IconChevron, IconWarn, IconSend, IconPlay } from "../icons";
-import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "../ui-kit";
+import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey, askKey, sendApproval } from "../ui-kit";
+import { AskList } from "../transcript/ask-card";
 import { ContinueRun, ReplyBubble } from "../transcript/reply";
 import { AgentTurn, ToolStep, GrantCard, hasPersistGrants, KEEP_HINT } from "../transcript/agent-detail";
 import { AnswerBody, ResultBlock } from "../transcript/answer-render";
@@ -22,7 +23,7 @@ import { useImageAttach, ThumbStrip } from "../transcript/composer";
 import {
     cardSelectedHash, cardDetail, cardSteerHash, cardMaximizedHash, isCardCollapsed, setCardCollapsed, dismissCardRun,
     composerOpen, composerElement, composerTarget, composerStarting,
-    orbHover, isPendingGate, runIsDone, runIsPending, cardRuns, selectedRun, ensureCardTitle,
+    orbHover, isPendingGate, pendingAskOf, runIsDone, runIsPending, cardRuns, selectedRun, ensureCardTitle,
 } from "./card-state";
 import { ApprovalBody } from "./card-approval";
 import { ShowWork } from "./card-showwork";
@@ -229,6 +230,9 @@ export function CardApp() {
     const showWork = !!hash && cardShowWorkHash.value === hash;   // active run's trace open? (subscribe → re-measure height on toggle)
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
     const pending = !!pendingStep;
+    // A NESTED ask inside the running step, when that is what waits (the step's own gate is not): answered by its id,
+    // drawn by the transcript's ask card, which carries its own buttons.
+    const pendingAsk = run && pendingStep && !pendingStep.awaitingApproval ? pendingAskOf(run.hash, pendingStep) : undefined;
     // Terminal ONLY when the run isn't mid-turn: a follow-up run() keeps the PRIOR summary set, so without
     // the status guard `done` would stay true and the card would show the stale answer instead of collapsing
     // to the working orb. status flips to "pending" on a new turn (optimistically in CardReply, and on any
@@ -397,7 +401,10 @@ export function CardApp() {
         const h = run.hash, seq = pendingStep.seq;
         const canKeep = hasPersistGrants(pendingStep.grants);
         toHost({ __mlSidebarCardFocus: true });
-        const decideKey = (ok: boolean, persist = false) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); void decideGate(pendingStep, h, seq, ok, persist); rev.value++; };
+        const decideKey = (ok: boolean, persist = false) => {
+            if (pendingAsk) { decidedSteps.add(askKey(h, seq, pendingAsk.id)); sendApproval(h, seq, ok, false, undefined, pendingAsk.id); rev.value++; return; }
+            decidedSteps.add(stepKey(h, seq)); clearHighlight(); void decideGate(pendingStep, h, seq, ok, persist); rev.value++;
+        };
         const onKey = (e: KeyboardEvent) => {
             // Enter approves; Esc denies; KEEP is a deliberate two-key combo (⌘/Ctrl+K) — intentionally NOT
             // Enter-adjacent, so granting a session-long fetch permission can't be a slip of the Approve key.
@@ -407,7 +414,7 @@ export function CardApp() {
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [pending, pendingStep?.seq]);
+    }, [pending, pendingStep?.seq, pendingAsk?.id]);
 
     if (composing) return <ComposerCard />;   // the blob reshapes into the task input (container morphs shell-side)
     // Backend GONE: a run that's still "starting"/"working" against a dead box would otherwise hang on the
@@ -446,6 +453,7 @@ export function CardApp() {
     const summaryHead = anyPend ? "Approval needed" : doneN === runs.length ? "All tasks complete" : doneN > 0 ? "Some tasks complete" : "Tasks running…";
     const decide = (ok: boolean, persist = false) => {
         if (!pendingStep || pendingStep.seq == null) return;
+        if (pendingAsk) { decidedSteps.add(askKey(run.hash, pendingStep.seq, pendingAsk.id)); sendApproval(run.hash, pendingStep.seq, ok, false, undefined, pendingAsk.id); rev.value++; return; }
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
         clearHighlight();
         void decideGate(pendingStep, run.hash, pendingStep.seq, ok, persist);   // fetch_url: grant its host in-gesture
@@ -528,7 +536,7 @@ export function CardApp() {
             </div>
             <div class="card-body">
                 {pending && pendingStep
-                    ? <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
+                    ? pendingAsk ? <AskList st={pendingStep} hash={run.hash} live /> : <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
                     : !done
                         // A working run browsed via a tab (multi-run detail): show a live "Working…" line + its
                         // trace, not the finished-answer branch (which would render an empty "no reply yet").
@@ -582,7 +590,7 @@ export function CardApp() {
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
-            {pending && pendingStep
+            {pending && pendingStep && !pendingAsk
                 ? (() => {
                     const showGrants = hasPersistGrants(pendingStep.grants);
                     return <div class="card-foot card-foot-appr">

@@ -54,6 +54,8 @@ import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
+import { approvalKey } from "./approval-key";
+import { raiseAsk } from "./sw/sw-asks";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -127,6 +129,9 @@ startValueSweeps();
 });
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
+// A nested ask raised from inside a running step, as a consumer (ml.sh) raises one: what the surfaces, SET_APPROVAL and
+// the cancel path are tested against before any consumer exists.
+(globalThis as unknown as { __mlRaiseAskForTest?: unknown }).__mlRaiseAskForTest = (runId: string, seq: number, kind: string, facts: Record<string, unknown>) => raiseAsk(runId, seq, { kind, facts });
 (globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
@@ -352,7 +357,13 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
         // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
-        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
+        // A content script answers only for the run ITS tab hosts. The overlay on another tab can be shown a run's id
+        // by that tab's page (an event under a session the worker never spoke for there), and a person's click on it
+        // must not reach the real gate elsewhere. The DevTools panel is an extension page (no `sender.tab`).
+        if (sender.tab && sender.tab.id !== runInboxes.get(p?.runId)?.tabId) return;
+        // A nested ask is named by its id beside the seq; a malformed one names no gate, not even the step's own.
+        const key = approvalKey(p.runId, p.seq, p.ask);
+        if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
         return;   // fire-and-forget
     }
     if (message.type === "CONTENT_READY") {

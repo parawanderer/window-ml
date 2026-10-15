@@ -218,8 +218,8 @@ export const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointer
 // (e.source === frame.contentWindow, unforgeable by the page) — forwards it to the background as
 // SET_APPROVAL. That authentication is the whole point: the decision is made HERE and the page can't
 // spoof it. Keyed by the run hash + the step's seq.
-export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false, feedback?: string) =>
-    services().answerApproval(hash, seq, decision, persist, feedback);
+export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false, feedback?: string, ask?: string) =>
+    services().answerApproval(hash, seq, decision, persist, feedback, ask);
 
 // The "https://host/*" host-permission pattern a step needs granted before it can run: a fetch_url's URL
 // (the background SW fetch needs the host) OR a navigate's destination (a cross-origin nav must RE-INJECT the
@@ -395,6 +395,8 @@ export const decidedSteps = new Set<string>();
 /** One step's identity across the panel: `<run hash>:<seq>`. `step` is the loop's counter and several
  *  records share it; `seq` addresses one row. */
 export const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
+/** The key a NESTED ask inside step `seq` is remembered under in {@link decidedSteps}. */
+export const askKey = (hash: string, seq: number, id: string) => `${stepKey(hash, seq)}#${id}`;
 // An IMAGE that opens in the lightbox — every screenshot the panel draws (a `look`, a locate's marked crop,
 // a python figure) goes through this, so click-to-enlarge means the same thing everywhere.
 // No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for

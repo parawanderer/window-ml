@@ -945,3 +945,23 @@ test("renewSelf: tries each browser that is awake, installs what comes back, and
     r = await renewSelf(w.host, w.pairing, [rt("a")], "p");
     assert.deepEqual([r.ok, w.asked], [false, []]);
 });
+
+// --- nested asks: the chat page and the phone answer one by its id ---
+
+test("a nested ask inside a running step: the page (and the phone, which embeds it) answers it by its id, and the runtime's own event closes it", async () => {
+    const { fake, store } = world();
+    const id = "a0123456789abcdef01234567";
+    fake.addSession(summary("laptop", "ask00001", { status: "waiting", pendingApprovals: 1 }), [
+        agentStart("ask00001"), step("ask00001", 1, { pending: true, result: undefined, asks: [{ id, kind: "sh", facts: { argv: ["ls"] }, state: "pending", raisedAt: 1 }] }),
+    ]);
+    const svc = hostServices(store, { kind: "web", prefs: { get: () => undefined, set() {} }, openImage() {}, saveFile() {}, copyText: async () => true });
+    await flush();
+    store.open("laptop:ask00001");
+    await flush();
+    svc.answerApproval("laptop:ask00001", 1, false, false, "not that", id);
+    await flush();
+    assert.deepEqual(fake.commands.at(-1), { type: "approval.answer", session: { runtime: "laptop", hash: "ask00001" }, seq: 1, decision: "deny", feedback: "not that", ask: id });
+    const st = sessionMap.get("laptop:ask00001").steps.find((s) => s.seq === 1);
+    assert.deepEqual(st.asks.map((a) => [a.state, a.note]), [["denied", "not that"]], "closed by the runtime's event, not optimistically");
+    assert.equal(st.pending, true, "the step itself keeps running");
+});

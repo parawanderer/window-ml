@@ -372,6 +372,36 @@ silently approved by an orchestrator that never asked for it. Threaded page→ba
 `StartRunPayload.approvalRouting`; logged in the sidebar "agent options" block. Tested in
 `tests/e2e/approval.spec.mjs` (approve/deny with NO UI, the opt-in guarantee, and the page-realm boundary).
 
+**Nested asks: a card raised from INSIDE a running step** (`src/sw/sw-asks.ts`; `docs/spec/ML_WIRE.md`, "Per-call
+asking"). Every gate above is raised by the loop before a tool runs. A call made while the step runs (`ml.sh` from an
+approved exec first, then the wire's gated members and a policy's per-call ask) calls `raiseAsk(runId, seq, { kind,
+facts })` instead, which:
+
+- keeps it in the same `pendingApprovals` under `${runId}:${seq}#${askId}` (`askId` is `a` plus 24 hex digits),
+  with `askId`, `consumer`, `facts` and `placement` on the descriptor;
+- re-emits the step's own last event with `asks[]`, so every surface that draws a step draws the ask (`ask-card.tsx`)
+  with no new message type, and the step's later events keep the list.
+
+Answers carry the ask id beside the seq:
+
+- `SET_APPROVAL` takes an optional `ask`;
+- `approval.answer` takes `ask` from the chat page, the phone and the hub;
+- the sidebar's two hosts build the payload with `approvalPayload`, which also stopped them dropping a denial's note.
+
+`approvalKey` (`src/approval-key.ts`) is the one rule for the key: a malformed id names no gate, never the step's own.
+
+An ask ends in one of these ways, and the consumer gets an outcome carrying `waitedMs` for its result to state:
+
+- the person answers;
+- the run has nobody to ask (`unattended`), refused at once;
+- `ASK_WAIT_MS` passes (5 min);
+- Stop is pressed (`cancelBackgroundRun`'s prefix match or the run's signal);
+- the turn ends (`hostAsks`' undo, in the run's `settle`);
+- the step has already asked `MAX_ASKS_PER_STEP` (64) times.
+
+The session index counts each pending ask as a gate, so the waiting status and the phone's badge include them. Both
+exports record every ask with its facts and its outcome.
+
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (a thought OR a tool
 call with args/result; `elements` is a **count**, since real DOM nodes can't cross

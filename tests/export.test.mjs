@@ -260,6 +260,19 @@ test("every approval decision has its own note, and only a denial reads as one",
 // A page's table cut to pageRead's caps (#629), a stored table's preview, a python frame past its preview: `rows` is the
 // first part, `rowCount` the source's. Both sinks print the rows they have, so each has to say they are the first part,
 // or a reader takes a prefix for the table, as the sidebar's view already refuses to (render-panel.tsx `PyDfTable`).
+test("a nested ask exports as a note naming what it would run and how it ended, its facts beside it; every state has a note", async () => {
+    const { ASK_NOTE, askNote } = await import("../src/sidebar/export/export.ts");
+    const all = ["pending", "allowed", "denied", "cancelled", "timeout", "unattended", "ended", "limit"];
+    assert.deepStrictEqual(Object.keys(ASK_NOTE).sort(), [...all].sort());
+    const a = { id: "a1", kind: "sh", facts: { argv: ["git", "status"], sandboxed: true }, state: "denied", raisedAt: 1000, answeredAt: 4000, note: "not now" };
+    assert.equal(askNote(a), "asked (sh: git status): denied by user after 3 s — “not now”");
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "user", asks: [a] }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /asked \(sh: git status\): denied by user after 3 s/);
+    assert.match(md, /"sandboxed": true/, "the facts it was judged on are in the export");
+});
+
 test("a cited table, a returned frame and a loaded frame held as a prefix say the source's row count in both sinks", async () => {
     const { toolToken } = await import("../src/util.ts");
     const hash = "prefix01";

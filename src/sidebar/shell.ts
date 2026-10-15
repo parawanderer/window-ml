@@ -22,6 +22,7 @@ import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
 import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
+import { approvalPayload } from "../approval-key";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -1002,7 +1003,7 @@ function fromApp(d: any): void {
     if (d.__mlSidebarApp === "approval" && frame
         && typeof d.hash === "string" && typeof d.seq === "number") {
         try {
-            void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist } }).catch(() => {});
+            void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: approvalPayload(d) }).catch(() => {});
         } catch { /* extension context gone */ }
         // The approval is resolved (approve OR deny) — hand focus back to the page element the card borrowed it
         // from, so the run's next `@focus`/type + its precheck target that element (the canvas/field), not the

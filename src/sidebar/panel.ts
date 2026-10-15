@@ -5,6 +5,7 @@
 // __mlDebug, exactly as under the shell — so the app needs no changes. (`chrome` is the
 // @types/chrome global — a local `declare` would poison the type across the project.)
 import { cleanImages } from "../contract/contract-run";
+import { approvalPayload } from "../approval-key";
 const frame = document.getElementById("app") as HTMLIFrameElement;
 
 // This panel only streams when it's the ACTIVE debug surface (debugMode === "devtools").
@@ -112,7 +113,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     // DevTools page. panel.ts (a devtools extension page) can chrome.runtime.sendMessage directly; the
     // page has no such path (it's not an extension context, and SET_APPROVAL isn't a content-relayed type).
     if (d.__mlSidebarApp === "approval" && typeof d.hash === "string" && typeof d.seq === "number") {
-        void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist } }).catch(() => {});
+        void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: approvalPayload(d) }).catch(() => {});
         return;
     }
     if (typeof d.__mlLightbox === "string") { showLightbox(d.__mlLightbox); return; }
