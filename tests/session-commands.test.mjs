@@ -441,6 +441,21 @@ test("session.resume hands a saved run to a page and says so in the transcript, 
     assert.equal(typeof note.afterMs, "number");
     assert.ok(note.dropped.length > 0, "never empty — something is always dropped");
     assert.ok(note.dropped.some((d) => /approval grants/.test(d)));
+    assert.equal("kept" in note, false, "a run with no policies carries none across, and the note says nothing of them");
+});
+
+// --- resume: what a resumed session carries across ---
+
+test("session.resume lists the run policies the session carries across, by label, and only when there are some", async () => {
+    const w = world({ runPolicyLabels: (hash) => (hash === "aaaa0011" ? ["fetch https://a.example/x"] : []) });
+    endedRun(w, "aaaa0011");
+    endedRun(w, "aaaa0012");
+    await w.run({ type: "session.resume", session: sid("aaaa0011"), target: { kind: "tab", tabId: TAB } });
+    await w.run({ type: "session.resume", session: sid("aaaa0012"), target: { kind: "tab", tabId: TAB } });
+    const [withKept, without] = w.named("noteResumed").map((c) => c[3]);
+    assert.deepEqual(withKept.kept, ["fetch https://a.example/x"]);
+    assert.equal("kept" in without, false);
+    assert.ok(withKept.dropped.some((d) => /approval grants other than the run's policies/.test(d)));
 });
 
 test("resuming the same session twice is two notes, because it is two resumes", async () => {

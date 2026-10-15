@@ -68,6 +68,7 @@ page-hosted one. Several stores exist once per host.
 | Sheets approved for `python_exec` | `approvedSheets` (`sw-run-host.ts` closure); page: `approvedSheets` (`ml-agent-run.ts`, page-wide) | one turn; page-hosted: the page |
 | Sub-operations of an approved call: sheets, Python code, server-tool calls, fetches inside an approved `exec` | `pendingGrants` (`sw-consent.ts`), per tab and per CALL; checks read their union (`tabGrants`) | ONE DELEGATED CALL. `delegateTool`'s `finally` drops only its own call's grants (`dropCallGrants`), so two runs on one tab keep theirs |
 | Repeat `ml.fetch` of an approved URL | `fetchConsent` | the tab, until it closes (memory) |
+| URLs remembered with "Approve + remember", and any policy | run and global policies: `policies.run`, `policies.global` (`sw-policies.ts`), `chrome.storage.local`; never the tab's `fetchConsent` | run: the session, survives a resume; global: until removed. `docs/dev/policies.md` |
 | One credentialed fetch | `credFetchGrants` | one use |
 | Remembered `confirm()` decisions | `approveOnce.remembered` (`ml-agent-handle.ts`, page) | the gate |
 | `window.ml` on an origin | `ml_site_always` / `ml_site_denied` (local), `ml_site_session` (session storage); declared `site.levels` (`sw-site-access.ts`) | persistent / browser session |
@@ -143,7 +144,7 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.meta` and `run.current` (`sw-runs.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
 not overall: both hosts declare the same member of a run. Each realm

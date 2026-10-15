@@ -27,7 +27,8 @@ import { sealedDescribe } from "../tools/tools";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
-import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
+import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, fetchConsent } from "./sw-consent";
+import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, policiesLoaded } from "./sw-policies";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
@@ -698,7 +699,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // What the world may ask for while it runs: re-pipes of what it was sent, and those stored tables.
                                 serve: isoServer(runId, reads, { deref: () => derefByRun.get(runId), holders: valueHolders, columns: readStoredColumns }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
-                                ...(snap && execNames(js).current ? { current: async () => withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())) } : {}),
+                                ...(snap && execNames(js).current ? { current: async () => withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) } : {}),
                             });
                         }
                         execNote = route.note;
@@ -1075,7 +1076,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // into it (sw-shared-watches.ts), which is async, and the evaluator asks for the snapshot synchronously.
                     // A snapshot that cannot be made is not the run's end: the survey falls through to the person.
                     let current: import("../agent/current-context").CurrentSnapshot | undefined;
-                    try { current = snap && wantsLog ? withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly, !byWorker())) : undefined; } catch (e) {
+                    try { current = snap && wantsLog ? withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) : undefined; } catch (e) {
                         recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
                         return null;
                     }
@@ -1188,9 +1189,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                         if (u && byWorker() && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
                                         else if (u) { if (cred) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
                                     }
-                                    // button #3: "Approve + remember" — also persist the exec's static ml.fetch
-                                    // literals for the session (a positive `persist` decision only).
-                                    if (ok && typeof decision === "object" && decision.persist) persistGrants(tabId, grants);
+                                    // button #3: "Approve + remember" — the exec's static ml.fetch literals become RUN
+                                    // policies (sw-policies.ts), one per URL the person saw: kept with the session, and
+                                    // never lent to the tab, so the page's own FETCH_URL does not get them.
+                                    if (ok && typeof decision === "object" && decision.persist)
+                                        for (const g of grants) if (g.kind === "fetch-url") rememberFetchUrls(runId, g.urls);
                                 } catch (e) {
                                     recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: "approve", key: thrownKey(e), detail: { tool } });
                                 }
@@ -1224,6 +1227,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
                 fetchNeedsConsent: (url) => !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)),   // a NEW url → gate; an already-approved one → auto
+                // The person's policies (sw-policies.ts), judged here in the worker over facts the worker resolved. A `deny`
+                // refuses any run's fetch; an `allow` answers only a fetch the worker itself runs, since only there does
+                // the fetch's own choke point (worker-tools.ts `consented`) consult the same policies.
+                fetchPolicy: (url, o) => {
+                    if (!policiesLoaded()) return "unknown";
+                    const j = judgeCall(runId, "fetch", fetchFacts(url, o));
+                    for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "fetch_url" } });
+                    if (!j.decision || !j.by || j.by === "builtin") return undefined;
+                    if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;
+                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
+                    return { decision: j.decision, label: j.by.label };
+                },
                 // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in
                 // consentedOrigins — seeded with the start origin) is FREE: the page can already fetch its own
                 // origin, so it's no escalation. Used by the auto-approve (no prompt), like a same-origin navigate.

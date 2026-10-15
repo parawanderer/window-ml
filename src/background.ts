@@ -38,6 +38,7 @@ import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { isExtensionSender, editSiteAccess, pageRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
+import { forgetRunPolicies } from "./sw/sw-policies";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -1141,7 +1142,7 @@ configureSessionCommands({
     forgetRun: (hash) => {
         if (runControllers.has(hash)) return;   // never a live run: the command refuses those first
         bgRuns.delete(hash); hydratedRuns.delete(hash); releaseSessionTokens(hash);
-        deleteRun(hash); forgetRunModel(hash);
+        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash);
     },
 });
 

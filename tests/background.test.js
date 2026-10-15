@@ -2982,10 +2982,12 @@ test("button #3: the exec gate DISCLOSES its static ml.fetch literals as grants 
     assert.deepEqual(gate.grants, [{ kind: "fetch-url", urls: [urlA, "http://localhost:8080/b.json"] }], "only the STATIC literals are disclosed (ml.fetch(dyn) is omitted)");
 });
 
-test("button #3: 'Approve + remember' (persist:true) makes the shown literals fetchable without re-approval; an unlisted URL stays refused", async () => {
+test("button #3: 'Approve + remember' (persist:true) remembers for the RUN, never lends the URL to the page's own FETCH_URL", async () => {
+    // It used to write the TAB's consent ledger, which the page's FETCH_URL reads: a remembered URL became the page's
+    // to fetch until the tab closed. It is a run policy now (sw-policies.ts), which only the run's own gate consults.
     const { urlA, reachA, reachC } = await runExecWithFetch({ js: `await ml.fetch("http://localhost:8080/a.json")`, persist: true });
-    assert.ok(reachA, `the remembered URL (${urlA}) fetches without re-approval after the run`);
-    assert.equal(reachC, false, "an un-remembered URL is still refused (only the human-seen literals persisted)");
+    assert.equal(reachA, false, `the remembered URL (${urlA}) is not the page's to fetch`);
+    assert.equal(reachC, false, "an un-remembered URL is still refused");
 });
 
 test("button #3: plain Approve (persist:false) does NOT remember — the URL is re-gated next time (one-off)", async () => {

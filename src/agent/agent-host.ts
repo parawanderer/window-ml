@@ -95,6 +95,9 @@ export interface RunAgentHostDeps {
     // ml.fetch consent: true → this exact URL hasn't been approved on this tab yet → GATE; false → already
     // approved this session → auto-approve (no re-prompt). Trusted (background-side, per-URL), not forgeable.
     fetchNeedsConsent?(url: string): boolean;
+    /** What the person's policies say about a fetch_url call (sw-policies.ts), or undefined when none decides. A `deny`
+     *  refuses it without a card; an `allow` skips the card for an uncredentialed fetch only. */
+    fetchPolicy?(url: string, opts: { credentials: boolean; rendered: boolean }): { decision: "allow" | "deny"; label: string } | "unknown" | undefined;
     // true → this UNCREDENTIALED fetch is same-origin as the run (its own / consented origins) → FREE (no
     // prompt), like a same-origin navigate: the page could fetch its own origin itself. Background-decided.
     fetchSameOrigin?(url: string): boolean;
@@ -187,6 +190,12 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             // auto-approves; a new one gates once, then is remembered.
             if (name === "fetch_url") {
                 const url = String((args as { url?: unknown }).url ?? "");
+                // A POLICY first: a `deny` wins over every free tier below, as it wins over any `allow`.
+                const pol = deps.fetchPolicy?.(url, { credentials: !!(args as { credentials?: unknown }).credentials, rendered: !!(args as { rendered?: unknown }).rendered });
+                // The saved policies are not read yet (a worker that just woke): a `deny` may exist, so nothing below
+                // may answer for the person, and the call asks.
+                if (pol === "unknown") return null;
+                if (pol?.decision === "deny") return { approval: "denied", refused: `Refused by the policy "${pol.label}", without asking. Do not retry this fetch; the person set this rule.` };
                 if (deps.fetchIsCurrentPage?.(url)) return "same-origin";   // the page you are on: any mode, no prompt
                 const sameOrigin = !!deps.fetchSameOrigin?.(url);
                 if ((args as { credentials?: unknown }).credentials) {
@@ -199,6 +208,8 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 // ...UNLESS it's an uncredentialed read of the agent's OWN repo source (code / structural API,
                 // NOT a prose endpoint) — free via the Self-source setting. Plain GET only (a rendered load asks).
                 if (cfg.autoApproveSelfSource && !(args as { rendered?: unknown }).rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl)) return "self-source";
+                // An `allow` policy covers an uncredentialed fetch (the credentialed branch above always asks).
+                if (pol?.decision === "allow") return { approval: "consented", reused: [{ kind: "policy", detail: pol.label }] };
                 return deps.fetchNeedsConsent?.(url) ? null : "consented";
             }
             return null;

@@ -109,8 +109,10 @@ Two more things it needed, both additive to the contract and therefore agreed wi
 - What happens when it is resumed onto a new page?
 - What happens when the agent's system prompt has changed?
 
-The middle one is answered: `RESUME_DROPS` (`src/session/session-commands.ts`) is written into the transcript where a reader
-and the model both see it, and it already names the tools a page script defined, because functions cannot be stored.
+The middle one is answered: `RESUME_DROPS` (`src/session/session-commands.ts`) is written into the transcript divider
+and both exports for the person, and it already names the tools a page script defined, because functions cannot be
+stored. The model does not read the note: it reads its run's policies through `ml.current.policies`, and those are
+kept across a resume and listed in the note's `kept`.
 
 The other two are SILENT. A resume rebuilds the toolset and the system prompt from whatever the current build
 offers — the page builds both — and nothing records what the session originally ran under. Two concrete failures:

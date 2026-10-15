@@ -300,9 +300,11 @@ export interface DebugSessionResumed extends DebugBase {
     fromUrl?: string;
     /** how long it had been idle, in ms, so a reader sees "after two days" rather than doing arithmetic */
     afterMs: number;
-    /** what did not survive, in words a person and a model both read: "the page's state object", "cached fetches",
+    /** what did not survive, in words a person reads (the divider, the exports; never sent to the model): "the page's state object", "cached fetches",
      *  "tools a page script defined", "approval grants". Never empty — something is always dropped. */
     dropped: string[];
+    /** The run's policies the session carried across the resume, by label (sw-policies.ts). Absent when none. */
+    kept?: string[];
 }
 
 /** Every event the debug stream carries about a session: a chat's turns, an agent run's lifecycle and live previews. */

@@ -2220,10 +2220,12 @@
       "description": "A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL, the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch.",
       "properties": {
         "kind": {
+          "description": "`policy`: a policy allowed the call (sw-policies.ts), and `detail` is its label.",
           "type": "string",
           "enum": [
             "fetch-url",
-            "sheet"
+            "sheet",
+            "policy"
           ]
         },
         "detail": {
@@ -2704,6 +2706,13 @@
         },
         "dropped": {
           "description": "What did not survive, in the runtime's own words: live element references, the page's state object, cached fetches, tools a page script defined, approval grants. Never empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kept": {
+          "description": "The run's policies the session carried across the resume, by label. Absent when it carried none.",
           "type": "array",
           "items": {
             "type": "string"

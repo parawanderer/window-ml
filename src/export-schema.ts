@@ -200,6 +200,8 @@ export interface ExportResume {
     /** What did not survive, in the runtime's own words: live element references, the page's state object,
      *  cached fetches, tools a page script defined, approval grants. Never empty. */
     dropped: string[];
+    /** The run's policies the session carried across the resume, by label. Absent when it carried none. */
+    kept?: string[];
 }
 
 export interface ExportPage {

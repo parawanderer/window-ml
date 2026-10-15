@@ -176,10 +176,11 @@ export class SessionIndex {
         // this module's own rules (a page-forwarded event, accepted for a session its tab owns), and the divider that
         // reads it would meet `undefined` where the contract promises a non-empty list.
         if (ev.kind === "session-resumed") {
-            const note = ev as { url?: unknown; dropped?: unknown };
+            const note = ev as { url?: unknown; dropped?: unknown; kept?: unknown };
             if (typeof note.url !== "string" || !note.url
                 || !Array.isArray(note.dropped) || !note.dropped.length
-                || !note.dropped.every((d: unknown) => typeof d === "string")) return { accepted: false, reason: "invalid" };
+                || !note.dropped.every((d: unknown) => typeof d === "string")
+                || (note.kept !== undefined && (!Array.isArray(note.kept) || !note.kept.every((d: unknown) => typeof d === "string")))) return { accepted: false, reason: "invalid" };
         }
 
         let s = this.sessions.get(hash);

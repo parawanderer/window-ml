@@ -555,9 +555,11 @@ the hydrated `bgRuns` entry and untracks the run, because the next thing to read
 that tab owns the session.
 
 **The note is written only after the page has it.** `session-resumed` says where the session is now, where it was,
-how long it sat and what it lost — a fact about the session, in the one place a reader and the model both trust, so
-a note for a resume that did not happen would be a lie. `RESUME_DROPS` (session-commands.ts) is the list, kept
-beside the command that causes the loss so the divider and the model's transcript cannot disagree.
+how long it sat and what it lost — a fact about the session, so a note for a resume that did not happen would be a
+lie. It is for the person (the transcript divider and both exports) and is not shown to the model, which reads its
+run's policies through `ml.current.policies`. `RESUME_DROPS` (session-commands.ts) is the list, kept beside the
+command that causes the loss so the divider and the exports cannot disagree; the run's policies survive a resume
+and are listed in the note's `kept`.
 
 **Its `id` identifies the RESUME, not the session.** The index de-duplicates a note by id, because two surfaces can
 report one resume. A note identified by the session would mean a session that moved page twice showed one divider

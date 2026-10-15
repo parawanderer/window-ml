@@ -325,7 +325,7 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         // Both sides can report one resume, and events repeat around a reconnect: a second note for the same id is
         // the same resume, and two would be two dividers.
         if ((s.resumes ?? []).some((r) => r.id === ev.id)) return;
-        s.resumes = [...(s.resumes ?? []), { id: ev.id, ts: ev.ts, url: ev.url, ...(ev.fromUrl ? { fromUrl: ev.fromUrl } : {}), afterMs: ev.afterMs, dropped: ev.dropped }];
+        s.resumes = [...(s.resumes ?? []), { id: ev.id, ts: ev.ts, url: ev.url, ...(ev.fromUrl ? { fromUrl: ev.fromUrl } : {}), afterMs: ev.afterMs, dropped: ev.dropped, ...(ev.kept?.length ? { kept: ev.kept } : {}) }];
         s.lastTs = Math.max(s.lastTs, ev.ts);
         // `pageUrl` is the page the run STARTED on, which is what the export's schema promises and what the index's
         // row says (both first-wins). Moving it here made the JSON say the resume page with the original page's

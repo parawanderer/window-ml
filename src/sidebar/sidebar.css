@@ -2253,6 +2253,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* What a resume did NOT carry over, listed in the divider's tooltip — a list, so it is not on the seam itself. */
 .resume-lost { margin: 4px 0 0; padding-left: 16px; }
 .resume-lost li { margin: 1px 0; }
+/* The run's policies a resume carried across, listed after what it lost; styled like `.resume-lost`. */
+.resume-kept { margin: 4px 0 0; padding-left: 16px; }
+.resume-kept li { margin: 1px 0; }
 /* The page a resumed session was on BEFORE, under the list of what it lost. */
 .resume-from { display: block; margin-top: 6px; color: var(--fg-faint); }
 .pending-note { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 10px; color: var(--fg-faint); font-style: italic; }

@@ -60,7 +60,8 @@ export interface AgentLoopDeps {
     // a forged "it's auto-approved" is exactly the threat design A closes.
     // Returns the provenance to skip the gate, or null to require it — OR an object also naming the prior
     // grants this call REUSED (e.g. an already-approved Google Sheet), surfaced on the step for transparency.
-    autoApprove?(name: string, args: Record<string, unknown>): Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[] } | null;
+    // `refused` is a call a policy refuses without asking: it does not run, and the model reads why.
+    autoApprove?(name: string, args: Record<string, unknown>): Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null;
     // Read-only try (exec only): attempt the call via the mediated read-only interpreter, which is
     // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
     // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.
@@ -880,10 +881,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 try { autoRaw = ro ? null : (deps.autoApprove?.(call.name, args) || null); }
                 catch (e) { threw(call.name, "auto-approve", e); autoRaw = null; }
                 // autoApprove may return the bare provenance OR { approval, reused } (grants it reused).
-                const auto = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
+                const auto: { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
                 if (ro) {
                     approval = "readonly";
                     tr = ro; result = ro.result;   // the interpreter already produced the result
+                } else if (auto?.refused) {
+                    // A POLICY refused it (sw-policies.ts): no card, and runTool is never called. The model is told which
+                    // policy, so it can stop trying rather than rephrase.
+                    approval = "denied";
+                    result = auto.refused;
                 } else if (auto) {
                     approval = auto.approval;
                     tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // trusted auto-approve → execute
