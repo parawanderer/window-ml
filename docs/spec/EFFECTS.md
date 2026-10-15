@@ -77,7 +77,7 @@ free(c)  ⇔  c.effects ⊆ B(c.placement) ∪ ReadsInRoots(c)      with ReadsIn
 | --- | --- |
 | the page's main world | `∅` (nothing is bounded there, which is why the JS dialect must prove effects from the source) |
 | a worker-side survey | `∅` for the same reason, with the dialect as the proof |
-| the Python dialect, anywhere | `{ read/write/alloc on heap(owned) }` by the interpreter's own proof, plus `read(entropy)` if allowed |
+| the Python dialect (CPython's restricted mode), anywhere | `{ read/write/alloc on heap(owned) }` by the runtime's own gates, plus `read(entropy)` if allowed |
 | a container | `read/write(fs(mounts))`, `exec(process)` inside it, `net(allowlist)` |
 | host mode under the OS sandbox | `read/write(fs(roots))`, `exec(process)`, `net(allowlist)` |
 | plain host mode | `∅` |

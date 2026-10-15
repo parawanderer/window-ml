@@ -19,7 +19,8 @@ is the callback gate plus the kill switch. Four things are wrong with it.
    proof about the program travels there.
 2. **A sandbox decays.** The Pyodide hardening is a list of things to purge (`js`, `pyodide_js`, the network globals;
    `harden()` in `src/python/python-runtime.ts`), which is a DENY list that the next Pyodide release can extend without
-   telling anyone. A dialect gives the script nothing it did not list. The hardening stays, as belt.
+   telling anyone. A dialect gives the script nothing it did not list. The hardening stays, as belt, until the
+   restricted mode's import gate makes it redundant.
 3. **Persistent state brings rollback back.** A sandboxed cell that is refused halfway has already mutated the run's
    namespace. An owned-value interpreter restores what it touched, as `evalReadonly` does.
 4. **Totality composes; a timer does not.** Every program the dialect admits terminates within a cost bound known before
@@ -27,33 +28,70 @@ is the callback gate plus the kill switch. Four things are wrong with it.
    shared across placements. A kill after N seconds proves nothing about the program, and Python is Turing-complete
    by default although almost nothing a model does with it needs to be.
 
-## The design: the JS dialect with one substitution and one simplification
+## The design: the evaluator is CPython, under a restricted mode we add
 
-- **The parser is `ast.parse`.** No hand-written tokenizer, no drift from real Python. The subset is a WHITELIST of
-  node types, and an unlisted node is `NotInDialect`. That whitelist is the one ratchet.
-- **The evaluator is written in Python and runs in-process with the values.** It has to: the leaves are numpy and pandas
-  objects that live in CPython. This is the opposite of the JS case, where the DOM is foreign and the interpreter lives
-  beside it. One module file runs under Pyodide and under the host's CPython unchanged, which is what makes placement
-  free and keeps JavaScript out of the process host ([`SHELL.md`](SHELL.md), "The host's language"). The evaluator never
-  calls Python's `eval`, `exec` or `compile`.
-- **Attribute access is mediated**, as `BY_KIND` and `DENIED_PROPS` mediate it in JS. Dunders are refused outright,
-  which cuts the `__class__` → `__subclasses__` escape chain at its root. Methods are allowed per receiver kind (`str`,
-  `list`, `dict`, `tuple`, `set`, numbers, `ndarray`, `DataFrame`, `Series`, `Index`), with the mutating ones accepted
-  only on an owned receiver.
-- **Halting is the Starlark set.** `for` over a finite collection or a bounded `range`, comprehensions over the same, no
-  `while`, recursion to a bounded depth, no generators and no `yield`, no `class`. `lambda` and `def` are in, and
-  `df.apply(f)` calls `f` back THROUGH the interpreter, which is the manifest's `@calls` annotation.
-- **Ownership is simpler than in JS.** Every value in the namespace was made by an earlier cell, injected as a copy
-  (`df`, `tables`, `img`), or returned by `ml.dereference` as a copy. The dialect owns nearly everything; the foreign
-  values are manifest `internal` aliases (a view from `reshape`). Rollback on refusal is copy-on-first-write per name.
-- **The native leaves are the manifest's whole job here.** In JS the dialect has few native libraries to worry about; in
-  Python every useful cell is numpy or pandas, so this dialect is why the manifest spec's Python examples exist. Tier 1
-  (a closed-form bound over `len`, `size`, `shape`, with hard caps) is the practical tier for C leaves, since there is no
-  charge hook inside a C loop. Tier 3 ("interpret my body") is RICHER than in JS: much of the stdlib is pure Python, so
-  the interpreter steps into `statistics`, `collections`, `json` and friends with only their C leaves annotated.
-- **`re` needs the `riskyRegex` port.** Python's engine backtracks and has no linear mode.
-- **Effects are the shared algebra** ([`EFFECTS.md`](EFFECTS.md)): the interpreter publishes `B = { read/write/alloc
-  on heap(owned) }`, so a cell whose every leaf projects inside that set is free wherever it runs.
+**Refined on 2026-10-15, the same day, replacing a first draft that put an evaluator written in Python above the
+runtime.** That draft was the Python analogue of the JS tree-walker, and the tree-walker has already proved what a
+read-only language is worth; a second proof-of-concept at that layer teaches nothing. In V8 the dialect cannot be hooked
+into the runtime without shipping a browser, which is why the JS side's best move is a bytecode compiler
+([#277](https://github.com/parawanderer/window-ml/issues/277)). CPython is different: Pyodide already builds it from a
+patch series, and the process host runs a build we ship. So the gate goes where it belongs, in the interpreter's abstract
+object layer, and the cost of interpretation goes to zero.
+
+Where each property of the dialect lives:
+
+| Property | Where | How |
+| --- | --- | --- |
+| membership | a Python-side pre-pass, unchanged | `ast.parse`, a WHITELIST of node types (the one ratchet), `compile` with a new code flag, `CO_RESTRICTED`; an unlisted node is `NotInDialect` before anything runs |
+| the gate | a thread-state flag with DYNAMIC extent | set on entering a restricted frame; checked in `PyObject_GetAttr`, `PyObject_SetAttr`, `PyObject_GetItem`, `PyObject_SetItem`, `PyObject_Call` and `IMPORT_NAME`, one branch per abstract call, against the kind tables (methods allowed per receiver kind, dunders refused outright, which cuts the `__class__` → `__subclasses__` chain at its root) |
+| C leaves | the flag is LIFTED for the dynamic extent of a manifest-approved native call | numpy's internals legitimately touch dunders; the manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)) is what approves the call and says what it returns |
+| callbacks | the flag is set again whenever a restricted frame is entered, whoever calls it | a `lambda` handed to `df.apply` runs restricted inside pandas' C loop; the manifest's `@calls` falls out of this instead of being an annotation the interpreter has to honour |
+| the step budget | a counter at the eval breaker | CPython already checks it on backward jumps and calls, which is where loops and recursion are; a few lines in `ceval`. The halting rules below still refuse the unbounded forms statically, so a refusal happens BEFORE running where it can |
+| ownership | an allocation hook under the flag, plus the manifest's return marking | an object allocated while restricted is owned; a leaf's `fresh` return is marked owned, `alias(i)` inherits argument i's, `internal` is never owned (a view from `reshape`). A side set keyed by pointer, with removal on dealloc, so the object layout is unchanged |
+| rollback | an undo log at the write barrier | every restricted write records container, key and old value, and a refusal replays it; a C leaf marked `mutates(i)` on a value from an earlier cell gets a copy first, or a refusal |
+| memory | the same allocation hook | a byte count per cell, the native form of the JS dialect's `MAX_COLLECTION` |
+| imports | the `IMPORT_NAME` gate | a module is a receiver kind with an allow list; a package installed on demand arrives with its manifest or as `unknown` |
+
+**Two things this does that nothing above the runtime can**, and both are why Python 2's `rexec` and RestrictedPython's
+list of CVEs look the way they do:
+
+1. **The gate covers the C paths.** `str.format` walking `"{0.__class__}"`, `getattr`, `operator.attrgetter`, pickle:
+   all of them go through `PyObject_GetAttr`. An evaluator or an AST rewrite guards the Python-visible paths and has to
+   ENUMERATE them; the abstract layer is a small, stable set of entry points. Enumerating entry points beats enumerating
+   tricks.
+2. **Tier 3 is the default.** A pure-Python library function called from a restricted frame simply runs under the gates,
+   at native speed, with no manifest: it stays inside them or raises `NotInDialect`. Only C leaves need manifest
+   entries, which is where the library manifest spec was always going to earn its keep ("interpret my body" costs
+   nothing here, where in JS it costs the interpretation slowdown).
+
+**Halting is still the Starlark set, checked statically first.** `for` over a finite collection or a bounded `range`,
+comprehensions over the same, no `while`, recursion to a bounded depth, no generators and no `yield`, no `class`.
+`lambda` and `def` are in. The budget catches what the static rules cannot see; the static rules keep a refusal
+BEFORE the run wherever the form is decidable from the source, so nothing has to be rolled back.
+
+**What this does not solve**, and the spec keeps saying so: the COST of a C leaf (tier 1 bounds over `len`, `size` and
+`shape`, with hard caps, since there is no charge hook inside a C loop); `re` backtracking (`sre` is C, so the
+`riskyRegex` pre-check is ported and applied before the call); and a long numpy operation does not visit the eval
+breaker, so the wall-clock kill stays as the backstop behind the budget.
+
+**RULE: the patch keeps the ABI.** It touches `ceval`, the abstract object layer and the thread state, never the object
+header or the stable ABI. Then Pyodide's own numpy and pandas builds work unchanged, and on the host a patched CPython
+with the same ABI tag installs stock wheels from PyPI. The cost of the fork stays at "rebase one patch per CPython
+release", the forked-backends pattern this repo already pays for Ollama and OpenWebUI
+([`docs/FORKED-BACKENDS.md`](../FORKED-BACKENDS.md)); a change that needs the patch gets a compat label the way hub and
+backend changes do. A header bit for ownership would be cheaper than the side set and is not worth the ABI.
+
+**The history a reviewer will raise.** CPython removed restricted execution (`rexec`, `Bastion`) in 2003 because the
+object model's introspection kept opening paths out of it, and PyPy moved its sandbox to the system-call boundary. This
+is a different object: an ALLOW list rather than a deny list, a refusal that degrades to a person rather than to the
+attacker, and an enforcement belt behind it (the Wasm boundary in the browser, the OS sandbox on the host). It is an
+approval-fatigue reducer for an honest model that fails closed, which is what the JS dialect's doc already says of
+itself, with the gate at the one layer every path crosses.
+
+**Effects are the shared algebra** ([`EFFECTS.md`](EFFECTS.md)): restricted mode publishes `B = { read/write/alloc on
+heap(owned) }`, so a cell whose every leaf projects inside that set is free wherever it runs. The same patched CPython
+runs under Pyodide and at the host, which is what makes placement free and keeps JavaScript out of the process host
+([`SHELL.md`](SHELL.md), "The host's language").
 
 ### Membership replaces `mode`
 
@@ -122,19 +160,29 @@ for a case that needs it, not the default.
 The repo holds a corpus of real `python_exec` cells in run logs and bench results. Walking them with `ast` and counting
 node types, imports and attribute calls says which subset admits most of what models actually write, and which numpy and
 pandas methods the first manifest must cover. The JS dialect grew the same way. The gap list from that count is the
-first PR's spec; nothing in the design above is written into code before it.
+first PR's spec, and it decides the node whitelist and the first manifest whichever layer the evaluator lives in; nothing
+in the design above is written into code before it. No guarded-compile or tree-walking prototype precedes the patch: the
+utility is proved, and the patch is tested against the vector corpus below.
 
 ## Tests
 
 The AGENTS.md rule for extending a dialect applies from the first construct: adversarial tests (reach `__class__`, a
-builtin's `__globals__`, `getattr` with a computed dunder, `type()`, an unlisted import, a mutation of an unowned value,
-unbounded `range`, a recursion past the depth), HALTING tests under a timeout, FAILURE tests (a refused cell leaves the
-namespace as it was), run against real CPython (the existing `dist/pyodide/` tests self-skip without it). The halting,
-failure and abuse vectors are written language-neutrally where they can be and run against BOTH dialects, which is the
-only sharing the two evaluators can honestly have: one contract, one manifest format, one vector corpus.
+builtin's `__globals__`, `getattr` with a computed dunder, `"{0.__class__}".format(x)`, `operator.attrgetter`,
+`type()`, an exception's `__traceback__` → `tb_frame`, an unlisted import, a mutation of an unowned value, unbounded
+`range`, a recursion past the depth), HALTING tests under a timeout, FAILURE tests (a refused cell leaves the namespace
+as it was), run against the PATCHED CPython (the existing `dist/pyodide/` tests self-skip without it, and the patched
+build replaces that directory's interpreter). A test that the C paths are gated is the one the evaluator-above-the-runtime
+could never pass, and is why it sits first. The halting, failure and abuse vectors are written language-neutrally where
+they can be and run against BOTH dialects, which is the only sharing the two can honestly have: one contract, one
+manifest format, one vector corpus.
 
 ## Open questions
 
+- **The allocation hook's cost.** A side-set insert per allocation while restricted, and a removal per dealloc; CPython
+  allocates many small objects. If it shows, the alternatives are an epoch counter (needs a header word, breaks the ABI)
+  or owning by reachability from the cell's namespace at the write barrier instead of by allocation.
+- **Which CPython and Pyodide versions carry the patch first**, and how the host's build is distributed (a wheel of
+  the interpreter, a `uv`-managed toolchain, the container image).
 - **How much of real pandas falls inside tier 1.** `groupby().apply`, `merge` and string accessors have data-dependent
   cost; the first manifest may need a hard cap in place of a bound for some of them.
 - **Exceptions.** `try`/`except` over the dialect's own errors is in (the JS dialect has it); whether a cell may catch a
