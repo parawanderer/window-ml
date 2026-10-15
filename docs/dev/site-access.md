@@ -468,6 +468,64 @@ the URL; a `rendered` read follows redirects as a navigation and needs its own a
 in the as-you mode, which a person approves per URL each time (or same-origin with `autoApproveSameOriginAuth`). The
 request is the worker's, so a `Referer`, if Chrome sends one, names the extension and never the page (not measured).
 
+## The `ml` wire (ML_CALL)
+
+`ML_CALL` is one `ml` call as a message, for code that cannot hold `window.ml`. The first client is the Pyodide cell, which
+runs in the offscreen document; CPython at a process host is the next. The contract is `docs/spec/ML_WIRE.md`; the types
+(`MlWireRequest`, `MlWireAnswer`, `MlWireErrorCode`, `WireRealm`) are in `contract-messages.ts`, the sender check, the
+members and the handler in `sw-ml-wire.ts`, and the client registry, the checks and the copy out in `ml-wire-serve.ts`,
+which has no `chrome` in it so its rules are tested without a worker.
+
+**The worker opens the client; the code never does.** `runPython` (`sw-python.ts`) calls `openWireClient` once per cell
+and gets a handle, `mlw-<uuid>`. The handle is bound to the sender kind that will carry the calls: `offscreen`
+(`sender.tab == null` and `sender.url` is the offscreen document's URL), the only kind so far. An isolated world keeps
+its own channel (`iso-channel.ts`); when it becomes a wire client, every fact (tab, frame 0, document, world) is
+REQUIRED, since a client opened without one would match any document on the tab. It is bound to the run the cell is for, and to a realm, `readonly` or `full`, taken
+from `hardened`. The handle and the run ride `PY_RUN` as `wire: { client, run }`, and the client is closed when the cell
+ends, so a call on the handle after that is refused. A completion runs no code and gets no client.
+
+**A call is answered only when the handle AND the sender match.** `senderIs` compares what the browser set on the
+message, and an absent fact does not match. An unknown handle, a closed one and a wrong sender are refused with one
+identical message (`this sender cannot call ml over the wire`), so a caller cannot tell which handles exist. A tab's
+sender never matches the offscreen client, and a page cannot start the message at all: `ML_CALL` is not in `HANDLE_MAP`
+(`page-relay.ts`), so the content script relays nothing under that name. The worker takes it from `onMessage`
+(`background.ts`).
+
+**The run id in the message is not authority.** A hostile page knows every run id. `serveWireCall` compares the message's
+`run` with the one the client was opened for and refuses any other, a `null` included, without saying whether that run
+exists. A cell a page started through `PYTHON_EXEC` is bound to NO run, even on the tab of a run in flight: `wireRun` is
+passed only by the worker-hosted run's tool (`worker-tools.ts`). Such a cell has no `dereference`, so it cannot read the
+run's `@tool:` values by naming the run.
+
+**Members.** They are the worker survey's own facade (`workerReadonlyMl` through `mlFacade` with realm `worker`), cut to
+`ML_READONLY_METHODS`. What reads the page (`queryAll`, `a11y`) is absent, and answered as `Absent` with the list of what
+the code does have. A member added to `ML_READONLY_METHODS` later arrives here without a second list. `full` has the same
+set this round: the gated members (a live fetch, `chat`, `click`) come with the consent path, each with its own gate.
+`dereference` is read from the run's resolver and answers `{ text, meta?, warning? }`, or the pointer when the value is
+over `WIRE_VALUE_CAP` (2^20 JSON characters). No read reaches that today: the run's store holds the text the model was
+shown (`fetch_url`'s "[first 4000 of N chars]"), and a pipe reads that text, so the whole of a large value is the value
+store's, named by `meta.value`, and the pointer answer is the server's rule ahead of a member that needs it.
+
+**What crosses.** Arguments are copied in and answers are rebuilt out by `toWire`, from own data properties into fresh
+plain objects: a function, a proxy, an accessor, a cycle or a class instance is refused, so nothing live reaches the
+client. Bytes cross as `{ $bytes: base64 }`. An argument that names a secret anywhere (an own `$secret` key) is refused
+with `SecretHandle`, never resolved to a value. An error's text goes through `forPage` (`sw-scrub.ts`), so the server
+URL, the key and the model filter never cross.
+
+**`ask`.** A gated member that needs the person is answered first with `{ ask: { card } }`, and the final answer follows as
+an `ML_ANSWER` push with the same `seq`. The member runs only if the client is still open when the person decides (an
+approval landing after the cell ended runs nothing), and a card unanswered for `ASK_TIMEOUT_MS` (five minutes) fails the
+call with `Denied`. No member is gated yet, so this path is exercised by the serve tests only.
+
+**What the tests hold.** `tests/redteam-ml-wire.test.mjs` holds the properties a hostile page must not get: a page's
+`ML_CALL` is never relayed; a tab's sender with a live handle is refused while the offscreen document with it is
+answered; an unknown, guessed or closed handle reads the same as a wrong sender; a forged or null run id reaches
+nothing; a page-started cell has no run; a read-only client reaches no `chat`, `click` or live fetch, nor anything off
+the prototype; a `$secret` argument is refused; no answer carries a function or a proxy. `tests/ml-wire.test.mjs` holds
+the wire's own behaviour. Each defence was mutation-checked: removing the sender check, the run check, the close, the
+secret check or the realm cut, or binding a page-started cell to its tab's run, each fails a named test in the red-team
+file.
+
 ## Adding a tool, a member or a message
 
 The red-team pass AGENTS.md requires. Run it as its own agent, told to find where a property does not hold rather
