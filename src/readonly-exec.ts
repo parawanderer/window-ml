@@ -38,6 +38,8 @@ export { NotInDialect, Denied, NeedsPage, STEP_BUDGET, MAX_COLLECTION, MAX_STORE
 export { ML_READONLY_METHODS } from "./readonly-exec/policy";
 export type { ReadonlyRealm } from "./readonly-exec/policy";
 export { ABRIDGE_OVER, describeSwaps } from "./readonly-exec/print";
+export { evalPolicy, POLICY_STEPS } from "./readonly-exec/policy-realm";
+export type { PolicyEffect, PolicyResult } from "./readonly-exec/policy-realm";
 export type { PrintSwap } from "./readonly-exec/print";
 
 // -------------------------------------------------------------------- entry ---
