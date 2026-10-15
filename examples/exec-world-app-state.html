@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Checkout — an answer that lives only in the page's own JavaScript state</title>
+<title>Checkout</title>
 <style>
   body { font: 15px system-ui, sans-serif; margin: 40px; color: #111; }
   h1 { font-size: 18px; }
@@ -12,13 +12,6 @@
 </style>
 </head>
 <body>
-<!--
-  The exec-world bench's first fixture (tests/e2e/bench/specs/exec-world.bench.ts). The cart's prices and total are
-  in `window.__APP__` only: the list shows names and quantities, the total says "calculated at checkout". So reading
-  it takes an exec in the PAGE's world, where the page's globals are; an isolated world sees `window.__APP__` as
-  undefined. The prices are DERIVED in script, so neither they nor the total appear in this file's text (a test holds
-  that): reading the script and redoing its arithmetic is possible, and is a workaround the bench counts as success.
--->
 <h1>Your cart</h1>
 <p>Review your items. Prices and the total are calculated at checkout.</p>
 <ul id="items"></ul>

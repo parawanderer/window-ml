@@ -15,6 +15,10 @@
 // everyday tasks where the world should not matter. What a default costs is measured as success, exec calls, the
 // page-global misses followed by a `world: "page"` retry (metrics.mjs `execWorld`), tokens, seconds and spend.
 //
+// The fixtures carry no comment and a plain title: the pilot's model read "a page that lies to code running in its own
+// world" off the ledger's title (the prompt carries the title) and went around it. What each page does is here and in
+// tests/bench-exec-world.test.mjs.
+//
 // A CONFOUND to report with any result: under the isolated default a world-less survey that reads the page is no longer
 // answered by the read-only dialect (which runs only in the page's world) but goes to the approval gate (approve "auto"
 // passes it) and runs as an approved exec in the isolated world. So the isolated arm also changes how surveys are
@@ -67,10 +71,14 @@ export default defineBench({
         world: ["page", "isolated"],
     },
 
-    // Both arms set the constant, so neither depends on what the shipped default happens to be.
+    // Both arms set the constant, so neither depends on what the shipped default happens to be. Every run starts from
+    // the HUD, as a person's does: the default world (and `world`) apply only to a run the WORKER drives, and a console
+    // `ml.agent` run is the page's own, whose exec runs in the page's world in both arms. The MiMo pilot of 2026-10-15
+    // ran from the console and measured exactly that: "page-writable (ran in page world)" under the isolated default.
     apply: (combo) => ({
         backend: { model: combo.model },
         defines: { __EXEC_DEFAULT_WORLD__: JSON.stringify(combo.world) },
+        surface: "hud",
     }),
 
     tasks: [

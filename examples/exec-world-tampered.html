@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Expense ledger — a page that lies to code running in its own world</title>
+<title>Expense ledger</title>
 <style>
   body { font: 15px system-ui, sans-serif; margin: 40px; color: #111; }
   h1 { font-size: 18px; }
@@ -13,13 +13,6 @@
 </style>
 </head>
 <body>
-<!--
-  The exec-world bench's third fixture (tests/e2e/bench/specs/exec-world.bench.ts). The table below is the truth, and
-  is what a person sees. The script then patches, in the page's MAIN world only, every getter code would read the
-  table's text through (textContent, innerText, outerText, innerHTML, outerHTML, nodeValue, data) and JSON.stringify,
-  so that each amount reads 13.00 higher. Code in the page's world therefore totals a wrong NUMBER; code in an isolated
-  world has its own prototypes and reads the true one. The page itself never reads these back, so it keeps working.
--->
 <h1>Expense ledger — October</h1>
 <p>Approved expenses for the field team. Amounts in EUR.</p>
 <table id="ledger">
@@ -37,17 +30,17 @@
 </table>
 <script>
 (() => {
-    const SKEW = 13;
-    const truths = Array.prototype.slice.call(document.querySelectorAll("#ledger td.amount"), 0)
+    const ADJ = 13;
+    const base = Array.prototype.slice.call(document.querySelectorAll("#ledger td.amount"), 0)
         .map((td) => td.firstChild.nodeValue);
-    const fake = {};
-    for (const t of truths) fake[t] = (Number(t) + SKEW).toFixed(2);
-    const pattern = new RegExp("(^|[^\\d.])(" + truths.map((t) => t.replace(".", "\\.")).join("|") + ")(?![\\d])", "g");
-    const lie = (s) => typeof s === "string" ? s.replace(pattern, (m, pre, n) => pre + fake[n]) : s;
+    const shown = {};
+    for (const t of base) shown[t] = (Number(t) + ADJ).toFixed(2);
+    const re = new RegExp("(^|[^\\d.])(" + base.map((t) => t.replace(".", "\\.")).join("|") + ")(?![\\d])", "g");
+    const fmt = (s) => typeof s === "string" ? s.replace(re, (m, pre, n) => pre + shown[n]) : s;
     const patch = (proto, key) => {
         const d = proto && Object.getOwnPropertyDescriptor(proto, key);
         if (!d || !d.get) return;
-        Object.defineProperty(proto, key, { ...d, get() { return lie(d.get.call(this)); } });
+        Object.defineProperty(proto, key, { ...d, get() { return fmt(d.get.call(this)); } });
     };
     patch(Node.prototype, "textContent");
     patch(Node.prototype, "nodeValue");
@@ -59,9 +52,9 @@
     const stringify = JSON.stringify;
     JSON.stringify = function (value, replacer, space) {
         const out = stringify.call(JSON, value, replacer, space);
-        return typeof out === "string" ? lie(out).replace(/(^|[^\d.])(\d+(?:\.\d+)?)(?![\d])/g, (m, pre, n) => {
+        return typeof out === "string" ? fmt(out).replace(/(^|[^\d.])(\d+(?:\.\d+)?)(?![\d])/g, (m, pre, n) => {
             const v = Number(n);
-            return truths.includes(v.toFixed(2)) ? pre + (v + SKEW).toFixed(2) : m;
+            return base.includes(v.toFixed(2)) ? pre + (v + ADJ).toFixed(2) : m;
         }) : out;
     };
 })();
