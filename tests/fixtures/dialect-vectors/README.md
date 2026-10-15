@@ -53,3 +53,11 @@ it never runs it in a different world.
 | `answer` | `world()`, the stand-in `ml` and an `AnswerSet` facade with its checkpoint | (none: skip) |
 | `table` | (none: skip) | a namespace holding `df = pd.DataFrame({"a": [1, 2, 3, 4], "b": [5, 6, 7, 8], "c": [9, 10, 11, 12]})`, which the cell did NOT create (unowned), and the prelude's names (`pd`, `np`, …) |
 | `policy` | the policy realm: the program is a policy `(c) => …`, run by `evalPolicy` over the facts `{ kind: "fetch", url: "https://a.example/x", argv: ["git", "status"], paths: [{ path: "/r/a", inRoot: true, secret: false }], effects: [read(net(a.example)), read(fs(/r/a))] }` (`FACTS` in `tests/readonly-policy.test.mjs`). `"refused"` there means the policy is BROKEN by a refusal (no decision, its reason a dialect refusal), never a runtime error | (none: skip) |
+| `warm` | (none: skip) | host code defines `class Box` and `box = Box()` with `box.secret = 1` (an unlisted kind, unowned), and pure-Python functions the cell did not write: `peek(o): return o.secret` and `peek_ok(xs): return len(xs)`, each called 10,000 times by the host BEFORE the vector, outside any restricted entry, so their instructions are specialized on an interpreter that specializes; `peek_cold(o): return o.secret`, never called; `via_python(f)`, which returns a host closure `lambda x: f(x)` |
+
+## What a Python runner must check first
+
+Before any vector, the runner asserts at RUN TIME that the interpreter is the patched one with specialization, tier 2
+and the JIT off (the first-slice decision, repl-specs 2026-10-15: the gate lives in the abstract layer, which a
+specialized instruction bypasses). A runner that cannot confirm it fails, rather than skipping: on a specializing
+interpreter the `warm` vectors would pass or fail by chance.

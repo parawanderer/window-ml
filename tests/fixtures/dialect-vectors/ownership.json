@@ -674,5 +674,15 @@
     },
     "reason": "one-argument type(x) is its own receiver kind: is and == against another type are allowed (ruled 2026-10-15)",
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: the warm world's own reads still work",
+    "py": "return peek_ok([1, 2, 3])",
+    "env": "warm",
+    "expect": {
+      "value": 3
+    },
+    "reason": "the default: a warmed library function that only calls an allowed builtin (len) on a list the cell built returns its value; refusing everything is not passing",
+    "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
   }
 ]

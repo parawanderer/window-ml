@@ -654,5 +654,37 @@
     "expect": "refused",
     "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
     "from": "tests/readonly-policy.test.mjs writing c"
+  },
+  {
+    "name": "py: a warmed library function reads past the gate",
+    "py": "return peek(box)",
+    "env": "warm",
+    "expect": "refused",
+    "reason": "peek is pure Python the host has run 10,000 times, so its LOAD_ATTR is specialized; under the gate it must still be refused (an unlisted attribute of an unlisted kind). The test option A (per-form guards) must pass",
+    "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
+  },
+  {
+    "name": "py: a cold library function under the gate",
+    "py": "return peek_cold(box)",
+    "env": "warm",
+    "expect": "refused",
+    "reason": "dynamic extent, case 1: a pure-Python function the cell calls runs restricted (tier 3), even never warmed",
+    "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
+  },
+  {
+    "name": "py: a callback from a lifted C leaf",
+    "py": "return sorted([box], key=lambda o: o.secret)",
+    "env": "warm",
+    "expect": "refused",
+    "reason": "dynamic extent, case 2: sorted is an approved C leaf (lifted), and the lambda it calls back is a CO_RESTRICTED frame above the lift barrier, so the gate fires again",
+    "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
+  },
+  {
+    "name": "py: a callback reached through library Python inside a lifted leaf",
+    "py": "return sorted([box], key=via_python(lambda o: o.secret))",
+    "env": "warm",
+    "expect": "refused",
+    "reason": "dynamic extent, case 3: sorted (an approved C leaf, lifted) calls via_python's host closure, which calls the cell's lambda INLINE (no C entry); the frame walk up to the lift barrier still finds the CO_RESTRICTED lambda frame",
+    "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
   }
 ]
