@@ -208,12 +208,20 @@
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
   },
   {
-    "name": "py: type(x) is not callable",
-    "py": "return type(1)(5)",
-    "env": "none",
+    "name": "py: type(x) does not reach an unlisted constructor",
+    "py": "return type(box)()",
+    "env": "warm",
     "expect": "refused",
-    "reason": "calling a type instantiates it; the type kind is not callable",
-    "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+    "reason": "type(x) returns the class itself; a call through it is judged at the call gate by the class's identity, and Box is not listed",
+    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
+  },
+  {
+    "name": "py: type(df) does not reach the DataFrame constructor",
+    "py": "return type(df)()",
+    "env": "table",
+    "expect": "refused",
+    "reason": "the same for a pandas class: the constructor is not a listed call",
+    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
   },
   {
     "name": "py: three-argument type builds a class",

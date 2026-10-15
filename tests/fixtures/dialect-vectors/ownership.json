@@ -723,5 +723,15 @@
     },
     "reason": "the callback runs restricted; its write to the cell's own list is judged by ownership and allowed",
     "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: type(x) of a builtin is that builtin",
+    "py": "return type(1)(5) == 5",
+    "env": "none",
+    "expect": {
+      "value": true
+    },
+    "reason": "type(1) IS int, the same object as the listed builtin, so calling it is int(5): a proxy would break type(x) is str",
+    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
   }
 ]
