@@ -95,26 +95,36 @@ now stored whole. A `value` answer for a capture that was NOT stored (a page-hos
 read cap, an `exec` or `python_exec` output) still carries `truncated: true` and the full size, and every client
 surfaces it.
 
-## Status (2026-10-15, end of the first day)
+## Status (2026-10-15, evening of the first day)
 
-- **Lane 4's first round is done**: root I as `window-ml-host` v0.1.0 (+ its PRs #2 to #5, the last adding Linux
-  enforcement in CI), root F merged (#683), results in `LANE_4_RESULT_I.md` and `LANE_4_RESULT_F.md` (#687, #694). Its
-  second round, started the same day on Shane's go: **the host's extension side**, unblocked by root A: `ml.sh` as a
-  wire call from a worker-hosted run (the plain `run`/`pipe`/`glob` forms; `execNames` gains `sh`), the facts-in
-  verdict-out exchange over native messaging, outputs as pointers read by range, every call asking, the three shell
-  capabilities, the red-team tests that no page-started type reaches the host; a new `sw-shell.ts` under `src/sw/`, a
-  pure client under `src/shell/`, one registration hook in the wire.
-- **Lane 2**: root D merged (#672, result #676); root E and the first consumer in progress. Its red-team pass found and
-  fixed a hole in the shipped dialect (`Object.assign` into a foreign target, #675).
-- **Lane 3**: the corpus count and the shared vectors in PR #677; root H next.
-- **Lane 1**: root A (the `ml` wire) in PR #678. Its red-team pass found that the hardened `python_exec` sandbox reaches
-  JavaScript and the network. **The lockdown is owned OUTSIDE the lanes**, by the red-team session, built from
-  [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md): the interim mitigations PR first, then the vectors, then the defence.
-  The lane 1 session finishes its root A result file and a design note for the `ml` message channel and then STOPS;
-  a fresh session takes lane 1 forward (`ml` in Pyodide, root C) from the plan, those two documents and the merged
-  lockdown, because the first session's context carries the escape work and is stopped on anything near the sandbox.
-- **Added roots**: J (whole text captures in the value store), taken by the fresh lane 1 session while the lockdown
-  merges, since its own PR 2 needs it and it is outside the worker; K (registering a program), unassigned.
+- **Lane 1**: root A merged (#678, result #689, design note #691); root J merged (#705, result #726) with the main-world
+  fallback kept on Shane's decision. The lockdown is owned by the red-team session (below). While it lands, lane 1 builds
+  the non-colliding part of PR 2: the Python `ml` facade in `python-runtime.ts` against a fake transport, wired to the
+  real channel once the lockdown merges; then root C.
+- **Lane 2**: D (#672), E (#686), 3a (#699), the `sh` consumer and archive removal (#706), the policy vectors (#709), 3b
+  (#716: the `POLICIES` message, the policy page in DevTools Settings, re-judging a showing card) all merged. Next: 3c
+  (`propose_policy`, with the breadth probe carrying no fixed shape and siblings at every label depth, #719), then the
+  results `LANE_2_RESULT_E.md` and `LANE_2_RESULT_3.md`. Two dialect holes found and fixed on the way (#675 `Object.assign`,
+  #699 the page inheriting run URL grants).
+- **Lane 3**: B+G (#677), root H in `parawanderer/cpython` branch `ml/restricted-mode`: slice 1 (`CO_RESTRICTED`, the entry,
+  the extent predicate, specialization off) and slice 2 (the gate, with lifting OPT-IN per manifest leaf) built; the
+  no-specialization cost measured (#718: 1.66x on pure-Python benchmarks, about 1.06x on real cells); CPython's suite at 0
+  failures; stock cp314 wheels load unrebuilt (the ABI holds). 71 of 85 shared Python vectors pass; the rest wait on
+  slices 4 to 6. Vectors #721, the leaf-vocabulary count #722 open. **Assigned after H** (Shane, 2026-10-15): the Pyodide
+  build of the patch, a build-flags job on the ABI argument.
+- **Lane 4**: I (host v0.1.0, v0.2.0), F (#683), results (#687, #694), the `sh` core (#704), nested asks (#710) merged.
+  Next PR 4a (the native port, Settings, the shell capabilities, the red-team test that no page-started type reaches
+  the host), then 4b (`ml.sh` itself, with the descriptor union making `effects` required for `fetch` and `sh`).
+- **Red team** (outside the lanes): vectors #698 open as `todo`; interim mitigations #708 merged; the lockdown's core
+  built on #698's branch, uncommitted (ses `lockdown()` plus the allow-list strip, both needed, #725; captured harness
+  refs; stdout through real stdout; asyncio cancel); still to build: the worker per principal, the enumeration test,
+  the corpus number, docs, state registry. Its PR unblocks lane 1's PR 2 and root C.
+- **Site access** (#647, outside the plan): rebased past #710, owner strings approved, merging; lanes 2 and 4 rebase onto it.
+- **Specs amended today by rulings** (all merged): effects (#671), wire (#693, #701), policies (#679, #700, #707, #719),
+  shell and manifests (#681, #682, #685, #688, #695, #697, #702), the Python dialect (#673, #674, #711, #718, #720), the
+  lockdown plan (#690, #700, #725), the README's rows (#712), the coordinator's handover (#715).
+- **Unassigned roots**: K (registering a program; depends on I and F), the host's hub transport (behind a Cargo feature),
+  the typed-node policy tree (the derived breadth).
 
 ## The lanes
 
