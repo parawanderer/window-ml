@@ -1,6 +1,6 @@
 # Spec (WIP): one effect algebra for every description of a call
 
-**Status: draft, nothing built.** Written on 2026-10-15 to close the "one effect vocabulary, or one per consumer" question
+**Status: the algebra is built** (`src/effects.ts`, tested row by row in `tests/effects.test.mjs`); no consumer reads it yet. Written on 2026-10-15 to close the "one effect vocabulary, or one per consumer" question
 in [`POLICIES.md`](POLICIES.md). Every spec that DESCRIBES what a call does ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md),
 [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), [`SHELL.md`](SHELL.md), [`SECRET_HANDLES.md`](SECRET_HANDLES.md),
 [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)) projects its own terms onto this one, and every policy reads this one.
