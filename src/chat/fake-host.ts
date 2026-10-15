@@ -444,6 +444,16 @@ export class FakeHost implements SessionHost {
         const base = { id: `${c.session.hash}-${now}`, ts: now, save: h.summary.saved, session: { hash: c.session.hash, turn: 0 } };
         switch (c.type) {
             case "approval.answer": {
+                if (c.ask) {
+                    // A nested ask: the step stays as it is, and only the ask it names is answered.
+                    const step = [...h.log].reverse().map((e) => e.event).find((e) => e.kind === "agent-step" && e.seq === c.seq);
+                    if (!step || step.kind !== "agent-step" || !step.asks?.some((a) => a.id === c.ask && a.state === "pending")) return ok({ resolved: false });
+                    const asks = step.asks;
+                    const approved = c.decision === "approve";
+                    this.emit(key, { ...step, ...base, asks: asks.map((a) => a.id === c.ask ? { ...a, state: approved ? "allowed" : "denied", answeredAt: now, ...(c.feedback ? { note: c.feedback } : {}) } : a) });
+                    this.updateSummary(key, { pendingApprovals: Math.max(0, h.summary.pendingApprovals - 1), status: "running" });
+                    return ok({ resolved: true });
+                }
                 const gate = [...h.log].reverse().map((e) => e.event).find((e) => e.kind === "agent-step" && e.seq === c.seq);
                 if (!gate || gate.kind !== "agent-step" || !gate.awaitingApproval) return ok({ resolved: false });
                 const approved = c.decision === "approve";

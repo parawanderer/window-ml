@@ -433,10 +433,12 @@ export type Command =
     | { type: "session.unarchive"; session: SessionId }
     /** Where the runtime's saved-session storage goes, now and day by day: what the Storage page draws. */
     | { type: "storage.stats"; runtime: RuntimeId }
-    /** Answer an open approval gate, keyed by the pending step's `seq`. Handed to the runtime's one
+    /** Answer an open approval gate, keyed by the pending step's `seq` (and `ask`, for a nested ask inside it). Handed to the runtime's one
      *  `resolveApproval`; nothing new decides a gate. `persist` also remembers the call's egress grants, which the
      *  runtime re-derives from the call itself. */
-    | { type: "approval.answer"; session: SessionId; seq: number; decision: "approve" | "deny"; persist?: boolean; feedback?: string }
+    | { type: "approval.answer"; session: SessionId; seq: number; decision: "approve" | "deny"; persist?: boolean; feedback?: string;
+        /** A NESTED ask inside step `seq` (a call made while the step ran); absent for the step's own gate. */
+        ask?: string }
     | {
         type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[];
         model?: string; system?: string; think?: boolean | null;

@@ -43,7 +43,8 @@ export interface SidebarServices {
     /** answer an approval gate by the pending step's `seq`. `feedback` is a sentence that reaches the MODEL on a
      *  denial — why it was refused, so the run can try something else instead of guessing at a bare no. Ignored on an
      *  approval, where there is nothing to explain. */
-    answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string): void;
+    /** Answer the gate of step `seq`, or the nested ask `ask` inside it. */
+    answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string, ask?: string): void;
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. */
     sendToSession(session: string, text: string, images?: string[]): Promise<SendOutcome>;

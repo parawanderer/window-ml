@@ -388,6 +388,11 @@ function writeAgent(s: Session, d: Sink): void {
         const said = typeof st.arguments?.[CALL_TITLE] === "string" ? String(st.arguments[CALL_TITLE]).trim() : "";
         d.head(`Step ${st.step} · ${st.tool || "?"}${said ? ` — “${said}”` : ""}`);
         if (st.approval) d.note(approvalNote(st.approval));
+        // Each nested ask: what was asked while the step ran, how it was answered, and the facts it was judged on.
+        for (const a of st.asks ?? []) {
+            d.note(askNote(a));
+            d.details(`Asked · ${a.kind} · the facts`, () => d.code(JSON.stringify(a.facts, null, 2), "json"));
+        }
         if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);
         // In: a rendered view (when the tool supplies one) AND — always — the RAW args
@@ -582,6 +587,29 @@ export const APPROVAL_NOTE: Record<NonNullable<AgentStep["approval"]>, string> =
  */
 export function approvalNote(approval: string): string {
     return (APPROVAL_NOTE as Record<string, string>)[approval] ?? `decided: ${approval}`;
+}
+
+/** How each nested ask's outcome reads in the export, keyed by every state, as {@link APPROVAL_NOTE} is. */
+export const ASK_NOTE: Record<import("../../contract").AskState, string> = {
+    pending: "waiting for the person",
+    allowed: "allowed by user",
+    denied: "denied by user",
+    cancelled: "cancelled while waiting (never ran)",
+    timeout: "nobody answered in time (never ran)",
+    unattended: "refused: nobody to ask in this run (never ran)",
+    ended: "the turn ended while waiting (never ran)",
+    limit: "refused: the step had asked too often (never ran)",
+};
+
+/**
+ * The export's line for one nested ask: what kind of call, what it would run when the facts say, and how it ended.
+ * @param a the ask
+ */
+export function askNote(a: import("../../contract").StepAsk): string {
+    const argv = Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : "";
+    const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
+    const outcome = (ASK_NOTE as Record<string, string>)[a.state] ?? `ended: ${a.state}`;
+    return `asked (${a.kind}${argv ? `: ${argv}` : ""}): ${outcome}${waited}${a.note ? ` — “${a.note}”` : ""}`;
 }
 
 export function serializeSession(s: Session): { md: string; images: Sidecar[] } {

@@ -1026,6 +1026,13 @@
             "$ref": "#/$defs/ReusedGrant"
           }
         },
+        "asks": {
+          "description": "Nested asks: calls made from inside this step while it ran that needed the person, each with the facts it was judged on, how it was answered and when (docs/spec/ML_WIRE.md, \"Per-call asking\").",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StepAsk"
+          }
+        },
         "elements": {
           "description": "A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus.",
           "type": "number"
@@ -2235,6 +2242,60 @@
       "required": [
         "kind",
         "detail"
+      ],
+      "additionalProperties": true
+    },
+    "StepAsk": {
+      "type": "object",
+      "description": "One nested ask as a step event carries it (docs/spec/ML_WIRE.md, \"Per-call asking\"). Plain data: every surface draws it, both exports record it, and its `facts` are the policy's `c` for the call.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "What kind of call (`sh`), which picks how a surface draws `facts`; an unknown kind is drawn as its facts.",
+          "type": "string"
+        },
+        "facts": {
+          "description": "The policy's `c` for the call, built in the worker from what it resolved, never from what a script or page said.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "allowed",
+            "denied",
+            "cancelled",
+            "timeout",
+            "unattended",
+            "ended",
+            "limit"
+          ]
+        },
+        "raisedAt": {
+          "type": "number"
+        },
+        "answeredAt": {
+          "type": "number"
+        },
+        "note": {
+          "description": "The person's note on a denial, or why the ask ended without them.",
+          "type": "string"
+        },
+        "external": {
+          "description": "The run routes approvals to the external channel only: surfaces show the ask without buttons.",
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "facts",
+        "state",
+        "raisedAt"
       ],
       "additionalProperties": true
     },

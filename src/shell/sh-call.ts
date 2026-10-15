@@ -262,7 +262,7 @@ function quoteArg(a: string): string {
 
 /** A call's effects in words, for the card. */
 function effectsText(e: EffectsData): string {
-    if (e === "unknown") return "unknown: no manifest describes this call";
+    if (e === "unknown") return "unknown";   // why is the card's own line: no manifest, an unknown flag, no version
     if (!e.length) return "nothing beyond running";
     return e.map((x) => `${x.op} ${x.res.kind === "fs" ? x.res.path + (x.res.inRoot === false ? " (outside the roots)" : "") : x.res.kind === "net" ? `network ${x.res.host}` : x.res.kind === "secret" ? `secret ${x.res.name}` : x.res.kind}`).join("; ");
 }

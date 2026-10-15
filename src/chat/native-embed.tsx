@@ -349,7 +349,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
             }
             case "cancel": services().cancelSession(m.key); return;
             case "continue": services().continueSession(m.key, m.maxSteps); return;
-            case "answer": services().answerApproval(m.key, m.seq, m.decision, !!m.persist); return;
+            case "answer": services().answerApproval(m.key, m.seq, m.decision, !!m.persist, undefined, typeof m.ask === "string" ? m.ask : undefined); return;
             case "switchModel": {
                 const id = parseSessionKey(m.key);
                 if (!id) return;

@@ -882,3 +882,16 @@ test("side.call: a TITLE goes to the runtime's one title for the session, a summ
     assert.deepEqual(await w.run({ ...base, purpose: "summary" }), { ok: true, data: { content: "a gloss", usage: null } });
     assert.equal(w.named("sideCall").length, 1);
 });
+
+// --- nested asks: a gate raised inside a running step (src/sw/sw-asks.ts) ---
+
+test("approval.answer with an ask id resolves that NESTED ask's key; a malformed id resolves nothing, not even the step's own gate", async () => {
+    const w = world({ resolveApproval: (key, d) => { w.calls.push(["resolve", key, d]); return true; } });
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    const id = `a${"0123456789abcdef".repeat(2).slice(0, 24)}`;
+    assert.deepEqual(await w.run({ type: "approval.answer", session: sid("aaaa0001"), seq: 2, decision: "deny", feedback: "no", ask: id }), { ok: true, data: { resolved: true } });
+    assert.deepEqual(w.named("resolve"), [["resolve", `aaaa0001:2#${id}`, { approved: false, feedback: "no" }]]);
+    for (const ask of ["x", `${id}0`, `A${id.slice(1)}`, `${id.slice(0, 24)}#`, 5, {}])
+        assert.equal(code(await w.run({ type: "approval.answer", session: sid("aaaa0001"), seq: 2, decision: "approve", ask })), "invalid", `ask ${JSON.stringify(ask)}`);
+    assert.equal(w.named("resolve").length, 1, "no malformed id reached the resolver, so none fell back to the step's own gate");
+});

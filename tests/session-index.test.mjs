@@ -492,3 +492,26 @@ test("heldEvents: what the ring still has, and where in the session it begins", 
     assert.deepEqual(next.heldEvents("aaaa0001"), { events: [], from: 40, seen: 40 });
     assert.equal(next.ingest(step("aaaa0001", 99), bg()).pos, 40);
 });
+
+// --- nested asks: a gate raised inside a running step (src/sw/sw-asks.ts) ---
+
+test("a nested ask is a gate of its own while it waits: the row is waiting and counts it, and the phone's badge reads that count", () => {
+    const ix = index();
+    const h = "aaaa0002";
+    ix.ingest(start(h), bg());
+    const ask = (id, state, over = {}) => ({ id, kind: "sh", facts: { argv: ["ls"] }, state, raisedAt: 1, ...over });
+    const running = { pending: true, result: undefined };
+    ix.ingest(step(h, 1, running), bg());
+    assert.equal(ix.get(h).status, "running", "positive control: a running step is not waiting");
+    ix.ingest(step(h, 1, { ...running, asks: [ask("a1", "pending"), ask("a2", "pending")] }), bg());
+    assert.deepEqual([ix.get(h).status, ix.get(h).pendingApprovals], ["waiting", 2]);
+    ix.ingest(step(h, 1, { ...running, asks: [ask("a1", "allowed"), ask("a2", "pending")] }), bg());
+    assert.equal(ix.get(h).pendingApprovals, 1, "an answered ask stops counting");
+    ix.ingest(step(h, 1, { ...running, asks: [ask("a1", "allowed"), ask("a2", "pending", { external: true })] }), bg());
+    assert.equal(ix.get(h).pendingApprovals, 0, "an ask only the external channel answers is not this person's to answer");
+    ix.ingest(step(h, 1, { ...running, asks: [ask("a1", "allowed"), ask("a2", "denied")] }), bg());
+    assert.deepEqual([ix.get(h).status, ix.get(h).pendingApprovals], ["running", 0]);
+    ix.ingest(step(h, 2, { ...running, asks: [ask("a3", "pending")] }), bg());
+    ix.ingest(result(h), bg());
+    assert.equal(ix.get(h).pendingApprovals, 0, "a finished turn clears its asks with its gates");
+});
