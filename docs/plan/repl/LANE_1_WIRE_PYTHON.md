@@ -9,7 +9,7 @@ Read `README.md` in this folder first. Work slug `repl-lane1`; clone `~/git/wind
 - `docs/spec/ML_WIRE.md` (all of it; it is short), `docs/spec/PYTHON_DIALECT.md` ("The namespace", "Membership
   replaces `mode`" for what NOT to do yet), `docs/spec/CURRENT_CONTEXT.md` ("Python parity constrains the shape").
 - `docs/dev/python-sandbox.md` (how the offscreen document, the dedicated worker, `harden()`, the stdout tee and the
-  per-run reset work today), `docs/dev/architecture.md` (the message contract, `DEREF_TOKEN`), `docs/dev/state.md`
+  per-run reset work today), `docs/dev/architecture.md` (the message contract; the run-keyed dereference resolver is `derefByRun` in `src/sw/sw-runs.ts`), `docs/dev/state.md`
   (where state lives and the registry), `docs/dev/site-access.md` ("Adding a tool, a member or a message").
 - The code: `src/python/python-worker.ts`, `src/python/python-runtime.ts` (`wrapUserCode`, its `persist` parameter,
   `harden`/`unharden`, `_ml_stdout_cb`), `src/offscreen.ts`, `src/sw/sw-offscreen.ts`, `src/readonly-exec/policy.ts`
@@ -23,8 +23,7 @@ What: one `ml` call as a message, served by the service worker.
 - The request and answer shapes from `ML_WIRE.md` as types in the contract (`src/contract/contract-messages.ts`), with
   `value`, `pointer`, `error` and `ask` answers. `ask` may land as a stub that today answers `error` for a gated call
   and is wired to the consent path in a follow-up; say so in the PR if you split it.
-- A new `sw-ml-wire.ts` under `src/sw/` routing `call` names to the handlers that exist (`dereference` via the `DEREF_TOKEN`
-  path, `config`, `getModel`, `models`, `capabilities`, `ps`, `serverTools`, `info`, `schema`), per CLIENT REALM: a
+- A new `sw-ml-wire.ts` under `src/sw/` routing `call` names to the handlers that exist (`dereference` via `derefByRun`, `config`, `getModel`, `models`, `capabilities`, `ps`, `serverTools`, `info`, `schema`), per CLIENT REALM: a
   read-only client gets exactly `ML_READONLY_METHODS` minus the page-reading ones, built from the same list (do not copy
   it), and an absent member is an `error` the client reports as a refusal.
 - **Sender, never run id.** The handler accepts the message only from senders it can verify (the offscreen document's
