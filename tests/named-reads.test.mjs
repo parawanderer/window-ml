@@ -41,7 +41,7 @@ test("a literal pipe that does not split (an unterminated quote) names nothing a
     const { execNames } = await import("../src/sw/exec-routing.ts");
     for (const js of [`ml.dereference("x", { pipe: "grep 'a" })`, `ml.dereference("x", { pipe: "head 1 | sed 's/a/b" })`, `// ml.dereference("x", { pipe: "grep \\"a" })`]) {
         assert.deepEqual(scan(js), [], js);
-        assert.deepEqual(execNames(js), { current: false, pointers: true }, js);
+        assert.deepEqual(execNames(js), { current: false, pointers: true, sh: false }, js);
     }
     assert.deepEqual(scan(`ml.dereference("x", { pipe: ["grep 'a"] })`), [{ ref: "x", pipe: ["grep 'a"] }], "an array names its stages as written; the quote fails when the stage runs");
     assert.deepEqual(scan(`ml.dereference("x", { pipe: "grep 'a" }); ml.dereference("y")`), [{ ref: "y", pipe: [] }], "positive control: the scan goes on past it");
