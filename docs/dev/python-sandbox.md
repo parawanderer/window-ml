@@ -345,7 +345,9 @@ the server's list, so nothing is copied into Python. A call sends ONE request, `
 as a trailing options object); the client and run are stamped by the offscreen document, never by the facade. Answers
 decode as: `value` to plain data (`{"$bytes": …}` to `bytes`, `{"$secret": …}` to an opaque read-only handle), `pointer`
 to an `MlPointer` whose token reads back through `ml.dereference`, `error` to a raised `MlError` with the wire's `code`.
-A value marked `truncated` prints one line saying so. There is no ask path: a call that needs the person waits in the
+Data shaped like a tag (an object whose one key starts with `$`) crosses wrapped as `{"$": …}` in
+both directions and is unwrapped one level, so a fetched JSON `{"$bytes": …}` stays a dict and a cell's own
+`{"$secret": …}` never crosses as a handle. A value marked `truncated` prints one line saying so. There is no ask path: a call that needs the person waits in the
 transport, on the server's per-call suspension. Two rules the wiring must keep: `send` is a PYTHON callable (a cell can
 reach it through the factory's closure, so a JsProxy there would be one in the namespace), and `codec` holds the
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.

@@ -20,6 +20,7 @@ export const ML_FACADE_NAMES = ["ml", "MlError"] as const;
  * - A member is any public attribute: `await ml.config()`, `await ml.dereference("@tool:a1b2c3", pipe=".rows")`. Which
  *   members a realm has is the SERVER's list, so nothing is copied here; an absent one is an `MlError` the cell can catch.
  * - Keyword arguments become one trailing options object, the wire's convention.
+ * - Data shaped like a tag (one key starting with "$") crosses wrapped as `{"$": …}` both ways, unwrapped one level.
  * - An answer decodes to: a `value` as plain data (`{"$bytes": …}` as `bytes`, `{"$secret": …}` as an opaque handle); a
  *   `pointer` as an `MlPointer` naming its token, which reads back through `ml.dereference`; an `error` as a raised
  *   `MlError` with its `code`. A value marked `truncated` prints one line saying so, unasked.
@@ -48,16 +49,26 @@ def _ml_make(_send, _codec):
         def __str__(self): return self.token
         def __repr__(self): return f"<pointer {self.token} ({self.label}, {self.size:,} chars): read it with a pipe>"
 
+    # A TAG is an object with one key starting with "$". Data shaped like one (a cell's {"$secret": …}, a fetched JSON
+    # {"$bytes": …}) crosses wrapped as {"$": <object>} both ways, and the receiver unwraps one level, so data is never
+    # read as a tag (ML_WIRE.md, "What crosses").
+    def _tagshaped(d): return len(d) == 1 and str(next(iter(d))).startswith("$")
+
     def _out(x):
         if isinstance(x, (bytes, bytearray, memoryview)): return {"$bytes": _b64e(bytes(x)).decode("ascii")}
         if isinstance(x, MlSecret): return {"$secret": x._name}
         if isinstance(x, MlPointer): return x.token
-        if isinstance(x, dict): return {str(k): _out(v) for k, v in x.items()}
+        if isinstance(x, dict):
+            d = {str(k): _out(v) for k, v in x.items()}
+            return {"$": d} if _tagshaped(d) else d
         if isinstance(x, (list, tuple)): return [_out(v) for v in x]
         return x
 
     def _in(x):
         if isinstance(x, dict):
+            if len(x) == 1 and "$" in x:
+                d = x["$"]
+                return {k: _in(v) for k, v in d.items()} if isinstance(d, dict) else _in(d)
             if len(x) == 1 and "$bytes" in x and isinstance(x["$bytes"], str): return _b64d(x["$bytes"])
             if len(x) == 1 and "$secret" in x and isinstance(x["$secret"], str): return MlSecret(x["$secret"])
             return {k: _in(v) for k, v in x.items()}

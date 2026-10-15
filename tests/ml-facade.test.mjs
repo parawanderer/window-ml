@@ -102,6 +102,17 @@ test("bytes cross as {$bytes: base64} both ways; a secret handle stays opaque an
     assert.deepEqual(sent[1].args, [{ $secret: "github" }]);
 });
 
+test("data shaped like a tag is data: a wrapped {$bytes} arrives as the dict, a cell's {$secret} leaves wrapped", { skip }, async () => {
+    const { out, sent } = await facadeRun(
+        `def answer(req): return {"value": {"doc": {"$": {"$bytes": "x"}}, "nested": {"$": {"$": {"a": 1}}}}}`,
+        `v = await ml.dereference("@tool:a1b2c3d")\nout["doc"], out["docType"] = v["doc"], type(v["doc"]).__name__\nout["nested"] = v["nested"]\nawait ml.schema({"$secret": "github"}, {"$bytes": "AA=="}, {"$x": 1, "y": 2})`);
+    assert.deepEqual(out.doc, { $bytes: "x" }, "the dict, not bytes");
+    assert.equal(out.docType, "dict");
+    assert.deepEqual(out.nested, { $: { a: 1 } }, "one level unwrapped, no more");
+    assert.deepEqual(sent[1].args, [{ $: { $secret: "github" } }, { $: { $bytes: "AA==" } }, { $x: 1, y: 2 }],
+        "a cell's tag-shaped dict never crosses as a tag; a dict with more keys is not tag-shaped");
+});
+
 test("a value marked truncated says so in the cell's output, unasked", { skip }, async () => {
     const { out } = await facadeRun(`def answer(req): return {"value": {"text": "abc"}, "truncated": True, "size": 1548889}`,
         `import io, contextlib\nbuf = io.StringIO()\nwith contextlib.redirect_stdout(buf):\n    await ml.dereference("@tool:a1b2c3d")\nout["printed"] = buf.getvalue()`);
