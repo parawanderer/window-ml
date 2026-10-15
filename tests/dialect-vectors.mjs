@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 /** The genres, one JSON file each under `tests/fixtures/dialect-vectors/`. */
 export const GENRES = ["abuse", "halting", "failure", "ownership", "print"];
 /** The worlds a vector may name; a runner that lacks one skips the vector, never runs it elsewhere. */
-export const ENVS = ["none", "dom", "answer", "table"];
+export const ENVS = ["none", "dom", "answer", "table", "policy"];
 
 const DIR = new URL("./fixtures/dialect-vectors/", import.meta.url);
 const cache = new Map();

@@ -390,5 +390,269 @@
     "expect": "refused",
     "reason": "a name that is neither a listed method nor a column is NotInDialect, never pandas' AttributeError",
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "policy: ml",
+    "js": "(c) => !!ml",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: document",
+    "js": "(c) => !!document",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: window",
+    "js": "(c) => !!window",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: globalThis",
+    "js": "(c) => !!globalThis",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: console",
+    "js": "(c) => { console.log(\"x\"); return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: Date",
+    "js": "(c) => Date.now() > 0",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: new Date",
+    "js": "(c) => new Date() > 0",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: Promise",
+    "js": "(c) => !!Promise",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: getComputedStyle",
+    "js": "(c) => !!getComputedStyle",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: Function",
+    "js": "(c) => !!Function",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: fetch",
+    "js": "(c) => !!fetch",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: self",
+    "js": "(c) => !!self",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the policy realm's only root is c and the pure builtins: no ml, no DOM, no console, no clock, no Promise",
+    "from": "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise"
+  },
+  {
+    "name": "policy: c.constructor",
+    "js": "(c) => !!c.constructor",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: c.__proto__",
+    "js": "(c) => !!c.__proto__",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: an array's constructor",
+    "js": "(c) => !!c.argv.constructor",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: a computed constructor",
+    "js": "(c) => !!c[\"constr\" + \"uctor\"]",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: a string's constructor",
+    "js": "(c) => !!c.url.constructor",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: a helper's constructor",
+    "js": "(c) => !!c.effects.has.constructor",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: a destructured constructor",
+    "js": "(c) => { const { constructor } = c.argv; return !!constructor; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: a nested __proto__",
+    "js": "(c) => !!c.paths[0].__proto__",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: prototype",
+    "js": "(c) => !!c.argv.prototype",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "the denied properties walk back to the realm, from c and from every value inside it",
+    "from": "tests/readonly-policy.test.mjs constructor, __proto__ and prototype"
+  },
+  {
+    "name": "policy: constructor inside map",
+    "js": "(c) => c.argv.map((x) => x.constructor).length > 0",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "a callback is the script's own arrow, mediated like any code: the realm is no nearer from inside one",
+    "from": "tests/readonly-policy.test.mjs a realm through a callback"
+  },
+  {
+    "name": "policy: getPrototypeOf inside map",
+    "js": "(c) => c.argv.map((x) => Object.getPrototypeOf(x)).length > 0",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "a callback is the script's own arrow, mediated like any code: the realm is no nearer from inside one",
+    "from": "tests/readonly-policy.test.mjs a realm through a callback"
+  },
+  {
+    "name": "policy: this in a function expression",
+    "js": "(c) => c.argv.some(function () { return this; })",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "a callback is the script's own arrow, mediated like any code: the realm is no nearer from inside one",
+    "from": "tests/readonly-policy.test.mjs a realm through a callback"
+  },
+  {
+    "name": "policy: a helper handed to a host method",
+    "js": "(c) => c.argv.map(c.effects.has).length > 0",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "a callback is the script's own arrow, mediated like any code: the realm is no nearer from inside one",
+    "from": "tests/readonly-policy.test.mjs a realm through a callback"
+  },
+  {
+    "name": "policy: Function through a comparator",
+    "js": "(c) => c.argv.sort((a, b) => a.constructor.constructor(\"return 1\")()) && true",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "a callback is the script's own arrow, mediated like any code: the realm is no nearer from inside one",
+    "from": "tests/readonly-policy.test.mjs a realm through a callback"
+  },
+  {
+    "name": "policy: a reviver",
+    "js": "(c) => JSON.parse(\"{}\", (k, v) => v.constructor) && true",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "a callback is the script's own arrow, mediated like any code: the realm is no nearer from inside one",
+    "from": "tests/readonly-policy.test.mjs a realm through a callback"
+  },
+  {
+    "name": "policy: assign to c",
+    "js": "(c) => { c.kind = \"x\"; return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
+    "from": "tests/readonly-policy.test.mjs writing c"
+  },
+  {
+    "name": "policy: push to c.argv",
+    "js": "(c) => { c.argv.push(\"x\"); return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
+    "from": "tests/readonly-policy.test.mjs writing c"
+  },
+  {
+    "name": "policy: assign into c.argv",
+    "js": "(c) => { c.argv[0] = \"x\"; return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
+    "from": "tests/readonly-policy.test.mjs writing c"
+  },
+  {
+    "name": "policy: assign into a path",
+    "js": "(c) => { c.paths[0].inRoot = false; return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
+    "from": "tests/readonly-policy.test.mjs writing c"
+  },
+  {
+    "name": "policy: sort c.argv in place",
+    "js": "(c) => { c.argv.sort(); return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
+    "from": "tests/readonly-policy.test.mjs writing c"
+  },
+  {
+    "name": "policy: Object.assign onto c",
+    "js": "(c) => { Object.assign(c, { kind: \"x\" }); return true; }",
+    "env": "policy",
+    "expect": "refused",
+    "reason": "c is not the script's: nothing it holds may be written, through assignment, a mutator or Object.assign",
+    "from": "tests/readonly-policy.test.mjs writing c"
   }
 ]

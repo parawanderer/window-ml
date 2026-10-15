@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
 
 const { evalPolicy, evalReadonly, POLICY_STEPS } = await import("../src/readonly-exec.ts");
+const { vectors } = await import("./dialect-vectors.mjs");
 
 const FACTS = Object.freeze({
     kind: "fetch", url: "https://a.example/x", argv: ["git", "status"],
@@ -19,6 +20,14 @@ function broken(src, why, facts = FACTS) {
     assert.equal(r.decision, undefined, `${why}: must not decide`);
     assert.ok(r.broken, `${why}: must be marked broken, got ${JSON.stringify(r)}`);
     return r.broken;
+}
+
+/** A shared dialect vector (tests/fixtures/dialect-vectors/, env "policy") must leave the policy broken by a REFUSAL. */
+function refusedHere(v) {
+    assert.equal(v.env, "policy", v.name);
+    const r = run(v.js);
+    assert.equal(r.decision, undefined, `${v.name}: must not decide`);
+    assert.match(r.broken ?? "", /^not allowed in a policy/, `${v.name}: must be refused, got ${JSON.stringify(r)}`);
 }
 
 // --- what a policy answers ---
@@ -139,50 +148,20 @@ test("=== and !== are fine in a policy, and == stays accepted in a survey", asyn
 // --- what a policy cannot reach ---
 
 test("no ml, no document, no window, no console, no clock, no Promise", () => {
-    for (const [src, why] of [
-        ["(c) => !!ml", "ml"], ["(c) => !!document", "document"], ["(c) => !!window", "window"], ["(c) => !!globalThis", "globalThis"],
-        ['(c) => { console.log("x"); return true; }', "console"], ["(c) => Date.now() > 0", "Date"], ["(c) => new Date() > 0", "new Date"],
-        ["(c) => !!Promise", "Promise"], ["(c) => !!getComputedStyle", "getComputedStyle"], ["(c) => !!Function", "Function"],
-        ["(c) => !!fetch", "fetch"], ["(c) => !!self", "self"],
-    ]) broken(src, why);
+    for (const v of vectors("abuse", "tests/readonly-policy.test.mjs no ml, no document, no window, no console, no clock, no Promise")) refusedHere(v);
 });
 
 test("constructor, __proto__ and prototype are denied on c, on its parts and through every binding form", () => {
-    for (const [src, why] of [
-        ["(c) => !!c.constructor", "c.constructor"], ["(c) => !!c.__proto__", "c.__proto__"],
-        ["(c) => !!c.argv.constructor", "an array's constructor"], ['(c) => !!c["constr" + "uctor"]', "a computed constructor"],
-        ["(c) => !!c.url.constructor", "a string's constructor"], ["(c) => !!c.effects.has.constructor", "a helper's constructor"],
-        ["(c) => { const { constructor } = c.argv; return !!constructor; }", "a destructured constructor"],
-        ["(c) => !!c.paths[0].__proto__", "a nested __proto__"], ["(c) => !!c.argv.prototype", "prototype"],
-    ]) broken(src, why);
+    for (const v of vectors("abuse", "tests/readonly-policy.test.mjs constructor, __proto__ and prototype")) refusedHere(v);
 });
 
 test("a realm cannot be reached through a callback", () => {
-    for (const [src, why] of [
-        ["(c) => c.argv.map((x) => x.constructor).length > 0", "constructor inside map"],
-        ["(c) => c.argv.map((x) => Object.getPrototypeOf(x)).length > 0", "getPrototypeOf inside map"],
-        ["(c) => c.argv.some(function () { return this; })", "this in a function expression"],
-        ["(c) => c.argv.map(c.effects.has).length > 0", "a helper handed to a host method"],
-        ['(c) => c.argv.sort((a, b) => a.constructor.constructor("return 1")()) && true', "Function through a comparator"],
-        ['(c) => JSON.parse("{}", (k, v) => v.constructor) && true', "a reviver"],
-    ]) broken(src, why);
+    for (const v of vectors("abuse", "tests/readonly-policy.test.mjs a realm through a callback")) refusedHere(v);
 });
 
 test("a policy cannot write c, its arrays or its parts", () => {
-    for (const [src, why] of [
-        ['(c) => { c.kind = "x"; return true; }', "assign to c"],
-        ['(c) => { c.argv.push("x"); return true; }', "push to c.argv"],
-        ['(c) => { c.argv[0] = "x"; return true; }', "assign into c.argv"],
-        ['(c) => { c.paths[0].inRoot = false; return true; }', "assign into a path"],
-        ['(c) => { c.argv.sort(); return true; }', "sort c.argv in place"],
-        ['(c) => { Object.assign(c, { kind: "x" }); return true; }', "Object.assign onto c"],
-        ['(c) => { c = 1; return true; }', "rebind the parameter... is allowed, but"],
-    ]) {
-        const r = run(src);
-        if (why.startsWith("rebind")) { assert.deepEqual(r, { decision: "allow" }, "a parameter is the script's own binding"); continue; }
-        assert.equal(r.decision, undefined, why);
-        assert.ok(r.broken, why);
-    }
+    for (const v of vectors("abuse", "tests/readonly-policy.test.mjs writing c")) refusedHere(v);
+    assert.deepEqual(run("(c) => { c = 1; return true; }"), { decision: "allow" }, "rebinding the parameter is allowed: it is the script's own binding");
 });
 
 test("a policy cannot write the host's builtins, which every later evaluation and the host itself share", () => {
@@ -304,15 +283,11 @@ test("HALTING: a loop the budget cannot afford is broken, not hung", async () =>
 });
 
 test("HALTING: recursion past the call depth is refused, directly and mutually", async () => {
-    for (const src of [
-        "(c) => { const f = (n) => f(n + 1); return f(0); }",
-        "(c) => { const g = (n) => h(n); const h = (n) => g(n + 1); return g(0); }",
-        "(c) => { const f = (n) => [n].map((x) => f(x + 1))[0]; return f(0) === 1; }",
-    ]) {
-        const r = await inWorker(src, FACTS);
-        assert.ok(!r.hung, `${src}: still running`);
-        assert.equal(r.decision, undefined, src);
-        assert.match(r.broken, /nested more than|budget/, src);
+    for (const v of vectors("halting", "tests/readonly-policy.test.mjs halting")) {
+        const r = await inWorker(v.js, FACTS);
+        assert.ok(!r.hung, `${v.name}: still running`);
+        assert.equal(r.decision, undefined, v.name);
+        assert.match(r.broken, /nested more than|budget|steps|too much/i, v.name);
     }
 });
 
