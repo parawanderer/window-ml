@@ -277,9 +277,16 @@ entry walks the arguments, positional and keyword, into plain containers (`list`
 object such as a frame), and every callable found must be a `CO_RESTRICTED` Python function, every string in a `names`
 position must be in the vocabulary, or the call is `NotInDialect` before the leaf runs. A gate-restoring shim around C
 callables is the alternative and is rejected: it is complexity in the one place that must stay simplest. The corpus
-consequence is that `df.a.apply(str)` and `.map(int)` are refused; if the count shows the idiom matters, the manifest
-grows a listed set of CALLBACK-SAFE C callables (pure, resolving no name from their arguments: `len`, `str`, `int`,
-`float`, `bool`, `abs`), admitted in that position, and nothing else.
+count (lane 3, PR #722, `leaf-vocabulary.json` over 1,697 parsed cells) says the rule costs nothing measurable: no cell
+passes a builtin or a bound method as a callback or `key=`; nine cells (about 0.5%) pass a MODULE function,
+`.map(decimal.Decimal)` six times and `.apply(pd.to_numeric)` three, and the rule refuses all nine rightly, since
+`Decimal` is a C type and `to_numeric` is pandas' own Python, either of which would run ungated inside the lift. So
+there is no general list of callback-safe builtins. If a leaf is ever admitted in that position, it is marked on ITS
+OWN manifest entry ("may also appear as a callback"), judged entry by entry under the same burden as `lift` (it resolves
+no name it is given), with `decimal.Decimal` and `pandas.to_numeric` the two candidates the corpus names. The same count
+sets the `names` vocabulary: one cell passes a string to a name-resolving leaf (`agg("sum")`), none use `transform` or
+`aggregate`, so the vocabulary starts at the pandas reductions; `query` appears once and `eval` never, so leaving them out
+costs nothing.
 
 ```python
 class DataFrame:
