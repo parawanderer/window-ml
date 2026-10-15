@@ -204,6 +204,17 @@ export interface MlConfig {
      *  its execution log, the watches you shared) inside a read-only `exec` of a run the extension hosts, and its system
      *  prompt says so, with `ml.current`'s shape. Off: no `ml.current` at all, and no word of it in the prompt. */
     selfIntrospection: boolean;
+    /** Default OFF. Let a run's approved script start programs on this machine through `ml.sh`, by way of the process
+     *  host (window-ml-host, installed separately). Every call still asks, showing what will run. */
+    shellEnabled: boolean;
+    /** The workspace folders `ml.sh` runs in: absolute paths. A call's working directory must be inside one; with the
+     *  sandbox on, writes are confined to them. Empty: nothing runs. */
+    shellRoots: string[];
+    /** Default ON. Run each `ml.sh` call under the OS sandbox (Seatbelt on macOS, bubblewrap on Linux): writes only in
+     *  the roots, no network. Off runs programs as you, with your files and network. */
+    shellSandbox: boolean;
+    /** The directories programs are looked up in, in order. Empty: the host's own default. */
+    shellPath: string[];
     /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
      *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
      *  quota caps it further. */
@@ -314,6 +325,10 @@ export const DEFAULT_CONFIG: MlConfig = {
     agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab
     selfIntrospection: true,            // default on: the agent reads its own run as `ml.current`, and is told so
     valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
+    shellEnabled: false,                // default off: no program runs until the person turns ml.sh on and names a folder
+    shellRoots: [],
+    shellSandbox: true,                 // default on, and fails closed: no sandbox on this machine means every call says so
+    shellPath: [],
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: true,

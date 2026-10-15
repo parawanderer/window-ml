@@ -846,3 +846,33 @@ test("PART 5 UPGRADE — a snapshot written by the build before the update is no
     await tick();
     assert.equal(driverCalls(), 0, "nothing resumed it");
 });
+
+// --- the process host behind ml.sh: no page reaches it (docs/spec/SHELL.md, "Security invariants") ---
+
+test("GAIN blocked — EVERY page-started message type, from an approved origin or not, never reaches the process host", async () => {
+    const { fakeNativeHost } = await import("./fake-native-host.mjs");
+    const extensionPage = { id: "test", url: "chrome-extension://test/sidebar.html" };
+    for (const [label, local, sender] of [
+        ["unapproved", {}, hostilePage()],
+        ["approved", { ml_site_always: ["https://evil.example"] }, hostilePage()],
+    ]) {
+        const host = fakeNativeHost();
+        // ml.sh is ON with a folder, so the worker has a live, configured port the whole time the page tries.
+        const bg = loadBackground({ config: baseConfig({ shellEnabled: true, shellRoots: ["/w/proj"] }), siteGate: true, local, onNative: host.onNative, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+        await bg.send({ type: "SHELL_STATUS", payload: { refresh: true } }, extensionPage);
+        const connects = bg.nativeConnects.length, calls = host.calls.length;
+        assert.deepEqual(host.names(), ["hello", "configure"], `${label}: positive control: the port is live`);
+        for (const type of PAGE_STARTED_TYPES) await attempt(bg, type, sender);
+        // The status message itself, which a content script could send, and its refresh (which would start the host).
+        const st = await bg.send({ type: "SHELL_STATUS", payload: { refresh: true } }, sender);
+        assert.equal(st?.error, "Refused", `${label}: a content script's SHELL_STATUS is refused`);
+        await tick();
+        assert.equal(bg.nativeConnects.length, connects, `${label}: no page-started type opened a native port`);
+        assert.deepEqual(host.calls.slice(calls), [], `${label}: no page-started type sent the host anything`);
+        // Positive control: the counters move when the extension itself reaches the host.
+        host.exit();
+        await tick();
+        await bg.send({ type: "SHELL_STATUS", payload: { refresh: true } }, extensionPage);
+        assert.equal(bg.nativeConnects.length, connects + 1, `${label}: positive control: a reconnect is counted`);
+    }
+});

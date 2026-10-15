@@ -31,6 +31,7 @@ import { defineJob } from "../job-registry";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
+import { shellCapabilities, refreshShell, onShellStatus, SHELL_KEYS } from "./sw-shell";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -124,7 +125,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, ...archiveCapability(), ...blankStartCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -631,11 +632,16 @@ try {
         sessionServer.runtimeChanged();
         void refreshBlankStart();
     });
+    // Only when turned on: measuring starts the host process.
+    void getConfig().then((cfg) => { if (cfg.shellEnabled === true) void refreshShell(); }, () => { /* no settings: off */ });
+    onShellStatus(() => sessionServer.runtimeChanged());
     chrome.storage.onChanged?.addListener((changes, area) => {
         if (area !== "sync") return;
         // A new start page is a new ORIGIN, so the old answer about it does not carry over.
         if (changes.agentStartPage) { agentStartPage = String(changes.agentStartPage.newValue ?? "").trim(); void refreshBlankStart(); }
         if (changes.autoTitles) autoTitles = changes.autoTitles.newValue !== false;
+        // The shell's settings are its session: a change reconnects and reconfigures, and the capabilities follow.
+        if (SHELL_KEYS.some((k) => changes[k])) void refreshShell();
         if (changes.sessionArchive) { archiveOn = changes.sessionArchive.newValue === true; archiveToggled(); }
         // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to
         // shrink while they watch.

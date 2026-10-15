@@ -131,6 +131,7 @@ learned by shipping the wrong version first.
 | the read-only `exec` dialect: the pointer macro, the parser, the mediated evaluator, halting | `docs/dev/readonly-exec.md` |
 | policies: the policy store, what a remembered URL does, judging a call | `docs/dev/policies.md` (+ `docs/spec/POLICIES.md`, `docs/spec/EFFECTS.md`) |
 | `python_exec`, the sandbox modes, the Python bench and its editor | `docs/dev/python-sandbox.md` |
+| `ml.sh` from the extension's side: the native port to the process host, its Settings, the shell capabilities | `docs/dev/shell.md` (+ `docs/spec/SHELL.md`) |
 | streamed tool output, the output cell, line maps, tracebacks, code-block buttons, retry diffs | `docs/dev/output-and-code.md` |
 | `@tool:` pointers, `dereference`, the pipe dialect, the pointer macro | `docs/dev/pointers.md` (+ `docs/POINTER-IDENTIFIERS.md`) |
 | the Markdown/PDF export, the JSON export and its schema, which run artifact to reach for | `docs/dev/export.md` |
