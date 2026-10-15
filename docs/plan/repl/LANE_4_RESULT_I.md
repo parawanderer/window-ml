@@ -76,14 +76,15 @@ Also shown, outside the sandbox:
 
 ## What did NOT work, or was left out
 
-- **Linux enforcement is untested in CI.** bubblewrap does not start on GitHub's `ubuntu-latest` (24.04): AppArmor
-  restricts unprivileged user namespaces. The host reports `available: false` there and every Linux sandbox test takes
-  the fail-closed branch (facts say `sandboxed: false`, `placement: "host-plain"`). That proves the failure mode, not
-  the profile. Shane chose a per-program AppArmor profile for `bwrap` on the runner (Ubuntu's own opt-in mechanism)
-  with `WMLHOST_REQUIRE_SANDBOX=1` on the Linux job. The change is on branch `ci/linux-sandbox`; the session's permission
-  classifier refused to let the agent commit a CI change that relaxes AppArmor even with Shane's go, so Shane pushes
-  it. Until it runs, Linux enforcement is unverified, and the first run may well need fixes to the bubblewrap
-  arguments.
+- **Linux enforcement now runs in CI (window-ml-host #5), and its first run found the documented gap.** bubblewrap did
+  not start on GitHub's Ubuntu 24.04 runner (AppArmor restricts unprivileged user namespaces), so at first every Linux
+  sandbox test took the fail-closed branch. Shane chose a per-program AppArmor profile granting `bwrap` user namespaces
+  on the runner, and CI now requires the sandbox on Linux (`WMLHOST_REQUIRE_SANDBOX=1`). The session's permission
+  classifier would not let the agent commit that AppArmor change even with Shane's go, so Shane pushed it. Its first
+  run: 29 of 30 sandbox tests enforced; the hooks test failed because `.vscode/settings.json`, absent when the call
+  started, was written. bubblewrap re-binds read-only only what exists at the start. The test now holds what each
+  sandbox guarantees, and a separate test PINS the Linux gap, so closing it (Landlock, which root K plans) has to flip
+  that test.
 - **Linux protects less than macOS even when it runs.** bubblewrap binds paths and cannot match patterns, so hooks in a
   NESTED repository, or created during the call, stay writable, and credential stores are masked only under `$HOME`.
 - **No container runner.** `mode: "container"` answers `Unsupported`; the seam and what Docker Desktop, Podman and
