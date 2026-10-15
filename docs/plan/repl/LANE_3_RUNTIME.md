@@ -82,3 +82,14 @@ in the abstract object layer, not in opcodes alone, so `str.format` and `getattr
 
 `LANE_3_RESULT_<root>.md` in this folder, per root: the corpus sizes and the admitted fraction per whitelist, the
 overhead numbers at depth zero and one, the allocation hook's cost, what the fork's build needs, what a spec got wrong.
+
+## Finding for the session that resumes lane 3 (2026-10-15 evening)
+
+The lane 3 session died in the memory crash of 2026-10-15 21:05, which its own CPython suite run caused: with the slice-2
+build (the gate) in, the `test_asyncio.test_runners` worker of `./python.exe -m test -j6` grew to 14.36 GB (Jetsam reports
+`JetsamEvent-2026-10-15-2054*.ips`) and hung for 1h43m, while the same test passed in 2 seconds on the slice-1 build. Treat
+it as a candidate regression in the gate until shown otherwise: reproduce it alone, `./python.exe -m test
+test_asyncio.test_runners -v --timeout 120` under `ulimit -v 4000000`, against stock, and look at the interpreter call
+sites slice 2 touched (`_DO_CALL`, `_PyRestricted_Vectorcall`) under asyncio's `Runner`, and at whether any hook runs when
+nothing is restricted. The fork holds slice 4 pushed (1c8b7db) and uncommitted edits in `~/git/cpython-restricted` (check
+`git status` there first). The suite rule in the plan's README applies to every later run.
