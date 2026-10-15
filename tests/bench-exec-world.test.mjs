@@ -95,6 +95,16 @@ test("both arms set the world constant, so neither measures whatever the shipped
     for (const world of spec.dimensions.world) {
         const fx = spec.apply({ model: "m", world });
         assert.equal(fx.defines.__EXEC_DEFAULT_WORLD__, JSON.stringify(world));
+        assert.equal(fx.surface, "hud", "a console run is the page's own: the default world never applies to it");
     }
     assert.deepEqual(spec.dimensions.world, ["page", "isolated"]);
+});
+
+test("no fixture tells the model what it tests: no comment, and a title a real page would have", async () => {
+    for (const name of ["app-state", "store", "tampered"]) {
+        const src = await html(name);
+        assert.ok(!src.includes("<!--"), `${name}: a comment is read by any fetch of the page`);
+        const title = src.match(/<title>([^<]*)<\/title>/)[1];
+        assert.ok(!/world|lie|tamper|state|store|global|isolat/i.test(title), `${name}: the title "${title}" is in the prompt`);
+    }
 });

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Support desk — data reachable only through the page's store</title>
+<title>Support desk</title>
 <style>
   body { font: 15px system-ui, sans-serif; margin: 40px; color: #111; }
   h1 { font-size: 18px; }
@@ -11,13 +11,6 @@
 </style>
 </head>
 <body>
-<!--
-  The exec-world bench's second fixture (tests/e2e/bench/specs/exec-world.bench.ts). The refunds are held in a
-  Redux-style store's CLOSURE, reachable only by calling `window.store.getState()`: no list is rendered, only a count.
-  Unlike the first fixture's plain global, this needs a page FUNCTION called in the page's world. Amounts are derived
-  in script and two refunds are reversed after being issued, so neither the amounts nor the total appear in this
-  file's text (a test holds that).
--->
 <h1>Support desk</h1>
 <p>Signed in as <b>mira</b>. The refund list is loading…</p>
 <p>Active refunds this week: <span class="badge" id="count">…</span></p>
