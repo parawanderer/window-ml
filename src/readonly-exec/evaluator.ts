@@ -5,7 +5,7 @@ import type { CurrentSnapshot } from "../agent/current-context";
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
-import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS } from "./policy";
+import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -887,16 +887,16 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
-            // `Object.assign(target, …)` WRITES its first argument, so the target meets the same rule as `o[k] = v`: a
+            // An argument the call WRITES (ARG_WRITERS: `Object.assign`'s target) meets the same rule as `o[k] = v`: a
             // plain object or array the script built, not one being iterated. Without it, a survey assigned into the
             // page (`Object.assign(document.body, { innerHTML })`) and into the host's own builtins (`Math`, `JSON`,
             // `Array`), which outlive the survey and every guard here reads.
-            if (key === "assign" && obj === Object) {
-                const target = args[0];
+            for (const i of argWrites(obj, key)) {
+                const target = args[i];
                 this.refuseWrite(target);
                 if (target === null || typeof target !== "object" || !this.owned.has(target) || !isWritableTarget(target))
-                    throw new Denied("Object.assign can only write into an object or array you built — never a DOM node, a page object, or a builtin");
-                this.notIterating(target, "assign into");
+                    throw new Denied(`${key} can only write into an object or array you built — never a DOM node, a page object, or a builtin`);
+                this.notIterating(target, "write into");
             }
             this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
             // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
