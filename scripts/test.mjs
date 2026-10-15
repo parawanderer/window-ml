@@ -82,8 +82,20 @@ const GENRES = {
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
-            "delegation.test.mjs", "redteam.test.js", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-geometry.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-current-runtime.test.mjs", "redteam-current-client.test.mjs", "redteam-tool-throw.test.mjs", "redteam-render-values.test.mjs", "redteam-run-payload.test.mjs", "redteam-image-fetch.test.mjs", "redteam-exec-console.test.mjs", "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "isolated-pointer.test.mjs", "ml-wire.test.mjs", "redteam-ml-wire.test.mjs", "pipe-backtracking.test.mjs", "trusted-input.test.mjs", "dom-query.test.mjs",
+            "delegation.test.mjs", "isolated-pointer.test.mjs", "ml-wire.test.mjs", "pipe-backtracking.test.mjs", "trusted-input.test.mjs", "dom-query.test.mjs",
             "tools-shadow.test.mjs", "bgrun.test.mjs", "replay.test.mjs", "vision-characterize.test.mjs", "vision-host.test.mjs"],
+    },
+    // What a hostile page must NOT get: the red-team pass for every tool, member and page-started message. Each
+    // property is a test with a positive control, and the suite is the one to run after any security-relevant change.
+    redteam: {
+        about: "what a hostile page must NOT get: every tool, member and page-started message, each property a test",
+        files: ["redteam.test.js", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-current-client.test.mjs",
+            "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-exec-console.test.mjs",
+            "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs",
+            "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-isolated.test.mjs",
+            "redteam-ml-wire.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-render-values.test.mjs",
+            "redteam-run-payload.test.mjs", "redteam-text-captures.test.mjs", "redteam-tool-throw.test.mjs",
+            "redteam-worker-shot.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.

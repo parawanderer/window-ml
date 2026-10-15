@@ -24,10 +24,11 @@ export const DATA_URL = "https://data.example/report.csv";
  * @param opts `body`: what fetch_url reads at `url` (or `bodies`, by URL); `mode`: python_exec's mode; `siteGate: false`
  *   approves every page; `calls`: the model's tool calls in order, in place of fetch_url then python_exec; `local` seeds
  *   `chrome.storage.local` (e.g. `ml_site_selfapprove` so a page-started PYTHON_EXEC is allowed to run); `store`: give
- *   the worker a value store (a `fake-indexeddb` database), with `budgetMB` as its budget
+ *   the worker a value store (a `fake-indexeddb` database), with `budgetMB` as its budget; `idb` shares one store across
+ *   two `wireRun`s (a cross-run read); `pageAnswer` is what the page's `RUN_TOOL_IN_PAGE` answers
  * @returns the worker, the PY_RUN messages, and the tool results the model was last handed
  */
-export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB } = {}) {
+export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer } = {}) {
     let turns = 0;
     const pyRuns = [];
     const calls = script ?? [
@@ -37,7 +38,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
     const toolResults = [];
     const bg = loadBackground({
         config: budgetMB == null ? config : { ...config, valueStoreBudgetMB: budgetMB }, siteGate, openTabs: [SITE], local,
-        ...(store ? { indexedDB: new IDBFactory() } : {}),
+        ...(store || idb ? { indexedDB: idb ?? new IDBFactory() } : {}),
         onFetch: (c) => {
             if (c.url in bodies) return new Response(bodies[c.url], { status: 200, headers: { "content-type": "text/plain" } });
             if (c.url === url) return new Response(body, { status: 200, headers: { "content-type": "text/plain" } });
@@ -59,7 +60,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
-            return { result: "" };
+            return pageAnswer ? await pageAnswer(msg, bg) : { result: "" };
         },
     });
     await bg.context.__mlStartUserRunForTest(SITE.id, { task: "read the report", surface: "hud" });
