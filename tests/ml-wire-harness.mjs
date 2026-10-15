@@ -19,16 +19,18 @@ export const DATA_URL = "https://data.example/report.csv";
 /**
  * Run a worker-built run whose python_exec cell plays `cell`.
  * @param cell `(wire, bg) => Promise<void>`: the cell's body, given the PY_RUN's `wire` and the worker
- * @param opts `body`: what fetch_url reads at `url`; `mode`: python_exec's mode; `siteGate: false` approves every page
- * @returns the worker, the PY_RUN messages and a `call(wire, call, args, sender?, run?)` helper
+ * @param opts `body`: what fetch_url reads at `url`; `mode`: python_exec's mode; `siteGate: false` approves every page;
+ *   `calls`: the model's tool calls in order, in place of fetch_url then python_exec
+ * @returns the worker, the PY_RUN messages, and the tool results the model was last handed
  */
-export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", mode = "readonly", url = DATA_URL, siteGate = true } = {}) {
+export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", mode = "readonly", url = DATA_URL, siteGate = true, calls: script } = {}) {
     let turns = 0;
     const pyRuns = [];
-    const calls = [
+    const calls = script ?? [
         { name: "fetch_url", args: { url } },
         { name: "python_exec", args: { code: "print(await ml.config())", mode } },
     ];
+    const toolResults = [];
     const bg = loadBackground({
         config, siteGate, openTabs: [SITE],
         onFetch: (c) => {
@@ -36,6 +38,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
             if (/\/(api|v1)\/models$/.test(c.url)) return jsonResponse({ data: [{ id: "default-model" }, { id: "other-model" }] });
             if (!c.url.includes("/chat/completions")) return jsonResponse({});
             const n = turns++;
+            toolResults.splice(0, Infinity, ...(c.body?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content)));
             return n < calls.length
                 ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: calls[n].name, arguments: JSON.stringify(calls[n].args) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
@@ -56,7 +59,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
     await bg.context.__mlStartUserRunForTest(SITE.id, { task: "read the report", surface: "hud" });
     for (let i = 0; i < 3000 && turns <= calls.length; i++) await tick();
     await new Promise((r) => setTimeout(r, 20));
-    return { bg, pyRuns };
+    return { bg, pyRuns, toolResults };
 }
 
 let seq = 0;

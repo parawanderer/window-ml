@@ -11,6 +11,7 @@
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
 import { jsonShape } from "../dom/dom";
+import { riskyRegex } from "../readonly-exec/limits";
 
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
  *  "here is what you can pipe" list. A prompt that advertises a verb the dialect lacks costs the model a whole
@@ -65,6 +66,26 @@ export const PIPE_SYNTAX =
     "A stage's argument needs quoting if it contains spaces; you can also pass an ARRAY with one stage per " +
     "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.";
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Compile one pipe stage's pattern: THE place a pipe makes a RegExp, so every caller (the run's `dereference`, the
+ * survey's, the wire's, a fetch's) is held to the same rule. A pattern that can backtrack exponentially is refused
+ * whoever asked: V8 has no match timeout, and one such match on a large capture blocks the thread it runs on, the
+ * service worker's included. The caller's own `onPattern` runs first, so its own refusal of the same pattern wins.
+ * @param cmd the stage, for the message
+ * @param source the pattern that will run (after `-F` escaping and `-w` wrapping)
+ * @param flags the RegExp flags
+ * @param limits the caller's limits
+ * @returns the compiled pattern
+ */
+function compilePattern(cmd: "grep" | "sed", source: string, flags: string, limits?: PipeLimits): RegExp {
+    // The caller's rule first: the read-only dialect refuses the same patterns as `Denied`, which hands the survey to
+    // the person rather than failing it, and that outcome must not change.
+    limits?.onPattern?.(source);
+    const risky = riskyRegex(source);
+    if (risky) throw new Error(`\`${cmd}\` — refused ${JSON.stringify(source)}: ${risky} can take hours to match. Drop the repeat around the group, or use -F for a literal string.`);
+    return new RegExp(source, flags);
+}
 
 /** What a CALLER that cannot trust the pipeline's input may hold it to. The read-only `exec` dialect is the one
  *  that passes these: there a pipe is a single host call doing work the dialect's step budget cannot see, over a
@@ -177,10 +198,10 @@ function grep(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     const i = flags.has("i"), v = flags.has("v"), n = flags.has("n"), count = flags.has("c"), only = flags.has("o");
     let src = flags.has("F") ? escapeRegex(pattern) : pattern;
     if (flags.has("w")) src = `\\b(?:${src})\\b`;
-    limits?.onPattern?.(src);
     let testRe: RegExp, gRe: RegExp;
-    try { testRe = new RegExp(src, i ? "i" : ""); gRe = new RegExp(src, i ? "gi" : "g"); }
-    catch (e) { throw new Error(`\`grep\` — invalid regex ${JSON.stringify(pattern)} (${(e as Error).message}). Use -F for a literal string.`); }
+    try { testRe = compilePattern("grep", src, i ? "i" : "", limits); gRe = new RegExp(src, i ? "gi" : "g"); }
+    catch (e) {
+        if (!(e instanceof SyntaxError)) throw e; throw new Error(`\`grep\` — invalid regex ${JSON.stringify(pattern)} (${(e as Error).message}). Use -F for a literal string.`); }
     const A = nums.C ?? nums.A ?? 0, B = nums.C ?? nums.B ?? 0;
     const matched: number[] = [];
     for (let k = 0; k < lines.length; k++) { let m = testRe.test(lines[k]); if (v) m = !m; if (m) matched.push(k); }
@@ -284,10 +305,10 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     const flags = rawFlags.trim();
     const bad = [...flags].find((f) => !"gi".includes(f));
     if (bad) throw new Error(`sed: unknown flag "${bad}" — only g (every match on a line) and i (ignore case) are supported.`);
-    limits?.onPattern?.(pattern);
     let re: RegExp;
-    try { re = new RegExp(pattern, flags.includes("g") ? (flags.includes("i") ? "gi" : "g") : (flags.includes("i") ? "i" : "")); }
-    catch (e) { throw new Error(`sed: ${String((e as Error).message)}. Escape a literal metacharacter, or use grep -F to match one literally.`); }
+    try { re = compilePattern("sed", pattern, flags.includes("g") ? (flags.includes("i") ? "gi" : "g") : (flags.includes("i") ? "i" : ""), limits); }
+    catch (e) {
+        if (!(e instanceof SyntaxError)) throw e; throw new Error(`sed: ${String((e as Error).message)}. Escape a literal metacharacter, or use grep -F to match one literally.`); }
     const max = limits?.maxChars;
     if (max == null) return lines.map((l) => l.replace(re, replacement));
     // The one stage that can GROW its input, and by a product: `s/./<a long string>/g` puts a copy of the
