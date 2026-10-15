@@ -11,7 +11,7 @@
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
+import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
@@ -118,14 +118,14 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // where they were listed as two variables no script had defined (and offered by completion).
     const tableBufs: string[] = [];
     if (!bench) {
-        ns.set("INJECTED_IMAGE_B64", image);
+        // Python None/str, never a JS null: `set` of a null lands as `JsNull`, a JsProxy in the namespace.
         const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
-        ns.set("INJECTED_TABLES_JSON", Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null);
+        injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null);
     }
-    // LIVE stdout tee (opt-in streaming): the prelude's _MlTee calls this per print(). Set only when the
-    // caller wants live output; cleared in finally so a later non-streaming run doesn't reuse a stale cb (it
-    // survives the per-run RESET — a leading-underscore global). No callback → pure capture, unchanged.
-    if (onStdout) ns.set("_ml_stdout_cb", onStdout);
+    // LIVE stdout tee (opt-in streaming): Pyodide's JS-side setStdout wraps the interpreter's real stdout,
+    // which the prelude's _MlTee writes through to. No callback object lands in the namespace — a JsProxy
+    // of one is a JS `Function` constructor to a hostile cell. Cleared in finally.
+    if (onStdout) py.setStdout({ batched: onStdout });
     const saved = hardened ? harden(py) : null;
     try {
         // RESET (per-run isolation) + PRELUDE (preloaded vars) + the user's code, wrapped to capture
@@ -165,11 +165,8 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     } catch (e: any) {
         return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
     } finally {
-        if (!bench) {
-            ns.set("INJECTED_IMAGE_B64", null);
-            ns.set("INJECTED_TABLES_JSON", null);
-        }
-        if (onStdout) { try { ns.delete("_ml_stdout_cb"); } catch { /* ignore */ } }   // don't leak the cb into the next run
+        if (!bench) injectInputs(ns, null, null);
+        if (onStdout) { try { py.setStdout({}); } catch { /* ignore */ } }
         for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
         try { ns.delete("_ipc_result"); } catch { /* not set */ }
         // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and

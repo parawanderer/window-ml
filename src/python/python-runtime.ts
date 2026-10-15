@@ -7,6 +7,21 @@
 import { PY_PRELUDE_IMPORTS } from "./python-env";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 
+/**
+ * Hand the run's inputs to the interpreter as PYTHON values — `None` or `str`, never a JS null.
+ * `ns.set` of a JS null lands as `JsNull` (a JsProxy in the namespace — the P3 vector); `undefined`
+ * lands as Python `None`. Measured on Pyodide: `set(k, null)` → `JsNull`, `set(k, undefined)` → `None`,
+ * and `toPy(null)` is itself `JsNull` — only `undefined` converts.
+ *
+ * @param ns the namespace to set on — `py.globals`, or a bench namespace
+ * @param image the injected screenshot (data: URL / base64), or null for none
+ * @param tablesJson the injected tables already JSON-encoded, or null for none
+ */
+export function injectInputs(ns: any, image: string | null, tablesJson: string | null): void {
+    ns.set("INJECTED_IMAGE_B64", image == null ? undefined : String(image));
+    ns.set("INJECTED_TABLES_JSON", tablesJson == null ? undefined : String(tablesJson));
+}
+
 // Standard prelude injected before the model's code: numpy/PIL/pandas in scope, an optional
 // `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, a `to_base64()`
 // helper, and the injected tables as named DataFrames (+ a `tables` dict). Reads the JS-injected
@@ -227,9 +242,24 @@ export const wrapUserCode = (code: string, hardened = true, persist = false): st
 # encodes or injects. Fallback to the plain module attributes when the frozen module is absent (real-CPython tests).
 try:
     from _ml_harness import ast_parse as _ml_parse, json_loads as _ml_loads, json_dumps as _ml_dumps
+    from _ml_harness import (ast_increment_lineno as _ml_ino, ast_copy_location as _ml_cloc,
+        ast_fix_missing_locations as _ml_fix, ast_Return as _ml_Ret, ast_Expr as _ml_Expr,
+        ast_Call as _ml_Call, ast_Attribute as _ml_Attr, ast_Name as _ml_Name,
+        ast_Assign as _ml_Assign, ast_walk as _ml_walk)
 except ImportError:
     import ast as _ml_a2, json as _ml_j2
     _ml_parse, _ml_loads, _ml_dumps = _ml_a2.parse, _ml_j2.loads, _ml_j2.dumps
+    _ml_ino, _ml_cloc, _ml_fix = _ml_a2.increment_lineno, _ml_a2.copy_location, _ml_a2.fix_missing_locations
+    _ml_Ret, _ml_Expr = _ml_a2.Return, _ml_a2.Expr
+    _ml_Call, _ml_Attr, _ml_Name, _ml_Assign = _ml_a2.Call, _ml_a2.Attribute, _ml_a2.Name, _ml_a2.Assign
+    _ml_walk = _ml_a2.walk
+# The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
+# JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
+# the host's \`injectInputs\`, which is the one that converts at the boundary.
+def _ml_in(_v):
+    return _v if (isinstance(_v, str) or _v is None) else None
+INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
+INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
 ${persist ? PRELUDE_BASE : RESET + PRELUDE}
 ${netPolicy(hardened)}
 result = None
@@ -298,20 +328,20 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         # Only the user's own statements move; the injected \`global\`/\`pass\` keep their positions, since a
         # negative lineno will not compile.
         for _ml_n in _ml_body[2:]:
-            _ast.increment_lineno(_ml_n, -3)
-        if isinstance(_ml_body[-1], _ast.Expr):
-            _ml_body[-1] = _ast.copy_location(_ast.Return(_ml_body[-1].value), _ml_body[-1])
-            _ast.fix_missing_locations(_ml_tree)
+            _ml_ino(_ml_n, -3)
+        if isinstance(_ml_body[-1], _ml_Expr):
+            _ml_body[-1] = _ml_cloc(_ml_Ret(_ml_body[-1].value), _ml_body[-1])
+            _ml_fix(_ml_tree)
         # If the RETURNED value is a latex(...) call (sympy.latex / sp.latex / a bare latex from
         # "from sympy import latex"), the string it produces IS LaTeX — remember it so the epilogue flags the
         # render (typeset, no pipe cast) even for a plain scalar like sympy.latex(5) == "5". Covers a
         # trailing expr, an explicit return, and a result = ... assignment.
         def _ml_is_latex_call(_n):
-            return isinstance(_n, _ast.Call) and ((isinstance(_n.func, _ast.Attribute) and _n.func.attr == "latex") or (isinstance(_n.func, _ast.Name) and _n.func.id == "latex"))
-        for _n in _ast.walk(_ml_tree):
-            if isinstance(_n, _ast.Return) and _n.value is not None and _ml_is_latex_call(_n.value):
+            return isinstance(_n, _ml_Call) and ((isinstance(_n.func, _ml_Attr) and _n.func.attr == "latex") or (isinstance(_n.func, _ml_Name) and _n.func.id == "latex"))
+        for _n in _ml_walk(_ml_tree):
+            if isinstance(_n, _ml_Ret) and _n.value is not None and _ml_is_latex_call(_n.value):
                 _ml_ret_latex = True
-            elif isinstance(_n, _ast.Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ast.Name) and _t.id == "result" for _t in _n.targets):
+            elif isinstance(_n, _ml_Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ml_Name) and _t.id == "result" for _t in _n.targets):
                 _ml_ret_latex = True
         exec(compile(_ml_tree, "<python_exec>", "exec"), globals())
         _ret = _user()
@@ -397,10 +427,13 @@ except Exception:
 # Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5): a task
 # left pending would run during the next cell's pump of the event loop, observing its source and injected
 # inputs. Cancel is enough — a cancelled task's coroutine throws at its await point and never continues.
+# The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the run machinery.
 try:
     import asyncio as _ml_aio
+    _ml_self = _ml_aio.current_task()
     for _ml_task in _ml_aio.all_tasks():
-        _ml_task.cancel()
+        if _ml_task is not _ml_self:
+            _ml_task.cancel()
 except Exception:
     pass
 `;

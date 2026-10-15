@@ -84,6 +84,19 @@ class _MlHarnessMod(_ml_t.ModuleType):
 _h = _MlHarnessMod("_ml_harness")
 object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "ast_parse": _ml_a.parse,
+    # The tree surgery (line numbers, the trailing-expression return, the latex(...) detect) walks and
+    # rebuilds the parse of the cell's SOURCE. Captured too: a patched ast.walk would observe the tree,
+    # which is the code, and a patched ast.Return would replace what the harness builds.
+    "ast_increment_lineno": _ml_a.increment_lineno,
+    "ast_copy_location": _ml_a.copy_location,
+    "ast_fix_missing_locations": _ml_a.fix_missing_locations,
+    "ast_Return": _ml_a.Return,
+    "ast_Expr": _ml_a.Expr,
+    "ast_Call": _ml_a.Call,
+    "ast_Attribute": _ml_a.Attribute,
+    "ast_Name": _ml_a.Name,
+    "ast_Assign": _ml_a.Assign,
+    "ast_walk": _ml_a.walk,
     "json_loads": _ml_j.loads,
     "json_dumps": _ml_j.dumps,
     "b64decode": _ml_b.b64decode,
@@ -101,11 +114,19 @@ _ml_s.modules["_ml_harness"] = _h
  *
  * @param py the Pyodide interpreter (already booted and its packages loaded)
  * @param scope the JS object to strip — `globalThis` in the worker, a stand-in in tests
+ * @returns the relay's `postMessage`/`close`, captured before the strip. The CALLER keeps them in its
+ *   closure — never on the scope, where a JsProxy of it would find them.
  */
-export function lockdownReadonly(py: any, scope: any = globalThis): void {
+export async function lockdownReadonly(py: any, scope: any = globalThis): Promise<{ postMessage?: unknown; close?: unknown }> {
     // 1. Intrinsic taming: the Function/AsyncFunction/GeneratorFunction constructors reached through a
     //    prototype chain throw. `lockdown()` is once per realm; a second call is a no-op here.
     if (!locked) {
+        // ONE evaluation first. Pyodide's result-conversion path (the `callKwargs` helper that tags a
+        // return value) assigns `.constructor` on a plain object, which `lockdown()` then makes
+        // read-only. Measured: lock first and every later `runPythonAsync` throws
+        // `ConversionError: Cannot assign to read only property 'constructor'`; warm up first and they
+        // work. So the order is: evaluate once, then lockdown — never the other way round.
+        try { await py.runPythonAsync("1"); } catch { /* unwarmable: the later cells will say so */ }
         try { (globalThis as any).lockdown({ errorTaming: "unsafe" }); locked = true; } catch { /* already locked */ }
     }
 
@@ -141,8 +162,7 @@ export function lockdownReadonly(py: any, scope: any = globalThis): void {
     //    `wrapUserCode` looks up; when it is absent the wrapper falls back to plain imports.
     try { py.runPython(HARNESS_BOOT); } catch { /* the wrapper falls back */ }
 
-    // Keep the closure-held refs reachable for the worker's relay (not on the scope — a JsProxy of the
-    // scope must find nothing).
-    if (heldPost) Object.defineProperty(globalThis, "__mlHeldPost", { value: heldPost, enumerable: false, configurable: false, writable: false });
-    if (heldClose) Object.defineProperty(globalThis, "__mlHeldClose", { value: heldClose, enumerable: false, configurable: false, writable: false });
+    // The relay keeps these in its own closure. Nothing is written to the scope: a JsProxy of it
+    // must find neither the relay's functions nor a name that leads to them.
+    return { postMessage: heldPost, close: heldClose };
 }
