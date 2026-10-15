@@ -312,6 +312,64 @@ test("adversarial (assignment): cannot mutate the PAGE — a DOM node or its pro
     assert.equal(doc.title, "");                       // the page is untouched
     assert.equal(doc.querySelector("#a").value, "");
 });
+test("adversarial (Object.assign): writes only into what the script built — never the page, a page object or a builtin", async () => {
+    // `Object.assign` is an allowed static whose FIRST argument is written, which the method gate (scoped by receiver,
+    // `Object`) never looked at: an auto-approved survey rewrote `document.body.innerHTML`, and assigned into the
+    // host's own `Math`, `JSON` and `Array`, which outlive the survey and which every later guard calls.
+    const doc = world();
+    const body = doc.body.innerHTML;
+    doc.appData = { n: 1 };
+    for (const js of [
+        `Object.assign(document.body, { innerHTML: "<b>x</b>" }); 1`,
+        `Object.assign(document.querySelector('#a'), { value: "x", onclick: 1 }); 1`,
+        `Object.assign(document.appData, { n: 2 }); 1`,
+        `Object.assign(Math, { pwned: 1 }); 1`,
+        `Object.assign(JSON, { stringify: (x) => "PWN" }); 1`,
+        `Object.assign(Array, { isArray: (x) => false }); 1`,
+        `Object.assign(Object, { keys: () => [] }); 1`,
+        `Object.assign(console, { log: 1 }); 1`,
+        `const m = Math; Object.assign(m, { pwned: 1 }); 1`,
+        `const a = [1]; for (const x of a) Object.assign(a, [1, 2, 3]); 1`,
+    ]) await assert.rejects(run(js, doc), outOfDialect, js);
+    for (const realm of ["worker"])
+        await assert.rejects(evalReadonly(`Object.assign(Math, { pwned: 1 }); 1`, null, undefined, undefined, { realm }), outOfDialect, realm);
+    assert.equal(doc.body.innerHTML, body, "the page is untouched");
+    assert.deepEqual(doc.appData, { n: 1 });
+    assert.equal(Math.pwned, undefined);
+    assert.equal(JSON.stringify({ a: 1 }), '{"a":1}');
+    assert.equal(Array.isArray([]), true);
+    // The direction of the write: a SOURCE is only read. Its getter runs once, the owned target receives the value,
+    // and the source keeps its getter.
+    let reads = 0;
+    doc.src = Object.defineProperty({}, "v", { enumerable: true, get() { reads++; return 5; } });
+    assert.deepEqual((await run(`const o = {}; Object.assign(o, document.src); o`, doc)).value, { v: 5 });
+    assert.equal(reads, 1);
+    assert.equal(typeof Object.getOwnPropertyDescriptor(doc.src, "v").get, "function", "the source is unchanged");
+    // Into an object the script built, it is the ordinary idiom, and runs.
+    assert.deepEqual((await run(`const o = { a: 1 }; Object.assign(o, { b: 2 }, document.appData); o`, doc)).value, { a: 1, b: 2, n: 1 });
+    assert.deepEqual((await run(`Object.assign({}, { b: 2 })`, doc)).value, { b: 2 });
+});
+test("adversarial (ARG_WRITERS): every argument an allowed method writes refuses the page, a page object and a builtin", async () => {
+    // Enumerated from the table, so a member added there is tested here without a line of its own. RECEIVER names the
+    // dialect expression for each receiver kind; a kind the table gains without one fails here first.
+    const { ARG_WRITERS } = await import("../src/readonly-exec/policy.ts");
+    const RECEIVER = { ObjectCtor: "Object", ArrayCtor: "Array", Math: "Math", JSON: "JSON", PromiseCtor: "Promise", DateCtor: "Date" };
+    const doc = world();
+    doc.appData = { n: 1 };
+    let n = 0;
+    for (const [kind, methods] of Object.entries(ARG_WRITERS)) {
+        assert.ok(RECEIVER[kind], `ARG_WRITERS has kind ${kind}: add its receiver expression here`);
+        for (const [method, indices] of Object.entries(methods)) for (const i of indices) for (const target of ["document.body", "document.appData", "Math", "JSON", "Array"]) {
+            const args = Array.from({ length: i + 2 }, (_, k) => (k === i ? target : "{ pwned: 1 }")).join(", ");
+            await assert.rejects(run(`${RECEIVER[kind]}.${method}(${args}); 1`, doc), outOfDialect, `${kind}.${method} argument ${i} = ${target}`);
+            n++;
+        }
+    }
+    assert.ok(n > 0);
+    assert.equal(Math.pwned, undefined);
+    assert.equal(doc.body.pwned, undefined);
+    assert.deepEqual(doc.appData, { n: 1 });
+});
 test("adversarial (assignment): cannot rebind a bare variable (window/document/globals) — no env corruption", async () => {
     await assert.rejects(run(`window = new Map(); 1`), outOfDialect);                       // the user's exact worry
     await assert.rejects(run(`document = new Map(); document.querySelectorAll('x')`), outOfDialect);

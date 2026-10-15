@@ -233,7 +233,11 @@ instances, and the fresh arrays and objects allowlisted methods return (`.map`, 
 `JSON.parse`). Only those can be written: `o[k] = v` needs an owned plain object or array, and the mutators
 (`push`, `sort`, `add`, `set`, `delete`, …) need an owned receiver. A container reached by reading a page value is
 never owned, so page state cannot be written. Marking method results as owned cannot launder a page container,
-because no allowlisted method returns one; they all build new ones.
+because no allowlisted method returns one; they all build new ones. `Object.assign` is the one allowed static that
+WRITES an argument, so its target meets the same rule as `o[k] = v` (owned, a plain object or array, not being
+iterated). Until 2026-10-15 it did not: the method gate is scoped by RECEIVER (`Object`), never looked at the target, and
+an auto-approved survey could assign into `document.body` (`innerHTML`) or into the host's own `Math`, `JSON` and
+`Array`, which outlive the survey and which every later guard calls. Found by the red-team pass on the policy realm.
 
 **The `ml` facade.** A null-prototype object holding only `ML_READONLY_METHODS` (`getModel`, `config`, `models`,
 `capabilities`, `ps`, `serverTools`, `queryAll`, `range`, `a11y`, `dereference`, `info`, `schema`) bound to the real
