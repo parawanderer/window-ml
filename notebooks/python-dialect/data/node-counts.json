@@ -1,0 +1,425 @@
+{
+  "unique_cells": 1697,
+  "nodes": [
+    {
+      "node": "Name",
+      "cells": 1685,
+      "share": 0.9929,
+      "total": 14090
+    },
+    {
+      "node": "Call",
+      "cells": 1633,
+      "share": 0.9623,
+      "total": 6349
+    },
+    {
+      "node": "Constant",
+      "cells": 1607,
+      "share": 0.947,
+      "total": 11417
+    },
+    {
+      "node": "Attribute",
+      "cells": 1497,
+      "share": 0.8821,
+      "total": 4280
+    },
+    {
+      "node": "Assign",
+      "cells": 1434,
+      "share": 0.845,
+      "total": 3057
+    },
+    {
+      "node": "Subscript",
+      "cells": 1418,
+      "share": 0.8356,
+      "total": 3045
+    },
+    {
+      "node": "Expr",
+      "cells": 989,
+      "share": 0.5828,
+      "total": 1606
+    },
+    {
+      "node": "alias",
+      "cells": 982,
+      "share": 0.5787,
+      "total": 1177
+    },
+    {
+      "node": "Return",
+      "cells": 918,
+      "share": 0.541,
+      "total": 937
+    },
+    {
+      "node": "Import",
+      "cells": 860,
+      "share": 0.5068,
+      "total": 905
+    },
+    {
+      "node": "Compare",
+      "cells": 452,
+      "share": 0.2664,
+      "total": 672
+    },
+    {
+      "node": "Eq",
+      "cells": 403,
+      "share": 0.2375,
+      "total": 470
+    },
+    {
+      "node": "Dict",
+      "cells": 306,
+      "share": 0.1803,
+      "total": 388
+    },
+    {
+      "node": "List",
+      "cells": 298,
+      "share": 0.1756,
+      "total": 824
+    },
+    {
+      "node": "comprehension",
+      "cells": 253,
+      "share": 0.1491,
+      "total": 298
+    },
+    {
+      "node": "ImportFrom",
+      "cells": 199,
+      "share": 0.1173,
+      "total": 208
+    },
+    {
+      "node": "keyword",
+      "cells": 189,
+      "share": 0.1114,
+      "total": 274
+    },
+    {
+      "node": "JoinedStr",
+      "cells": 185,
+      "share": 0.109,
+      "total": 279
+    },
+    {
+      "node": "FormattedValue",
+      "cells": 185,
+      "share": 0.109,
+      "total": 288
+    },
+    {
+      "node": "GeneratorExp",
+      "cells": 172,
+      "share": 0.1014,
+      "total": 177
+    },
+    {
+      "node": "Tuple",
+      "cells": 168,
+      "share": 0.099,
+      "total": 460
+    },
+    {
+      "node": "BinOp",
+      "cells": 123,
+      "share": 0.0725,
+      "total": 272
+    },
+    {
+      "node": "ListComp",
+      "cells": 95,
+      "share": 0.056,
+      "total": 115
+    },
+    {
+      "node": "Slice",
+      "cells": 78,
+      "share": 0.046,
+      "total": 257
+    },
+    {
+      "node": "IfExp",
+      "cells": 69,
+      "share": 0.0407,
+      "total": 77
+    },
+    {
+      "node": "Add",
+      "cells": 68,
+      "share": 0.0401,
+      "total": 98
+    },
+    {
+      "node": "For",
+      "cells": 63,
+      "share": 0.0371,
+      "total": 80
+    },
+    {
+      "node": "If",
+      "cells": 60,
+      "share": 0.0354,
+      "total": 104
+    },
+    {
+      "node": "BitAnd",
+      "cells": 52,
+      "share": 0.0306,
+      "total": 81
+    },
+    {
+      "node": "In",
+      "cells": 44,
+      "share": 0.0259,
+      "total": 72
+    },
+    {
+      "node": "UnaryOp",
+      "cells": 39,
+      "share": 0.023,
+      "total": 53
+    },
+    {
+      "node": "Mult",
+      "cells": 33,
+      "share": 0.0194,
+      "total": 54
+    },
+    {
+      "node": "Gt",
+      "cells": 26,
+      "share": 0.0153,
+      "total": 53
+    },
+    {
+      "node": "Not",
+      "cells": 21,
+      "share": 0.0124,
+      "total": 25
+    },
+    {
+      "node": "BoolOp",
+      "cells": 20,
+      "share": 0.0118,
+      "total": 22
+    },
+    {
+      "node": "arguments",
+      "cells": 20,
+      "share": 0.0118,
+      "total": 22
+    },
+    {
+      "node": "arg",
+      "cells": 20,
+      "share": 0.0118,
+      "total": 25
+    },
+    {
+      "node": "USub",
+      "cells": 18,
+      "share": 0.0106,
+      "total": 27
+    },
+    {
+      "node": "Lt",
+      "cells": 17,
+      "share": 0.01,
+      "total": 38
+    },
+    {
+      "node": "Lambda",
+      "cells": 15,
+      "share": 0.0088,
+      "total": 17
+    },
+    {
+      "node": "And",
+      "cells": 14,
+      "share": 0.0082,
+      "total": 15
+    },
+    {
+      "node": "Div",
+      "cells": 12,
+      "share": 0.0071,
+      "total": 15
+    },
+    {
+      "node": "Sub",
+      "cells": 10,
+      "share": 0.0059,
+      "total": 17
+    },
+    {
+      "node": "NotEq",
+      "cells": 9,
+      "share": 0.0053,
+      "total": 11
+    },
+    {
+      "node": "NotIn",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 7
+    },
+    {
+      "node": "GtE",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 8
+    },
+    {
+      "node": "Pow",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 7
+    },
+    {
+      "node": "With",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 7
+    },
+    {
+      "node": "withitem",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 7
+    },
+    {
+      "node": "AugAssign",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 7
+    },
+    {
+      "node": "Or",
+      "cells": 7,
+      "share": 0.0041,
+      "total": 7
+    },
+    {
+      "node": "Continue",
+      "cells": 6,
+      "share": 0.0035,
+      "total": 7
+    },
+    {
+      "node": "Is",
+      "cells": 6,
+      "share": 0.0035,
+      "total": 6
+    },
+    {
+      "node": "Try",
+      "cells": 6,
+      "share": 0.0035,
+      "total": 7
+    },
+    {
+      "node": "ExceptHandler",
+      "cells": 6,
+      "share": 0.0035,
+      "total": 7
+    },
+    {
+      "node": "FunctionDef",
+      "cells": 5,
+      "share": 0.0029,
+      "total": 5
+    },
+    {
+      "node": "DictComp",
+      "cells": 5,
+      "share": 0.0029,
+      "total": 5
+    },
+    {
+      "node": "IsNot",
+      "cells": 4,
+      "share": 0.0024,
+      "total": 4
+    },
+    {
+      "node": "Mod",
+      "cells": 4,
+      "share": 0.0024,
+      "total": 4
+    },
+    {
+      "node": "Break",
+      "cells": 3,
+      "share": 0.0018,
+      "total": 3
+    },
+    {
+      "node": "FloorDiv",
+      "cells": 3,
+      "share": 0.0018,
+      "total": 3
+    },
+    {
+      "node": "Set",
+      "cells": 2,
+      "share": 0.0012,
+      "total": 2
+    },
+    {
+      "node": "LtE",
+      "cells": 2,
+      "share": 0.0012,
+      "total": 3
+    },
+    {
+      "node": "Raise",
+      "cells": 2,
+      "share": 0.0012,
+      "total": 2
+    },
+    {
+      "node": "Await",
+      "cells": 2,
+      "share": 0.0012,
+      "total": 2
+    },
+    {
+      "node": "Pass",
+      "cells": 2,
+      "share": 0.0012,
+      "total": 2
+    },
+    {
+      "node": "NamedExpr",
+      "cells": 1,
+      "share": 0.0006,
+      "total": 1
+    },
+    {
+      "node": "SetComp",
+      "cells": 1,
+      "share": 0.0006,
+      "total": 1
+    },
+    {
+      "node": "Assert",
+      "cells": 1,
+      "share": 0.0006,
+      "total": 1
+    },
+    {
+      "node": "Invert",
+      "cells": 1,
+      "share": 0.0006,
+      "total": 1
+    }
+  ]
+}

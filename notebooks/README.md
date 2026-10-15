@@ -4,5 +4,6 @@ Analyses worth keeping that span several files and are not a feature of a tool: 
 README naming every notebook. How they are made, run and checked: [docs/dev/notebooks.md](../docs/dev/notebooks.md).
 
 - [bench/](bench/README.md): bench sweeps (prompt variants, models, regressions).
+- [python-dialect/](python-dialect/README.md): what the read-only Python dialect must admit, counted on real `python_exec` cells.
 - `pyproject.toml`, `uv.lock`: the one environment (`node scripts/nb.mjs setup`).
 - `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`, `find_sweep`, `store`).

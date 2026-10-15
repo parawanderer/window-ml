@@ -1,0 +1,118 @@
+{
+  "modules": {
+    "PIL": [
+      "Image.open"
+    ],
+    "base64": [],
+    "csv": [
+      "DictReader",
+      "reader"
+    ],
+    "decimal": [
+      "Decimal",
+      "getcontext"
+    ],
+    "io": [
+      "BytesIO",
+      "StringIO"
+    ],
+    "math": [
+      "fsum"
+    ],
+    "random": [
+      "choice"
+    ],
+    "re": [
+      "compile",
+      "findall",
+      "search"
+    ],
+    "string": []
+  },
+  "kinds": {
+    "Decimal": [
+      "max"
+    ]
+  },
+  "leaves": {
+    "decimal.Decimal": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "digits",
+      "why": "a C type used by 10% of cells; ruled a day-one entry (repl-specs 2026-10-15)"
+    },
+    "csv.reader": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
+      "why": "_csv is C; ruled in as a leaf 2026-10-15"
+    },
+    "csv.writer": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
+      "why": "_csv is C; ruled in as a leaf 2026-10-15"
+    },
+    "csv.DictReader": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
+      "why": "_csv is C; ruled in as a leaf 2026-10-15"
+    }
+  },
+  "observed": {
+    "modules": {
+      "PIL": {
+        "Image.fromarray": 1,
+        "Image.open": 2
+      },
+      "base64": {
+        "b64encode": 1
+      },
+      "csv": {
+        "DictReader": 3,
+        "reader": 11
+      },
+      "decimal": {
+        "Decimal": 143,
+        "getcontext": 2
+      },
+      "io": {
+        "BytesIO": 4,
+        "StringIO": 33
+      },
+      "math": {
+        "fsum": 3
+      },
+      "random": {
+        "choice": 2,
+        "choices": 1
+      },
+      "re": {
+        "DOTALL": 1,
+        "I": 1,
+        "compile": 2,
+        "findall": 3,
+        "finditer": 1,
+        "search": 3,
+        "sub": 1
+      },
+      "string": {
+        "hexdigits": 1,
+        "hexdigits.lower": 1
+      }
+    },
+    "kinds": {
+      "Decimal": {
+        "max": 10,
+        "compare": 1,
+        "as_tuple": 1
+      }
+    }
+  },
+  "min_cells": 2,
+  "note": "names only, except the ruled leaf; effects, return marking and cost shapes are the second pass"
+}

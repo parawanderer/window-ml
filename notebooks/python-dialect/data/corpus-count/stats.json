@@ -1,0 +1,48 @@
+{
+  "commit": "b1840bcb8f89aac6fb04dc09d893a2d44271bf26",
+  "extracted_at": "2026-10-15T12:04:23+00:00",
+  "rows": [
+    {
+      "cells_after_dedupe": {
+        "bench": 2151,
+        "e2e": 61,
+        "store": 115,
+        "tmp": 91
+      },
+      "cells_before_dedupe": {
+        "bench": 2151,
+        "e2e": 61,
+        "store": 115,
+        "tmp": 91
+      },
+      "clones": [
+        "window-ml",
+        "window-ml-bench",
+        "window-ml-chatpage",
+        "window-ml-host",
+        "window-ml-hub",
+        "window-ml-hub-v0.4.3",
+        "window-ml-raster",
+        "window-ml-redteam",
+        "window-ml-repl",
+        "window-ml-repl-lane1",
+        "window-ml-repl-lane2",
+        "window-ml-repl-lane3",
+        "window-ml-repl-lane4"
+      ],
+      "files_scanned": {
+        "run.json": 2784,
+        "run.md": 893,
+        "store_fetched": 98,
+        "store_listed": 2514,
+        "zip": 32
+      },
+      "key_agreement": "2416 runs match on sweep/task/variant/r/session-hash; 2428 match on sweep/task/variant/r -> session hash agrees, full key used",
+      "malformed_files": 0,
+      "store_error": null
+    }
+  ],
+  "source": {
+    "reader": "corpus.last_stats() after the cells extract"
+  }
+}

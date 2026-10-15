@@ -4,6 +4,15 @@ import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { expandPointers } from "../src/pointers/pointer-macro.ts";
+import { vectors } from "./dialect-vectors.mjs";
+
+/** The shared vectors (tests/fixtures/dialect-vectors/<genre>.json) lifted from a named group of this file. */
+const lifted = (genre, label) => vectors(genre, `tests/readonly-exec.test.mjs ${label}`);
+/** Asserts one vector's expectation for a survey run through `run`: refused, or ended with its value. */
+async function checkVector(v, runner = run) {
+    if (v.expect === "refused") await assert.rejects(runner(v.js), outOfDialect, v.name);
+    else assert.deepEqual((await runner(v.js)).value, v.expect.value, v.name);
+}
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>
@@ -124,19 +133,8 @@ test("captures console output alongside the value", async () => {
 });
 
 // --- the security surface: every one of these must throw (→ caller falls back) ---
-const ESCAPES = {
-    "node → window → fetch": `document.querySelectorAll("input")[0].ownerDocument.defaultView.fetch("/x")`,
-    "constructor → Function": `({}).constructor.constructor("return fetch")()`,
-    "computed owner-document": `document.querySelectorAll("input")[0]["owner" + "Document"]`,
-    "__proto__ access": `({}).__proto__`,
-    "bare fetch": `fetch("/x")`,
-    "window global": `window.location`,
-    "self global": `self.fetch`,
-    "setAttribute (mutation)": `document.body.setAttribute("x", "y")`,
-    "innerHTML assign": `document.body.innerHTML = "x"`,
-    "click (effect)": `document.querySelector("input").click()`,
-    "method as value": `const g = document.body.getAttribute; g("x")`,
-};
+// The cases are shared with the Python dialect: tests/fixtures/dialect-vectors/abuse.json.
+const ESCAPES = Object.fromEntries(vectors("abuse", "tests/readonly-exec.test.mjs ESCAPES").map(v => [v.name, v.js]));
 for (const [name, js] of Object.entries(ESCAPES)) {
     test(`blocked: ${name}`, async () => {
         await assert.rejects(run(js), outOfDialect, `"${name}" must be rejected, not executed`);
@@ -183,20 +181,8 @@ test("if-statement guard clauses run in-dialect (a very common survey shape)", a
 });
 
 // --- out-of-dialect syntax must throw NotInDialect (fail closed, not crash) ---
-const OUT = {
-    // `for…of` is now IN-dialect (see below); a C-style `for(;;)` and `for…in` stay OUT.
-    "C-style for": `for (let i = 0; i < 3; i++) { i }`,
-    "for...in": `for (const k in {a: 1}) { k }`,
-    // Member assignment on an object YOU built is in-dialect, and so is assignment to a binding the script
-    // DECLARED. What stays out is a write that could be seen from outside the evaluator: the environment's own
-    // names, and a name nothing declared — which in real JS would create a global.
-    "assigning to the environment": `document = 1`,
-    "an implicit global": `leaked = 1; leaked`,
-    "a const rebound": `const x = 1; x = 2; x`,
-    // No short-circuiting compound forms: whether the write happens at all depends on the value.
-    "logical assignment": `let o = null; o ||= 1; o`,
-    "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
-};
+// (The comments on each case live in its `reason` in tests/fixtures/dialect-vectors/abuse.json.)
+const OUT = Object.fromEntries(vectors("abuse", "tests/readonly-exec.test.mjs OUT").map(v => [v.name, v.js]));
 for (const [name, js] of Object.entries(OUT)) {
     test(`falls back (NotInDialect): ${name}`, async () => {
         await assert.rejects(run(js), outOfDialect);
@@ -371,23 +357,17 @@ test("adversarial (ARG_WRITERS): every argument an allowed method writes refuses
     assert.deepEqual(doc.appData, { n: 1 });
 });
 test("adversarial (assignment): cannot rebind a bare variable (window/document/globals) — no env corruption", async () => {
-    await assert.rejects(run(`window = new Map(); 1`), outOfDialect);                       // the user's exact worry
-    await assert.rejects(run(`document = new Map(); document.querySelectorAll('x')`), outOfDialect);
-    await assert.rejects(run(`Object = { entries: () => [] }; Object.entries({})`), outOfDialect);
-    await assert.rejects(run(`const x = 1; x = 2; x`), outOfDialect);
+    // `window = new Map()` is the user's exact worry.
+    for (const v of lifted("ownership", "assignment cannot rebind a bare variable")) await checkVector(v);
 });
 test("adversarial (assignment): cannot poison the prototype or reach the realm via a WRITE", async () => {
-    await assert.rejects(run(`const o = {}; o.__proto__ = { pwned: 1 }; o`), outOfDialect);
-    await assert.rejects(run(`const o = {}; o['__proto__'] = {}; o`), outOfDialect);
-    await assert.rejects(run(`const o = {}; o.constructor = 1; o`), outOfDialect);
-    await assert.rejects(run(`const a = []; a['constructor'] = 1; a`), outOfDialect);
+    for (const v of lifted("ownership", "assignment cannot poison the prototype or reach the realm via a write")) await checkVector(v);
     assert.equal(({}).pwned, undefined);               // Object.prototype stayed clean
 });
 test("adversarial (assignment): cannot LAUNDER a live method by storing it under an allowlisted name", async () => {
-    const doc = world();
     // Reading a method as a value gives the inert METHOD_REF; stored under 'map' and called, it still throws.
-    await assert.rejects(run(`const o = {}; o.map = document.querySelector; o.map('#a')`, doc), outOfDialect);
-    await assert.rejects(run(`const o = {}; o.c = [].constructor; o.c`, doc), outOfDialect);   // .constructor read is denied
+    // (The `.constructor` read in the second case is denied.)
+    for (const v of lifted("ownership", "assignment cannot launder a live method under an allowlisted name")) await checkVector(v);
 });
 test("adversarial (mutators): push/sort/… only touch an array YOU built — never one reached off the page", async () => {
     const doc = world();
@@ -409,35 +389,19 @@ test("ownership is ONE LEVEL deep, for EVERY source — the nested containers ar
     // round trip of it. A model told to "clone it and edit the clone" therefore fails LOUDLY rather than
     // quietly editing something it did not create.
 
-    // TOP LEVEL: the facade built this value for this call, so it is the script's to write.
-    const { value: top } = await run(`const i = await ml.info(); i.compute = { mine: 1 }; i.compute.mine`);
-    assert.equal(top, 1);
-    const { value: flat } = await run(`const c = { ...(await ml.info()) }; c.mine = 1; c.mine`);
-    assert.equal(flat, 1, "a spread is likewise the script's own object — one level deep");
-
-    // NESTED, off the result: refused.
-    await assert.rejects(run(`const i = await ml.info(); i.compute.system_compute = {}; 1`), outOfDialect);
-    await assert.rejects(run(`const i = await ml.info(); i.compute.supported_gpus.push({ gpu_id: "9" }); 1`), outOfDialect);
-    await assert.rejects(run(`const i = await ml.info(); i.compute.supported_gpus[0].name = 'HACKED'; 1`), outOfDialect);
-    // NESTED, off a SHALLOW copy: the spread carried those containers by REFERENCE, so the refusal lands at
-    // the depth where the alias is. This is the case a model writes by accident.
-    await assert.rejects(run(`const c = { ...(await ml.info()) }; c.compute.supported_gpus[0].name = 'HACKED'; 1`), outOfDialect);
-    await assert.rejects(run(`const c = { ...(await ml.info()) }; c.compute.system_compute.total_memory = 1; 1`), outOfDialect);
-
+    // TOP LEVEL: the facade built this value for this call, so it is the script's to write; a spread is likewise the
+    // script's own object, one level deep, and so is the outermost container of a JSON.parse result.
+    //
+    // NESTED, off the result: refused. Off a SHALLOW copy: the spread carried those containers by REFERENCE, so the
+    // refusal lands at the depth where the alias is. This is the case a model writes by accident.
+    //
     // NESTED, off a JSON ROUND TRIP: also refused. Every container in a JSON.parse result is freshly built and
-    // provably not a page object, yet only the OUTERMOST one is marked owned — so there is no idiom in the
-    // dialect today that yields a deeply writable copy. The spec records that as a dependency rather than
-    // assuming it; this is the assertion that will fail the day it is lifted, which is when the spec's
-    // deep-clone advice becomes true.
-    await assert.rejects(run(`const j = JSON.parse('{"a":{"b":1}}'); j.a.b = 2; 1`), outOfDialect);
-    await assert.rejects(run(`const mine = JSON.parse(JSON.stringify(await ml.info())); mine.compute.system_compute.total_memory = 1; 1`), outOfDialect);
-    // Its top level is writable, like any other owned value.
-    const { value: jtop } = await run(`const j = JSON.parse('{"a":{"b":1}}'); j.a = 5; j.a`);
-    assert.equal(jtop, 5);
-
+    // provably not a page object, yet only the OUTERMOST one is marked owned — so there is no idiom in the dialect
+    // today that yields a deeply writable copy. The spec records that as a dependency rather than assuming it; these
+    // are the assertions that will fail the day it is lifted, which is when the spec's deep-clone advice becomes true.
+    //
     // And a later read is untouched by any of it — the facade builds a fresh value per call.
-    const { value: fresh } = await run(`(await ml.info()).compute.supported_gpus[0].name`);
-    assert.equal(fresh, "CUDA0");
+    for (const v of lifted("ownership", "ownership is one level deep for every source")) await checkVector(v);
 });
 
 test("adversarial (new): only pure builtins — code gen / network / host constructors are Denied", async () => {
@@ -1360,22 +1324,20 @@ async function fallsBack(src, why, stepBudget) {
     assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
     return r;
 }
+/** Asserts a halting vector in the worker: refused (fell back to approval) or ended with its value. */
+async function checkHalting(v) {
+    if (v.expect === "refused") return fallsBack(v.js, v.name, v.budget);
+    const r = await inWorker(v.js, 5000, v.budget);
+    assert.deepEqual(r, { value: v.expect.value }, v.js);
+    return r;
+}
 
 test("ADVERSARIAL (halting): a loop cannot grow the collection it is iterating", async () => {
     // Every one of these ran forever before: the iteration re-reads the collection each step and the body keeps
     // adding to it. Possible since script-created containers became mutable (push/add/set on your own array).
-    for (const [src, why] of [
-        ["const a = [1]; for (const x of a) a.push(x); 0", "for…of over an array the body pushes to"],
-        ["const a = [1]; for (const x of a) a[a.length] = x; 0", "for…of over an array the body assigns past the end of"],
-        ["const s = new Set([0]); for (const x of s) s.add(x + 1); 0", "for…of over a Set the body adds to"],
-        ["const m = new Map([[0, 0]]); for (const e of m) m.set(e[0] + 1, 0); 0", "for…of over a Map the body sets"],
-        ["const s = new Set([0]); s.forEach(x => s.add(x + 1)); 0", "Set.forEach whose callback adds"],
-        ["const m = new Map([[0, 0]]); m.forEach((v, k) => m.set(k + 1, 0)); 0", "Map.forEach whose callback sets"],
-        ["const a = [1]; Array.from(a, x => a.push(x)); 0", "Array.from over an array its mapper pushes to"],
-        ["const s = new Set([0]); Array.from(s, x => s.add(x + 1)); 0", "Array.from over a Set its mapper adds to"],
-    ]) {
-        const r = await fallsBack(src, why);
-        assert.match(r.message, /while it is being iterated/, `${why}: says why`);
+    for (const v of lifted("halting", "a loop cannot grow the collection it is iterating")) {
+        const r = await checkHalting(v);
+        assert.match(r.message, /while it is being iterated/, `${v.name}: says why`);
     }
 });
 
@@ -1383,69 +1345,48 @@ test("ADVERSARIAL (halting): recursion is bounded, however a function reaches it
     // Recursion is allowed the way `ml.range` allows a loop: bounded. Depth is capped (MAX_CALL_DEPTH), so a call
     // tree is finite; the step budget bounds how BIG that finite tree may get. Every one of these ran forever, or
     // stopped only when the JS stack overflowed — a RangeError a dialect `try` could have caught and retried.
-    for (const [src, why, reason] of [
-        ["const f = n => f(n + 1); f(0)", "unbounded linear recursion", /nested more than 256 deep/],
-        ["const f = n => n > 0 ? f(n - 1) + f(n - 1) : 1; f(60)", "branching recursion through its own name", /over \d+ steps/],
-        ["const r = h => n => n > 0 ? h(h)(n - 1) + h(h)(n - 1) : 1; r(r)(60)", "fresh closures of one arrow (the Y-combinator shape)", /over \d+ steps/],
-        ["const f = n => n > 0 ? [n - 1, n - 1].map(f).length : 1; f(60)", "branching recursion through a host callback", /over \d+ steps/],
-        // Not even reachable: calling a function stored on an object is outside the dialect altogether.
-        ["const o = {}; o.f = n => o.f(n + 1); o.f(0)", "recursion through an object property", /method 'f' not allowed/],
-        ["try { const f = n => f(n + 1); f(0) } catch { } 0", "a runaway recursion inside try/catch", /nested more than 256 deep/],
-    ]) {
-        const r = await fallsBack(src, why);
-        assert.match(r.message, reason, `${why}: says why`);
+    const WHY = {
+        "unbounded linear recursion": /nested more than 256 deep/,
+        "branching recursion through its own name": /over \d+ steps/,
+        "fresh closures of one arrow (the Y-combinator shape)": /over \d+ steps/,
+        "branching recursion through a host callback": /over \d+ steps/,
+        "recursion through an object property": /method 'f' not allowed/,   // not even reachable: calling a function stored on an object is outside the dialect
+        "a runaway recursion inside try/catch": /nested more than 256 deep/,
+    };
+    for (const v of lifted("halting", "recursion is bounded")) {
+        const r = await checkHalting(v);
+        assert.match(r.message, WHY[v.name], `${v.name}: says why`);
     }
 });
 
 test("recursion inside the bounds works: a tree walk and a deep chain", async () => {
     // Walking a nested structure is what recursion is FOR in a read-only survey.
-    const ok = async (src, want) => { const r = await inWorker(src); assert.deepEqual(r, { value: want }, src); };
-    await ok("const tree = { v: 1, kids: [{ v: 2, kids: [] }, { v: 3, kids: [{ v: 4, kids: [] }] }] };"
-        + " const sum = t => t.v + t.kids.map(sum).reduce((a, b) => a + b, 0); sum(tree)", 10);
-    await ok("const fact = n => n < 2 ? 1 : n * fact(n - 1); fact(10)", 3628800);
-    // Just under the cap, by both routes, must not trip the JS stack first.
-    await ok("const f = n => n > 0 ? f(n - 1) : 'bottom'; f(250)", "bottom");
-    await ok("const f = n => n > 0 ? [n - 1].map(f)[0] : 'bottom'; f(120)", "bottom");
+    for (const v of lifted("halting", "recursion inside the bounds works")) await checkHalting(v);
+    // Just under the cap, by both routes (the last two), must not trip the JS stack first.
 });
 
 test("halting rules leave the ordinary shapes alone", async () => {
-    const ok = async (src, want) => { const r = await inWorker(src); assert.deepEqual(r, { value: want }, src); };
-    // Filling a DIFFERENT container while iterating is the accumulator idiom and must keep working.
-    await ok("const src = [1, 2, 3]; const out = []; for (const x of src) out.push(x * 2); out", [2, 4, 6]);
-    await ok("const s = new Set([1, 2]); const seen = new Set(); s.forEach(x => seen.add(x * 10)); [...seen]", [10, 20]);
-    // Once the loop is over — however it ended — the collection is writable again.
-    await ok("const a = [1, 2]; for (const x of a) { } a.push(3); a.length", 3);
-    await ok("const a = [1, 2]; const f = () => { for (const x of a) return x; }; f(); a.push(3); a.length", 3);
-    await ok("const a = [1, 2]; try { for (const x of a) JSON.parse('{'); } catch { } a.push(3); a.length", 3);
-    // Reading the collection being iterated is fine; so is nesting two loops over it.
-    await ok("const a = [1, 2]; const out = []; for (const x of a) for (const y of a) out.push(x * y); out", [1, 2, 2, 4]);
-    // The same function called again once it has RETURNED is not recursion.
-    await ok("const f = x => x * 2; f(f(3))", 12);
-    await ok("const f = x => x + 1; [1, 2, 3].map(f)", [2, 3, 4]);
-    await ok("const twice = g => x => g(g(x)); twice(y => y + 1)(0)", 2);
+    // Filling a DIFFERENT container while iterating is the accumulator idiom; once the loop is over, however it ended, the
+    // collection is writable again; reading it while iterating is fine, and so is nesting two loops over it; and the
+    // same function called again once it has RETURNED is not recursion.
     // Array methods fix their length when they start, so a callback that pushes to its own array still halts —
-    // but it is changing the collection being iterated, which the rule refuses rather than special-cases.
-    const r = await inWorker("const a = [1, 2]; a.map(x => a.push(x)); a.length");
-    assert.ok(r.threw === "Denied", `a callback mutating its own array falls back: ${JSON.stringify(r)}`);
+    // but it is changing the collection being iterated, which the rule refuses rather than special-cases (the one
+    // refused vector of the group). That one must be refused as Denied specifically, which a vector cannot say.
+    for (const v of lifted("halting", "halting rules leave the ordinary shapes alone")) {
+        const r = await checkHalting(v);
+        if (v.name === "a callback mutating its own array") assert.equal(r.threw, "Denied", `${v.name}: ${JSON.stringify(r)}`);
+    }
 });
 
 test("ADVERSARIAL (cost): a survey that halts but would take too long goes to the human", async () => {
-    for (const [src, why] of [
-        ["const o = { n: 0 }; for (const i of Array(1000000).keys()) for (const j of Array(1000000).keys()) o.n = o.n + 1; o.n", "10¹² iterations of a nested loop"],
-        ["Array.from({ length: 1000000000 }, (_, i) => i).length", "a billion-element Array.from"],
-        ["Array(1000000000).join(',').length", "a billion-hole array, joined"],
-        ["new Array(1000000000).length", "new Array of a billion"],
-        ["'x'.repeat(1000000000).length", "a gigabyte repeat"],
-        ["''.padStart(1000000000).length", "a gigabyte padStart"],
-        ["const o = { a: [1] }; for (const i of Array(40).keys()) o.a = o.a.concat(o.a); o.a.length", "an array doubled forty times"],
-        ["const o = { s: 'xx' }; for (const i of Array(40).keys()) o.s = o.s + o.s; o.s.length", "a string doubled forty times"],
-    ]) await fallsBack(src, why);
+    for (const v of lifted("halting", "a survey that halts but would take too long")) await checkHalting(v);
 });
 
 test("ADVERSARIAL (cost): a try/catch cannot swallow the budget, at the REAL budget", async () => {
     // The real STEP_BUDGET, once: proves the shipped number stops a runaway in bounded time, not just a test-sized one.
-    const r = await fallsBack("try { for (const i of Array(1000000).keys()) for (const j of Array(1000000).keys()) { } } catch { } 0",
-        "an over-budget loop inside try/catch", null);   // null = the shipped STEP_BUDGET
+    const [v] = lifted("halting", "a try/catch cannot swallow the budget at the real budget");
+    assert.equal(v.budget, STEP_BUDGET, "the vector carries the shipped budget");
+    const r = await checkHalting(v);
     assert.match(r.message, new RegExp(`over ${STEP_BUDGET} steps`));
 });
 
@@ -1461,13 +1402,14 @@ test("a survey that falls out of dialect leaves the answer set as it found it", 
     // The interpreter's contract is that a failed attempt does nothing observable, which is what makes TRYING it
     // safe. `ml.answer` is the one mutating facade, so an add before the fall-back would outlive it: the human is
     // then asked to approve a script whose earlier half has already changed the run's answer.
+    const [v] = lifted("failure", "a survey that falls out of dialect leaves the answer set as it found it");
     const set = new AnswerSet();
-    set.add({ kind: "text", text: "kept" });
-    await assert.rejects(
-        evalReadonly("ml.answer.add('leaked'); ml.answer.remove(0); document.body.click()", world(), ML,
-            makeAnswerFacade(set), { checkpoint: () => set.checkpoint() }),
-        outOfDialect);
-    assert.deepEqual(set.dump().map((d) => d.preview), ["kept"]);
+    const answer = makeAnswerFacade(set), opts = { checkpoint: () => set.checkpoint() };
+    await evalReadonly(v.pre.js, world(), ML, answer, opts);
+    const before = set.dump();
+    assert.deepEqual(before.map((d) => d.preview), ["kept"], "the pre program made the state to roll back to");
+    await assert.rejects(evalReadonly(v.js, world(), ML, answer, opts), outOfDialect);
+    assert.deepEqual(set.dump(), before, "the refusal left the answer set as it found it");
     // And a survey that SUCCEEDS keeps its changes.
     await evalReadonly("ml.answer.add('added')", world(), ML, makeAnswerFacade(set), { checkpoint: () => set.checkpoint() });
     assert.deepEqual(set.dump().map((d) => d.preview), ["kept", "added"]);
@@ -1476,27 +1418,14 @@ test("a survey that falls out of dialect leaves the answer set as it found it", 
 test("ADVERSARIAL (cost): a regex that could backtrack without end is refused before it runs", async () => {
     // One host call, no match timeout in V8, and exponential in the input: `/^(a+)+$/` on forty a's and a `!`
     // ran for hours. Checked on the pattern, so it never starts.
-    const s = "'" + "a".repeat(38) + "!'";
-    for (const [src, why] of [
-        [`/^(a+)+$/.test(${s})`, "a nested quantifier"],
-        [`/^(a|a)+$/.test(${s})`, "an alternation under a quantifier"],
-        [`/^(\\w+\\s?)*$/.test(${s})`, "the classic word-and-space shape"],
-        [`${s}.match('^(a+)+$')`, "a string pattern, which match() turns into a regex"],
-        [`new RegExp('^(a+)+$').test(${s})`, "a pattern built with new RegExp"],
-        [`/^(?:a+){2,}$/.test(${s})`, "a non-capturing group under a counted repeat"],
-    ]) {
-        const r = await fallsBack(src, why);
-        assert.match(r.message, /backtrack/, `${why}: says why`);
+    for (const v of lifted("halting", "a regex that could backtrack without end")) {
+        const r = await checkHalting(v);
+        assert.match(r.message, /backtrack/, `${v.name}: says why`);
     }
 });
 
 test("ordinary regexes still run", async () => {
-    const ok = async (src, want) => { const r = await inWorker(src); assert.deepEqual(r, { value: want }, src); };
-    await ok("'a1b22c333'.match(/\\d+/g)", ["1", "22", "333"]);
-    await ok("/^(?:https?):\\/\\/([^/]+)/.exec('https://example.com/x')[1]", "example.com");
-    await ok("'2026-09-14'.replace(/(\\d+)-(\\d+)-(\\d+)/, '$3/$2/$1')", "14/09/2026");
-    await ok("/(?<year>\\d{4})/.exec('in 2026').groups.year", "2026");
-    await ok("/(ab)?c/.test('abc')", true);
+    for (const v of lifted("halting", "ordinary regexes still run")) await checkHalting(v);
 });
 
 // --- Dereferenced TABLES ------------------------------------------------------------------------------------
@@ -1845,34 +1774,21 @@ test("HALTING `**`: a power is one bounded operation — repeated squaring ends 
 test("HALTING (reassignment): rebinding the loop's collection cannot extend the loop", async () => {
     // The loop holds the iterable it STARTED with, so rebinding the name it came from is invisible to it. Each of
     // these would be an infinite loop if the iteration re-read the binding.
-    for (const [src, why] of [
-        ["let a = [1]; for (const x of a) { a = a.concat([x]); } return a.length", "rebinding to a longer array"],
-        ["let a = [1]; for (const x of a) { a = [...a, x]; } return a.length", "rebinding to a spread of itself"],
-        ["let n = 0; let a = [1, 2]; for (const x of a) { n++; a = a.concat(a); } return n", "doubling the binding mid-loop"],
-    ]) {
-        const r = await inWorker(src, 5000);
-        assert.ok(!r.hung, `${why}: still running after 5 s`);
-        assert.ok(r.threw === undefined, `${why}: ${JSON.stringify(r)}`);
-    }
-    // And MUTATING the collection still cannot, whether it was declared const or let — the hold is on the value.
-    await fallsBack("let a = [1]; for (const x of a) a.push(x); 0", "for…of over a `let` array the body pushes to");
+    for (const v of lifted("halting", "rebinding the loop's collection cannot extend the loop")) await checkHalting(v);
+    // The last case: MUTATING the collection still cannot, whether it was declared const or let — the hold is on the value.
 });
 
 test("HALTING (reassignment): growth through a compound assignment is bounded like any other", async () => {
     // `+=` goes through the same `sized` guard as `+`, or it would be a string-doubling hole with an `=` right
     // beside it that is not. Forty doublings is a terabyte; it must end at the gate, not in the heap.
-    await fallsBack(`let s = "x"; for (const i of [...Array(40).keys()]) s += s; return s.length`, "a string doubled in a loop");
     // A counter that merely counts is fine, and the step budget is what bounds the loop itself.
-    const ok = await inWorker("let n = 0; for (const x of [...Array(1000).keys()]) n += x; return n", 5000);
-    assert.equal(ok.value, 499500);
-    await fallsBack("let n = 0; for (const a of [...Array(600).keys()]) for (const b of [...Array(600).keys()]) n++; return n", "a nested loop past the step budget");
+    for (const v of lifted("halting", "growth through a compound assignment")) await checkHalting(v);
 });
 
 test("HALTING (reassignment): a counter cannot buy extra call depth", async () => {
     // Depth is bounded by the SOURCE (a function cannot be entered while it is already running), and a mutable
     // binding does not change what the source says. Recursion is refused the same way with or without one.
-    await fallsBack("let n = 0; const f = (x) => { n++; return f(x + 1); }; return f(0)", "self-recursion with a counter");
-    await fallsBack("let n = 0; const f = (x) => { n++; return g(x); }; const g = (x) => f(x + 1); return f(0)", "mutual recursion with a counter");
+    for (const v of lifted("halting", "a counter cannot buy extra call depth")) await checkHalting(v);
 });
 
 test("FAILURE `**`: a survey that computes with it and then leaves the dialect leaves nothing behind", async () => {
@@ -1929,82 +1845,50 @@ test("an assignment reaches the binding it should, through blocks and arrow fram
 // --- ADVERSARIAL: bare-name assignment must not reach the environment -------------------------------------------------
 
 test("ADVERSARIAL: the host's own names cannot be assigned to, by any of the new forms", async () => {
-    for (const src of [
-        `document = 1`, `ml = 1`, `Math = 1`, `JSON = 1`, `console = 1`, `Object = 1`, `Array = 1`, `Promise = 1`,
-        `document += 1`, `ml += 1`, `Math++`, `++document`, `console--`, `getComputedStyle = 1`,
-        `undefined = 1`, `NaN = 1`, `Infinity = 1`, `parseInt = 1`,
-    ]) {
-        await assert.rejects(run(src), outOfDialect, src);
-    }
+    for (const v of lifted("ownership", "the host's own names cannot be assigned to")) await checkVector(v);
 });
 
 test("ADVERSARIAL: assignment never CREATES a binding, so there are no implicit globals", async () => {
     // In real JS (non-strict) `leaked = 1` makes a global. Here nothing is declared, so nothing is written, and
     // the survey falls to the gate rather than inventing a name.
-    for (const src of [`leaked = 1; return leaked`, `leaked += 1`, `leaked++`, `window = 1`, `globalThis = 1`, `self = 1`])
-        await assert.rejects(run(src), outOfDialect, src);
+    for (const v of lifted("ownership", "assignment never creates a binding")) await checkVector(v);
 });
 
 test("ADVERSARIAL: a const is a const, so the dialect never computes a value real JavaScript would not", async () => {
-    for (const src of [
-        `const n = 1; n = 2; return n`,
-        `const n = 1; n += 1; return n`,
-        `const n = 1; n++; return n`,
-        `const { a } = { a: 1 }; a = 2; return a`,
-        `const [a] = [1]; a = 2; return a`,
-        `for (const x of [1]) { x = 2; } return 0`,
-    ]) await assert.rejects(run(src), outOfDialect, src);
-    // A `let` loop variable is not a const, and writing to it is a per-iteration binding like any other.
-    assert.equal((await run(`let out = 0; for (let x of [1, 2]) { x = x * 10; out += x; } return out`)).value, 30);
-    // An inner `const x` must not freeze an OUTER `let x` that merely shares its name: the set of const names is
-    // an own property of its frame, not something read through the prototype chain.
-    assert.equal((await run(`let x = 1; if (true) { const x = 9; } x = 2; return x`)).value, 2);
+    for (const v of lifted("ownership", "a const is a const")) await checkVector(v);
+    // A `let` loop variable is not a const, and writing to it is a per-iteration binding like any other. An inner
+    // `const x` must not freeze an OUTER `let x` that merely shares its name: the set of const names is an own
+    // property of its frame, not something read through the prototype chain.
 });
 
 test("ADVERSARIAL: shadowing a host name writes to the script's frame, never the environment's", async () => {
     // Allowed — it is just a local binding — and the host's own stays untouched, which is the thing that matters.
-    const { value } = await run(`const ml = 1; return [ml, typeof document]`);
-    assert.deepEqual(value, [1, "object"]);
-    assert.equal((await run(`{ const document = 1; } return typeof document.querySelectorAll`)).value, "function");
+    for (const v of lifted("ownership", "shadowing a host name")) await checkVector(v);
 });
 
 test("ADVERSARIAL: rebinding cannot launder a host value into a writable target", async () => {
     // `owned` is a property of the VALUE, not of the name holding it, so moving a DOM node into a local changes
     // nothing: the member write still refuses it, and so does ++ on one of its properties.
-    for (const src of [
-        `let o = {}; o = document.querySelector("#a"); o.id = "x"; return 1`,
-        `let o = {}; o = document.querySelector("#a"); o.id += "x"; return 1`,
-        `let o = {}; o = document.body; o.innerHTML = ""; return 1`,
-        `let o = {}; o = document.querySelector("#a"); o.scrollTop++; return 1`,
-    ]) await assert.rejects(run(src), outOfDialect, src);
+    for (const v of lifted("ownership", "rebinding cannot launder a host value")) await checkVector(v);
 });
 
 test("ADVERSARIAL: the realm is still out of reach through every new form", async () => {
-    for (const src of [
-        `const o = {}; o.__proto__ = { x: 1 }; return 1`,
-        `const o = {}; o["__proto__"] += 1; return 1`,
-        `const o = {}; o.constructor = 1; return 1`,
-        `const o = {}; o.prototype++; return 1`,
-    ]) await assert.rejects(run(src), outOfDialect, src);
-    // A method lifted off a host object is the inert sentinel, and passing it through a reassignment does not
-    // reanimate it: calling it is still refused.
-    await assert.rejects(run(`let f = [].map; let g = f; return g.call([1], x => x)`), outOfDialect);
-    await assert.rejects(run(`let f = document.querySelector; f = f; return f("#a")`), outOfDialect);
+    // (The last two cases pass a method lifted off a host object through a reassignment: it is the inert sentinel, and
+    // a copy does not reanimate it, so calling it is still refused.)
+    for (const v of lifted("ownership", "the realm is out of reach through every new assignment form")) await checkVector(v);
 });
 
 test("ADVERSARIAL: a compound assignment runs through the SAME size guard as the operator it applies", async () => {
     // `+=` that skipped `sized` would be a string-growth hole with an `=` right beside it that is not.
-    await assert.rejects(run(`let s = "x"; for (const i of ml.range(40)) s += s; return s.length`), outOfDialect);
+    for (const v of lifted("ownership", "a compound assignment runs through the same size guard")) await checkVector(v);
 });
 
 // --- FAILURE: a survey that reassigns and then leaves the dialect leaves nothing behind -------------------------------
 
 test("FAILURE: a counter survey that falls out of dialect afterwards has changed nothing", async () => {
+    const [v] = lifted("failure", "a counter survey that falls out of dialect afterwards has changed nothing");
     const set = new AnswerSet();
-    await assert.rejects(
-        evalReadonly(`let n = 0; for (const x of [1, 2]) n += x; ml.answer.add("total " + n); document.body.click(); return n`,
-            world(), ML, makeAnswerFacade(set), { checkpoint: () => set.checkpoint() }),
-        outOfDialect);
+    await assert.rejects(evalReadonly(v.js, world(), ML, makeAnswerFacade(set), { checkpoint: () => set.checkpoint() }), outOfDialect);
     assert.equal(set.dump().length, 0, "the add before the refusal was rolled back");
 });
 

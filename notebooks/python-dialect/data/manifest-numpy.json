@@ -1,0 +1,61 @@
+{
+  "module": "numpy",
+  "version_counted_against": "2.5.3",
+  "min_cells": 2,
+  "functions": [
+    "abs",
+    "any",
+    "argwhere",
+    "array",
+    "mean",
+    "sum",
+    "where"
+  ],
+  "kinds": {
+    "ndarray": [
+      "any",
+      "astype",
+      "copy",
+      "max",
+      "mean",
+      "round",
+      "sum",
+      "tolist"
+    ]
+  },
+  "observed": {
+    "functions": {
+      "abs": 2,
+      "any": 2,
+      "argwhere": 16,
+      "array": 10,
+      "cos": 1,
+      "linspace": 1,
+      "maximum": 1,
+      "mean": 14,
+      "meshgrid": 1,
+      "sin": 1,
+      "stack": 1,
+      "sum": 4,
+      "uint8": 1,
+      "where": 3,
+      "zeros": 1,
+      "zeros_like": 1
+    },
+    "kinds": {
+      "ndarray": {
+        "all": 1,
+        "any": 3,
+        "astype": 64,
+        "copy": 5,
+        "item": 1,
+        "max": 10,
+        "mean": 5,
+        "round": 7,
+        "sum": 1162,
+        "tolist": 152
+      }
+    }
+  },
+  "note": "names only; effects, return marking (fresh/alias/internal) and cost shapes are the second pass, after the CPython restricted mode"
+}
