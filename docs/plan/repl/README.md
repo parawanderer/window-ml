@@ -80,7 +80,11 @@ Seatbelt restricts `process-exec` to a literal path; on Linux the same comes fro
 applied by a small exec shim (`exec-under <ruleset> -- prog`, which composes with bubblewrap and keeps the host free of
 `unsafe`), with EXECUTE granted to the program, the ELF interpreter and a script's `#!` interpreter; the Landlock ABI is
 reported in `hello`, and best-effort is treated as unavailable, so a no-runner claim is never silently trusted where
-the kernel cannot enforce it.
+the kernel cannot enforce it. Landlock also closes a WRITE gap bubblewrap has (measured in the host's Linux CI, 29 of 30
+enforcement tests passing): bwrap binds only paths that EXIST when the call starts, so a protected path that is absent
+then (`.vscode/settings.json`) is writable on Linux while Seatbelt's regex denies it. K's Linux write rules are Landlock
+rules over the roots minus the protected NAMES, which hold whether or not the file exists; the gap is pinned by its own
+test in the host repo, which must flip when K lands.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
