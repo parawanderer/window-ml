@@ -90,7 +90,7 @@ test in the host repo, which must flip when K lands.
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
 kept whole (`POINTER_VALUES.md`, slices 5 and 6). So "the operation goes to the value" has no value to go to for a text
 body, and a code client (a Python cell, a survey's pipe) computes over a prefix. J is a root (it extends the value store
-the way the table slices did) and is not assigned to a lane this round; until it lands, a `value` answer for a
+the way the table slices did), taken by the fresh lane 1 session on 2026-10-15 while the lockdown merges; until it lands, a `value` answer for a
 truncated capture carries `truncated: true` and the full size, and every client surfaces it.
 
 ## Status (2026-10-15, end of the first day)
@@ -107,7 +107,8 @@ truncated capture carries `truncated: true` and the full size, and every client 
   The lane 1 session finishes its root A result file and a design note for the `ml` message channel and then STOPS;
   a fresh session takes lane 1 forward (`ml` in Pyodide, root C) from the plan, those two documents and the merged
   lockdown, because the first session's context carries the escape work and is stopped on anything near the sandbox.
-- **Added roots**: J (whole text captures in the value store) and K (registering a program), both unassigned.
+- **Added roots**: J (whole text captures in the value store), taken by the fresh lane 1 session while the lockdown
+  merges, since its own PR 2 needs it and it is outside the worker; K (registering a program), unassigned.
 
 ## The lanes
 
