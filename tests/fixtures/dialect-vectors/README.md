@@ -52,3 +52,4 @@ it never runs it in a different world.
 | `dom` | the `world()` document of `tests/readonly-exec.test.mjs`, with its stand-in `ml` | (none: skip) |
 | `answer` | `world()`, the stand-in `ml` and an `AnswerSet` facade with its checkpoint | (none: skip) |
 | `table` | (none: skip) | a namespace holding `df = pd.DataFrame({"a": [1, 2, 3, 4], "b": [5, 6, 7, 8], "c": [9, 10, 11, 12]})`, which the cell did NOT create (unowned), and the prelude's names (`pd`, `np`, …) |
+| `policy` | the policy realm: the program is a policy `(c) => …`, run by `evalPolicy` over the facts `{ kind: "fetch", url: "https://a.example/x", argv: ["git", "status"], paths: [{ path: "/r/a", inRoot: true, secret: false }], effects: [read(net(a.example)), read(fs(/r/a))] }` (`FACTS` in `tests/readonly-policy.test.mjs`). `"refused"` there means the policy is BROKEN by a refusal (no decision, its reason a dialect refusal), never a runtime error | (none: skip) |

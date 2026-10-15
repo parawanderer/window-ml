@@ -1174,5 +1174,37 @@
     "expect": "refused",
     "reason": "not the sole positional argument, so not in consumer position",
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "policy: direct recursion",
+    "js": "(c) => { const f = (n) => f(n + 1); return f(0); }",
+    "env": "policy",
+    "expect": "halts",
+    "reason": "calls nest at most MAX_CALL_DEPTH deep and every step is charged to the policy's budget, so a policy ends in milliseconds",
+    "from": "tests/readonly-policy.test.mjs halting"
+  },
+  {
+    "name": "policy: mutual recursion",
+    "js": "(c) => { const g = (n) => h(n); const h = (n) => g(n + 1); return g(0); }",
+    "env": "policy",
+    "expect": "halts",
+    "reason": "calls nest at most MAX_CALL_DEPTH deep and every step is charged to the policy's budget, so a policy ends in milliseconds",
+    "from": "tests/readonly-policy.test.mjs halting"
+  },
+  {
+    "name": "policy: recursion through a host callback",
+    "js": "(c) => { const f = (n) => [n].map((x) => f(x + 1))[0]; return f(0) === 1; }",
+    "env": "policy",
+    "expect": "halts",
+    "reason": "calls nest at most MAX_CALL_DEPTH deep and every step is charged to the policy's budget, so a policy ends in milliseconds",
+    "from": "tests/readonly-policy.test.mjs halting"
+  },
+  {
+    "name": "policy: exponential recursion",
+    "js": "(c) => { const f = (n) => n === 0 ? 1 : f(n - 1) + f(n - 1); return f(40) > 0; }",
+    "env": "policy",
+    "expect": "halts",
+    "reason": "calls nest at most MAX_CALL_DEPTH deep and every step is charged to the policy's budget, so a policy ends in milliseconds",
+    "from": "tests/readonly-policy.test.mjs halting"
   }
 ]
