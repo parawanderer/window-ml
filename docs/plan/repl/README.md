@@ -142,6 +142,8 @@ Each lane's second task is unblocked by its own first one, so a session never wa
   timeout and a memory cap (`ulimit -v`, or the suite's own `--timeout`/`--memlimit`), and ONE at a time on this machine,
   which has 16 GB. Lane 3's CPython suite run on the restricted-mode fork sat on a worker that grew to 14 GB and took every
   session down with it; the session that started it died, the run did not. A run whose owner dies is anyone's to kill.
+  The write-up, with the Jetsam evidence and how to read it, is the shared memory
+  ~/.claude/projects/-Users-sb-git-window-ml/memory/trap-laptop-oom-runaway-test-suite.md (outside the repo).
 
 - **One clone per session**, a sibling of `~/git/window-ml` named for the lane (`window-ml-repl-lane1`, …). The
   commands are in `docs/dev/working-in-the-repo.md`, "Running several sessions at once": clone, symlink `.env` and
