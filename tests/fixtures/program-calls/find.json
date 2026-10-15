@@ -16,6 +16,11 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find"
       ]
     },
     {
@@ -31,13 +36,20 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "."
       ]
     },
     {
@@ -57,17 +69,28 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         },
         {
           "arg": 2,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "src",
+        "docs",
+        "-name",
+        "*.ts"
       ]
     },
     {
@@ -88,13 +111,25 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-type",
+        "f",
+        "-name",
+        "*.md",
+        "-print"
       ]
     },
     {
@@ -115,13 +150,25 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-name",
+        "*.log",
+        "-o",
+        "-name",
+        "*.tmp"
       ]
     },
     {
@@ -147,13 +194,30 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "(",
+        "-name",
+        "a",
+        "-o",
+        "-name",
+        "b",
+        ")",
+        "-a",
+        "!",
+        "-empty"
       ]
     },
     {
@@ -174,13 +238,25 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-not",
+        "-path",
+        "./node_modules/*",
+        "-prune",
+        "-print0"
       ]
     },
     {
@@ -204,13 +280,28 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-maxdepth",
+        "2",
+        "-mtime",
+        "-7",
+        "-size",
+        "+1M",
+        "-perm",
+        "644"
       ]
     },
     {
@@ -233,13 +324,22 @@
         },
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-newer",
+        "ref.txt"
       ]
     },
     {
@@ -262,13 +362,22 @@
         },
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-samefile",
+        "ref.txt"
       ]
     },
     {
@@ -289,13 +398,24 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-exec",
+        "rm",
+        "{}",
+        ";"
       ]
     },
     {
@@ -318,13 +438,26 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-exec",
+        "grep",
+        "-l",
+        "x",
+        "{}",
+        "+"
       ]
     },
     {
@@ -347,13 +480,26 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-execdir",
+        "sh",
+        "-c",
+        "echo",
+        "{}",
+        ";"
       ]
     },
     {
@@ -374,13 +520,24 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-ok",
+        "rm",
+        "{}",
+        ";"
       ]
     },
     {
@@ -401,13 +558,24 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-okdir",
+        "rm",
+        "{}",
+        ";"
       ]
     },
     {
@@ -424,13 +592,23 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-exec",
+        "rm",
+        "{}"
       ]
     },
     {
@@ -448,13 +626,21 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-delete"
       ]
     },
     {
@@ -474,13 +660,23 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-name",
+        "*.o",
+        "-delete"
       ]
     },
     {
@@ -495,13 +691,21 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-follow"
       ]
     },
     {
@@ -515,11 +719,26 @@
       "note": "-L follows symlinks: left out of the manifest, so unknown (a listed -L with [unknown] would still be described:true, see report)",
       "described": false,
       "effects": "unknown",
-      "pathArgs": [],
-      "actsOnDir": true,
+      "pathArgs": [
+        {
+          "arg": 2,
+          "role": "read",
+          "walk": true
+        }
+      ],
+      "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "-L",
+        ".",
+        "-name",
+        "x"
       ]
     },
     {
@@ -538,13 +757,23 @@
       "pathArgs": [
         {
           "arg": 2,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "-H",
+        ".",
+        "-name",
+        "x"
       ]
     },
     {
@@ -563,13 +792,23 @@
       "pathArgs": [
         {
           "arg": 2,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "-P",
+        ".",
+        "-name",
+        "x"
       ]
     },
     {
@@ -585,13 +824,22 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-fprint",
+        "out.txt"
       ]
     },
     {
@@ -607,13 +855,22 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-printf",
+        "%p"
       ]
     },
     {
@@ -628,13 +885,21 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-depth"
       ]
     },
     {
@@ -650,13 +915,22 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "-newerat",
+        "2020-01-01"
       ]
     },
     {
@@ -671,13 +945,21 @@
       "pathArgs": [
         {
           "arg": 1,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        ".",
+        "--wml-made-up"
       ]
     },
     {
@@ -694,6 +976,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "--",
+        "."
       ]
     },
     {
@@ -710,6 +999,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "find",
+        "-x",
+        "."
       ]
     }
   ]

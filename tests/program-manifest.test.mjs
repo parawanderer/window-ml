@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const { describeCall, validateManifest, inRange } = await import("../src/shell/program-manifest.ts");
+const { describeCall, hardenArgv, validateManifest, inRange } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor } = await import("../src/effects.ts");
 
 const MANIFESTS = new URL("../src/shell/manifests/", import.meta.url);
@@ -21,7 +21,7 @@ function commands(cmd, at = []) {
 }
 
 /** A flag changes a call's description when it adds an effect, a path, a directory, a runner, an echo or an answer code. */
-const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.valueIsDir || f.runner || f.echoes || f.okCodes || f.pathsFrom !== undefined;
+const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.valueIsDir || f.runner || f.echoes || f.okCodes || f.recursive || f.pathsFrom !== undefined;
 
 // --- the shipped manifests ---
 
@@ -45,8 +45,8 @@ for (const [name, fx] of Object.entries(fixtures)) {
         assert.ok(fx.calls.length >= 8, `${name} has a real fixture, not a sample`);
         for (const c of fx.calls) {
             const d = describeCall(c.argv, manifests[name], { version: fx.version });
-            const got = { described: d.described, effects: keys(d.effects), pathArgs: d.pathArgs, actsOnDir: d.actsOnDir, runner: d.runner, okCodes: d.okCodes };
-            const want = { described: c.described, effects: c.effects, pathArgs: c.pathArgs, actsOnDir: c.actsOnDir, runner: c.runner, okCodes: c.okCodes };
+            const got = { described: d.described, effects: keys(d.effects), pathArgs: d.pathArgs, actsOnDir: d.actsOnDir, runner: d.runner, okCodes: d.okCodes, echoes: d.echoes, recursive: d.recursive, hardened: hardenArgv(c.argv, d) };
+            const want = { described: c.described, effects: c.effects, pathArgs: c.pathArgs, actsOnDir: c.actsOnDir, runner: c.runner, okCodes: c.okCodes, echoes: c.echoes, recursive: c.recursive, hardened: c.hardened };
             assert.deepEqual(got, want, `${c.argv.join(" ")} (${c.note})`);
             assert.equal(typeof c.note, "string", "each call says what it is for");
         }
@@ -173,4 +173,36 @@ test("the validator refuses a misspelt key, a runner that runs nothing, a bad ef
     assert.match(bad({ version: { range: "latest", args: [], pattern: "x" } }).join(), /range/);
     assert.match(bad({ command: { ...base.command, flags: { "-x": { valueIsPath: "write" } } } }).join(), /needs value: true/);
     assert.match(bad({ extra: 1 }).join(), /unknown key extra/);
+});
+
+// --- hardening and recursive readers (rulings of 2026-10-15) ---
+
+test("a hardened argv describes exactly as the original, for every fixture call", () => {
+    for (const [name, fx] of Object.entries(fixtures)) for (const c of fx.calls) {
+        const d = describeCall(c.argv, manifests[name], { version: fx.version });
+        const h = describeCall(hardenArgv(c.argv, d), manifests[name], { version: fx.version });
+        assert.deepEqual(keys(h.effects), keys(d.effects), `${c.argv.join(" ")}: hardening changed the effects`);
+        assert.equal(h.described, d.described, c.argv.join(" "));
+    }
+});
+
+test("git's read subcommands are hardened against the repository's pager, external diff and textconv", () => {
+    const h = (argv) => hardenArgv(argv, describeCall(argv, git, V));
+    assert.deepEqual(h(["git", "diff", "HEAD"]), ["git", "--no-pager", "diff", "--no-ext-diff", "--no-textconv", "HEAD"]);
+    assert.deepEqual(h(["git", "-C", "x", "log", "-1"]), ["git", "--no-pager", "-C", "x", "log", "--no-ext-diff", "--no-textconv", "-1"]);
+    assert.deepEqual(h(["git", "--no-pager", "status"]), ["git", "--no-pager", "status"], "nothing doubled");
+});
+
+test("a recursive reader marks every walked path, and its own directory when it has no path", () => {
+    const rg = manifests.rg, find = manifests.find, ls = manifests.ls;
+    const v = (m) => ({ version: fixtures[m.program].version });
+    const a = describeCall(["rg", "TODO", "src", "docs"], rg, v(rg));
+    assert.equal(a.recursive, true);
+    assert.deepEqual(a.pathArgs.map((p) => [p.arg, p.walk]), [[2, true], [3, true]]);
+    const b = describeCall(["rg", "TODO"], rg, v(rg));
+    assert.equal(b.recursive && b.actsOnDir, true, "no path: the cwd is walked");
+    assert.equal(describeCall(["find", ".", "-name", "*.ts"], find, v(find)).pathArgs[0].walk, true);
+    assert.equal(describeCall(["ls", "src"], ls, v(ls)).recursive, false);
+    assert.equal(describeCall(["ls", "-R", "src"], ls, v(ls)).pathArgs[0].walk, true);
+    assert.equal(describeCall(["cat", "a.txt"], manifests.cat, v(manifests.cat)).recursive, false);
 });

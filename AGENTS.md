@@ -27,6 +27,7 @@ file` finds the path:
 | `hub/` (+ `hub/runtime/`), `pairing/`, `archive/`, `chat/`, `native/`, `proto/` | as named; `hub/runtime/` is this browser AS a runtime |
 | `sidebar/` (+ `resource/`, `transcript/`, `card/`, `code/`, `export/`, `settings/`) | the panel, by view |
 | `gallery/` | the component gallery's page (`gallery.mjs`, the `gallery` skill) |
+| `shell/` | what describes a call to `ml.sh`: program manifests (`manifests/<program>.json`) and `describeCall`; the process host itself is [window-ml-host](https://github.com/parawanderer/window-ml-host) |
 | `lab/<topic>/` | LAB code: research that lives here but is not for window.ml (`lab/gradient/`). Each topic imports nothing outside its folder (`tests/lab.test.mjs`), has a `docs/spec/` file, and its PRs carry `@lab` |
 
 A new file goes in the folder of what it is for. Move files with `node scripts/move-files.mjs`, never `git mv`.

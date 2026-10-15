@@ -22,6 +22,12 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "README.md"
       ]
     },
     {
@@ -50,6 +56,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "a.txt",
+        "b.txt"
       ]
     },
     {
@@ -64,6 +77,11 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat"
       ]
     },
     {
@@ -79,6 +97,12 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-"
       ]
     },
     {
@@ -102,6 +126,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-n",
+        "a.txt"
       ]
     },
     {
@@ -125,6 +156,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-bs",
+        "a.txt"
       ]
     },
     {
@@ -148,6 +186,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-vet",
+        "a.txt"
       ]
     },
     {
@@ -169,6 +214,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-A",
+        "a.txt"
       ]
     },
     {
@@ -190,6 +242,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-l",
+        "a.txt"
       ]
     },
     {
@@ -211,6 +270,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "--number",
+        "a.txt"
       ]
     },
     {
@@ -234,6 +300,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "--",
+        "-weird"
       ]
     },
     {
@@ -258,6 +331,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "-n",
+        "--",
+        "-n"
       ]
     },
     {
@@ -279,6 +360,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "cat",
+        "--end-of-options",
+        "x"
       ]
     }
   ]

@@ -18,6 +18,12 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "TODO"
       ]
     },
     {
@@ -36,11 +42,13 @@
       "pathArgs": [
         {
           "arg": 2,
-          "role": "read"
+          "role": "read",
+          "walk": true
         },
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -48,6 +56,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "TODO",
+        "src",
+        "docs"
       ]
     },
     {
@@ -66,7 +82,8 @@
       "pathArgs": [
         {
           "arg": 4,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -74,6 +91,15 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-n",
+        "-i",
+        "foo",
+        "src"
       ]
     },
     {
@@ -91,7 +117,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -99,6 +126,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-in",
+        "foo",
+        "src"
       ]
     },
     {
@@ -117,7 +152,8 @@
       "pathArgs": [
         {
           "arg": 4,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -125,6 +161,15 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-A",
+        "3",
+        "foo",
+        "src"
       ]
     },
     {
@@ -142,7 +187,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -150,6 +196,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-A3",
+        "foo",
+        "src"
       ]
     },
     {
@@ -167,7 +221,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -175,6 +230,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--glob=*.ts",
+        "foo",
+        "src"
       ]
     },
     {
@@ -196,11 +259,13 @@
       "pathArgs": [
         {
           "arg": 5,
-          "role": "read"
+          "role": "read",
+          "walk": true
         },
         {
           "arg": 6,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -208,6 +273,17 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-e",
+        "foo",
+        "-e",
+        "bar",
+        "src",
+        "docs"
       ]
     },
     {
@@ -224,7 +300,8 @@
       "pathArgs": [
         {
           "arg": 2,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -232,6 +309,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--regexp=foo",
+        "src"
       ]
     },
     {
@@ -254,7 +338,8 @@
         },
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -262,6 +347,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-f",
+        "patterns.txt",
+        "src"
       ]
     },
     {
@@ -284,7 +377,8 @@
         },
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -292,6 +386,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--file",
+        "patterns.txt",
+        "src"
       ]
     },
     {
@@ -318,6 +420,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--ignore-file",
+        ".myignore",
+        "foo"
       ]
     },
     {
@@ -334,7 +444,8 @@
       "pathArgs": [
         {
           "arg": 2,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -342,6 +453,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--files",
+        "src"
       ]
     },
     {
@@ -360,6 +478,12 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--files"
       ]
     },
     {
@@ -379,7 +503,8 @@
       "pathArgs": [
         {
           "arg": 4,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -387,6 +512,15 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--pre",
+        "cat",
+        "foo",
+        "src"
       ]
     },
     {
@@ -407,6 +541,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--pre=./filter.sh",
+        "foo"
       ]
     },
     {
@@ -427,6 +568,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--pre-glob",
+        "*.pdf",
+        "foo"
       ]
     },
     {
@@ -445,7 +594,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -453,6 +603,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-z",
+        "foo",
+        "archive.gz"
       ]
     },
     {
@@ -471,7 +629,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -479,6 +638,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-iz",
+        "foo",
+        "archive.gz"
       ]
     },
     {
@@ -499,6 +666,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--search-zip",
+        "foo"
       ]
     },
     {
@@ -522,6 +696,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--hostname-bin",
+        "hostname",
+        "--hyperlink-format",
+        "default",
+        "foo"
       ]
     },
     {
@@ -537,7 +721,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -545,6 +730,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-L",
+        "foo",
+        "src"
       ]
     },
     {
@@ -562,6 +755,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--follow",
+        "foo"
       ]
     },
     {
@@ -579,6 +779,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--wml-made-up",
+        "foo"
       ]
     },
     {
@@ -596,6 +803,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-iX",
+        "foo"
       ]
     },
     {
@@ -614,7 +828,8 @@
       "pathArgs": [
         {
           "arg": 4,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -622,6 +837,15 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-e",
+        "foo",
+        "--",
+        "-weird-file"
       ]
     },
     {
@@ -639,7 +863,8 @@
       "pathArgs": [
         {
           "arg": 3,
-          "role": "read"
+          "role": "read",
+          "walk": true
         }
       ],
       "actsOnDir": false,
@@ -647,6 +872,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--",
+        "-pattern",
+        "src"
       ]
     },
     {
@@ -664,6 +897,13 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--end-of-options",
+        "foo"
       ]
     },
     {
@@ -684,6 +924,14 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "-q",
+        "foo",
+        "-"
       ]
     },
     {
@@ -702,6 +950,12 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": true,
+      "hardened": [
+        "rg",
+        "--version"
       ]
     }
   ]

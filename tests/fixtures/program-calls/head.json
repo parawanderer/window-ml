@@ -22,6 +22,12 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "a.txt"
       ]
     },
     {
@@ -46,6 +52,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-n",
+        "5",
+        "a.txt"
       ]
     },
     {
@@ -69,6 +83,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-n5",
+        "a.txt"
       ]
     },
     {
@@ -99,6 +120,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-c",
+        "100",
+        "a.txt",
+        "b.txt"
       ]
     },
     {
@@ -122,6 +152,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "--lines=3",
+        "a.txt"
       ]
     },
     {
@@ -146,6 +183,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "--bytes",
+        "20",
+        "a.txt"
       ]
     },
     {
@@ -169,6 +214,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-5",
+        "a.txt"
       ]
     },
     {
@@ -183,6 +235,11 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head"
       ]
     },
     {
@@ -198,6 +255,12 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-"
       ]
     },
     {
@@ -222,6 +285,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-n",
+        "-5",
+        "a.txt"
       ]
     },
     {
@@ -243,6 +314,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "--wml-made-up",
+        "a.txt"
       ]
     },
     {
@@ -264,6 +342,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-x",
+        "a.txt"
       ]
     },
     {
@@ -287,6 +372,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "--",
+        "-weird"
       ]
     },
     {
@@ -312,6 +404,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-n",
+        "2",
+        "--",
+        "-n"
       ]
     },
     {
@@ -333,6 +434,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "--end-of-options",
+        "x"
       ]
     },
     {
@@ -354,6 +462,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "head",
+        "-q",
+        "a.txt"
       ]
     }
   ]

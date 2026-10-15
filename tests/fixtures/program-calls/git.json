@@ -18,6 +18,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "status",
+        "--short"
       ]
     },
     {
@@ -37,6 +45,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "status",
+        "--porcelain=v2",
+        "-b"
       ]
     },
     {
@@ -56,6 +73,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--stat",
+        "HEAD~1"
       ]
     },
     {
@@ -82,6 +110,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--output=out.patch",
+        "HEAD"
       ]
     },
     {
@@ -107,6 +146,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--output",
+        "out.patch"
       ]
     },
     {
@@ -126,6 +176,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--ext-diff"
       ]
     },
     {
@@ -145,6 +205,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--textconv"
       ]
     },
     {
@@ -163,6 +233,18 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-index",
+        "a",
+        "b"
       ]
     },
     {
@@ -188,6 +270,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-O",
+        "order.txt"
       ]
     },
     {
@@ -207,6 +300,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--exit-code"
       ]
     },
     {
@@ -226,6 +329,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--quiet"
       ]
     },
     {
@@ -245,6 +358,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--",
+        "a.txt"
       ]
     },
     {
@@ -264,6 +388,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--oneline",
+        "-20"
       ]
     },
     {
@@ -284,6 +419,18 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-n",
+        "5",
+        "--format=%H"
       ]
     },
     {
@@ -303,6 +450,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--show-signature"
       ]
     },
     {
@@ -328,6 +485,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--output=log.txt"
       ]
     },
     {
@@ -344,6 +511,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--frobnicate"
       ]
     },
     {
@@ -363,6 +540,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "HEAD",
+        "--stat"
       ]
     },
     {
@@ -383,6 +571,17 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--ext-diff",
+        "HEAD"
       ]
     },
     {
@@ -403,6 +602,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "blame",
+        "--no-textconv",
+        "-L",
+        "1,10",
+        "src/a.ts"
       ]
     },
     {
@@ -429,6 +639,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "blame",
+        "--no-textconv",
+        "--contents",
+        "/etc/passwd",
+        "a.ts"
       ]
     },
     {
@@ -455,6 +676,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "blame",
+        "--no-textconv",
+        "--ignore-revs-file",
+        ".git-blame-ignore-revs",
+        "a.ts"
       ]
     },
     {
@@ -475,6 +707,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard"
       ]
     },
     {
@@ -500,6 +742,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "ls-files",
+        "--exclude-from=ignore.txt"
       ]
     },
     {
@@ -518,6 +768,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "rev-parse",
+        "--show-toplevel"
       ]
     },
     {
@@ -536,6 +794,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "branch",
+        "-vv"
       ]
     },
     {
@@ -552,6 +818,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "branch",
+        "newbranch"
       ]
     },
     {
@@ -576,6 +850,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "-C",
+        "sub",
+        "status"
       ]
     },
     {
@@ -593,6 +876,17 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.pager=sh",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv"
       ]
     },
     {
@@ -609,6 +903,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--git-dir=/elsewhere/.git",
+        "status"
       ]
     },
     {
@@ -627,6 +929,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv"
       ]
     },
     {
@@ -647,6 +958,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "fetch",
+        "origin"
       ]
     },
     {
@@ -668,6 +987,15 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "fetch",
+        "--upload-pack=sh",
+        "origin"
       ]
     },
     {
@@ -690,6 +1018,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "push",
+        "origin",
+        "main"
       ]
     },
     {
@@ -713,6 +1050,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "push",
+        "--receive-pack",
+        "x",
+        "origin"
       ]
     },
     {
@@ -737,6 +1084,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "push",
+        "-u",
+        "origin",
+        "main"
       ]
     },
     {
@@ -754,6 +1111,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "commit",
+        "-m",
+        "x"
       ]
     },
     {
@@ -773,6 +1139,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "status",
+        "--end-of-options",
+        "-weird"
       ]
     },
     {
@@ -792,6 +1167,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "status",
+        "--",
+        "-weird"
       ]
     },
     {
@@ -809,6 +1193,15 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--config-env",
+        "x",
+        "status"
       ]
     },
     {
@@ -826,6 +1219,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--work-tree",
+        "x",
+        "status"
       ]
     },
     {
@@ -843,6 +1245,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--namespace",
+        "x",
+        "status"
       ]
     },
     {
@@ -860,6 +1271,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--exec-path",
+        "x",
+        "status"
       ]
     },
     {
@@ -877,6 +1297,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--super-prefix",
+        "x",
+        "status"
       ]
     },
     {
@@ -894,6 +1323,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--list-cmds",
+        "x",
+        "status"
       ]
     },
     {
@@ -911,6 +1349,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--attr-source",
+        "x",
+        "status"
       ]
     },
     {
@@ -927,6 +1374,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--bare",
+        "status"
       ]
     },
     {
@@ -943,6 +1398,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "--paginate",
+        "status"
       ]
     },
     {
@@ -959,6 +1422,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "-p",
+        "status"
       ]
     },
     {
@@ -978,6 +1449,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--exit-code"
       ]
     },
     {
@@ -997,6 +1478,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--quiet"
       ]
     },
     {
@@ -1022,6 +1513,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-O",
+        "p.txt"
       ]
     },
     {
@@ -1041,6 +1543,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--ext-diff"
       ]
     },
     {
@@ -1060,6 +1572,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--textconv"
       ]
     },
     {
@@ -1079,6 +1601,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--exit-code"
       ]
     },
     {
@@ -1098,6 +1630,16 @@
       "okCodes": [
         0,
         1
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--quiet"
       ]
     },
     {
@@ -1123,6 +1665,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--output",
+        "p.txt"
       ]
     },
     {
@@ -1148,6 +1701,17 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-O",
+        "p.txt"
       ]
     },
     {
@@ -1167,6 +1731,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--textconv"
       ]
     },
     {
@@ -1186,6 +1760,16 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--show-signature"
       ]
     },
     {
@@ -1211,6 +1795,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "blame",
+        "--no-textconv",
+        "-S",
+        "p.txt"
       ]
     },
     {
@@ -1236,6 +1830,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "ls-files",
+        "-X",
+        "p.txt"
       ]
     },
     {
@@ -1258,6 +1861,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "push",
+        "--set-upstream"
       ]
     },
     {
@@ -1280,6 +1891,73 @@
       "runner": true,
       "okCodes": [
         0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "push",
+        "--exec",
+        "x"
+      ]
+    },
+    {
+      "argv": [
+        "git",
+        "blame",
+        "--textconv",
+        "a.ts"
+      ],
+      "note": "blame --textconv runs the configured converter",
+      "described": true,
+      "effects": [
+        "exec:process",
+        "read:fs:.:?:?"
+      ],
+      "pathArgs": [],
+      "actsOnDir": true,
+      "runner": true,
+      "okCodes": [
+        0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "blame",
+        "--no-textconv",
+        "--textconv",
+        "a.ts"
+      ]
+    },
+    {
+      "argv": [
+        "git",
+        "blame",
+        "--no-textconv",
+        "a.ts"
+      ],
+      "note": "blame --no-textconv, the hardening",
+      "described": true,
+      "effects": [
+        "read:fs:.:?:?"
+      ],
+      "pathArgs": [],
+      "actsOnDir": true,
+      "runner": false,
+      "okCodes": [
+        0
+      ],
+      "echoes": false,
+      "recursive": false,
+      "hardened": [
+        "git",
+        "--no-pager",
+        "blame",
+        "--no-textconv",
+        "a.ts"
       ]
     }
   ]

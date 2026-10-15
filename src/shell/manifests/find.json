@@ -18,7 +18,12 @@
     "syntax": "find",
     "flags": {
       "-H": {},
-      "-P": {}
+      "-P": {},
+      "-L": {
+        "effects": [
+          "unknown"
+        ]
+      }
     },
     "primaries": {
       "(": {},
@@ -170,6 +175,7 @@
         ],
         "runner": true
       }
-    }
+    },
+    "recursive": true
   }
 }

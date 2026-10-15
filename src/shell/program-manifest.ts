@@ -28,6 +28,8 @@ export type FlagSpec = {
     echoes?: boolean;
     /** Exit codes that become answers with this flag (`git diff --exit-code`: 1). */
     okCodes?: readonly number[];
+    /** With this flag the command walks its directory arguments (`ls -R`). */
+    recursive?: boolean;
 };
 
 /** A `find`-style expression primary: how many arguments it consumes (or up to which terminator), and what it adds. */
@@ -67,6 +69,11 @@ export type CommandSpec = {
     primaries?: Readonly<Record<string, PrimarySpec>>;
     okCodes?: readonly number[];
     echoes?: boolean;
+    /** It walks its directory arguments (`rg`, `find`): the host checks what is beneath them for secrets. */
+    recursive?: boolean;
+    /** Arguments the caller inserts right after this command's name, turning off what the repository's own config could
+     *  make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call. */
+    harden?: readonly string[];
 };
 
 /** A program manifest: the program, the versions it was written against, and its command tree. */
@@ -85,7 +92,7 @@ export type ProgramManifest = {
 
 /** A path the host is asked to resolve: argv index, and the separator to split on when the path is a flag's attached
  *  value (`--output=f`). The shape of the host's `pathArgs` entries (window-ml-host docs/PROTOCOL.md). */
-export type PathArg = { arg: number; split?: string; role: "read" | "write" };
+export type PathArg = { arg: number; split?: string; role: "read" | "write"; walk?: true };
 
 /** What describeCall finds in one argv: the facts a policy is given, before the host resolves the paths. */
 export type CallDescription = {
@@ -102,6 +109,11 @@ export type CallDescription = {
     actsOnDir: boolean;
     /** The argv index of a `valueIsDir` flag's value, when one was given. */
     dirArg: number | null;
+    /** The call walks directories (`rg`, `find`, `ls -R`): its path operands carry `walk`, and when it acts on its
+     *  directory, that directory is walked too. The host answers `containsSecret` for each. */
+    recursive: boolean;
+    /** Where `hardenArgv` inserts the manifest's hardening arguments: after argv index `at`. */
+    harden: { at: number; args: string[] }[];
     /** Where operands start (the host puts the terminator there before a value from a variable), or null if none. */
     operandStart: number | null;
     terminator: "--" | "--end-of-options" | null;
@@ -127,7 +139,7 @@ const unresolved = (p: { arg: number | "cwd"; given: string }): Resource => ({ k
 export function describeCall(argv: readonly string[], m: ProgramManifest, opts: DescribeOptions = {}): CallDescription {
     const d: CallDescription = {
         described: true, why: [], program: m.program, subcommand: [], effects: [], pathArgs: [], actsOnDir: false,
-        dirArg: null, operandStart: null, terminator: null, runner: false, echoes: !!m.echoes, okCodes: [...(m.okCodes ?? [0])],
+        dirArg: null, recursive: false, harden: [], operandStart: null, terminator: null, runner: false, echoes: !!m.echoes, okCodes: [...(m.okCodes ?? [0])],
     };
     const unknown = (why: string) => { d.described = false; d.why.push(why); };
     const base = (argv[0] ?? "").split("/").pop();
@@ -141,6 +153,7 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     let cmd = m.command;
     let i = 1;
     let operandPaths: number[] = [];
+    if (cmd.harden?.length) d.harden.push({ at: 0, args: [...cmd.harden] });
     // Descend through subcommands: options before a subcommand belong to the level above it.
     for (;;) {
         const r = cmd.syntax === "find" ? parseFind(argv, i, cmd, d, terms, unknown) : parseOptions(argv, i, cmd, d, terms, unknown);
@@ -148,9 +161,12 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
         const next = cmd.subcommands?.[argv[r.sub]];
         if (!next) { unknown(`${[m.program, ...d.subcommand].join(" ")} has no subcommand ${JSON.stringify(argv[r.sub])} in its manifest`); break; }
         d.subcommand.push(argv[r.sub]);
+        if (next.harden?.length) d.harden.push({ at: r.sub, args: [...next.harden] });
         cmd = next;
         i = r.sub + 1;
     }
+    if (cmd.recursive) d.recursive = true;
+    if (d.recursive) for (const p of d.pathArgs) if (operandPaths.includes(p.arg)) p.walk = true;
     if (cmd.okCodes) d.okCodes = [...new Set([...cmd.okCodes, ...d.okCodes.filter((c) => c !== 0)])];
     if (cmd.echoes) d.echoes = true;
 
@@ -181,6 +197,18 @@ function resolveArg(ph: string, argv: readonly string[], resolve: NonNullable<De
     const i = Number(n);
     const given = split ? argv[i].slice(argv[i].indexOf(split) + split.length) : argv[i];
     return resolve({ arg: i, given });
+}
+
+/** The argv with the manifest's hardening arguments inserted (`git --no-pager diff --no-ext-diff --no-textconv …`),
+ *  skipping any already present. What the person approves and the host runs is this argv, and it describes exactly
+ *  as the original does. */
+export function hardenArgv(argv: readonly string[], d: CallDescription): string[] {
+    const out = [...argv];
+    for (const h of [...d.harden].sort((a, b) => b.at - a.at)) {
+        const add = h.args.filter((a) => !argv.includes(a));
+        out.splice(h.at + 1, 0, ...add);
+    }
+    return out;
 }
 
 type Terms = { term: ProgramEffect; targets: "command" | Resource[] }[];
@@ -214,6 +242,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
         if (f.pathsFrom !== undefined) pathsFrom = f.pathsFrom;
         if (f.runner) d.runner = true;
         if (f.echoes) d.echoes = true;
+        if (f.recursive) d.recursive = true;
         if (f.okCodes) d.okCodes = [...new Set([...d.okCodes, ...f.okCodes])];
     };
     for (let i = start; i < argv.length; i++) {
@@ -279,6 +308,7 @@ function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: 
     let i = start;
     while (i < argv.length && /^-[HLPEXdsx]+$/.test(argv[i]) && cmd.flags[argv[i]]) {
         const f = cmd.flags[argv[i]];
+        if (f.effects?.includes("unknown")) unknown(`${argv[i]} can make find do what no manifest describes`);
         for (const t of f.effects ?? []) terms.push({ term: t, targets: "command" });
         i++;
     }
@@ -366,9 +396,9 @@ function compareVersions(a: number[], b: number[]): number {
 // --- the validator ---
 
 const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "runs-code", "unknown"]);
-const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes"]);
+const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive"]);
 const PRIMARY_KEYS = new Set(["args", "until", "effects", "argIsPath", "runner"]);
-const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes"]);
+const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden"]);
 const MANIFEST_KEYS = new Set(["program", "version", "okCodes", "echoes", "env", "command"]);
 
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
@@ -398,7 +428,9 @@ export function validateManifest(m: unknown): string[] {
         if (!(p === "none" || p === "operands" || p === "repo" || (isObj(p) && Number.isInteger(p.operandsFrom) && Object.keys(p).length === 1))) errs.push(`${at}.paths: none, operands, repo or {operandsFrom}`);
         if (c.noPaths !== undefined && c.noPaths !== "cwd" && c.noPaths !== "nothing") errs.push(`${at}.noPaths: cwd or nothing`);
         if (![undefined, null, "--", "--end-of-options"].includes(c.terminator as string)) errs.push(`${at}.terminator`);
-        for (const b of ["numericFlag", "clusters", "echoes"]) if (c[b] !== undefined && typeof c[b] !== "boolean") errs.push(`${at}.${b}: boolean`);
+        if (c.harden !== undefined && !(Array.isArray(c.harden) && c.harden.every((a) => typeof a === "string" && isObj(c.flags) && a in (c.flags as object))))
+            errs.push(`${at}.harden: flags this command lists, so hardening never makes a call unknown`);
+        for (const b of ["numericFlag", "clusters", "echoes", "recursive"]) if (c[b] !== undefined && typeof c[b] !== "boolean") errs.push(`${at}.${b}: boolean`);
         if (c.maxOperands !== undefined && !(Number.isInteger(c.maxOperands) && (c.maxOperands as number) >= 0)) errs.push(`${at}.maxOperands`);
         if (c.okCodes !== undefined) codes(c.okCodes, `${at}.okCodes`);
         if (!isObj(c.flags)) errs.push(`${at}.flags: an object`);

@@ -23,6 +23,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -52,6 +59,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        ".a.b",
+        "x.json",
+        "y.json"
       ]
     },
     {
@@ -68,6 +83,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-n",
+        "1+1"
       ]
     },
     {
@@ -84,6 +106,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-nr",
+        "\"x\""
       ]
     },
     {
@@ -109,6 +138,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-r",
+        "-c",
+        ".[]",
+        "data.json"
       ]
     },
     {
@@ -134,6 +172,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--indent",
+        "4",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -158,6 +205,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--tab",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -184,6 +239,14 @@
         0,
         1,
         4
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-e",
+        ".a",
+        "data.json"
       ]
     },
     {
@@ -210,6 +273,14 @@
         0,
         1,
         4
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--exit-status",
+        ".a",
+        "data.json"
       ]
     },
     {
@@ -239,6 +310,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-f",
+        "prog.jq",
+        "data.json"
       ]
     },
     {
@@ -268,6 +347,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--from-file",
+        "prog.jq",
+        "data.json"
       ]
     },
     {
@@ -293,6 +380,15 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-L",
+        "mods",
+        "-n",
+        "1"
       ]
     },
     {
@@ -310,6 +406,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-Lmods",
+        "-n",
+        "1"
       ]
     },
     {
@@ -342,6 +446,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--rawfile",
+        "v",
+        "f.txt",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -374,6 +488,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--slurpfile",
+        "v",
+        "f.json",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -406,6 +530,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--arg",
+        "k",
+        "v",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -438,6 +572,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--argjson",
+        "k",
+        "{}",
+        ".",
+        "data.json"
       ]
     },
     {
@@ -466,6 +610,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-n",
+        "$ARGS",
+        "--args",
+        "a",
+        "b"
       ]
     },
     {
@@ -494,6 +648,16 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-n",
+        "$ARGS",
+        "--jsonargs",
+        "1",
+        "2"
       ]
     },
     {
@@ -510,6 +674,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-n",
+        "env"
       ]
     },
     {
@@ -526,6 +697,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--wml-made-up",
+        "."
       ]
     },
     {
@@ -550,6 +728,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--",
+        "-x",
+        "data.json"
       ]
     },
     {
@@ -567,6 +753,14 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "-n",
+        "--",
+        "1"
       ]
     },
     {
@@ -583,6 +777,13 @@
       "runner": false,
       "okCodes": [
         0
+      ],
+      "echoes": true,
+      "recursive": false,
+      "hardened": [
+        "jq",
+        "--end-of-options",
+        "."
       ]
     }
   ]
