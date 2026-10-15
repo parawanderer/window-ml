@@ -190,26 +190,26 @@ jobs:
     # Its work is skipped only when `changes` PROVED nothing but prose changed: no test reads a markdown file from
     # the repo (checked when this gate was added), and `tools` still runs the format and index checks over it.
     #
-    # THE STEPS ARE GATED, NOT THE JOB. The required checks name each leg (`test (node 22)`, `test (node 24)`,
-    # `test (node 26)`), and a matrix job skipped by a job-level `if` reports once, as plain `test`, so the three
-    # required names never arrive and the PR stays blocked. Gating every step keeps the three legs: each starts,
-    # does nothing for a prose-only change, and reports success under its own name.
+    # THE STEPS ARE GATED, NOT THE JOB. The required check names the leg (`test (node 26)`), and a matrix job
+    # skipped by a job-level `if` reports as plain `test`, so the required name never arrives and the PR stays
+    # blocked. Gating every step keeps the leg: it starts, does nothing for a prose-only change, and reports
+    # success under its own name.
     needs: changes
     env:
       CODE: ${{ needs.changes.outputs.code }}
     runs-on: ubuntu-24.04
     strategy:
-      # `fail-fast: false` for the same reason the e2e shards have it, and with a sharper edge here: a
-      # CANCELLED check blocks a merge exactly as a failing one does, so the default (cancel every sibling
-      # the moment one goes red) turns one Node version's failure into three unmergeable contexts, two of
-      # which never reported an opinion. It also costs the answer you need — whether a break is
-      # version-specific or in the code — which is the whole reason three versions run.
+      # `fail-fast: false` for the same reason the e2e shards have it: a CANCELLED check blocks a merge exactly
+      # as a failing one does. It matters again the moment a second leg is added.
       fail-fast: false
       matrix:
-        # 22 + 24 are the Active LTS lines; 26 is Current (catches forward-compat). Node 20 was
-        # dropped — it's EOL, and tsx loads a `.css` import via the CJS path there, which the
-        # ESM-only css-null test stub can't intercept (Node 22+ keeps it on the ESM loader).
-        node: [22, 24, 26]
+        # ONE Node version, the one development runs on. Nobody runs window.ml on Node: it runs in Chrome, and
+        # Node only runs the tests, the build and the dev scripts (the process host is Rust). Every fix the 22/24
+        # legs ever forced was to the test HARNESS (tsx loader paths, the node:test IPC), never to the product,
+        # while each leg was the slowest job in a run (about 16 min) and held a runner slot that queued every
+        # other PR's CI behind it. Dropped 2026-10-15, approved by Shane. Kept as a matrix so the check keeps its
+        # name, `test (node 26)`, which the repository ruleset requires.
+        node: [26]
     steps:
       - if: env.CODE != 'true'
         run: echo "Only prose changed, so this leg runs nothing."

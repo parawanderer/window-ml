@@ -8,7 +8,7 @@ description: Open a PR and drive its CI to green — watch the run, read the FAI
 Work on this repo happens in **several sessions at once** (UI here, benchmark/pointers elsewhere), which
 is why the work goes on branches and merges through PRs: the PR is the thing that runs CI, and CI is the
 thing that catches what one session broke for another. A green local `npm test` is not that check —
-it does not run the e2e suite, three Node versions, or the real-CPython tests.
+it does not run the e2e suite or the real-CPython tests.
 
 Merging your own PR once it is green: the `merge-when-green` skill (`node scripts/merge-when-green.mjs <pr> --wait
 --merge`), which applies the merge rule and keeps a worktree's bench results.

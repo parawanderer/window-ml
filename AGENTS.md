@@ -343,7 +343,7 @@ every demo: `docs/dev/e2e-harness.md`.
 ## Branches, PRs and CI
 
 Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at once, and the
-PR is what runs CI (e2e, three Node versions, real CPython), which a green local `npm test` is not.
+PR is what runs CI (e2e, the unit suite, real CPython), which a green local `npm test` is not.
 
 - **RULE — label every PR by TOPIC when you open it** (`gh pr create --label @exec,@api`), every one that applies.
   Topic labels start with `@`, which keeps them apart from GitHub's defaults: `@core` `@api` `@agent` `@exec`
