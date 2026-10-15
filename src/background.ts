@@ -357,6 +357,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
         // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
+        // A content script answers only for the run ITS tab hosts. The overlay on another tab can be shown a run's id
+        // by that tab's page (an event under a session the worker never spoke for there), and a person's click on it
+        // must not reach the real gate elsewhere. The DevTools panel is an extension page (no `sender.tab`).
+        if (sender.tab && sender.tab.id !== runInboxes.get(p?.runId)?.tabId) return;
         // A nested ask is named by its id beside the seq; a malformed one names no gate, not even the step's own.
         const key = approvalKey(p.runId, p.seq, p.ask);
         if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });

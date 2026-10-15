@@ -59,7 +59,7 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         },
         answerApproval: (key, seq, decision, persist, feedback, ask) => {
             const id = idOf(key);
-            if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}), ...(feedback ? { feedback } : {}), ...(ask ? { ask } : {}) });
+            if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}), ...(feedback ? { feedback } : {}), ...(ask !== undefined ? { ask } : {}) });
         },
         sendToSession: async (key, text, images) => {
             const id = idOf(key);

@@ -14,7 +14,7 @@ let n = 0;
 function run(over = {}) {
     const ctl = new AbortController();
     const emitted = [];
-    const r = { runId: `run${++n}`, unattended: false, routing: "ui", signal: ctl.signal, emit: (seq, asks) => emitted.push({ seq, asks }), stepOf: () => 4, ...over };
+    const r = { runId: `run${++n}`, unattended: false, routing: "ui", signal: ctl.signal, emit: (seq, asks) => emitted.push({ seq, asks }), stepOf: () => 4, running: () => true, ...over };
     const unhost = hostAsks(r);
     return { r, ctl, emitted, unhost };
 }
@@ -72,6 +72,15 @@ test("asks accumulate on their step, history included, and each step keeps its o
 });
 
 // --- every way it ends without the person ---
+
+test("an ask on a step that is not running (finished, or never drawn) is refused at once, with no card", async () => {
+    const { r, emitted, unhost } = run({ running: (seq) => seq === 1 });
+    const o = await raiseAsk(r.runId, 2, { kind: "sh", facts: FACTS });
+    assert.deepEqual([o.allowed, o.state], [false, "ended"]);
+    assert.equal(keysOf(r.runId).length, 0);
+    assert.equal(emitted.length, 0);
+    unhost();
+});
 
 test("a run with nobody to ask refuses at once: no card, nothing in the store", async () => {
     const { r, emitted, unhost } = run({ unattended: true });
@@ -140,7 +149,7 @@ test("an answer reaches only the ask it names exactly: a guessed id, another run
     assert.equal(resolveApproval(approvalKey(a.r.runId, 2, guessed), { approved: true }), false, "a well-formed guess names no gate");
     assert.equal(resolveApproval(approvalKey(b.r.runId, 2, id), { approved: true }), false, "run A's ask id under run B's key is refused");
     assert.equal(resolveApproval(approvalKey(a.r.runId, 3, id), { approved: true }), false, "and under another step of the same run");
-    for (const bad of ["x", `${id}#`, id.toUpperCase(), 7, {}]) assert.equal(approvalKey(a.r.runId, 2, bad), null, `malformed ${JSON.stringify(bad)} names no key`);
+    for (const bad of ["x", `${id}#`, id.toUpperCase(), 7, {}, null, ""]) assert.equal(approvalKey(a.r.runId, 2, bad), null, `malformed ${JSON.stringify(bad)} names no key`);
     await tick();
     assert.equal(keysOf(a.r.runId).length, 1, "the ask is still waiting");
     assert.equal(approvalKey(a.r.runId, 2), `${a.r.runId}:2`, "positive control: no ask id is the step's own gate");
@@ -162,7 +171,9 @@ test("the step's own gate is never answered by a message that names a malformed 
 test("the sidebar hosts' payload carries the denial's note and the ask, and nothing else the app's message had", () => {
     assert.deepEqual(approvalPayload({ hash: "h", seq: 2, decision: 1, persist: 0, feedback: "why", ask: "a1", evil: true, runId: "other" }),
         { runId: "h", seq: 2, decision: true, persist: false, feedback: "why", ask: "a1" });
-    assert.deepEqual(approvalPayload({ hash: "h", seq: 2, feedback: 5, ask: 9 }), { runId: "h", seq: 2, decision: false, persist: false });
+    assert.deepEqual(approvalPayload({ hash: "h", seq: 2, feedback: 5, ask: 9 }), { runId: "h", seq: 2, decision: false, persist: false, ask: 9 },
+        "an ask of the wrong type is kept for the worker to refuse, never dropped into an answer for the step's own gate");
+    assert.deepEqual(approvalPayload({ hash: "h", seq: 2, feedback: 5 }), { runId: "h", seq: 2, decision: false, persist: false });
     assert.equal(approvalPayload({ hash: "h", seq: 2, feedback: "x".repeat(5000) }).feedback.length, 2000);
 });
 
@@ -260,4 +271,63 @@ test("red team: SET_APPROVAL naming a malformed ask never falls back to the step
     for (let i = 0; i < 20 && !w.events.some((e) => e.approval === "user"); i++) await tick();
     assert.ok(w.events.some((e) => e.seq === w.seq && e.approval === "user"), "positive control: no ask id opens it");
     w.release();
+});
+
+// --- red team (review of the nested-asks change): what an answer reaches, and where an ask may be raised ---
+
+test("red team: an app message naming an ask of the wrong type is never forwarded as the step's own answer", () => {
+    // The sidebar's hosts rebuild SET_APPROVAL from the app's message with approvalPayload. An `ask` that is present but
+    // not a string (a number, an object, a forged event's id of another type) must reach the worker as a malformed ask,
+    // which approvalKey refuses, never vanish so that the answer lands on the step's own gate.
+    for (const ask of [9, { id: "a0123456789abcdef01234567" }, true]) {
+        const p = approvalPayload({ hash: "h", seq: 2, decision: true, ask });
+        assert.notEqual(approvalKey(p.runId, p.seq, p.ask), "h:2", `ask ${JSON.stringify(ask)} became the step's own gate`);
+    }
+    // positive control: no ask at all is the step's own gate
+    const own = approvalPayload({ hash: "h", seq: 2, decision: true });
+    assert.equal(approvalKey(own.runId, own.seq, own.ask), "h:2");
+});
+
+test("red team: SET_APPROVAL from another tab's content script does not answer a run on this tab, neither its ask nor its gate", T, async () => {
+    const OTHER = { tab: { id: 9, url: "https://evil.example/attack" }, url: "https://evil.example/attack", frameId: 0 };
+    const RUN_TAB = { tab: { id: SITE.id, url: SITE.url }, url: SITE.url, frameId: 0 };
+    // The ask: its id reaches the shell of the run's own tab only, but the worker does not check who answers.
+    const w = await runningStep();
+    const g = await runningStep({ approve: false });
+    const stop = () => { for (const r of [w, g]) { void r.bg.send({ type: "CANCEL_RUN", payload: { runId: r.hash } }); r.release(); } };
+    try {
+    const p = w.raise();
+    await tick();
+    const [a] = w.asksOn();
+    void w.bg.send({ type: "SET_APPROVAL", payload: { runId: w.hash, seq: w.seq, decision: true, ask: a.id } }, OTHER);
+    for (let i = 0; i < 10; i++) await tick();
+    assert.equal(w.asksOn()[0].state, "pending", "tab 9's shell answered an ask of the run on tab 7");
+    void w.bg.send({ type: "SET_APPROVAL", payload: { runId: w.hash, seq: w.seq, decision: false, ask: a.id } }, RUN_TAB);
+    assert.equal((await p).state, "denied", "positive control: the run's own tab answers it");
+    // The step's own gate: a page on tab 9 whose overlay sidebar draws run X under the "none" claim (shell.ts workerClaim:
+    // the worker never spoke for X on tab 9) gets a person's click there forwarded as SET_APPROVAL for X.
+    void g.bg.send({ type: "SET_APPROVAL", payload: { runId: g.hash, seq: g.seq, decision: true } }, OTHER);
+    for (let i = 0; i < 20; i++) await tick();
+    assert.ok(!g.events.some((e) => e.seq === g.seq && e.approval === "user"), "tab 9's shell approved the gate of the run on tab 7");
+    void g.bg.send({ type: "SET_APPROVAL", payload: { runId: g.hash, seq: g.seq, decision: true } }, RUN_TAB);
+    for (let i = 0; i < 20 && !g.events.some((e) => e.approval === "user"); i++) await tick();
+    assert.ok(g.events.some((e) => e.seq === g.seq && e.approval === "user"), "positive control: the run's own tab approves it");
+    } finally { stop(); }
+});
+
+test("red team: an ask raised on a seq no surface has a step for is refused at once, not left waiting where nobody can see it", T, async () => {
+    const w = await runningStep();
+    const before = w.events.length;
+    const p = w.bg.context.__mlRaiseAskForTest(w.hash, w.seq + 50, "sh", FACTS);
+    try {
+    const settled = await Promise.race([p.then((o) => o), new Promise((r) => setTimeout(() => r(null), 200))]);
+    const shown = w.events.slice(before).some((e) => e.seq === w.seq + 50 && e.asks?.length);
+    assert.ok(settled || shown, "the ask waits (up to ASK_WAIT_MS) with no step event carrying it: no card, no gate count, no way to answer it but the clock");
+    // positive control: an ask on the running step is shown
+    const q = w.raise();
+    await tick();
+    assert.equal(w.asksOn().length, 1);
+    void w.bg.send({ type: "CANCEL_RUN", payload: { runId: w.hash } });
+    await q;
+    } finally { void w.bg.send({ type: "CANCEL_RUN", payload: { runId: w.hash } }); await p; w.release(); }
 });

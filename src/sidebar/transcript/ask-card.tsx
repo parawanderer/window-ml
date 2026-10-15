@@ -8,13 +8,14 @@
 import type { AgentStep } from "../store";
 import { rev } from "../store";
 import type { StepAsk } from "../../contract";
+import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
 import { shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
 
 /** What each kind of ask is, said as the card's question. A kind this build does not know is asked about plainly. */
-const ASK_TITLE: Record<string, string> = {
+const ASK_TITLE: Readonly<Record<string, string>> = {
     sh: "While it runs, this step wants to start a program:",
 };
 
@@ -57,7 +58,7 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                 if (!waiting) return <AskDone key={a.id} a={a} />;
                 return (
                     <div key={a.id} class="astep-approve ask">
-                        <span class="appr-ask">{ASK_TITLE[a.kind] ?? <>While it runs, this step asks for <b>{a.kind}</b>:</>}</span>
+                        <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : <>While it runs, this step asks for <b>{String(a.kind)}</b>:</>}</span>
                         <dl class="ask-facts">
                             {askLines(a).map((l, i) => (
                                 <div key={i} class={l.warn ? "warn" : undefined}>
@@ -67,7 +68,9 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                         </dl>
                         {!live
                             ? <span class="appr-dead">This run ended before anyone answered, so there is nothing left to approve.</span>
-                            : a.external || !hash || seq == null
+                            // An ask without a well-formed id has nothing to answer: its answer would name no ask,
+                            // which the worker reads as the step's own gate.
+                            : a.external || !hash || seq == null || typeof a.id !== "string" || !ASK_ID.test(a.id)
                                 ? <span class="appr-dead">Waiting for the run's external approver.</span>
                                 : <ApprovalRow grants={false} decide={(ok, _persist, feedback) => {
                                     decidedSteps.add(key);
@@ -85,7 +88,7 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
 function AskDone({ a }: { a: StepAsk }) {
     const argv = Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : a.kind;
     const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
-    const outcome = a.state === "pending" ? "answered, waiting for the run" : ASK_DONE[a.state] ?? a.state;
+    const outcome = a.state === "pending" ? "answered, waiting for the run" : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);
     return (
         <div class={`astep-ask-done ${a.state === "allowed" ? "ok" : "no"}`}>
             Asked to run <code>{argv}</code>: {outcome}{waited}{a.note ? <> — “{a.note}”</> : null}

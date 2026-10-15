@@ -8,6 +8,7 @@ import { sessionMap, ollamaIds, config } from "../store";
 import type { AgentStep, Session } from "../store";
 import { decidedSteps, stepKey, askKey } from "../ui-kit";
 import type { StepAsk } from "../../contract";
+import { ASK_ID } from "../../approval-key";
 import { utilitySummariesOn } from "../transcript/summaries";
 import { genTitle } from "../debug-reducer";
 
@@ -75,7 +76,7 @@ export const cardTitleTried = new Set<string>();
 
 /** The first nested ask inside a running step still waiting for an answer from this surface, if any. */
 export const pendingAskOf = (hash: string, st: AgentStep): StepAsk | undefined =>
-    st.pending && st.seq != null ? st.asks?.find((a) => a.state === "pending" && !a.external && !decidedSteps.has(askKey(hash, st.seq!, a.id))) : undefined;
+    st.pending && st.seq != null ? st.asks?.find((a) => a.state === "pending" && !a.external && typeof a.id === "string" && ASK_ID.test(a.id) && !decidedSteps.has(askKey(hash, st.seq!, a.id))) : undefined;
 
 // A live, not-yet-decided approval gate (mirrors PendingNote's blocked check): the step's own, or a nested ask inside it.
 export const isPendingGate = (hash: string, st: AgentStep): boolean =>

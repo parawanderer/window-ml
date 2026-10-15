@@ -12,11 +12,12 @@ export const ASK_ID = /^a[0-9a-f]{24}$/;
  * so a forged one resolves no gate, not even the step's own.
  * @param runId the run
  * @param seq the step's seq
- * @param ask the ask id, if the answer is for one (absent or null: the step's own gate)
+ * @param ask the ask id, if the answer is for one (absent: the step's own gate; anything else present, null included,
+ *   must be a well-formed id)
  * @returns the key, or null when `ask` is present but malformed
  */
 export function approvalKey(runId: string, seq: number, ask?: unknown): string | null {
-    if (ask === undefined || ask === null) return `${runId}:${seq}`;
+    if (ask === undefined) return `${runId}:${seq}`;
     return typeof ask === "string" && ASK_ID.test(ask) ? `${runId}:${seq}#${ask}` : null;
 }
 
@@ -31,6 +32,8 @@ export function approvalPayload(d: { hash: string; seq: number; decision?: unkno
     return {
         runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist,
         ...(typeof d.feedback === "string" && d.feedback ? { feedback: d.feedback.slice(0, 2000) } : {}),
-        ...(typeof d.ask === "string" ? { ask: d.ask } : {}),
+        // Present means an ask was meant, whatever its type: the worker's approvalKey refuses a malformed one. Dropping it
+        // here would turn the answer into one for the step's own gate.
+        ...(d.ask !== undefined ? { ask: d.ask as string } : {}),
     };
 }

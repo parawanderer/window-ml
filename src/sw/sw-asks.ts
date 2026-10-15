@@ -39,6 +39,9 @@ export interface AskRun {
     routing: "ui" | "both" | "external";
     /** Re-emit step `seq` (the OFFSET seq every surface sees) with its asks. */
     emit: (seq: number, asks: StepAsk[]) => void;
+    /** Whether `seq` is a step of this turn that is running now, which a surface has drawn: an ask anywhere else would
+     *  wait where nobody can see it. */
+    running: (seq: number) => boolean;
     /** The run's step counter for `seq`, for the descriptor. */
     stepOf: (seq: number) => number;
     /** Aborted when the run is cancelled. */
@@ -89,6 +92,7 @@ export function raiseAsk(runId: string, seq: number, ask: { kind: string; facts:
     const run = runs.get(runId);
     const ended = (state: AskOutcome["state"], note: string): AskOutcome => ({ allowed: false, state, note, raisedAt, answeredAt: raisedAt, waitedMs: 0 });
     if (!run || run.signal.aborted) return Promise.resolve(ended("ended", "the run is not running here"));
+    if (!run.running(seq)) return Promise.resolve(ended("ended", "no step of this run is running under that seq"));
     const stepKey = `${runId}:${seq}`;
     const list = asksByStep.get(stepKey) ?? [];
     asksByStep.set(stepKey, list);

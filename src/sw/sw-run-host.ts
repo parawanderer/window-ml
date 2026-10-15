@@ -537,6 +537,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
             emit: (seq, asks) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }); },
             stepOf: (seq) => stepBase + (Number(lastStepEv.get(seq - seqBase)?.step) || 0),
+            running: (seq) => !!lastStepEv.get(seq - seqBase)?.pending,
         });
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
          *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call

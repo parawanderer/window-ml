@@ -121,3 +121,24 @@ test("HUD card: a waiting ask takes the card, Enter allows it by its id, and Esc
     const msg = posted.find((m) => m.__mlSidebarApp === "approval");
     assert.deepEqual([msg.decision, msg.ask, msg.seq], [true, ID, 1]);
 });
+
+// --- red team: an ask's answer never lands on the step's own gate ---
+
+test("red team: an ask drawn with a missing or empty id never posts an answer that names no ask (the step's own gate)", async () => {
+    // A forged event (a page writing under the "none" claim, shell.ts workerClaim) or any producer bug can draw an ask
+    // without a usable id. Its Approve must not post `{hash, seq}` alone: the worker reads that as the step's own gate.
+    for (const [i, over] of [[1, { id: "" }], [2, { id: undefined }]]) {
+        const w = await loadSidebarWorld();
+        const hash = `askR${i}`;
+        await w.dispatch(agentStart(hash, "check the repo"));
+        await w.dispatch(running(hash, [ask(over)]));
+        await open(w);
+        const posted = [];
+        w.window.postMessage = (d) => posted.push(d);
+        const yes = w.shadow.querySelector(".astep-approve.ask .appr-btn.yes");
+        if (yes) { yes.click(); await w.tick(); }
+        for (const m of posted.filter((m) => m.__mlSidebarApp === "approval"))
+            assert.ok(typeof m.ask === "string" && m.ask, `id ${JSON.stringify(over.id)}: the answer named no ask, so it would resolve ${m.hash}:${m.seq}`);
+    }
+    // positive control: a well-formed ask posts its id (the test above, "Approve on an ask posts its id")
+});
