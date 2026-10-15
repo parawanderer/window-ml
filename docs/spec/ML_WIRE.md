@@ -72,6 +72,19 @@ Three rules while a call waits: the dialect's STEP budget does not run (it measu
 a WALL-CLOCK cap does, and a card unanswered past it fails the call, not the script; and a suspended survey records that
 it waited, so a reading taken after the wait is not presented as simultaneous with one taken before.
 
+**How it is raised: a NESTED ASK on the running step** (ruled 2026-10-15, built by lane 4 of the plan as its own PR; `ml.sh`
+is its first user, the wire's gated members and policies' per-call asking the next two). Today every gate is raised by
+the agent loop before a tool runs, keyed `${runId}:${seq}`, and is the step's own pending event; a call made from inside
+an already-running step has no gate to open. So a step gains `asks[]`, each `{ id, kind, facts, state, raisedAt,
+answeredAt }`, keyed `${runId}:${seq}#${askId}` in the same pending-approvals store, answered by `SET_APPROVAL` with an
+optional ask id under today's origin check, drawn as a card inside the running step with two answers (allow, or deny
+with a note), showing the resolved facts and never the script, recorded in the run log and both exports. The ask's
+`facts` IS the policy's `c` object, one shape for the card, `judgeCall` and the log, so a pending ask is re-judged when
+a policy changes with no extra plumbing. An unattended run refuses an ask at once; one unanswered past the wall-clock cap
+is denied; cancelling the run denies its pending asks with that reason. A nested ask rides the same approval event the
+chat page and the phone render, or the phone could not answer it. Rejected: a synthetic sub-step with its own `seq`,
+because `seq` is the model's call index and nothing may put a call the model never made into it.
+
 ## Related
 
 - [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md): the first new client, and the reason for the handle and copy rules.
