@@ -337,3 +337,18 @@ packages are never loaded early. It has no watchdog of its own: nothing waits on
 a hung start arms its own start timeout. The housekeeping log records the trigger (`pyodide/prewarm`), the start
 (`pyodide/cold-start`, `reason: prewarm`) and whether the first run after it found the runtime warm
 (`pyodide/prewarm-used`) — which is how anyone finds out whether pre-warming pays for itself.
+
+**`ml` inside Python is a FACADE over the `ml` wire, built and not yet wired** (`src/python/ml-facade.ts`; the wire:
+`docs/spec/ML_WIRE.md`; the plan: `docs/plan/repl/LANE_1_PR2_DESIGN.md`). `_ml_make(send, codec)` returns `ml` and
+`MlError`; every member is awaited (`rows = await ml.dereference("@tool:…", pipe=".rows")`), and which members exist is
+the server's list, so nothing is copied into Python. A call sends ONE request, `{ seq, call, args }` (keyword arguments
+as a trailing options object); the client and run are stamped by the offscreen document, never by the facade. Answers
+decode as: `value` to plain data (`{"$bytes": …}` to `bytes`, `{"$secret": …}` to an opaque read-only handle), `pointer`
+to an `MlPointer` whose token reads back through `ml.dereference`, `error` to a raised `MlError` with the wire's `code`.
+Data shaped like a tag (an object whose one key starts with `$`) crosses wrapped as `{"$": …}` in
+both directions and is unwrapped one level, so a fetched JSON `{"$bytes": …}` stays a dict and a cell's own
+`{"$secret": …}` never crosses as a handle. A value marked `truncated` prints one line saying so. There is no ask path: a call that needs the person waits in the
+transport, on the server's per-call suspension. Two rules the wiring must keep: `send` is a PYTHON callable (a cell can
+reach it through the factory's closure, so a JsProxy there would be one in the namespace), and `codec` holds the
+harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
+Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
