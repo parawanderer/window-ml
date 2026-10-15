@@ -443,17 +443,27 @@ test.describe("navigation and requests", () => {
         expect(first.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "cors", cookie: "session=api.test-secret" });
     });
 
-    test("rendered fetch: a real tab on the site, focus emulated, visibility flipped, window.ml injected there", async () => {
+    test("rendered fetch: a real tab on the site, focus emulated, visibility set, window.ml injected there", async () => {
         const row = await scenario("fetch-url-rendered", { script: (site) => [{ tool: "fetch_url", args: { url: site.url("api.test", "/?via=rendered"), rendered: true, credentials: true } }] });
         // observed today: the ONLY Emulation.* command the extension sends, on the render tab only.
         expect(row.cdp).toEqual(["(attach)", "Emulation.setFocusEmulationEnabled", "Page.setWebLifecycleState", "(detach)"]);
         const tab = row.others["http://api.test/?via=rendered"];
-        // false then true on macOS; already true at the probe's first look on Linux (the emulation lands first).
-        expect(tab.final.hasFocus).toBe(true);
-        expect(tab.visibility).toEqual(["hidden", "visible"]);
+        // The probe's first sample can beat or lose to the CDP landing. macOS usually records the flip
+        // (["hidden","visible"]); the Linux runner is often already visible at first look (["visible"]).
+        // Both are the same product behaviour — the tab is made visible — so what is asserted is that
+        // it ends visible, and that a flip it records is hidden→visible, never the reverse.
+        expect(tab.final.hasFocus, "the render tab is focus-emulated").toBe(true);
+        expect(tab.final.visibility, "the render tab is made visible").toBe("visible");
+        expect(tab.visibility, "a recorded flip goes hidden→visible").toEqual(
+            tab.visibility[0] === "hidden" ? ["hidden", "visible"] : ["visible"]);
         expect(tab.lifecycle.filter((t) => t === "visibilitychange").length).toBeGreaterThanOrEqual(2);
         expect(tab.lifecycle).not.toContain("freeze");
-        expect(tab.rafHz, "not throttled: the render tab is made visible, so focused-but-hidden never happens").toEqual(["≥40"]);
+        // "not throttled" is the invariant, not a wall-clock rate: a focused-but-hidden tab is throttled
+        // to ~1 fps (the "1-4"/"0" buckets). A visible tab under host load can sit in "5-39" and is still
+        // unthrottled, so asserting ["≥40"] here asserted the machine, not the extension.
+        expect(tab.rafHz.length, "the probe measured at least one frame-rate window").toBeGreaterThan(0);
+        expect(tab.rafHz.filter((h) => h === "0" || h === "1-4"),
+            "not throttled: the render tab is made visible, so focused-but-hidden never happens").toEqual([]);
         expect(tab.final.windowMl, "the rendered site gets window.ml like any page").toEqual(expect.any(Number));
         const nav = row.requests.find((r) => r.path === "/?via=rendered");
         expect(nav.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate", cookie: "session=api.test-secret" });

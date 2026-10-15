@@ -66,7 +66,7 @@ names are the spec's.
 | 17 | CDP typing: trusted keydown/keypress/beforeinput/input/keyup, `key`/`code`/`keyCode` the US-layout cross-map, Shift held around a capital | type-cdp | "type into a sealed field (CDP)…" | Matched to Playwright's baseline (`input-dispatch.ts`, `cdpTypePlan`) | Typing cadence still differs from a person |
 | 18 | Infobar resize at a CDP attach | **not observed**: no UI headless; headful (Chrome for Testing 151, macOS) also 0 resizes, the infobar itself not verified on screen | `resizes` 0 in the CDP rows | — | Unverified on branded Chrome |
 | 19 | Debugger attach/detach | one attach and one detach per run that uses CDP (not per click) | the recorder's `(attach)`/`(detach)` in each row | — | — |
-| 20 | Focus emulation and lifecycle | rendered only, on the render tab: `visibilityState` hidden then visible, `hasFocus` false then true (on Linux already true at the probe's first look), 4 `visibilitychange`, rAF ≥40 Hz; never on the run's tab; no `freeze`/`resume` ever | "rendered fetch…" | — | — |
+| 20 | Focus emulation and lifecycle | rendered only, on the render tab: ends `visibilityState` visible and `hasFocus` true; a flip the probe records is hidden→visible (macOS usually, Linux already visible at the probe's first look), `visibilitychange` ≥2, rAF never in the throttled `0`/`1-4` buckets; never on the run's tab; no `freeze`/`resume` ever | "rendered fetch…" | — | — |
 | 21 | `Emulation.*` | `Emulation.setFocusEmulationEnabled` (and `Page.setWebLifecycleState`), rendered only | "the extension sends no Emulation.* command…" (static) + the recorder | — | — |
 | 22 | `navigator.webdriver`, `HeadlessChrome` | the harness, not the extension: not flipped by `chrome.debugger.attach` | "no extension…", `webdriverChanges` [] in "canvas click (CDP)…" | — | — |
 | 23 | `chrome.runtime` reachable from the page | **no**: no `externally_connectable` | `env.hasRuntime` false | — | — |
@@ -159,8 +159,9 @@ what still separates them from a person is timing and cadence, not the envelope.
 - **Console swap** (leak 3): in the main world for exec-main and exec-strict; not visible from exec-iso. Removed since
   (row 10): `console` is a parameter of the exec's code.
 - **Focus emulation** (leak 6) is used only by a rendered `fetch_url` on its own background tab, and that tab is made
-  visible too (rAF ≥40 Hz), so "focused but hidden" does not occur. **`setWebLifecycleState`** (leak 7) only ever sets
-  `active`: no `freeze`/`resume` was seen.
+  visible too (rAF never throttled), so "focused but hidden" does not occur. Whether the page records a hidden→visible
+  flip or is already visible at its first sample is a race between the tab load and the CDP landing; both are the same
+  product behaviour. **`setWebLifecycleState`** (leak 7) only ever sets `active`: no `freeze`/`resume` was seen.
 - **`navigator.webdriver`** is true here because of the harness (headless, `--remote-debugging-port`), not
   `chrome.debugger`, which does not change it.
 - **CDP `screenX`/`screenY` equal `clientX`/`clientY`**: no, they are offset by the window's position.
