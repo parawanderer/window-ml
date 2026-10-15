@@ -17,7 +17,7 @@ Per program, subcommand and flag:
 | `runner` | the flags that start other programs (`find -exec`, `xargs`, `git -c core.pager`, `npm run`, `env`) | never free on the program's own word |
 | `echoes` | whether it prints its environment or its inputs (`env`, `printenv`, `set`, `curl -v`) | a secret in the env reaches stdout; refused with a secret present, scrubbed otherwise |
 | `okCodes` | exit codes that are answers, not failures (`grep` 1, `diff` 1) | `ok` and pipefail |
-| `env` | environment variables that change what it does (`PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD`) | the REFUSED list, and the forced values the host sets for this program (`git`: `core.fsmonitor=false`, `core.pager=cat`, `diff.external=` through `GIT_CONFIG_COUNT`) |
+| `env` | environment variables that change what it does (`PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD`) | the REFUSED list, and the forced values the host sets for this program (`git`: `core.fsmonitor=false` and `core.pager=cat` through `GIT_CONFIG_COUNT`; never an empty `diff.external`, which makes every `git diff` fail; the external diff is suppressed by the `harden` flags, `--no-ext-diff`) |
 | `recursive` | whether a directory argument means everything beneath it (`rg`, `grep -r`, `find`, `ls -R`, `tar`, `du`) | the host computes `containsSecret` for such an argument ([`SHELL.md`](SHELL.md)) |
 | `configRunsCode` | for a program whose own config can make a read run code (`git`), the keys to look for | the `repoConfigRunsCode` fact |
 

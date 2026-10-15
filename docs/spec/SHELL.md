@@ -124,10 +124,11 @@ never a page. The model learns which mode a call ran in from the call's result, 
   `core.pager`, `core.hooksPath`, `diff.external`, a `textconv`, a `filter` driver, an alias or credential helper
   starting with `!` make `git status` or `git diff` run a program, and no manifest can see that from argv. Repo-level
   config is UNTRUSTED, because it arrived with the repository (a tarball, a copied tree); the person's global config is
-  theirs. Two answers, both: a BELT, the host forcing `core.fsmonitor=false`, `core.pager=cat` and an empty
-  `diff.external` through `GIT_CONFIG_COUNT` in its own base environment for every git spawn (plus
-  `GIT_OPTIONAL_LOCKS=0`, so a status writes no index), with the manifest adding `--no-pager`, `--no-ext-diff` and
-  `--no-textconv` to the read subcommands; and a FACT, `repoConfigRunsCode`, from the host reading the repository's
+  theirs. Two answers, both: a BELT, the host forcing `core.fsmonitor=false` and `core.pager=cat` through
+  `GIT_CONFIG_COUNT` in its own base environment for every git spawn (plus `GIT_OPTIONAL_LOCKS=0`, so a status writes
+  no index), with the manifest adding `--no-pager`, `--no-ext-diff` and `--no-textconv` to the read subcommands (an
+  EMPTY `diff.external` pin is not an option: git tries to run the empty command and every `git diff` fails, measured
+  by lane 4 on git 2.55, so the external diff is covered by the flag and the fact below); and a FACT, `repoConfigRunsCode`, from the host reading the repository's
   config and what its includes pull in for those keys, which the plain-host default policy requires to be false. Under
   the sandbox the harm is bounded and the tier is what the algebra says.
 - **A recursive reader is judged on what is BENEATH its directory argument**, not on the named path alone (`rg pat .`
