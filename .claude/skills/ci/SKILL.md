@@ -224,6 +224,35 @@ gh run list --branch main --limit 3             # does MAIN fail it too? then it
   no extension code; a rerun of the shard passed. Treat a single failure as flaky, rerun the shard
   (`gh run rerun <id> --failed`), and look properly only if it fails twice running on the same branch.
 
+The three entries above did not occur once in the 80 `tests` runs of 2026-10-15 (08:09–14:02Z, 24 with e2e): each
+passed first try everywhere it ran. Six hours is weak evidence for events this rare, so they stay listed until a longer
+window says otherwise.
+
+Measured from CI logs on 2026-10-15 (the same 80 runs; method: read every e2e shard log, count per test failed vs
+flaky), and the only entries that BLOCKED a run that day:
+
+- **`detection-surface.spec.mjs:446` › `rendered fetch: a real tab on the site, focus emulated, visibility flipped,
+  window.ml injected there`** (e2e 2/3) — bad in 14 of 24 e2e runs: FAILED 6 times (4 on main), flaky 8. It blocked six
+  runs, two of them PRs that touch no extension code (#677, #703). Always `expect(tab.visibility).toEqual(["hidden",
+  "visible"])` receiving `["visible"]`: on the Linux runner the render tab is visible before the probe's first sample,
+  the same race the `hasFocus` line above it already allows for. Not fixed yet, and NOT to be loosened casually: the
+  spec records what a page can observe of window.ml, and whether "visible from the first look" is an acceptable
+  observation is the spec owner's call. Until then: a failure of exactly this assertion is not yours; rerun the shard.
+
+Flaky only (passed on retry, never blocked a run), worth knowing because two may be PRODUCT bugs, not races:
+
+- **`chat-page.spec.mjs:935` › `the start page holds through a worker restart…`** (e2e 1/3) — flaky 3 times; the tab
+  list stays at one row for the whole 5 s instead of two. Possibly a stale tab list after a worker restart, a real bug.
+- **`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`**
+  (e2e 3/3) — flaky 3 times, all on main: the run does not reach an ended status within 20 s of the approve click. The
+  security assertions before that step passed; the stall itself is unexplained. A @security test going flaky is a bug
+  report until proven otherwise.
+- Seen once each: `site-access` 16a (@security), `cross-page` composer seq collision, `output-scroll` tail-follow,
+  `chat-web` phone tooltip, `focus-restore`, `bench-editor` traceback, `chat-page` PAGE-hosted run, `resource-panel`
+  narrow window.
+
+node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
+
 Recently removed, recorded so nobody re-adds them from memory:
 
 - ~~`tool-tokens.spec.mjs` › `res.outputs` (2D matrix)~~ — **fixed.** It hardcoded `@tool:([0-9a-f]{6})`
