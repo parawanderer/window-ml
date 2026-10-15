@@ -112,3 +112,35 @@ test("one item heavier than the whole budget is still drawn — never an empty t
     assert.deepEqual(drawn, [{ w: W.WINDOW * 20 }], "the thing you are looking at is the one thing that must be there");
     assert.equal(hidden, 1);
 });
+
+// --- infinite scroll upward: the window grows from a sentinel and holds the reader's position ---
+
+test("growHolding draws a window more and queues nothing to run until the edge's layout effect asks", () => {
+    W.resetWindow("g1");
+    W.tail(items(200), "g1");
+    W.growHolding("g1", null);
+    assert.equal(W.shownFor("g1"), W.WINDOW * 2, "one more window per growth");
+    assert.equal(W.tail(items(200), "g1").hidden, 200 - W.WINDOW * 2);
+});
+
+test("a held position is restored by the measured delta, the way a browser with no scroll anchoring needs", () => {
+    // A stub scroller whose content grows by 3000 px above the reader, who was at 120.
+    const scroller = { scrollHeight: 5000, scrollTop: 120, clientHeight: 800, parentElement: null, isScroller: true };
+    const child = { parentElement: scroller };
+    const saved = globalThis.getComputedStyle;
+    globalThis.getComputedStyle = (p) => ({ overflowY: p.isScroller ? "auto" : "visible" });
+    try {
+        const restore = W.holdPosition(child);
+        scroller.scrollHeight = 8000;
+        restore();
+        assert.equal(scroller.scrollTop, 120 + 3000, "the reader stays on the same text");
+    } finally { globalThis.getComputedStyle = saved; }
+});
+
+test("the window says when it is drained, so the store may be asked for older pages", () => {
+    const seen = [];
+    const off = W.onWindowDrained((k) => seen.push(k));
+    off();
+    assert.deepEqual(seen, [], "unsubscribing works; the layout effect is what fires it, covered by chat-scroll.spec");
+    assert.ok(W.EARLIER_MARGIN_PX >= 400, "the margin outruns a flick");
+});

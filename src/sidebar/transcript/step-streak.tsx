@@ -23,6 +23,7 @@ import { IconChevron } from "../icons";
 import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
+import { useHistoryPaint } from "./history-paint";
 
 /** The fewest turns worth folding. Two is a pair; three is where a reader starts skipping. */
 export const STREAK_MIN = 3;
@@ -225,7 +226,8 @@ export const holdsSeq = (s: ToolStreak, seq: number | null | undefined): boolean
 export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurnGroup) => preact.JSX.Element }) {
     // FOLDING IN FRONT OF A READER, as a collapse rather than a cut. Captured ONCE, on mount: it is a fact about
     // how this streak came to exist, and re-reading the clock on later renders would make it decay mid-animation.
-    const [refolding] = useState(() => foldedInView(s));
+    const history = useHistoryPaint();
+    const [refolding] = useState(() => !history && foldedInView(s));
     const [open, setOpen] = useState(refolding);
     // THROUGH THE SAME CLOSE A STEP USES. Eleven turns arriving in one frame is most of a screen appearing at once,
     // which shoves whatever you were reading down the page — the shove `.astep-body` was given an animation for,

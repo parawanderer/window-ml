@@ -6,11 +6,16 @@
 // scroll height. Linear in turns, and an agent step with a screenshot or a table costs several times a chat turn. A
 // phone pays that in memory and in every layout; a laptop has the headroom to not notice until it does.
 //
+// EARLIER ITEMS DRAW THEMSELVES: a sentinel at the top of the drawn items grows the window as the reader nears it
+// (`EarlierInThread`), and the reading position is held by the measured delta in the commit that adds them. What
+// 1000 turns cost once everything is drawn, measured, is in docs/dev/chat-page.md ("A long transcript").
+//
 // A REFERENCE INTO THE PAST is why this is not just a slice. A citation, a pointer chip or a lane bar names a step by
 // `seq`, and the step it names may be outside the window or not even loaded. `reveal` is the one way in: it grows the
 // window, pages the store if it must, and says so when the step is gone for good — so a reference never silently does
 // nothing, which is what the eight-frame retry it replaces did.
 
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { services } from "../services";
 import { rev } from "../store";
 
@@ -131,19 +136,64 @@ export async function reveal(key: string, find: () => Element | null): Promise<R
     return "gone";
 }
 
-/** The control above a windowed transcript: how much is not drawn, and the way to draw more of it. */
+/** How far above the viewport's top edge the window starts drawing earlier items, in px: a flick should not outrun it. */
+export const EARLIER_MARGIN_PX = 800;
+
+/** Listeners told that a session's window has drawn everything held, so the edge above it (store paging) may start. */
+const drainedL = new Set<(key: string) => void>();   // state: ui
+
+/** Call `fn` whenever a session's window finishes drawing everything held. Returns the way to stop. */
+export function onWindowDrained(fn: (key: string) => void): () => void {
+    drainedL.add(fn);
+    return () => { drainedL.delete(fn); };
+}
+
+/** The restore a growth is waiting to run once its items are in the DOM, by session key. */
+const pendingRestore = new Map<string, () => void>();   // state: ui
+
+/**
+ * Draw `by` more of a session's earlier items and keep the reader on what they were reading. The restore runs from a
+ * layout effect of the component that draws the edge (so before paint, in the commit that added the items) and not
+ * from a timer, which could land a frame late and show the jump it exists to hide. It measures the delta rather than
+ * trusting `overflow-anchor`: WebKit has none, and where it exists it moves the same way, so the absolute position
+ * computed here agrees with it.
+ */
+export function growHolding(key: string, el: Element | null, by = WINDOW): void {
+    pendingRestore.set(key, holdPosition(el));
+    growWindow(key, by);
+}
+
+/**
+ * The edge above a windowed transcript: a sentinel that draws the next `WINDOW` earlier items as it nears the top of
+ * the viewport (infinite scroll upward), and says how many are still held. Without IntersectionObserver the old
+ * "Show N earlier" button is drawn instead.
+ */
 export function EarlierInThread({ sessionKey, hidden }: { sessionKey: string; hidden: number }) {
+    const edge = useRef<HTMLDivElement>(null);
+    const canObserve = typeof IntersectionObserver === "function";
+    // After the items are in the DOM, before paint: put the reader back, and say so when nothing is held any more.
+    useLayoutEffect(() => {
+        const restore = pendingRestore.get(sessionKey);
+        if (restore) { pendingRestore.delete(sessionKey); restore(); }
+        if (hidden <= 0) for (const f of drainedL) f(sessionKey);
+    }, [sessionKey, hidden]);
+    // Re-observed after every growth: a sentinel still inside the margin (a tall screen, a short page of items) is
+    // reported again by the new observer's first callback, which is what keeps drawing until it has moved away.
+    useEffect(() => {
+        const el = edge.current;
+        if (!el || hidden <= 0 || !canObserve) return;
+        const root = scrollerOf(el);
+        const io = new IntersectionObserver((es) => {
+            if (es.some((e) => e.isIntersecting)) growHolding(sessionKey, el);
+        }, { root, rootMargin: `${EARLIER_MARGIN_PX}px 0px 0px 0px` });
+        io.observe(el);
+        return () => io.disconnect();
+    }, [sessionKey, hidden, canObserve]);
     if (hidden <= 0) return null;
     const more = Math.min(hidden, WINDOW);
-    const show = (e: Event): void => {
-        const restore = holdPosition((e.currentTarget as Element).parentElement);
-        growWindow(sessionKey, WINDOW);
-        // After the added items are drawn, put the reader back where they were reading.
-        setTimeout(restore, 0);
-    };
     return (
-        <div class="chat-window-edge">
-            <button class="chat-earlier-retry" onClick={show}>Show {more} earlier</button>
+        <div class="chat-window-edge" ref={edge}>
+            {canObserve ? null : <button class="chat-earlier-retry" onClick={() => growHolding(sessionKey, edge.current)}>Show {more} earlier</button>}
             <span class="chat-window-rest">{hidden} earlier in this session</span>
         </div>
     );

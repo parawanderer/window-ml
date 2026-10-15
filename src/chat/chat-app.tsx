@@ -10,6 +10,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session/session-host";
 import { parseSessionKey } from "../session/session-host";
 import { DetailView } from "../sidebar/transcript/session-detail";
+import { HistoryPaint } from "../sidebar/transcript/history-paint";
+import { hiddenFor, onWindowDrained } from "../sidebar/transcript/transcript-window";
 import { Composer } from "../sidebar/transcript/composer";
 import { RUN_LOG_ABOUT } from "../log/run-log";
 import { useDismissAt } from "../sidebar/use-dismiss";
@@ -214,6 +216,10 @@ function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
     // Where the reader was when a page was asked for: its distance from the BOTTOM of the content, which is what a
     // page landing above leaves unchanged.
     const anchor = useRef<number | null>(null);
+    // The window draws what is HELD before the store is asked for anything older: a page landing while the window is
+    // still growing would have two holders of the reading position, each right about a different moment.
+    const [drained, setDrained] = useState(0);
+    useEffect(() => onWindowDrained((k) => { if (k === sessionKey) setDrained((n) => n + 1); }), [sessionKey]);
     const more = !!at?.more && !at.error;
     const load = () => {
         const el = scroller.current;
@@ -223,10 +229,10 @@ function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
     useEffect(() => {
         const el = sentinel.current, root = scroller.current;
         if (!el || !root || !more || at?.loading || typeof IntersectionObserver !== "function") return;
-        const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) load(); }, { root, rootMargin: "200px 0px 0px 0px" });
+        const io = new IntersectionObserver((es) => { if (hiddenFor(sessionKey) === 0 && es.some((e) => e.isIntersecting)) load(); }, { root, rootMargin: "800px 0px 0px 0px" });
         io.observe(el);
         return () => io.disconnect();
-    }, [sessionKey, more, at?.loading, at?.from]);
+    }, [sessionKey, more, at?.loading, at?.from, drained]);
     // A page landed: put the reader back where they were, measured from the bottom.
     useLayoutEffect(() => {
         const el = scroller.current;
@@ -272,6 +278,23 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
     useFadeEdges(scroller);
+    // THE SESSION IS DRAWN ONCE, when its history is in (`store.loaded`), not event by event as it arrives. A reload
+    // used to paint the first events, then the rest in further passes, with the scroll position jumping from the top
+    // to the end underneath them.
+    const ready = !!s && store.loaded.value.has(sessionKey);
+    // Everything mounted in that first paint is history, however recent its stamp says it is (history-paint.ts).
+    const [paintedKey, setPaintedKey] = useState<string | null>(null);
+    const firstPaint = ready && paintedKey !== sessionKey;
+    useEffect(() => {
+        if (!ready) return;
+        const t = requestAnimationFrame(() => setPaintedKey(sessionKey));
+        return () => cancelAnimationFrame(t);
+    }, [ready, sessionKey]);
+    // Pin to the end BEFORE paint, in the commit that first draws the transcript.
+    useLayoutEffect(() => {
+        const el = scroller.current;
+        if (ready && el && stuck.current) el.scrollTop = el.scrollHeight;
+    }, [ready, sessionKey]);
 
     // Follow the newest event while the reader is at the bottom; leave them alone once they scroll up.
     useEffect(() => {
@@ -404,7 +427,8 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                 <div ref={content}>
                     {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native || modelBelow} /> : null}
                     <EarlierEdge store={store} sessionKey={sessionKey} scroller={scroller} rtName={rt?.name} truncated={truncated} />
-                    {s ? <DetailView hash={sessionKey} />
+                    {s && ready ? <HistoryPaint.Provider value={firstPaint}><DetailView hash={sessionKey} /></HistoryPaint.Provider>
+                        : s ? <div class="empty">Loading…</div>
                         : !summary && !rt ? <div class="empty">Session not found.</div>
                             : <div class="empty">Loading…</div>}
                 </div>

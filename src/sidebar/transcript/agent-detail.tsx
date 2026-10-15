@@ -35,6 +35,7 @@ import { FoldRail } from "./fold-rail";
 import { AskList } from "./ask-card";
 import { CALL_TITLE } from "../../tools/tool-params";
 import { justArrived } from "./just-arrived";
+import { useHistoryPaint } from "./history-paint";
 import { deepestUserLine } from "../../python/py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
@@ -623,7 +624,8 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
     // Only a turn that landed WHILE YOU WERE WATCHING (`justArrived`), and captured once on mount: without that
     // test, opening any transcript plays the same animation over fifty items at once, about turns the reader
     // never saw happen.
-    const [fresh] = useState(() => justArrived(turn.tools[turn.tools.length - 1]?.ts));
+    const history = useHistoryPaint();
+    const [fresh] = useState(() => !history && justArrived(turn.tools[turn.tools.length - 1]?.ts));
     return (
         <div class={`aturn${fresh ? " fresh" : ""}`}>
             <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>

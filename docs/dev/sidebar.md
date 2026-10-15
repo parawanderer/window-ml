@@ -205,7 +205,12 @@ A future page-input channel would follow the pattern.
   grows the window, pages the session back and reports `gone` — a citation that silently does nothing is the failure
   being prevented. The window is a plain Map bumped through `rev`, NEVER a signal read during render: a component that
   reads a signal is converted to re-render from it and stops re-rendering from the parent's `rev` cascade, which made
-  live turns stop appearing while every window assertion still passed.
+  live turns stop appearing while every window assertion still passed. Earlier items are drawn by a SENTINEL
+  (`EarlierInThread`, `IntersectionObserver`, 800 px margin) as the reader nears the top, not by a button (kept only
+  where there is no observer). The position is held by the measured delta (`growHolding` -> `holdPosition`), applied
+  in a layout effect of the commit that adds the items, never from a timer. On the chat page the window drains
+  before the store is asked for older pages (`onWindowDrained`), so two holders never restore the position at once.
+  The measurements, and why `content-visibility: auto` is NOT shipped: `docs/dev/chat-page.md`, "A long transcript".
 
 ## Tooltips: the panel's, not the browser's `title`
 
