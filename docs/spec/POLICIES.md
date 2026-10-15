@@ -111,9 +111,11 @@ Two specs carry a consumer such as `ml.sh`, and they are separate on purpose:
 **Built-in defaults are policies too.** A consumer's "free" tier is the built-in default policy, sitting beside the
 person's, and it is ONE rule for every consumer ([`EFFECTS.md`](EFFECTS.md)): the call's effects are a subset of what
 the enforcer at its placement bounds, plus reads inside the workspace roots of paths not flagged secret. For a shell
-call on the plain host that reduces to `(c) => !c.effects.has("write") && !c.effects.has("exec") &&
-c.effects.reads.every((r) => r.inRoot && !r.secret)`; under the OS sandbox, writes inside the roots join the free set
-because Seatbelt publishes them as bounded. So the free tier needs both specs: the manifest for `effects`, the policy to
+call on the plain host, where nothing is bounded, that reduces to `(c) => c.effects.every((e) => e.op === "read" &&
+e.res.kind === "fs" && e.res.inRoot && !e.res.secret)`: a UNIVERSAL over the set, never a list of excluded operations
+(an earlier draft wrote `!has("write") && !has("exec") && …`, which let `use(secret)` and `alloc` through unnamed; lane
+2 of the plan caught it building the algebra). Under the OS sandbox, writes inside the roots join the free set because
+Seatbelt publishes them as bounded. The example is derived from `free()` in the algebra's module, not written by hand. So the free tier needs both specs: the manifest for `effects`, the policy to
 act on it. Without a manifest a call's `effects` is `unknown`, the top element, inside no bound, and it asks: correct,
 only slower.
 
