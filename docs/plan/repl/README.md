@@ -74,7 +74,13 @@ secrets, placement, the hub desktop runtime.
 **Added 2026-10-15: K. registering a program** ([`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md), "Registering a
 program"): the sandbox profile derived from a manifest's claims (the description as the envelope), hash pinning of a
 resolved program, a manifests directory with workspace and global scope, drafting a manifest from `--help` or completion
-files as a card with evidence, and the registration page. Depends on I and F; unassigned this round.
+files as a card with evidence, and the registration page. Depends on I and F; unassigned this round. Details settled
+with lane 4 (2026-10-15): the host's sandbox plan gains `write: none|roots` and `exec: any|program-only`; on macOS
+Seatbelt restricts `process-exec` to a literal path; on Linux the same comes from Landlock's per-path EXECUTE right,
+applied by a small exec shim (`exec-under <ruleset> -- prog`, which composes with bubblewrap and keeps the host free of
+`unsafe`), with EXECUTE granted to the program, the ELF interpreter and a script's `#!` interpreter; the Landlock ABI is
+reported in `hello`, and best-effort is treated as unavailable, so a no-runner claim is never silently trusted where
+the kernel cannot enforce it.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
