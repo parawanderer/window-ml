@@ -280,7 +280,8 @@ and that the free tier is a built-in default policy over it.
 | `run` | the run it belongs to (its id; a run policy sees only its own run) |
 
 **The free tier is the built-in default policy**, the one subset rule in [`EFFECTS.md`](EFFECTS.md); on the plain host it
-reads `(c) => !c.effects.has("write") && !c.effects.has("exec") && c.effects.reads.every((r) => r.inRoot && !r.secret)`.
+reads `(c) => c.effects.every((e) => e.op === "read" && e.res.kind === "fs" && e.res.inRoot && !e.res.secret)`, a universal
+over the set so that `use`, `alloc`, `exec`, `net` and `unknown` are out without being named.
 The program's manifest supplies `effects` and marks the path arguments; the person's policies sit beside the default.
 Without a manifest `effects` is `unknown` and the call asks.
 

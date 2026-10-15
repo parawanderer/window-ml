@@ -69,7 +69,8 @@ of them has a place for it, and together they answer parts of the threat model a
 - **In the effect algebra a secret is a resource with one operation.** `use(secret(name))` exists; `read(secret(name))`
   does not, in any vocabulary ([`EFFECTS.md`](EFFECTS.md)). A policy can see that a call carries a secret
   (`c.effects.uses("github")`) and bind it to a destination, which is threat 1 as a set predicate. A file the host flags
-  as secret-looking is `read(fs(path))` with `secret: true`, excluded from every free tier by name.
+  as secret-looking is `read(fs(path))` with `secret: true`, inside no bound at all, the sandbox's included, because
+  the harm is disclosure and no enforcer bounds that.
 - **Processes are a sink**, and the biggest one ([`SHELL.md`](SHELL.md), "Security invariants"). A script names the handle
   in `env` (`{ GITHUB_TOKEN: ml.secret("github") }`); the policy sees the NAME; the host injects the value at spawn,
   into the environment or a credential helper, only for a program whose manifest may receive that secret. Reflection
