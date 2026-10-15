@@ -29,7 +29,8 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies } from "./sw-policies";
+import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy } from "./sw-policies";
+import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
@@ -50,7 +51,7 @@ import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated
 import { handOverSettled } from "./nav-handover";
 import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
@@ -196,6 +197,8 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  *   stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
+ * - Removed from `tools`: `propose_policy`, which only a run the worker built offers (a page's run asking the person for
+ *   policies would be the page writing the rules its own calls are judged by).
  * - Replaced by the sender's, as the browser stamped it (what the origin gate read): `pageOrigin` seeds the run's
  *   consented origins and `pageUrl` is "the page you are on", so a page naming another site would get navigations and
  *   reads there without a gate. Absent when the sender has none.
@@ -223,6 +226,8 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
     rest.autoApproveSelfSource = !!rest.autoApproveSelfSource && !!cfg.autoApproveSelfSource;
     // Absent is on, for the page's payload as for the config (an older stored config).
     rest.selfIntrospection = rest.selfIntrospection !== false && cfg.selfIntrospection !== false;
+    // propose_policy is the worker's to offer: a page naming it would turn its own run into a way to ask for policies.
+    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && t.name === "propose_policy"));
     if (Array.isArray(rest.tools)) rest.tools = rest.tools.map((t) => (t && typeof t === "object" && (GATED_TOOL_NAMES.has(t.name) || t.remote) ? { ...t, requiresApproval: true } : t));
     const url = sender.url ?? sender.tab?.url;
     const g = grantableOrigin({ origin: sender.origin, url, frameId: sender.frameId });
@@ -346,11 +351,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     /** Whether a turn its page started (`p` says the page built the run) is the worker's now: whoever waits on this turn's
      *  answer is that page, which lost the run at the hand-over. */
     const handedThisTurn = (): boolean => p.builtBy !== "worker" && byWorker();
+    /** Whether this run may ask the person for a policy (`propose_policy`): one the worker BUILT, whose tools offer it. A
+     *  page's run never does (`pageStartPayload`), nor one handed to the worker: within the turn of its hand-over `p` is
+     *  still the page's, and after it the stored copy has the tool stripped (`markWorkerRun`). */
+    const offersProposals = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_policy");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
-     *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. */
+     *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
+     *  lose `propose_policy` as `markWorkerRun`'s copy does, or this write would put it back. */
     const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
-        ? { ...p, builtBy: "worker", ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
+        ? { ...p, builtBy: "worker", tools: withoutProposals(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
     /** Take a verify in the worker, pinned to `doc`, with the run's vision facts (carried in its rebuild config). */
     /** The run's vision facts for the worker's look, locate and verify: the worker's own for a run it built, a handed-over
@@ -1156,6 +1166,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
                 // that HAVE a precheck (avoids a useless round-trip on every gated call).
                 precheck: async (name, args) => {
+                    // A proposal is checked in the worker: one that does not run, or a run that does not offer the tool, is
+                    // told to the model and never shown to the person as a card.
+                    if (name === "propose_policy") {
+                        if (!offersProposals()) return `Error: propose_policy is not offered in this run.`;
+                        const c = checkProposal(args);
+                        return "error" in c ? c.error : null;
+                    }
                     // A worker-built run's exec is checked here, never on the page: its checks need nothing of the page's, and
                     // the page is not shown a call that may run in another world. A `world` it cannot have is refused before
                     // the person is asked to approve it (a call without one is routed after approval, as before).
@@ -1176,6 +1193,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
                     // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
                     let renderIn: unknown = tool === "exec" && typeof args.js === "string" ? execCodeIn(args.js) : undefined;
+                    // propose_policy's card is the worker's alone: the code as sent, led by its breadth, measured here over
+                    // the run's own fetch_url calls and a probe of unrelated sites, never anything the model said of it. What
+                    // the person approves is `proposal`, and only that is added (the resolve below).
+                    let proposal: PolicyProposal | undefined;
+                    if (tool === "propose_policy") {
+                        const c = offersProposals() ? checkProposal(args) : undefined;
+                        if (c && "proposal" in c) {
+                            proposal = c.proposal;
+                            let messages: readonly import("../contract").NeutralMessage[] = [];
+                            try { messages = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { /* no history: measured over nothing, and the card says so */ }
+                            renderIn = { type: "code", text: proposal.source, lang: "javascript", format: true, note: breadthNote(proposal, measureBreadth(proposal, recordedFetches(messages))) };
+                        } else renderIn = { type: "code", text: "", lang: "javascript", note: "This proposal cannot be added: the run does not offer propose_policy, or it does not run." };
+                    }
                     if (!renderIn) try {
                         const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
@@ -1232,6 +1262,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     // never lent to the tab, so the page's own FETCH_URL does not get them.
                                     if (ok && typeof decision === "object" && decision.persist)
                                         for (const g of grants) if (g.kind === "fetch-url") rememberFetchUrls(runId, g.urls);
+                                    // A proposed policy is added HERE, from the person's answer, and only the proposal the card
+                                    // showed; the tool's own run only reports whether it is there.
+                                    if (ok && tool === "propose_policy" && proposal && offersProposals()) {
+                                        const added = addRunPolicy(runId, { consumer: "fetch", ...proposal, origin: "proposed" });
+                                        recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool } });
+                                    }
                                 } catch (e) {
                                     recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: "approve", key: thrownKey(e), detail: { tool } });
                                 }

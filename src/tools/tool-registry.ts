@@ -91,6 +91,8 @@ defineBuiltinTool({ name: "navigate", factories: ["src/ml/ml-tool-factories.ts"]
 defineBuiltinTool({ name: "fetch_url", factories: ["src/ml/ml-tool-factories.ts"], gated: true, citable: true, realm: "worker", cardLine: "Read other websites (it asks you before each new one)" });
 defineBuiltinTool({ name: "chat_metadata", factories: ["src/ml/ml-tool-factories.ts"], gated: false, citable: false, realm: "page", cardLine: null });
 defineBuiltinTool({ name: "python_exec", factories: ["src/python/python-tool.ts"], gated: true, citable: true, realm: "worker", cardLine: "Run Python" });
+// propose_policy asks the person for a run policy: always a card, and the worker adds the policy only from its answer.
+defineBuiltinTool({ name: "propose_policy", factories: ["src/tools/propose-policy-tool.ts"], gated: true, citable: false, realm: "worker", cardLine: null });
 defineBuiltinTool({ name: "agent_api_docs", factories: ["src/tools/api-docs-tool.ts"], gated: false, citable: true, realm: "worker", cardLine: null });
 
 // --- what the rest of the code reads ---

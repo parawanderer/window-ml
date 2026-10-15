@@ -20,8 +20,9 @@ export type PolicyConsumer = "fetch" | "sh";
 /** Every consumer, for checking what storage held. */
 const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh"]);
 
-/** Where a policy came from: written by the person, or added by answering an approval card. */
-export type PolicyOrigin = "person" | "card";
+/** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
+ *  approved by the person on its own card (`propose_policy`). */
+export type PolicyOrigin = "person" | "card" | "proposed";
 
 /** One stored policy. `source` is the dialect script; `label` the line the policy page shows. */
 export interface StoredPolicy {
@@ -307,3 +308,6 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
 export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: PolicyEffect; label: string; source: string }[] {
     return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }
+
+/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
+export const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;

@@ -21,10 +21,13 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | Deleting a session removes its policies | `forgetRun` in `src/background.ts`; `onEvicted` in `src/sw/sw-sessions.ts` |
 | `kept` on the resume note | `runPolicyLabels` in `src/sw/sw-sessions.ts`, `src/session/session-commands.ts` |
 | What the model reads | `policies` on `CurrentSnapshot` (`src/agent/current-context.ts`) |
+| A proposal from the model: its check, its measured breadth, the card's note | `src/sw/policy-proposal.ts` |
+| The `propose_policy` tool (reports the decision; adds nothing) | `src/tools/propose-policy-tool.ts` |
+| Its gate: precheck, card, the add in the resolve (`offersProposals`) | `src/sw/sw-run-host.ts` |
 
 State is declared in the registry as `policies.global` and `policies.run` (audience `model`, exposed as
 `ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (`"fetch"`, and `"sh"` for `ml.sh`, whose facts its own consumer builds),
-`effect`, `source`, `label`, `origin` (`person` or `card`) and `created`.
+`effect`, `source`, `label`, `origin` (`person`, `card`, or `proposed` for one the model proposed and the person approved) and `created`.
 
 ## Scopes and lifetime
 
@@ -151,7 +154,9 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   for the store's keys, which it duplicates rather than import worker code (a test holds the two lists together).
 - **A card already showing is judged again** on every change (`onPoliciesChanged` → `rejudgePending`, `sw-consent.ts`).
   Only a pending entry whose descriptor carries `consumer` and `facts` is judged: the facts the WORKER resolved when the
-  card opened (the `fetch_url` card of a run whose fetch the worker runs, today). A new `deny` closes it as refused, a
+  card opened (the `fetch_url` card of a run whose fetch the worker runs, and lane 4's nested `sh` asks). Only consumer
+  `fetch` or `sh`, and only when `facts.effects` is present: a card whose effects nobody resolved is left to the person,
+  since an `allow` that never reads `c.effects` would otherwise answer it (repl-specs, #719). A new `deny` closes it as refused, a
   new `allow` as answered, both with `source: "policy"` on the decision, which only the worker sets (every resolver
   that takes a person's or an orchestrator's answer builds its own decision). The model reads "Denied by a policy the
   person set while the card was showing: the policy "…" refuses it".
@@ -160,11 +165,40 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   names them with the time, and the model reads them as `ml.current.policiesRemoved`. Deleting the session drops the
   record too.
 
+## A proposal from the model (`propose_policy`)
+
+The model never adds a policy; it asks for one, and the person answers a card (`POLICIES.md`, "Scopes").
+
+- **Offered only to a run the worker built** (`startUserRun`, `sw-run-start.ts`). A page's run never has it: a page that
+  could put proposals in front of the person would be writing the rules its own calls are judged by.
+  `pageStartPayload` drops a page's descriptor of that name, `markWorkerRun` strips it from a page-built run handed to
+  the worker, and `offersProposals` in `sw-run-host.ts` (built by the worker, handed to it, and offering the tool) guards
+  the precheck, the card and the add, because within the turn of a hand-over `p` is still the page's.
+- **Checked before any card** (`checkProposal`, the gate's precheck): `effect` is `allow` or `deny`, `when` a source of
+  at most `POLICY_SOURCE_MAX` that runs over a probe call without breaking, `label` at most `POLICY_LABEL_MAX`. A
+  proposal that fails is said to the model and never shown to the person. Fetch only for now (`consumer: "fetch"`).
+- **The card leads with the breadth, which the worker measures.** `recordedFetches` reads the run's `fetch_url` calls
+  from its messages (`contextByRun`, else the settled snapshot), pairing each call with its result by id;
+  `measureBreadth` evaluates the proposal over them and over hosts the run never used: `FIXED_PROBE_URLS` (loopback and
+  a private address, past any site however a policy is written), a random host under each common and reserved suffix
+  (`probeUrls`), and, from what it matched (`relatedProbes`), a SIBLING of each matched host at every label depth
+  (`a.b.c.d` gives `<random>.b.c.d`, `<random>.c.d`, `<random>.d`, so `endsWith` at any suffix is caught without a public
+  suffix list) plus another path and the other scheme of each matched URL. The probe carries NO fixed marker: random
+  labels of random length, so a policy cannot exclude it by name or by shape (`endsWith(".invalid")`,
+  `startsWith("10.")`), repl-specs' ruling of #719. `breadthNote` says how many of the run's calls it matches and on
+  which hosts, which unrelated sites it matches or "none of the N unrelated sites it was tried on" (never "reaches no
+  other site"), whether it matches other pages of the sites it matched, and that this is measured, not proven: a sample. The card is a `code` render of `when`
+  as sent, with that note. Nothing the model sends besides `when` and `label` reaches it.
+- **Added only in the gate's resolve**, when the answer approves, from the proposal the card showed (`addRunPolicy`,
+  origin `proposed`), with a `policy`/`added` run-log record. The tool's own `run` only reports whether the run now
+  holds that policy. Its descriptor carries no `consumer`/`facts`, so `rejudgePending` never answers its card.
+
 ## Not built yet
 
-- A model PROPOSING a run policy, as a card that shows its breadth, computed by the worker over the run's log (3c: a
-  new tool, so the tool registry and its own red-team pass).
+- The DERIVED breadth for the decidable fragment of a typed-node policy (`POLICIES.md`), and a corpus wider than this
+  run's own calls (the run log of every session). Today's breadth is this run's calls and a random probe: a sample.
 - Telling a run that RELIED on a removed policy, on its next call, that the call now asks because the policy went
-  (`POLICIES.md`, "A change takes effect at once"). The call asks; the reason is not said yet.
+  (`POLICIES.md`, "A change takes effect at once"). The call asks; the reason is not said. Left out of REPL lane 2 by
+  repl-specs on 2026-10-15 (#719), which keeps it in the spec as intended behaviour.
 - A page-built run's card is not judged again when a policy changes: its descriptor carries no facts, because its
   fetch runs in the page and an `allow` cannot answer it (see Traps). A `deny` would; it is left for the run's next call.

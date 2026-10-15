@@ -29,6 +29,8 @@ import { ingestSessionEvent, keepSession } from "./sw-sessions";
 import { workerMl } from "./worker-ml";
 import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
+import { proposePolicyTool } from "../tools/propose-policy-tool";
+import { defineTool } from "../ml/ml-tool-factories";
 
 /**
  * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
@@ -80,7 +82,9 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const ml = workerMl(url);
     const recipe = userRunOptions(ml, req, opts.sender);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
-    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, ...(opts.answer ? { answer: true } : {}) });
+    // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can.
+    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool)];
+    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
     const runId = shortHash();
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
