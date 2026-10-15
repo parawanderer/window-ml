@@ -33,6 +33,19 @@ version it reports with every call, and a program outside the range is `unknown`
 The BSD coreutils on macOS (`ls`, `cat`, `wc`, `head`, `tail`, `find`) report no version at all: such a manifest has
 `range: "*"`, takes no version arguments, and lists only flags with the same meaning in GNU and BSD (2026-10-15).
 
+**When the version is learned** (ruled 2026-10-15, lane 4 of the plan). Learning a version means RUNNING the program,
+and the host spawns nothing without an explicit start, so the probe is not an exception to that rule but an ordinary
+call: the shipped manifest carries a `version` entry (the arguments, the output pattern, effects empty, no runner, no
+paths, a 2 s limit, stdin closed, output capped at 4 KiB), the worker judges it with the default policy like any call,
+and the host spawns it on a start. Under the sandbox its effects are inside what the sandbox bounds, so it is free and
+no card is raised; on the plain host nothing is bounded, so the worker does not raise the probe at all and the program
+stays `unknown` there, which costs nothing since every plain-host call asks anyway. Two refusals in the worker: a
+program whose resolved path is inside a workspace root is never probed (it arrived with the repository), and only a
+SHIPPED manifest's probe entry is used, never arguments from a script. The result is cached per binary for the session
+(realpath, device, inode, size, mtime), reported in the facts as `program.version` (`null` when unreadable), shown on
+the card and written to the log. A sweep of every manifest's program at configure time was rejected: it runs binaries the
+person may never call.
+
 ## Trust
 
 As for library manifests: shipped with the extension or installed by the person; never from a page, never from the
