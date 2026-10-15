@@ -10,6 +10,7 @@ import { activeRuns, execReads, isWorkerRun, pageValueSession } from "./sw-runs"
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
+import { openWireClient } from "./ml-wire-serve";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -64,6 +65,11 @@ export interface PythonCaller {
     /** Record a returned frame's key as disclosed to the tab (`pageValueSession`). False for a run in the worker, whose
      *  loop claims it under the run's own session. */
     disclose: boolean;
+    /** The run the cell's `ml` calls are for (sw-ml-wire.ts): a run the worker hosts, never one a page names. Absent:
+     *  none, so the cell's `ml` has no `dereference`. */
+    wireRun?: string;
+    /** The cell's tab URL now, for its `ml.config()`. */
+    tabUrl?: () => string;
 }
 
 /** PYTHON_EXEC through the router: the caller is read off the sender, which the browser sets. */
@@ -74,7 +80,7 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
         // The discriminator is the sending FRAME's own url, not `sender.tab`: the overlay sidebar is an extension
         // iframe INSIDE a tab, and relaying its chunks through that tab's content script would post them to the page
         // instead of to the bench that asked. `sender.url` is set by Chrome and a page cannot forge it.
-        stream: ownSurface ? null : sender.tab?.id, disclose: true,
+        stream: ownSurface ? null : sender.tab?.id, disclose: true, tabUrl: () => sender.tab?.url ?? "",
     }).then(sendResponse);
 }
 
@@ -139,7 +145,11 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const noTimeout = !!payload?.noTimeout && ownSurface;
     // A run whose returned frame may become a pointer carries the store's budget; the bench's and a completion's never do.
     const valueBudget = persist || complete ? 0 : await valueBudgetBytes().catch(() => 0);
-    const run = { type: "PY_RUN", ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: complete ? true : payload?.hardened !== false, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
+    // The cell's `ml` over the wire: a client bound to the offscreen document, this call's run and its mode. A completion
+    // runs no code, so it gets none.
+    const hardened = complete ? true : payload?.hardened !== false;
+    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: hardened ? "readonly" : "full", tabUrl: caller.tabUrl });
+    const run = { type: "PY_RUN", ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
     try {
         const res = await attempt().catch((err) => {
@@ -158,6 +168,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         return { error: (err as Error)?.message || String(err) };
     } finally {
         if (streamId) pyStreamTabs.delete(streamId);
+        wire?.close();
     }
 }
 

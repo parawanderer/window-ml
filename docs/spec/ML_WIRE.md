@@ -1,6 +1,6 @@
 # Spec (WIP): `ml` over the wire, the one protocol every executor speaks
 
-**Status: draft, nothing built as a protocol; most of the server half exists.** Written on 2026-10-15. Four pieces of work
+**Status: the server half is built (`ML_CALL`, `src/sw/sw-ml-wire.ts`; how it is bound: [`docs/dev/site-access.md`](../dev/site-access.md), "The `ml` wire"); no client consumes it yet.** Written on 2026-10-15. Four pieces of work
 turned out to depend on the same missing thing: `ml` inside Pyodide, JS values reaching Python, Python running at the
 process host, and policies answering a call from inside a script. The missing thing is a definition of ONE `ml` call as a
 message, so that every place code runs is a client of the same server.
@@ -21,7 +21,7 @@ pointer store, the run's `current` snapshot).
 
 ```jsonc
 // request, from any client
-{ "run": "<run id>", "seq": 12, "call": "dereference", "args": ["@tool:a1b2c3", { "pipe": ".rows" }] }
+{ "client": "mlw-<uuid>", "run": "<run id>", "seq": 12, "call": "dereference", "args": ["@tool:a1b2c3", { "pipe": ".rows" }] }
 
 // answers
 { "seq": 12, "value": { … } }                                  // plain data
@@ -29,6 +29,10 @@ pointer store, the run's `current` snapshot).
 { "seq": 12, "error": { "code": "NotInDialect", "message": "…" } }
 { "seq": 12, "ask": { "card": "…" } }   // the call needs the person; the client WAITS, and a later message answers
 ```
+
+`client` is the handle the server issued when it started the code making the call (built: one per Python cell); the
+server answers by it and the verified sender together, and checks `run` against it. An `ask`'s final answer is a later
+`ML_ANSWER` push carrying the same `client` and `seq`.
 
 **What crosses.** Plain JSON; bytes as Arrow or a buffer (the one copy, as `injectStoredTable` makes today); a `@tool:`
 pointer; a table value with its `shape`; a secret HANDLE as a tagged reference `{ "$secret": "github" }` that names a grant

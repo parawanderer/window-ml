@@ -5,6 +5,7 @@
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
+import { onMlCall } from "./sw/sw-ml-wire";
 import { changesSiteAccess, forgetHandOverTab, handOverOnCommit, handOverOnRevoke } from "./sw/nav-handover";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
@@ -571,6 +572,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // only starts Pyodide early, which a page could already cause by being where a person opens the Commander.
     if (message.type === "USER_PYTHON_PREWARM") { pythonPrewarm(message, sendResponse); return true; }
     if (message.type === "PYTHON_EXEC") { pythonExec(message, sender, sendResponse); return true; }   // async
+    // One `ml` call over the wire from a client the worker opened (sw-ml-wire.ts): answered by the sender and the handle,
+    // never the run id. Not in HANDLE_MAP, so a page cannot start it, and a tab's sender never matches a client.
+    if (message.type === "ML_CALL") return onMlCall(message, sender, sendResponse);
     // A page-side tool of a background-hosted run calling `ml.dereference`. Answered only for a run WE are
     // hosting, from that run's own pointer store — the resolver the loop handed us at start (tokenSink).
     // A stored table's columns (`t.col(…)` on a stored table's facade, POINTER_VALUES slice 7). Answered only for a run WE

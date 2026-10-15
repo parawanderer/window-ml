@@ -73,7 +73,42 @@ export type BackgroundMessageType =
     | "INJECT_MESSAGE"   // a.say() mid-run: push a user message into a RUNNING background run's inbox (steer it live)
     | "CONTENT_READY"   // cross-page: a fresh document loaded — the SW replies with any rebuild-config for runs this tab hosts
     | "RUN_READOPTED"   // cross-page: the fresh document re-registered a run's toolset → release the navigation barrier
-    | "SET_APPROVAL"; // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
+    | "SET_APPROVAL" // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
+    | "ML_CALL";   // one `ml` call over the wire (MlWireRequest) from a client the worker vouches for; never page-started
+
+/** Which members a wire client may call: the read-only dialect's slice, or the full gated set (each member still gated
+ *  per call). Decided by the worker when it opens the client, never by the client. */
+export type WireRealm = "readonly" | "full";
+
+/** One `ml` call as a message (docs/spec/ML_WIRE.md). `client` is the handle the worker issued when it started the
+ *  code making the call; the worker answers by that handle AND the sender it can verify, so `run` is checked against
+ *  the handle's run and never read as authority. */
+export interface MlWireRequest {
+    type: "ML_CALL";
+    client: string;
+    run: string | null;
+    seq: number;
+    call: string;
+    args: unknown[];
+}
+
+/** Why a wire call failed. `Absent`: the client's realm has no such member (the dialect reports it as a refusal).
+ *  `Refused`: the sender, the handle or the run is not one the worker vouches for. `SecretHandle`: an argument named a
+ *  secret, which is never resolved to a value here. `Denied`: the call's gate or the person said no. `TooLarge`: the
+ *  answer cannot cross and has no pointer to stay home under. `BadRequest`: malformed. `Failed`: the member threw. */
+export type MlWireErrorCode = "Absent" | "Refused" | "SecretHandle" | "Denied" | "TooLarge" | "BadRequest" | "Failed";
+
+/** A value too big to cross: it stays in the run's store under `token`, and a narrower read (a pipe) fetches part of it. */
+export interface MlWirePointer { token: string; label: string; size: number }
+
+/** The answer to one {@link MlWireRequest}, matched by `seq`. Exactly one of `value`, `pointer`, `error` or `ask`. An
+ *  `ask` means the call waits on the person; its final answer arrives later as an `ML_ANSWER` push with the same `seq`.
+ *  A `value` is always a fresh plain-data copy (JSON, with bytes as `{ $bytes: base64 }`), never a function or a proxy. */
+export type MlWireAnswer =
+    | { seq: number; value: unknown }
+    | { seq: number; pointer: MlWirePointer }
+    | { seq: number; error: { code: MlWireErrorCode; message: string } }
+    | { seq: number; ask: { card: string } };
 
 /** Message types the CONTENT SCRIPT handles INBOUND from the background — the reverse of the
  *  page→background relay above. Design A's agent loop lives in the background (extension origin,
