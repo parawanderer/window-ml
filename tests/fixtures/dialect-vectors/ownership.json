@@ -613,7 +613,7 @@
   },
   {
     "name": "py: a copy of an injected table is the cell's",
-    "py": "d = df.copy()\nd[\"new\"] = 1\nreturn int(d.shape[1])",
+    "py": "d = df.copy()\nd[\"new\"] = 1\nreturn len(d.keys())",
     "env": "table",
     "expect": {
       "value": 4
@@ -674,5 +674,72 @@
     },
     "reason": "one-argument type(x) is its own receiver kind: is and == against another type are allowed (ruled 2026-10-15)",
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "py: the warm world's own reads still work",
+    "py": "return peek_ok([1, 2, 3])",
+    "env": "warm",
+    "expect": {
+      "value": 3
+    },
+    "reason": "the default: a warmed library function that only calls an allowed builtin (len) on a list the cell built returns its value; refusing everything is not passing",
+    "from": "docs/spec/PYTHON_DIALECT.md, the specializer and entry rulings (repl-specs 2026-10-15)"
+  },
+  {
+    "name": "py: agg with a listed name",
+    "py": "return int(df.agg(\"sum\").sum())",
+    "env": "table",
+    "expect": {
+      "value": 78
+    },
+    "reason": "a string in the leaf's closed vocabulary passes the check and the lifted call runs",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a sort key that calls a lifted leaf",
+    "py": "return sorted([3, 1, 2], key=lambda x: x + int(df.a.sum()) * 0)",
+    "env": "table",
+    "expect": {
+      "value": [
+        1,
+        2,
+        3
+      ]
+    },
+    "reason": "sorted (unlifted) calls the cell's lambda, which calls a lifted pandas leaf: lift and re-entry nest, and the result is right",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: a callback writing to an owned list inside a lifted leaf",
+    "py": "xs = []\ndf.a.apply(lambda v: xs.append(int(v)))\nreturn xs",
+    "env": "table",
+    "expect": {
+      "value": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "reason": "the callback runs restricted; its write to the cell's own list is judged by ownership and allowed",
+    "from": "repl-specs rulings on name-resolving leaves and lifting, 2026-10-15"
+  },
+  {
+    "name": "py: type(x) of a builtin is that builtin",
+    "py": "return type(1)(5) == 5",
+    "env": "none",
+    "expect": {
+      "value": true
+    },
+    "reason": "type(1) IS int, the same object as the listed builtin, so calling it is int(5): a proxy would break type(x) is str",
+    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
+  },
+  {
+    "name": "py: type(df) is the listed class, no more",
+    "py": "import pandas as pd\nreturn type(df) is pd.DataFrame",
+    "env": "table",
+    "expect": { "value": true },
+    "reason": "type(x) returns the class itself, so a call through type(df) is exactly as allowed as pd.DataFrame(...), a manifest call; it reaches nothing the program could not already name (the refusal case is abuse.json's unlisted Box class)",
+    "from": "repl-specs ruling on type(x), 2026-10-15 (type(1) IS int; the call gate judges the class)"
   }
 ]

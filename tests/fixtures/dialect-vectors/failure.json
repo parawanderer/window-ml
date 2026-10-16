@@ -104,7 +104,7 @@
     "pre": {
       "py": "xs = [3, 1, 2]"
     },
-    "py": "xs.sort()\nreturn type(xs)",
+    "py": "xs.sort()\nreturn ().__class__",
     "env": "none",
     "expect": "refused",
     "leaves_nothing": true,
