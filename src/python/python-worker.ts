@@ -150,7 +150,9 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
     } else {
         // A kept-state run still needs the harness module in its namespace — the wrapper looks it up there.
-        injectInputs(ns, null, null, harness);
+        // Only the harness: `injectInputs` would also set INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON as
+        // undefined (→ Python None) in the bench namespace, and `benchVars()` would list them as kept.
+        if (harness !== undefined) ns.set("_ml_harness", harness);
     }
     // LIVE stdout tee (opt-in streaming): Pyodide's JS-side setStdout wraps the interpreter's real stdout,
     // which the prelude's _MlTee writes through to. No callback object lands in the namespace — a JsProxy

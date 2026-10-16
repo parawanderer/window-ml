@@ -288,6 +288,7 @@ else:
 # (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
 del _ml_h
 globals().pop("_ml_harness", None)
+${persist ? "" : `
 # The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
 # JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
 # the host's \`injectInputs\`, which is the one that converts at the boundary.
@@ -295,6 +296,7 @@ def _ml_in(_v):
     return _v if (isinstance(_v, str) or _v is None) else None
 INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
 INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
+`}
 ${persist ? PRELUDE_BASE : RESET + PRELUDE}
 ${netPolicy(hardened)}
 result = None
