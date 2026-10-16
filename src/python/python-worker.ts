@@ -7,11 +7,21 @@
 //
 // This worker is chrome-free: it resolves the vendored Pyodide URLs relative to its OWN
 // location (self.location) rather than chrome.runtime.getURL, and the sandbox logic
-// (wrapUserCode/harden/unharden) is the same shared, real-CPython-tested module the
+// (wrapUserCode, injectInputs) is the same shared, real-CPython-tested module the
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
+//
+// A READONLY worker boots LOCKED DOWN (`lockdownReadonly`: ses `lockdown()` + the allow-list strip +
+// the harness's captured refs) and stays that way. A FULL worker is a separate worker that is never
+// locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
+import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
+import { lockdownReadonly } from "./lockdown";
+
+/** Which kind of worker this is, from `self.name` (the host spawns one per principal and mode). */
+const READONLY = self.name !== "full";
+/** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
+let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, re-bound into every cell's namespace
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
@@ -50,9 +60,17 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
         await py.loadPackage(PY_PACKAGE_LOADS);
-        // Before ANY run, so before the first hardening: a package that needs the `js` bridge to import (pyarrow's
+        // Before ANY run and before the lockdown: a package that needs the `js` bridge to import (pyarrow's
         // timezone helper) is imported here, where the bridge exists. See python-env.ts `prepare`.
         if (PY_STARTUP_PREPARE) py.runPython(PY_STARTUP_PREPARE);
+        if (READONLY) {
+            // The readonly worker's security model: ses `lockdown()` + the allow-list strip + the harness's
+            // captured refs, once at boot, never undone. `harden()`/`unharden()` no longer gate anything —
+            // the strip IS the hardening. The relay keeps `postMessage`/`close` in its closure; the harness
+            // module is re-bound into every cell by `injectInputs`.
+            const held = await lockdownReadonly(py, self);
+            harness = held.harness;
+        }
         pyodideLive = true;
         self.postMessage({ booted: true, ms: Date.now() - t0, by });
         return py;
@@ -120,17 +138,21 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     if (!bench) {
         // Python None/str, never a JS null: `set` of a null lands as `JsNull`, a JsProxy in the namespace.
         const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
-        injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null);
+        injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
+    } else {
+        // A kept-state run still needs the harness module in its namespace — the wrapper looks it up there.
+        injectInputs(ns, null, null, harness);
     }
     // LIVE stdout tee (opt-in streaming): Pyodide's JS-side setStdout wraps the interpreter's real stdout,
     // which the prelude's _MlTee writes through to. No callback object lands in the namespace — a JsProxy
     // of one is a JS `Function` constructor to a hostile cell. Cleared in finally.
     if (onStdout) py.setStdout({ batched: onStdout });
-    const saved = hardened ? harden(py) : null;
     try {
         // RESET (per-run isolation) + PRELUDE (preloaded vars) + the user's code, wrapped to capture
         // stdout / a `return`-or-bare-`result=` value / a traceback → `python-runtime.ts` (shared so
         // the exact script is exercised against real CPython in tests). Reads back _stdout/_err/_json_result.
+        // The readonly worker's `hardened` flag is the wrapper's netPolicy belt — the lockdown already
+        // stripped the JS realm. The full worker passes false and keeps the bridges.
         await py.runPythonAsync(wrapUserCode(code, hardened, persist), { globals: ns });
         const stdout = String(ns.get("_stdout") ?? "");
         // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
@@ -165,7 +187,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     } catch (e: any) {
         return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
     } finally {
-        if (!bench) injectInputs(ns, null, null);
+        if (!bench) injectInputs(ns, null, null, harness);
         if (onStdout) { try { py.setStdout({}); } catch { /* ignore */ } }
         for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
         try { ns.delete("_ipc_result"); } catch { /* not set */ }
@@ -173,13 +195,12 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
         // `pd.read_csv("sales")` could have been handed the model's last table. Clear them now instead.
         if (!bench) { try { py.runPython(RESET); } catch { /* the next run resets anyway */ } }
-        if (saved) unharden(py, saved);
     }
 }
 
-// Serialize runs on the single Pyodide instance so a hardened run's global swap
-// (harden/unharden) can't overlap another run — one leaking capabilities into the other.
-// The worker owns the instance, so the invariant lives here now (was offscreen's runChain).
+// Serialize runs on the single Pyodide instance this worker owns — one interpreter, one queue.
+// The per-principal split is the HOST's (offscreen spawns one worker per principal); inside a
+// worker, runs still queue so a completion or env query cannot land mid-run.
 let runChain: Promise<unknown> = Promise.resolve();
 // WHAT THE SANDBOX ACTUALLY IS — the Python and Pyodide versions, and each package's installed version.
 // Read FROM the running interpreter rather than from our own manifest: the manifest says what we asked for,
@@ -222,6 +243,13 @@ async function complete(code: string, line: number, column: number, bench?: "rea
 self.onmessage = (e: MessageEvent) => {
     const msg = e.data as RunMsg;
     if (!msg || typeof msg.id !== "number") return;
+    // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be
+    // handed a `full` run (the bridges are stripped), and a full worker must not be handed a readonly
+    // run under the assumption it is locked. Refuse rather than silently run in the wrong sandbox.
+    if (msg.hardened !== undefined && msg.hardened !== !READONLY && !msg.complete && !msg.env && !msg.benchReset && !(msg as { prewarm?: boolean }).prewarm) {
+        self.postMessage({ id: msg.id, ok: false, stdout: "", error: READONLY ? "Refused: this worker is the readonly sandbox (locked down)." : "Refused: this worker is the full sandbox (not locked down)." });
+        return;
+    }
     // A PRE-WARM: start the runtime now so the run that needs it later does not wait. Deliberately NOT on the
     // run chain — a run arriving meanwhile must wait on the start itself (and be charged for that wait), not
     // queue behind a message that is itself waiting on it. Answers at once with whether it started anything.
@@ -241,9 +269,9 @@ self.onmessage = (e: MessageEvent) => {
         return;
     }
     // A COMPLETION, not a run: the script is analysed, never executed. It joins the same serialized chain for
-    // the same reason the env query does — it reads the one interpreter, and hardens it while it does, which
-    // must not interleave with a run's own harden/unharden. A completion asked for during a long run therefore
-    // waits for it; the editor has a short budget and falls back to its static list rather than blocking.
+    // the same reason the env query does — it reads the one interpreter and must not interleave with a run.
+    // A completion asked for during a long run therefore waits for it; the editor has a short budget and
+    // falls back to its static list rather than blocking.
     if (msg.complete) {
         const { line, column, bench } = msg.complete;
         runChain = runChain.then(() => complete(msg.code, line, column, bench)).then(

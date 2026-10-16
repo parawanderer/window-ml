@@ -76,21 +76,28 @@ async function withStoredTables(tables: unknown): Promise<{ tables: unknown; tra
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
 type PyResult = { prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
-// The worker is same-origin (extension page → chrome-extension:// worker), so it needs no
-// web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
-let worker: Worker | null = null;
+// One worker per PRINCIPAL (PYODIDE_LOCKDOWN.md step 1): a worker-hosted run, a page, `full`. A principal
+// change is a new worker, never a reused one — a patch one principal left in module state must not reach
+// the next. The workers are same-origin (extension page → chrome-extension:// worker), so they need no
+// web_accessible_resources entry; they inherit this page's 'wasm-unsafe-eval' CSP.
+type PyWorkerEntry = { w: Worker; readonly: boolean };
+const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one Python worker per principal
+// Principals whose worker was killed and whose next spawn is a RESPAWN: the kept bench namespace died with
+// the old worker, and the new one starts from empty. The respawn writes the housekeeping record that the
+// bench's "sandbox restarted" banner is the human face of (docs/dev/housekeeping.md).
+const respawned = new Set<string>();   // state: plumbing — principals awaiting a respawn housekeeping record
 let nextId = 1;
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean }>();
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string }>();   // state: plumbing
 
-/** Arm a kill for run `id`: when it fires, that run fails with `error` and the (still-busy) worker is terminated,
- *  failing anything queued behind it. */
+/** Arm a kill for run `id`: when it fires, that run fails with `error` and its worker is terminated,
+ *  failing anything queued behind it on that principal. */
 function killAfter(id: number, ms: number, error: string, reason: "timeout" | "start-timeout"): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
         const entry = pending.get(id);
         if (!entry) return;   // already resolved
         pending.delete(id);
         entry.resolve({ ok: false, stdout: "", error });
-        killWorker(reason);   // nuke the (still-busy) instance + fail any others queued behind it
+        killWorker(entry.principal, reason);   // nuke the (still-busy) instance + fail any others queued behind it
     }, ms);
 }
 
@@ -100,27 +107,49 @@ function reportHousekeeping(report: { subsystem: string; kind: string; reason?: 
     try { chrome.runtime.sendMessage({ type: "HOUSEKEEPING_REPORT", payload: report }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
 }
 
-// Terminate the worker and fail every still-pending run with `reason`. Used on a worker crash and
-// on a timeout kill (after the timed-out run itself has been resolved + removed from `pending`).
-function killWorker(reason: string): void {
-    if (worker) {
-        try { worker.terminate(); } catch { /* already gone */ }
-        worker = null;
+// Terminate one principal's worker and fail its still-pending runs with `reason`. Used on a worker crash and
+// on a timeout kill (after the timed-out run itself has been resolved + removed from `pending`). A principal
+// respawn (the next run of the same principal) writes the housekeeping record the persistent namespace's
+// loss message reads (docs/dev/housekeeping.md): the kept bench namespace died with the worker.
+function killWorker(principal: string, reason: string): void {
+    const entry = workers.get(principal);
+    if (entry) {
+        try { entry.w.terminate(); } catch { /* already gone */ }
+        workers.delete(principal);
+        respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
         // A timeout names itself; anything else is the worker's own error message, kept as detail under "crashed".
         const named = reason === "timeout" || reason === "start-timeout";
-        reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: named ? reason : "crashed", detail: { queuedRuns: pending.size, ...(named ? {} : { message: reason }) } });
+        reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: named ? reason : "crashed", key: principal, detail: { queuedRuns: [...pending.values()].filter((p) => p.principal === principal).length, ...(named ? {} : { message: reason }) } });
     }
-    for (const { resolve, timer } of pending.values()) { clearTimeout(timer); resolve({ ok: false, stdout: "", error: `Python worker stopped (${reason}).` }); }
-    pending.clear();
+    for (const [id, p] of [...pending.entries()]) {
+        if (p.principal !== principal) continue;
+        clearTimeout(p.timer);
+        p.resolve({ ok: false, stdout: "", error: `Python worker stopped (${reason}).` });
+        pending.delete(id);
+    }
 }
 
-function ensureWorker(): Worker {
-    if (worker) return worker;
-    const w = new Worker(chrome.runtime.getURL("python-worker.js"));
+/** Terminate every principal's worker (the offscreen document is going away). */
+function killAllWorkers(reason: string): void {
+    for (const principal of [...workers.keys()]) killWorker(principal, reason);
+}
+
+function ensureWorker(principal: string, readonly: boolean): Worker {
+    const existing = workers.get(principal);
+    if (existing) return existing.w;
+    // `name` is how the worker knows which sandbox it is: a readonly worker boots locked down (`lockdownReadonly`),
+    // a full worker is never locked. One Worker per principal is one REALM per principal — a second Pyodide
+    // cannot boot in a realm `lockdown()` froze.
+    const w = new Worker(chrome.runtime.getURL("python-worker.js"), { name: readonly ? "readonly" : "full" });
+    // A respawn after a kill: the old worker's kept bench namespace died with it, and this one starts empty.
+    // The record is the log's account of the loss the bench's "sandbox restarted" banner shows the person.
+    if (respawned.delete(principal)) {
+        reportHousekeeping({ subsystem: "pyodide", kind: "respawn", key: principal, detail: { mode: readonly ? "readonly" : "full" } });
+    }
     w.onmessage = (e: MessageEvent) => {
         // The runtime finished starting (not a reply to anything): what started it and how long it took.
         if (e.data?.booted) {
-            reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", reason: e.data.by === "prewarm" ? "prewarm" : "run", ms: e.data.ms });
+            reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", reason: e.data.by === "prewarm" ? "prewarm" : "run", ms: e.data.ms, key: principal });
             return;
         }
         // A `partial` message is a LIVE stdout chunk (opt-in streaming) — forward it to the background keyed by
@@ -146,8 +175,8 @@ function ensureWorker(): Worker {
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
-    w.onerror = (ev: ErrorEvent) => { if (worker === w) killWorker(ev.message || "crashed"); };
-    worker = w;
+    w.onerror = (ev: ErrorEvent) => { if (workers.get(principal)?.w === w) killWorker(principal, ev.message || "crashed"); };
+    workers.set(principal, { w, readonly });
     return w;
 }
 
@@ -157,8 +186,11 @@ function ensureWorker(): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = []): Promise<PyResult> {
-    const w = ensureWorker();
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full"): Promise<PyResult> {
+    // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
+    // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
+    // `full` is its own worker and is never locked.
+    const w = ensureWorker(principal, hardened);
     const id = nextId++;
     return new Promise((resolve) => {
         // A COMPLETION NEVER ARMS THE WATCHDOG. The timer starts when a message is POSTED, not when it runs,
@@ -174,7 +206,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // START bound, and the worker's `started` (runtime up, script about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
-        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset) });   // streamId → the background can key live stdout chunks
+        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal });   // streamId → the background can key live stdout chunks
         w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) }, transfer);
     });
 }
@@ -260,21 +292,34 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
-    // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own.
+    // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own. Prewarm
+    // carries the same principal + mode as the run it is warming for, so it warms THAT principal's worker.
     if (msg?.type === "PY_PREWARM") {
-        const w = ensureWorker();
+        const principal = String(msg.principal ?? "own");
+        const w = ensureWorker(principal, msg.hardened !== false);
         const id = nextId++;
-        pending.set(id, { resolve: (r) => sendResponse({ ok: r.ok, prewarm: r.prewarm }), timer: 0 as unknown as ReturnType<typeof setTimeout> });
+        pending.set(id, { resolve: (r) => sendResponse({ ok: r.ok, prewarm: r.prewarm }), timer: 0 as unknown as ReturnType<typeof setTimeout>, principal });
         w.postMessage({ id, prewarm: true });
         return true;
     }
     if (msg?.type !== "PY_RUN") return;
-    // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
+    // The bench's "reset both modes" spans every principal's worker now: one Worker per principal means
+    // the kept readonly namespace and the kept full namespace live in different realms. Broadcast the
+    // reset to every worker, then let the normal path answer on the primary. Each worker's `benchReset`
+    // clears its own kept namespace (or no-ops if it has none).
+    if (msg.benchReset) {
+        const primaryPrincipal = String(msg.principal ?? (msg.hardened !== false ? "own" : "full"));
+        for (const [p, entry] of workers) {
+            if (p === primaryPrincipal) continue;
+            try { entry.w.postMessage({ id: nextId++, code: "", image: null, hardened: entry.readonly, tables: null, benchReset: true }); } catch { /* a dead worker is killed on its next use */ }
+        }
+    }
+    // The worker serializes runs internally (one Pyodide instance per worker = one per principal),
     // so we can forward straight through — no need to chain here.
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
-            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer)
+            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")))
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result

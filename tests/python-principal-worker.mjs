@@ -16,13 +16,14 @@ py.setStderr({ batched: () => {} });
 // The prelude imports numpy/PIL/pandas (and pandas pulls pyarrow): the packages the cell's wrapper needs.
 if (Array.isArray(packages) && packages.length) await py.loadPackage(packages);
 const { lockdownReadonly } = await import(lockdownUrl);
-await lockdownReadonly(py, {});
+const held = await lockdownReadonly(py, {});
+const harness = held.harness;
 const { wrapUserCode, injectInputs } = await import(runtimeUrl);
 
 parentPort.on("message", async (msg) => {
     const { id, code, image, tablesJson } = msg;
     try {
-        injectInputs(py.globals, image ?? null, tablesJson ?? null);
+        injectInputs(py.globals, image ?? null, tablesJson ?? null, harness);
         await py.runPythonAsync(wrapUserCode(code, true));
         const out = {
             stdout: String(py.globals.get("_stdout") ?? ""),
@@ -34,7 +35,7 @@ parentPort.on("message", async (msg) => {
     } catch (e) {
         parentPort.postMessage({ id, out: { stdout: "", error: String((e && e.message) || e), value: null } });
     } finally {
-        injectInputs(py.globals, null, null);
+        injectInputs(py.globals, null, null, harness);
     }
 });
 parentPort.postMessage({ ready: true });

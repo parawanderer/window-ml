@@ -16,8 +16,13 @@ import { OUTPUT_CEILING } from "../agent/output-clip";
  * @param ns the namespace to set on — `py.globals`, or a bench namespace
  * @param image the injected screenshot (data: URL / base64), or null for none
  * @param tablesJson the injected tables already JSON-encoded, or null for none
+ * @param harness the harness module `lockdownReadonly` captured at boot. Re-bound HERE before every
+ *   cell, never looked up through `sys.modules`: a cell that pops `sys.modules["_ml_harness"]` cannot
+ *   force the next cell into the wrapper's `except ImportError` fallback (which imports the patched
+ *   `ast`/`json`). Absent (real-CPython tests without the lockdown): the wrapper falls back to imports.
  */
-export function injectInputs(ns: any, image: string | null, tablesJson: string | null): void {
+export function injectInputs(ns: any, image: string | null, tablesJson: string | null, harness?: unknown): void {
+    if (harness !== undefined) ns.set("_ml_harness", harness);
     ns.set("INJECTED_IMAGE_B64", image == null ? undefined : String(image));
     ns.set("INJECTED_TABLES_JSON", tablesJson == null ? undefined : String(tablesJson));
 }
@@ -48,7 +53,7 @@ img_np = None
 H = W = 0
 _b64 = globals().get("INJECTED_IMAGE_B64")
 if _b64:
-    _raw = base64.b64decode(_b64.split(",")[-1])   # tolerate a data: URL prefix
+    _raw = _ml_b64d(_b64.split(",")[-1])   # tolerate a data: URL prefix
     img = Image.open(io.BytesIO(_raw)).convert("RGB")
     img_np = np.array(img)
     H, W = img_np.shape[:2]
@@ -239,20 +244,45 @@ for _k in list(globals().keys()):
 export const wrapUserCode = (code: string, hardened = true, persist = false): string => /* python */ `
 # THE HARNESS'S OWN REFS (lockdown.ts captured them at boot, before any cell ran). A cell that patches
 # \`ast.parse\` or \`json.loads\` changes what the RUN's own later cells see, never what the harness parses,
-# encodes or injects. Fallback to the plain module attributes when the frozen module is absent (real-CPython tests).
-try:
-    from _ml_harness import ast_parse as _ml_parse, json_loads as _ml_loads, json_dumps as _ml_dumps
-    from _ml_harness import (ast_increment_lineno as _ml_ino, ast_copy_location as _ml_cloc,
-        ast_fix_missing_locations as _ml_fix, ast_Return as _ml_Ret, ast_Expr as _ml_Expr,
-        ast_Call as _ml_Call, ast_Attribute as _ml_Attr, ast_Name as _ml_Name,
-        ast_Assign as _ml_Assign, ast_walk as _ml_walk)
-except ImportError:
-    import ast as _ml_a2, json as _ml_j2
+# encodes or injects. Looked up in the NAMESPACE — \`injectInputs\` re-binds the module before every cell —
+# never through \`sys.modules\`: a cell that pops the entry there must not force this cell into the import
+# fallback below. Fallback to the plain module attributes when the module is absent (real-CPython tests).
+_ml_h = globals().get("_ml_harness")
+if _ml_h is not None and getattr(_ml_h, "ast_parse", None) is not None:
+    _ml_parse = _ml_h.ast_parse
+    _ml_loads = _ml_h.json_loads
+    _ml_dumps = _ml_h.json_dumps
+    _ml_ino = _ml_h.ast_increment_lineno
+    _ml_cloc = _ml_h.ast_copy_location
+    _ml_fix = _ml_h.ast_fix_missing_locations
+    _ml_Ret = _ml_h.ast_Return
+    _ml_Expr = _ml_h.ast_Expr
+    _ml_Call = _ml_h.ast_Call
+    _ml_Attr = _ml_h.ast_Attribute
+    _ml_Name = _ml_h.ast_Name
+    _ml_Assign = _ml_h.ast_Assign
+    _ml_walk = _ml_h.ast_walk
+    _ml_b64d = _ml_h.b64decode
+    _ml_b64e = _ml_h.b64encode
+    _ml_indent = _ml_h.indent
+    _ml_bytesio = _ml_h.bytes_io
+    _ml_stringio = _ml_h.string_io
+    _ml_fmt_exc = _ml_h.format_exc
+    _ml_redir_out = _ml_h.redirect_stdout
+    _ml_redir_err = _ml_h.redirect_stderr
+    _ml_real_out = _ml_h.sys_stdout
+else:
+    import ast as _ml_a2, json as _ml_j2, base64 as _ml_b2, textwrap as _ml_tw2, traceback as _ml_tb2, io as _ml_io2, contextlib as _ml_c2, sys as _ml_s2
     _ml_parse, _ml_loads, _ml_dumps = _ml_a2.parse, _ml_j2.loads, _ml_j2.dumps
     _ml_ino, _ml_cloc, _ml_fix = _ml_a2.increment_lineno, _ml_a2.copy_location, _ml_a2.fix_missing_locations
     _ml_Ret, _ml_Expr = _ml_a2.Return, _ml_a2.Expr
     _ml_Call, _ml_Attr, _ml_Name, _ml_Assign = _ml_a2.Call, _ml_a2.Attribute, _ml_a2.Name, _ml_a2.Assign
     _ml_walk = _ml_a2.walk
+    _ml_b64d, _ml_b64e = _ml_b2.b64decode, _ml_b2.b64encode
+    _ml_indent, _ml_bytesio = _ml_tw2.indent, _ml_io2.BytesIO
+    _ml_stringio, _ml_fmt_exc = _ml_io2.StringIO, _ml_tb2.format_exc
+    _ml_redir_out, _ml_redir_err = _ml_c2.redirect_stdout, _ml_c2.redirect_stderr
+    _ml_real_out = _ml_s2.stdout
 # The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
 # JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
 # the host's \`injectInputs\`, which is the one that converts at the boundary.
@@ -267,8 +297,7 @@ _ml_src = ${JSON.stringify(code)}
 _ml_persist = ${persist ? "True" : "False"}
 # stdout capture that tees each write to the REAL stdout (Pyodide's \`setStdout\` wraps it on the JS side for
 # live streaming) — no JS callback in the namespace, so the namespace holds no JsProxy at all.
-_ml_real_out = sys.stdout
-class _MlTee(io.StringIO):
+class _MlTee(_ml_stringio):
     # Bounded (output-clip.ts OUTPUT_CEILING): past it a write is counted, not kept and not teed, so a print in a loop
     # costs a counter, not the worker's memory.
     _ml_kept = 0
@@ -285,13 +314,12 @@ class _MlTee(io.StringIO):
 _out = _MlTee()
 _err = None
 _ml_ret_latex = False
-with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
+with _ml_redir_out(_out), _ml_redir_err(_out):
     try:
-        import textwrap as _tw
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
-        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    ")
+        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _ml_indent(_ml_src, "    ")
         try:
             _ml_tree = _ml_parse(_ml_def_src, filename="<python_exec>")
         except SyntaxError as _ml_se:
@@ -348,8 +376,7 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         if _ret is not None:
             result = _ret
     except BaseException:
-        import traceback
-        _err = traceback.format_exc()
+        _err = _ml_fmt_exc()
         result = None
 _stdout = _out.getvalue()
 _ml_stdout_dropped = _out._ml_dropped
@@ -367,9 +394,8 @@ try:
         import sympy as _sp
         _json_result = _ml_dumps(_sp.latex(result)); _json_render = 'latex'
     elif _rmod == 'PIL' and hasattr(result, 'save'):
-        import io as _io2, base64 as _b642
-        _pbuf = _io2.BytesIO(); result.save(_pbuf, format='PNG')
-        _json_result = _ml_dumps('data:image/png;base64,' + _b642.b64encode(_pbuf.getvalue()).decode()); _json_render = 'img'
+        _pbuf = _ml_bytesio(); result.save(_pbuf, format='PNG')
+        _json_result = _ml_dumps('data:image/png;base64,' + _ml_b64e(_pbuf.getvalue()).decode()); _json_render = 'img'
     # The code RETURNED a latex(...) call's string (AST-detected above) — typeset it, even a bare "5".
     elif _ml_ret_latex and isinstance(result, str):
         _json_render = 'latex'

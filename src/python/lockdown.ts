@@ -65,7 +65,7 @@ const TIMER_NAMES = ["setTimeout", "setInterval"];
  * falls back to the normal module attributes.
  */
 const HARNESS_BOOT = /* python */ `
-import ast as _ml_a, json as _ml_j, base64 as _ml_b, textwrap as _ml_tw, traceback as _ml_tb, types as _ml_t, sys as _ml_s
+import ast as _ml_a, json as _ml_j, base64 as _ml_b, textwrap as _ml_tw, traceback as _ml_tb, types as _ml_t, sys as _ml_s, io as _ml_io, contextlib as _ml_c
 
 class _MlHarnessMod(_ml_t.ModuleType):
     """The harness's captured module references. A cell cannot patch through this."""
@@ -99,10 +99,18 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "ast_walk": _ml_a.walk,
     "json_loads": _ml_j.loads,
     "json_dumps": _ml_j.dumps,
+    # The wrapper's SOURCE indent, the injected image decode and the result encode are the harness's own
+    # paths: a patched textwrap.indent would receive the next cell's source, a patched base64 would decide
+    # what the harness reports as the cell's bytes.
     "b64decode": _ml_b.b64decode,
     "b64encode": _ml_b.b64encode,
     "indent": _ml_tw.indent,
+    "bytes_io": _ml_io.BytesIO,
+    "string_io": _ml_io.StringIO,
     "format_exc": _ml_tb.format_exc,
+    "redirect_stdout": _ml_c.redirect_stdout,
+    "redirect_stderr": _ml_c.redirect_stderr,
+    "sys_stdout": _ml_s.stdout,
 })
 _ml_s.modules["_ml_harness"] = _h
 `;
@@ -114,10 +122,11 @@ _ml_s.modules["_ml_harness"] = _h
  *
  * @param py the Pyodide interpreter (already booted and its packages loaded)
  * @param scope the JS object to strip — `globalThis` in the worker, a stand-in in tests
- * @returns the relay's `postMessage`/`close`, captured before the strip. The CALLER keeps them in its
- *   closure — never on the scope, where a JsProxy of it would find them.
+ * @returns the relay's `postMessage`/`close`, captured before the strip, and the harness module the
+ *   caller re-binds into every cell's namespace. The CALLER keeps them in its closure — never on the
+ *   scope, where a JsProxy of it would find them.
  */
-export async function lockdownReadonly(py: any, scope: any = globalThis): Promise<{ postMessage?: unknown; close?: unknown }> {
+export async function lockdownReadonly(py: any, scope: any = globalThis): Promise<{ postMessage?: unknown; close?: unknown; harness?: unknown }> {
     // 1. Intrinsic taming: the Function/AsyncFunction/GeneratorFunction constructors reached through a
     //    prototype chain throw. `lockdown()` is once per realm; a second call is a no-op here.
     if (!locked) {
@@ -137,7 +146,7 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
 
     // 3. The allow-list strip. Delete everything outside ALLOWED_GLOBALS; also force-remove the known
     //    evaluator/host names even if a realm invents an alias for one. Timers become string-refusing
-    //    wrappers; WebAssembly loses its string-compiling paths.
+    //    wrappers. WebAssembly is kept whole — it compiles bytes, never a string.
     const keep = new Set(ALLOWED_GLOBALS);
     for (const name of Object.getOwnPropertyNames(scope)) {
         if (keep.has(name)) continue;
@@ -158,11 +167,19 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
         } catch { /* non-configurable */ }
     }
 
-    // 4. The harness's module references, captured before any cell runs. `_ml_harness` is what
-    //    `wrapUserCode` looks up; when it is absent the wrapper falls back to plain imports.
-    try { py.runPython(HARNESS_BOOT); } catch { /* the wrapper falls back */ }
+    // 4. The harness's module references, captured before any cell runs. The wrapper looks the module
+    //    up in the cell's NAMESPACE (which `injectInputs` re-binds before every cell), never through
+    //    `sys.modules`: a cell that pops `sys.modules["_ml_harness"]` must not force the next cell into
+    //    the import fallback, which imports the patched `ast`/`json`. The caller holds the PyProxy and
+    //    re-sets it, so nothing a prior cell did in Python can unseat it.
+    let harness: unknown;
+    try {
+        py.runPython(HARNESS_BOOT);
+        // Read it back as the PYTHON module object (`sys.modules` holds it; `globals()` does not).
+        harness = py.runPython("__import__('sys').modules.get('_ml_harness')");
+    } catch { /* the wrapper falls back */ }
 
     // The relay keeps these in its own closure. Nothing is written to the scope: a JsProxy of it
     // must find neither the relay's functions nor a name that leads to them.
-    return { postMessage: heldPost, close: heldClose };
+    return { postMessage: heldPost, close: heldClose, harness };
 }

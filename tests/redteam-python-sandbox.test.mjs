@@ -97,6 +97,8 @@ function makeRunner(w) {
 let py = null;
 /** True once `lockdownReadonly` has run on `py` — the strip IS the hardening then, and `harden()`/`unharden()` must not undo it. */
 let lockedDown = false;
+/** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
+let harness = null;
 /** P1's positive control, captured BEFORE any `lockdown()` (see the header). */
 let p1Control = null;
 
@@ -106,7 +108,8 @@ before(async () => {
     // The control first, while the realm is still unlocked: `lockdown()` closes the very route it proves.
     p1Control = await cellOn(py, P1_CHAIN, { hardened: false });
     if (typeof lockdownReadonly === "function") {
-        await lockdownReadonly(py, {});
+        const held = await lockdownReadonly(py, {});
+        harness = held.harness ?? null;
         lockedDown = true;
     }
 }, { timeout: 180000 });
@@ -124,7 +127,7 @@ after(async () => {
  * has been returned (not the wrapper — it is not a cell).
  */
 async function cellOn(interp, code, { hardened = true, stream = false, tables = null, image = null, later = 0 } = {}) {
-    injectInputs(interp.globals, image, tables == null ? null : JSON.stringify(tables));
+    injectInputs(interp.globals, image, tables == null ? null : JSON.stringify(tables), interp === py ? harness : undefined);
     if (stream) {
         try { interp.setStdout({ batched: (s) => { (cellOn.chunks ??= []).push(s); } }); } catch { /* no setStdout here */ }
     }
@@ -457,6 +460,73 @@ _m = sys.modules.get("_rt_p5i")
         `the cell's own json.loads call must still see the patch, got ${JSON.stringify(seen)}`);
     assert.ok(seen.some(([k, v]) => k === "ast.parse" && v.includes("CELL2_OWN_AST")),
         `the cell's own ast.parse call must still see the patch, got ${JSON.stringify(seen)}`);
+});
+
+test("P5-intra-indent: a patched textwrap.indent never receives a later cell's source", { skip }, async () => {
+    // The wrapper indents the cell's source into `def _user():`. That indent is the HARNESS's path over
+    // the code. Captured at boot (`_ml_harness.indent`), never `import textwrap` at cell time.
+    const plant = await cell(`
+import textwrap, types, sys
+_m = types.ModuleType("_rt_p5ind")
+_m.seen = []
+_orig = textwrap.indent
+def _spy(_s, *a, **k):
+    _m.seen.append(str(_s))
+    return _orig(_s, *a, **k)
+textwrap.indent = _spy
+sys.modules["_rt_p5ind"] = _m
+textwrap.indent("PROBE_INDENT_OWN", "    ")
+{"seen": list(_m.seen)}
+`);
+    assert.equal(plant.error, null, `plant cell should run, got: ${plant.error}`);
+    assert.ok(plant.value.seen.some((s) => s.includes("PROBE_INDENT_OWN")),
+        `positive control: the indent spy must see the same cell's call, got ${JSON.stringify(plant.value.seen)}`);
+
+    const second = await cell('marker = "CELL2_INDENT_SECRET_SOURCE"\n1');
+    assert.equal(second.error, null, `second cell should run, got: ${second.error}`);
+    const after = await cell(`
+import sys
+_m = sys.modules.get("_rt_p5ind")
+{"seen": [s for s in _m.seen] if _m else "NO MARKER"}
+`);
+    assert.equal(after.error, null, `readback should run, got: ${after.error}`);
+    assert.deepEqual(after.value.seen.filter((s) => /CELL2_INDENT_SECRET_SOURCE/.test(s)), [],
+        `a prior cell must not observe a later cell's source through textwrap.indent, got ${JSON.stringify(after.value.seen)}`);
+});
+
+test("P5-intra-unseat: popping sys.modules['_ml_harness'] does not hand the next cell the import fallback", { skip }, async () => {
+    // The wrapper used to `from _ml_harness import ...`, which is a `sys.modules` lookup. A cell that
+    // popped the entry and patched `ast.parse` forced the NEXT cell into `except ImportError:`, which
+    // imports the patched `ast` — and that cell's source goes through the spy. Closed by looking the
+    // harness up in the NAMESPACE, which `injectInputs` re-binds before every cell.
+    const plant = await cell(`
+import ast, sys, types
+_m = types.ModuleType("_rt_p5uns")
+_m.seen = []
+_orig = ast.parse
+def _spy(_src, *a, **k):
+    _m.seen.append(str(_src))
+    return _orig(_src, *a, **k)
+ast.parse = _spy
+sys.modules["_rt_p5uns"] = _m
+sys.modules.pop("_ml_harness", None)
+ast.parse("PROBE_UNSEAT_OWN")
+{"seen": list(_m.seen)}
+`);
+    assert.equal(plant.error, null, `plant cell should run, got: ${plant.error}`);
+    assert.ok(plant.value.seen.some((s) => s.includes("PROBE_UNSEAT_OWN")),
+        `positive control: the ast.parse spy must see the same cell's call, got ${JSON.stringify(plant.value.seen)}`);
+
+    const second = await cell('marker = "CELL2_UNSEAT_SECRET_SOURCE"\n1');
+    assert.equal(second.error, null, `second cell must still run after the unseat, got: ${second.error}`);
+    const after = await cell(`
+import sys
+_m = sys.modules.get("_rt_p5uns")
+{"seen": list(_m.seen) if _m else "NO MARKER"}
+`);
+    assert.equal(after.error, null, `readback should run, got: ${after.error}`);
+    assert.deepEqual(after.value.seen.filter((s) => /CELL2_UNSEAT_SECRET_SOURCE/.test(s)), [],
+        `popping sys.modules['_ml_harness'] must not hand the next cell's source to a patched ast.parse, got ${JSON.stringify(after.value.seen)}`);
 });
 
 // --- P5-cross. a patched function is not visible after the principal changes -----------------------

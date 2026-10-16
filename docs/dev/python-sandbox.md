@@ -66,7 +66,7 @@ reads the whole table instead, POINTER_VALUES slice 5:
   was evicted …`.
 - The worker makes the ONE copy: `injectStoredTable` (python-runtime.ts, so the CPython tests use it) allocates a
   `bytearray`, fills it through `getBuffer`, and binds it as `_ml_tbuf_<i>`. It is a buffer, never a JsProxy, so it
-  crosses the hardened boundary without widening it.
+  crosses the locked-down boundary without widening it.
 - The prelude decodes by stored format:
   - `arrow-file` / `arrow-stream`: `pyarrow.ipc` → `to_pandas()`.
   - `parquet`: `pyarrow.parquet.read_table` → `to_pandas()`.
@@ -154,21 +154,32 @@ return showed as raw LaTeX source there while the log typeset it. What stays in 
 tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printed JSON.
 
 **Two capability modes (agent-declared) + auto-approve.** The tool takes `mode`:
-`"readonly"` (default) **hardens** the offscreen sandbox for that run — unregisters *and*
-purges `sys.modules['js']`/`['pyodide_js']` (an `unregisterJsModule` alone leaves a prior
-`full` run's cached `JsProxy` reachable), and nulls every network/exfil global
-(fetch/XHR/WebSocket/Worker/**`importScripts`**/… + `navigator.sendBeacon`) so even
-`pyodide.code.run_js` or a leaked proxy hits `undefined` — making it a pure function over the
-inputs. Since Pyodide now runs in the **worker**, `js` resolves to the WorkerGlobalScope (not the
-offscreen document), so `importScripts` — a worker-only fetch+eval vector — is in the null-list
-too, and full mode's `import js` correspondingly has NO `js.document`/`js.window` (a worker has
-no DOM), only network. `"full"` leaves the bridges intact (outbound network) and **always**
-requires manual approval. Restored in
-`finally`; PY_RUN is serialized so the global swap can't race. `harden`/`unharden` live in
-`python-runtime.ts` (chrome-free) and are **escape-tested against real Pyodide**
-(`tests/python.test.mjs`): a hardened run can't `import js`/`pyodide_js` or reach
-`pyodide.code.run_js`, a `full` run's cached `import js` is still purged, and `full` mode
-genuinely leaves the bridge open (why it needs approval). Config `autoApprovePython`
+`"readonly"` (default) runs in a **locked-down** worker — one Worker (one realm) per PRINCIPAL:
+a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`).
+`"full"` is a separate worker that is never locked. A principal change spawns a new worker;
+the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
+respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
+lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
+(1) Agoric `ses` `lockdown()` after one `runPythonAsync("1")` warmup (Pyodide's result path
+assigns `.constructor`, which `lockdown()` then freezes — lock first and every later call
+throws `ConversionError`); (2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
+needs and a few capability-free host APIs stay; `eval`, `Function`, `fetch`, `importScripts`,
+`postMessage`, `navigator`, `chrome`, every Node module go. There is no deny list to keep
+current. (3) The harness's module references (`ast.parse`, `json.loads`, `textwrap.indent`,
+`base64`, `io`, `contextlib`, …) are captured into a frozen `_ml_harness` module before any cell
+runs, so a cell that monkeypatches `ast.parse` or `json.loads` cannot change what the harness
+parses, encodes or injects — and the wrapper looks the harness up in the NAMESPACE
+(`injectInputs` re-binds it every cell), never through `sys.modules`, so a cell that pops
+`sys.modules["_ml_harness"]` cannot force the import fallback onto patched modules. (4) No
+JsProxy lands in the Python namespace: injected inputs are `None`/`str` via `undefined`, and
+the stdout tee is Pyodide's JS-side `setStdout`. (5) asyncio pending handles are cancelled
+before a cell's result is returned. The strip, the harness capture and the wrapper are
+**escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
+cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
+receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
+cell the import fallback, and `loadPackage` of a wheel still works after the strip. `full` mode
+leaves the bridges intact (outbound network) and **always** requires manual approval.
+Config `autoApprovePython`
 (ON by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
 `sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
@@ -256,7 +267,7 @@ announces itself). Six things are load-bearing:
   (runtime up, this run's turn) swaps in the 15s. Armed from the post, the cold start and any queue were charged
   to the script: a run queued behind an 8s one was killed three seconds into its own work, and on a loaded CI
   runner a first `time.sleep(4)` was killed by the boot alone, both with "simplify the computation".
-- **Always hardened, and only from our own surfaces** (the `PYTHON_EXEC` choke point, `sender.url`): analysis
+- **Always locked down, and only from our own surfaces** (the `PYTHON_EXEC` choke point, `sender.url`): analysis
   can import a compiled module to inspect it, which must not reach the network even in `full` mode, and a
   page is refused rather than handed a new kind of request to the one sandbox.
 - **Budgeted, with the static list as the floor** (`withRemote`, cm-editor.ts, 350 ms): the first request
@@ -318,11 +329,11 @@ flags moved the failure to `NameError: pa`. Measured in Node, loading it at star
 (3.1 s → 4.7 s); the pre-warm absorbs most of that, and pandas behaves the same in every run (its `str` columns
 are pyarrow-backed from the first).
 
-`PyPackage.prepare` runs once, unhardened, right after the start-up packages load (`PY_STARTUP_PREPARE`, in
-`getPyodide`). pyarrow needs it: its `unix_timezones` dependency does `import js` at import time, and a `readonly`
+`PyPackage.prepare` runs once, before the lockdown, right after the start-up packages load (`PY_STARTUP_PREPARE`, in
+`getPyodide`, then `lockdownReadonly`). pyarrow needs it: its `unix_timezones` dependency does `import js` at import time, and a `readonly`
 run has no `js` — while its prelude's `import pandas` imports pyarrow. Importing it first, where `js` exists, puts
 it in the module cache; but that module then HOLDS `js` as an attribute, and `import unix_timezones;
-unix_timezones.js` would hand a hardened script the global scope hardening removed, so `prepare` deletes it.
+unix_timezones.js` would hand a locked-down script the global scope the strip removed, so `prepare` deletes it.
 `tests/python.test.mjs` has the escape test, which fails with that deletion removed. A new package with a
 `prepare` gets the same check: look for a `js` attribute on every module it brought in.
 

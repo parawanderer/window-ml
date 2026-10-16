@@ -32,15 +32,18 @@ defineJob({
 
 /** PYTHON_PREWARM: boot the offscreen Pyodide host ahead of a run that will need it. `sendResponse` reports
  *  whether this call is what actually started it. */
-export function pythonPrewarm(message: any, sendResponse: (r: any) => void): void {
+export function pythonPrewarm(message: any, sender: chrome.runtime.MessageSender | undefined, sendResponse: (r: any) => void): void {
     // Start Pyodide ahead of a run likely to need it: a run whose tools include python_exec starting, or the
     // Commander opening (its runs always have it). Only those two — booting the runtime and its packages
     // costs real memory, so a mere ml.* read never pays it. Idempotent in the worker, and logged only when it
     // actually started something. A page can send this, and could already start the runtime by running code.
     const trigger = (message.payload as { trigger?: string } | undefined)?.trigger;
     if (trigger !== "run-start" && trigger !== "commander") { sendResponse({ error: "PYTHON_PREWARM needs a trigger: run-start or commander." }); return; }
+    // Prewarm warms the SPECIFIC principal's worker the next run will use. A page's run-start is its tab's
+    // sandbox; the Commander is our own surface's. Readonly always — a full-mode run is never prewarmed.
+    const principal = trigger === "commander" ? "own" : sender?.tab?.id != null ? `page:${sender.tab.id}` : "own";
     ensureOffscreen()
-        .then(() => chrome.runtime.sendMessage({ type: "PY_PREWARM" }))
+        .then(() => chrome.runtime.sendMessage({ type: "PY_PREWARM", principal, hardened: true }))
         .then((r: { prewarm?: string } | undefined) => {
             if (r?.prewarm === "started") recordHousekeeping({ subsystem: "pyodide", kind: "prewarm", reason: trigger });
             sendResponse({ data: r?.prewarm ?? null });
@@ -159,8 +162,16 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // The cell's `ml` over the wire: a client bound to the offscreen document, this call's run and its mode. A completion
     // runs no code, so it gets none.
     const hardened = complete ? true : payload?.hardened !== false;
+    // WHOSE sandbox: `full` mode is its own worker; a readonly cell belongs to the worker-hosted run that
+    // called it, the tab whose page called it, or one of our own surfaces (the bench). One Worker per
+    // principal (PYODIDE_LOCKDOWN.md step 1) so a patch one principal left in module state cannot reach the next.
+    const principal = !hardened ? "full"
+        : caller.ownSurface ? "own"
+        : caller.wireRun ? `run:${caller.wireRun}`
+        : caller.tabId != null ? `page:${caller.tabId}`
+        : "own";
     const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: hardened ? "readonly" : "full", tabUrl: caller.tabUrl });
-    const run = { type: "PY_RUN", ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
     try {
         const res = await attempt().catch((err) => {

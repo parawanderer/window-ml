@@ -604,10 +604,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         startBackgroundRun(message, sender, sendResponse);
         return true;   // async: sendResponse fires when the whole run finishes
     }
-    if (message.type === "PYTHON_PREWARM") { pythonPrewarm(message, sendResponse); return true; }
+    if (message.type === "PYTHON_PREWARM") { pythonPrewarm(message, sender, sendResponse); return true; }
     // The HUD Commander's prewarm, from the shell rather than the page (shell.ts), so it is not behind the origin gate. It
     // only starts Pyodide early, which a page could already cause by being where a person opens the Commander.
-    if (message.type === "USER_PYTHON_PREWARM") { pythonPrewarm(message, sendResponse); return true; }
+    if (message.type === "USER_PYTHON_PREWARM") { pythonPrewarm(message, sender, sendResponse); return true; }
     if (message.type === "PYTHON_EXEC") { pythonExec(message, sender, sendResponse); return true; }   // async
     // One `ml` call over the wire from a client the worker opened (sw-ml-wire.ts): answered by the sender and the handle,
     // never the run id. Not in HANDLE_MAP, so a page cannot start it, and a tab's sender never matches a client.

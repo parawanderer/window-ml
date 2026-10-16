@@ -20,9 +20,10 @@ you add an emitter.
 | --- | --- | --- |
 | `sw/start`, `sw/evicted-inferred` | the worker (`HousekeepingLog.start`) | See "Inferred eviction" below. |
 | `pyodide/prewarm` (`reason: run-start / commander`) | the worker (`PYTHON_PREWARM`) | Only when it actually started the runtime; an already-running one logs nothing. |
-| `pyodide/cold-start` (`ms`, `reason: prewarm / run`) | `offscreen.ts`, from the worker's `booted` message | The start itself, whatever caused it. A warm run reports nothing. |
+| `pyodide/cold-start` (`ms`, `reason: prewarm / run`, `key` = principal) | `offscreen.ts`, from the worker's `booted` message | The start itself, whatever caused it. A warm run reports nothing. |
 | `pyodide/prewarm-used` (`ms`, `detail.warm`) | `offscreen.ts` | The first run after a pre-warm: warm, or still starting and how long it waited. |
 | `pyodide/kill` (`reason: timeout / start-timeout / crashed`) | `offscreen.ts` `killWorker` | `detail.queuedRuns` is how many runs behind it failed with it; a crash keeps the worker's message in `detail.message`. |
+| `pyodide/respawn` (`key` = principal, `detail.mode`) | `offscreen.ts` `ensureWorker` | A principal's worker was killed and is starting fresh: its kept bench namespace died with the old worker. |
 | `fetch-cache/evict` (`reason: budget`, `key`, `bytes`) | the page (`injected.ts`, `FetchCache`'s `onEvict`) | Page-origin, so only the tab that fetched the URL reads the key back. |
 | `sessions/evict` (`reason: retention / budget`, `key` = session hash, `bytes`, `detail.outcome`, `detail.idleDays`) | the worker (`SessionStore`'s `onEvicted`, `sw-sessions.ts`) | A saved session the store dropped on its own: past `sessionRetentionDays`, or to fit its size and count caps. Pinned sessions never appear. `outcome` is `deleted` today and will be `archived` once an archive folder exists. A `session.delete` is asked for, so it is not logged. |
 
