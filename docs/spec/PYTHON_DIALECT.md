@@ -17,10 +17,17 @@ is the callback gate plus the kill switch. Four things are wrong with it.
    ([`SHELL.md`](SHELL.md)), a read-only Python cell must be safe wherever the runtime puts it, and the place that
    matters most is the process host's real CPython, with numpy at native speed and no WebAssembly around it. Only a
    proof about the program travels there.
-2. **A sandbox decays.** The Pyodide hardening is a list of things to purge (`js`, `pyodide_js`, the network globals;
-   `harden()` in `src/python/python-runtime.ts`), which is a DENY list that the next Pyodide release can extend without
-   telling anyone. A dialect gives the script nothing it did not list. The hardening stays, as belt, until the
-   restricted mode's import gate makes it redundant.
+2. **A sandbox decays.** The original Pyodide hardening was a deny-list of things to purge (`js`, `pyodide_js`, the
+   network globals; `harden()` in `src/python/python-runtime.ts`). Red-teaming (`#698`, `#708`, `#735`,
+   [`docs/plan/repl/PYODIDE_LOCKDOWN.md`](../plan/repl/PYODIDE_LOCKDOWN.md)) proved six concrete escape routes past a
+   Python-level deny-list in unpatched Pyodide: `import _pyodide_core` (`jsproxy_c` is compiled into the main WASM
+   binary), `Object.__getattribute__(proxy, "constructor")` bypassing JS proxy get traps to reach the worker's
+   `Function` constructor (`Function("return globalThis")()`), `import ctypes; ctypes.CDLL(None)` calling Emscripten's
+   `emscripten_run_script`, monkey-patching `builtins.__import__` / `sys.stdout` to spoof harness return markers, and
+   `asyncio` background tasks firing `postMessage` after a cell returns. Even after locking down the JS worker realm at
+   boot (`ses` `lockdown()` plus an explicit global allow-list in `src/python/lockdown.ts`, `#735`) so the worker holds
+   only closure-captured capabilities, any in-worker sandbox remains a boundary around the *worker*, not around the
+   *program*: only the dialect's CPython gate holds inside the interpreter and on the native host.
 3. **Persistent state brings rollback back.** A sandboxed cell that is refused halfway has already mutated the run's
    namespace. An owned-value interpreter restores what it touched, as `evalReadonly` does.
 4. **Totality composes; a timer does not.** Every program the dialect admits terminates within a cost bound known before

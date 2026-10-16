@@ -95,39 +95,41 @@ now stored whole. A `value` answer for a capture that was NOT stored (a page-hos
 read cap, an `exec` or `python_exec` output) still carries `truncated: true` and the full size, and every client
 surfaces it.
 
-## Status (2026-10-15, evening of the first day)
+## Status (2026-10-16)
 
 - **Lane 1**: root A merged (#678, result #689, design note #691); root J merged (#705, result #726) with the main-world
-  fallback kept on Shane's decision. The lockdown is owned by the red-team session (below). While it lands, lane 1 builds
-  the non-colliding part of PR 2: the Python `ml` facade in `python-runtime.ts` against a fake transport, wired to the
-  real channel once the lockdown merges; then root C.
-- **Lane 2**: D (#672), E (#686), 3a (#699), the `sh` consumer and archive removal (#706), the policy vectors (#709), 3b
-  (#716: the `POLICIES` message, the policy page in DevTools Settings, re-judging a showing card) all merged. Next: 3c
-  (`propose_policy`, with the breadth probe carrying no fixed shape and siblings at every label depth, #719), then the
-  results `LANE_2_RESULT_E.md` and `LANE_2_RESULT_3.md`. Two dialect holes found and fixed on the way (#675 `Object.assign`,
-  #699 the page inheriting run URL grants).
-- **Lane 3**: B+G (#677), root H in `parawanderer/cpython` branch `ml/restricted-mode`: slice 1 (`CO_RESTRICTED`, the entry,
-  the extent predicate, specialization off) and slice 2 (the gate, with lifting OPT-IN per manifest leaf) built; the
-  no-specialization cost measured (#718: 1.66x on pure-Python benchmarks, about 1.06x on real cells); CPython's suite at 0
-  failures; stock cp314 wheels load unrebuilt (the ABI holds). 71 of 85 shared Python vectors pass; the rest wait on
-  slices 4 to 6. Vectors #721, the leaf-vocabulary count #722 open. **Assigned after H** (Shane, 2026-10-15): the Pyodide
-  build of the patch, a build-flags job on the ABI argument.
-- **Lane 4**: I (host v0.1.0, v0.2.0), F (#683), results (#687, #694), the `sh` core (#704), nested asks (#710) merged.
-  Next PR 4a (the native port, Settings, the shell capabilities, the red-team test that no page-started type reaches
-  the host), then 4b (`ml.sh` itself, with the descriptor union making `effects` required for `fetch` and `sh`).
-- **Red team** (outside the lanes): vectors #698 open as `todo`; interim mitigations #708 merged; the lockdown's core
-  built on #698's branch, uncommitted (ses `lockdown()` plus the allow-list strip, both needed, #725; captured harness
-  refs; stdout through real stdout; asyncio cancel); still to build: the worker per principal, the enumeration test,
-  the corpus number, docs, state registry. Its PR unblocks lane 1's PR 2 and root C.
-- **Site access** (#647, outside the plan): rebased past #710, owner strings approved, merging; lanes 2 and 4 rebase onto it.
-- **Specs amended today by rulings** (all merged): effects (#671), wire (#693, #701), policies (#679, #700, #707, #719),
+  fallback kept on Shane's decision; PR 2a (the Python `ml` facade in `python-runtime.ts` against a transport callback)
+  merged (#728). Unblocked by the Pyodide lockdown (#735): remaining are PR 2b (wiring `_ml_make` over the worker's
+  closure-held `post` through `offscreen.ts` and `sw-python.ts`) and root C (persistent per-run `dict`, housekeeping
+  loss notice, `LANE_1_RESULT_C.md`).
+- **Lane 2**: **DONE** — D (#672), E (#686), 3a (#699), the `sh` consumer and archive removal (#706), the policy vectors
+  (#709), 3b (#716: the `POLICIES` message, the policy page in DevTools Settings, re-judging a showing card), 3c (#723:
+  `propose_policy`, derived breadth probe, policy syntax/eval hardening), and results `LANE_2_RESULT_E.md` +
+  `LANE_2_RESULT_3.md` (#731) all merged; lane clone removed.
+- **Lane 3**: B+G (#677), shared dialect vectors (#721) merged; root H in `parawanderer/cpython` branch
+  `ml/restricted-mode`: slices 1 (`CO_RESTRICTED`, entry, extent predicate, specialization off), 2 (the gate, with
+  lifting OPT-IN per manifest leaf), 4 (step budget at the eval breaker + AST static loop rejection), and 5 (ownership
+  and per-entry allocation byte cap via `PyMem_SetAllocator`) pushed (`ec7ebb4`), passing 84 of 87 shared vectors.
+  Remaining: slice 6 (the write-barrier undo log for the 3 failure/rollback vectors + `test_asyncio` slice-2 leak fix),
+  `LANE_3_RESULT_H.md`, and the post-H Pyodide WASM build.
+- **Lane 4**: I (host v0.1.0, v0.2.0), F (#683), results (#687, #694), the `sh` core (#704), nested asks (#710), PR 4a
+  (#724: native port to the process host, Settings, shell capabilities), and PR 4b (#733: `ml.sh` on `window.ml` and in
+  `exec`, required `effects` on `fetch` and `sh` descriptors) merged. Remaining: PR 4c (`ml.sh` on `ml-wire.ts` so
+  Python and remote clients reach it) and root L (#734: process-group ownership table and physical-footprint `alloc`
+  bound in `window-ml-host`).
+- **Red team** (outside the lanes): **DONE** — interim mitigations (#708), full Pyodide boot lockdown (#735: `ses`
+  `lockdown()` + global allow-list in `src/python/lockdown.ts`, closure-captured `postMessage`, per-principal worker
+  routing across `run`/`bench`/`call`, real `sys.stdout` capture, `asyncio` cancel-on-settle, enumeration gate), and
+  red-team audit of `ml.sh` + `propose_policy` (#739) all merged; superseded #698 closed.
+- **Specs amended by rulings** (all merged): effects (#671), wire (#693, #701), policies (#679, #700, #707, #719),
   shell and manifests (#681, #682, #685, #688, #695, #697, #702), the Python dialect (#673, #674, #711, #718, #720), the
-  lockdown plan (#690, #700, #725), the README's rows (#712), the coordinator's handover (#715).
+  lockdown plan (#690, #700, #725), the README's rows (#712, #732), the coordinator's handover (#715), lane 1's PR 2/C
+  design (#729), root L (#734).
 - **Unassigned roots**: K (registering a program; depends on I and F), the host's hub transport (behind a Cargo feature),
   the typed-node policy tree (the derived breadth).
-- **Added root L** (Shane and the coordinator, 2026-10-15 evening, after the crash): process ownership and the memory
-  bound at the host, `SHELL.md` "Every process has an owner" and `EFFECTS.md`'s `alloc` bound: the owner table as the one
-  table, a process group per spawn, kill-on-owner-loss as the default with a visible orphan list as the policy
+- **Added root L** (Shane and the coordinator, 2026-10-15 evening, after the crash; spec in #734): process ownership and
+  the memory bound at the host, `SHELL.md` "Every process has an owner" and `EFFECTS.md`'s `alloc` bound: the owner table
+  as the one table, a process group per spawn, kill-on-owner-loss as the default with a visible orphan list as the policy
   alternative, a footprint watchdog (macOS) or a cgroup maximum (Linux), the footprint as a fact and a span on the
   resource panel. Lane 4's, after `ml.sh` (4b/4c) and before the hub transport. Acceptance: a spawned sleeper dies with
   its port; a child that allocates past the bound is killed and the run log says so; neither test reads `ps`.
