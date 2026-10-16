@@ -18,6 +18,11 @@ import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPAR
 import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
 import { lockdownReadonly } from "./lockdown";
 
+// Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
+// in this file goes through `post`, never `self.postMessage` — which is gone once `lockdownReadonly` runs
+// in a real Worker where `self === globalThis`.
+const post = self.postMessage.bind(self);
+
 /** Which kind of worker this is, from `self.name` (the host spawns one per principal and mode). */
 const READONLY = self.name !== "full";
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
@@ -72,7 +77,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
             harness = held.harness;
         }
         pyodideLive = true;
-        self.postMessage({ booted: true, ms: Date.now() - t0, by });
+        post({ booted: true, ms: Date.now() - t0, by });
         return py;
     })();
     return pyodideReady;
@@ -240,31 +245,34 @@ async function complete(code: string, line: number, column: number, bench?: "rea
     return completeIn(py, code, line, column, bench ? benchNs.get(bench)?.ns : undefined);
 }
 
-self.onmessage = (e: MessageEvent) => {
-    const msg = e.data as RunMsg;
-    if (!msg || typeof msg.id !== "number") return;
-    // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be
-    // handed a `full` run (the bridges are stripped), and a full worker must not be handed a readonly
-    // run under the assumption it is locked. Refuse rather than silently run in the wrong sandbox.
-    if (msg.hardened !== undefined && msg.hardened !== !READONLY && !msg.complete && !msg.env && !msg.benchReset && !(msg as { prewarm?: boolean }).prewarm) {
-        self.postMessage({ id: msg.id, ok: false, stdout: "", error: READONLY ? "Refused: this worker is the readonly sandbox (locked down)." : "Refused: this worker is the full sandbox (not locked down)." });
-        return;
-    }
-    // A PRE-WARM: start the runtime now so the run that needs it later does not wait. Deliberately NOT on the
-    // run chain — a run arriving meanwhile must wait on the start itself (and be charged for that wait), not
+// Frozen: the strip's `STRIPPED_NAMES` removes `addEventListener`, so `onmessage` is the only way in.
+// A frozen handler cannot be replaced after the lockdown.
+Object.defineProperty(self, "onmessage", {
+    value: (e: MessageEvent) => {
+        const msg = e.data as RunMsg;
+        if (!msg || typeof msg.id !== "number") return;
+        // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be
+        // handed a `full` run (the bridges are stripped), and a full worker must not be handed a readonly
+        // run under the assumption it is locked. Refuse rather than silently run in the wrong sandbox.
+        if (msg.hardened !== undefined && msg.hardened !== !READONLY && !msg.complete && !msg.env && !msg.benchReset && !(msg as { prewarm?: boolean }).prewarm) {
+            post({ id: msg.id, ok: false, stdout: "", error: READONLY ? "Refused: this worker is the readonly sandbox (locked down)." : "Refused: this worker is the full sandbox (not locked down)." });
+            return;
+        }
+        // A PRE-WARM: start the runtime now so the run that needs it later does not wait. Deliberately NOT on the
+        // run chain — a run arriving meanwhile must wait on the start itself (and be charged for that wait), not
     // queue behind a message that is itself waiting on it. Answers at once with whether it started anything.
     if ((msg as unknown as { prewarm?: boolean }).prewarm) {
         const started = pyodideReady == null;
         getPyodide("prewarm").catch(() => { /* the run that needs it reports the failure */ });
-        self.postMessage({ id: msg.id, ok: true, stdout: "", prewarm: started ? "started" : "already" });
+        post({ id: msg.id, ok: true, stdout: "", prewarm: started ? "started" : "already" });
         return;
     }
     // An ENV query, not a run. It goes through the same serialized chain so it cannot land between a run's
     // globals being set and its code executing — the interpreter is one thread and this reads from it.
     if ((msg as unknown as { env?: boolean }).env) {
         runChain = runChain.then(() => env()).then(
-            (info) => self.postMessage({ id: msg.id, ok: true, stdout: "", env: info }),
-            (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+            (info) => post({ id: msg.id, ok: true, stdout: "", env: info }),
+            (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
         );
         return;
     }
@@ -275,15 +283,15 @@ self.onmessage = (e: MessageEvent) => {
     if (msg.complete) {
         const { line, column, bench } = msg.complete;
         runChain = runChain.then(() => complete(msg.code, line, column, bench)).then(
-            (completions) => self.postMessage({ id: msg.id, ok: true, stdout: "", completions }),
-            (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+            (completions) => post({ id: msg.id, ok: true, stdout: "", completions }),
+            (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
         );
         return;
     }
     // Throw away the bench's kept state, both modes. Through the chain like everything else that touches the
     // interpreter, so it cannot land in the middle of a run that is using it.
     if (msg.benchReset) {
-        runChain = runChain.then(() => { resetBench(); self.postMessage({ id: msg.id, ok: true, stdout: "" }); });
+        runChain = runChain.then(() => { resetBench(); post({ id: msg.id, ok: true, stdout: "" }); });
         return;
     }
     // Live stdout streaming: when the run opted in (`stream`), post each print() chunk back as a `partial`
@@ -291,12 +299,15 @@ self.onmessage = (e: MessageEvent) => {
     // Stamped HERE, in the worker — this is where the print actually happened. The chunk then crosses
     // offscreen → SW → page before anything renders it, so a timestamp taken downstream would be skewed
     // by those hops (the same reason a remote bash tool must stamp on its own server).
-    const onStdout = msg.stream ? (chunk: string) => self.postMessage({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
-    const onStarted = () => self.postMessage({ id: msg.id, started: true });
+    const onStdout = msg.stream ? (chunk: string) => post({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
+    const onStarted = () => post({ id: msg.id, started: true });
     runChain = runChain
         .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted))
         .then(
-            (result: RunResult) => self.postMessage({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
-            (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+            (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
+            (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
         );
-};
+    },
+    writable: false,
+    configurable: false,
+});

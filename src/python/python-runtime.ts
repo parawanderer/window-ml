@@ -283,6 +283,11 @@ else:
     _ml_stringio, _ml_fmt_exc = _ml_io2.StringIO, _ml_tb2.format_exc
     _ml_redir_out, _ml_redir_err = _ml_c2.redirect_stdout, _ml_c2.redirect_stderr
     _ml_real_out = _ml_s2.stdout
+# The harness module is GONE from the namespace before the user's code sees it: the refs are in local
+# names now, and neither \`import _ml_harness\` (it is not in \`sys.modules\`) nor \`globals()["_ml_harness"]\`
+# (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
+del _ml_h
+globals().pop("_ml_harness", None)
 # The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
 # JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
 # the host's \`injectInputs\`, which is the one that converts at the boundary.

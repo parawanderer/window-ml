@@ -112,7 +112,7 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "redirect_stderr": _ml_c.redirect_stderr,
     "sys_stdout": _ml_s.stdout,
 })
-_ml_s.modules["_ml_harness"] = _h
+_h
 `;
 
 /**
@@ -174,9 +174,10 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
     //    re-sets it, so nothing a prior cell did in Python can unseat it.
     let harness: unknown;
     try {
-        py.runPython(HARNESS_BOOT);
-        // Read it back as the PYTHON module object (`sys.modules` holds it; `globals()` does not).
-        harness = py.runPython("__import__('sys').modules.get('_ml_harness')");
+        // `HARNESS_BOOT` ends with `_h` as its trailing expression: `runPython` returns the module object
+        // directly. It is NOT placed in `sys.modules` — `import _ml_harness` must fail, and the wrapper
+        // deletes `_ml_harness` from the cell's namespace after extracting the refs.
+        harness = py.runPython(HARNESS_BOOT);
     } catch { /* the wrapper falls back */ }
 
     // The relay keeps these in its own closure. Nothing is written to the scope: a JsProxy of it
