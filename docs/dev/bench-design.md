@@ -37,7 +37,10 @@ with each run's model calls beside it (`calls`, the usage as recorded, priced on
 by hash in `snapshots`: `spend.mjs`);
 and the box log, `box.sqlite` (`box-stream.mjs`), every frame of the server's event stream once, keyed by the box and
 the server's clock so two sweeps watching one box store it once. A sweep's page bakes in what it saw, so a saved
-report stays scrollable without either file.
+report stays scrollable without either file. The governing evaluation axes over those stores (constrained operational
+efficiency: $\text{IPS}$, $\text{IPD}$, $\text{IPJ}$ above rest, semantic token density, $\tau_{\text{core}}$ vs
+$\tau_{\text{client}}$, and interactive vs asymptotic regimes) live in
+[`docs/spec/MODEL_EFFICIENCY.md`](../spec/MODEL_EFFICIENCY.md).
 
 ## 2. Edits go to an append-only log; nothing is overwritten
 
