@@ -101,12 +101,30 @@ test("an ask on a step that is not running (finished, or never drawn) is refused
 test("a run with nobody to ask refuses at once: no card, nothing in the store", async () => {
     const { r, emitted, unhost } = run({ unattended: true });
     const o = await raiseAsk(r.runId, 1, { kind: "sh", facts: FACTS });
-    assert.deepEqual([o.allowed, o.state], [false, "unattended"]);
-    // At once: nobody was waited for. Not exactly 0, which a slow runner's clock can miss by a millisecond or three.
-    assert.ok(o.waitedMs < 1000, `waited ${o.waitedMs} ms`);
+    assert.deepEqual([o.allowed, o.state, o.waitedMs], [false, "unattended", 0]);
     assert.equal(keysOf(r.runId).length, 0);
     assert.deepEqual(emitted.at(-1).asks.map((a) => a.state), ["unattended"], "the step still records what was asked");
     unhost();
+});
+
+test("an unattended refusal says waitedMs 0 even when the wall clock ticks between the two readings", async () => {
+    // "Refused at once" is the product guarantee. Measuring the instant path reported a phantom
+    // millisecond (or three, on a slow runner) whenever the clock ticked across raise and answer.
+    const orig = Date.now.bind(Date);
+    let reads = 0;
+    Date.now = () => (reads++ === 0 ? orig() : orig() + 5);
+    try {
+        const { r, emitted, unhost } = run({ unattended: true });
+        const o = await raiseAsk(r.runId, 1, { kind: "sh", facts: FACTS });
+        assert.deepEqual([o.allowed, o.state, o.waitedMs], [false, "unattended", 0]);
+        assert.equal(o.answeredAt, o.raisedAt, "an instant refusal answers at the raise time");
+        assert.equal(o.waitedMs, o.answeredAt - o.raisedAt, "the wait is still measured, for the call's result to say");
+        assert.equal(keysOf(r.runId).length, 0);
+        assert.deepEqual(emitted.at(-1).asks.map((a) => a.state), ["unattended"]);
+        unhost();
+    } finally {
+        Date.now = orig;
+    }
 });
 
 test("an ask nobody answers is denied when the wall clock runs out", async () => {

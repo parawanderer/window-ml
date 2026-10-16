@@ -21,7 +21,8 @@ import { recordRunLog } from "./sw-run-log";
 export { ASK_ID, approvalKey } from "../approval-key";
 
 /** What the consumer gets back. `waitedMs` is the wall-clock time the call waited, which its result says: a reading
- *  taken after the wait is not simultaneous with one taken before. */
+ *  taken after the wait is not simultaneous with one taken before. A refusal that waited for nobody (`unattended`, and
+ *  the instant `ended`/`limit` ones) answers at the raise time and reports 0. */
 export interface AskOutcome { allowed: boolean; state: Exclude<AskState, "pending">; note?: string; raisedAt: number; answeredAt: number; waitedMs: number }
 
 /** How long an ask waits for the person before it is denied (the wall clock runs while a script waits; its step budget
@@ -106,9 +107,11 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
     asksByStep.set(stepKey, list);
     const id = `a${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
     const entry: StepAsk = { id, kind: String(ask.kind), facts: plainCopy(ask.facts), state: "pending", raisedAt, ...(run.routing === "external" ? { external: true as const } : {}) };
-    const settle = (e: StepAsk, state: AskOutcome["state"], note?: string): AskOutcome => {
+    const settle = (e: StepAsk, state: AskOutcome["state"], note?: string, instant = false): AskOutcome => {
         e.state = state;
-        e.answeredAt = Date.now();
+        // An instant refusal answers at the raise time, as `ended()` does: there was no wait to measure, and a
+        // second `Date.now()` is not simultaneous with the first, so measuring one would report a phantom millisecond.
+        e.answeredAt = instant ? raisedAt : Date.now();
         if (note) e.note = note.slice(0, 2000);
         run.emit(seq, list.map((a) => ({ ...a })));
         recordRunLog(runId, { ...(state === "allowed" ? {} : { level: "warn" as const }), subsystem: "consent", kind: "ask", reason: state, ms: e.answeredAt - raisedAt, detail: { kind: e.kind, seq } });
@@ -120,7 +123,7 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
         return Promise.resolve(ended("limit", `this step already asked ${MAX_ASKS_PER_STEP} times; make fewer calls that need approval in one step`));
     }
     list.push(entry);
-    if (run.unattended) return Promise.resolve(settle(entry, "unattended", "this run has nobody to ask"));
+    if (run.unattended) return Promise.resolve(settle(entry, "unattended", "this run has nobody to ask", true));
     const key = `${stepKey}#${id}`;
     return new Promise<AskOutcome>((resolve) => {
         let done = false;
