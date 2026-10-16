@@ -2361,11 +2361,15 @@ test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screensh
 test("CANCEL_RUN aborts a background run's in-flight model call → the run resolves cancelled", async () => {
     // The HUD's "Cancel agent run": abort the run's controller mid-generation. The loop threads the
     // signal into fetchLLM (kills the slow call) and converts the AbortError to a clean { cancelled }.
-    let sawSignal = false;
+    // Wait for the fetch to be IN FLIGHT before cancelling: the router awaits hydration, the config and
+    // the start gate first, so one tick is not enough, and a CANCEL_RUN that lands before the controller
+    // exists is a no-op (the next test's loop waits the same way).
+    let sawSignal = false, inFlight = false;
     const bg = loadBackground({
         config: baseConfig(),
         onFetch: (call) => new Promise((_, reject) => {
             sawSignal = !!call.opts.signal;
+            inFlight = true;
             const abort = () => { const e = new Error("aborted"); e.name = "AbortError"; reject(e); };
             if (call.opts.signal.aborted) return abort();
             call.opts.signal.addEventListener("abort", abort);
@@ -2375,7 +2379,8 @@ test("CANCEL_RUN aborts a background run's in-flight model call → the run reso
         runId: "runC", task: "x", systemPrompt: "sys", tools: [], model: "m", think: null,
         maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
     } }, { tab: { id: 8 } });
-    await new Promise(r => setTimeout(r, 0));   // let the run reach its in-flight model call
+    for (let i = 0; i < 200 && !inFlight; i++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(inFlight, true, "the run reached its in-flight model call");
     bg.send({ type: "CANCEL_RUN", payload: { runId: "runC" } });   // fire-and-forget (no response)
     const res = await pending;
     assert.equal(sawSignal, true, "the run's model fetch received the abort signal");
