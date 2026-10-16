@@ -876,3 +876,112 @@ test("GAIN blocked — EVERY page-started message type, from an approved origin 
         assert.equal(bg.nativeConnects.length, connects + 1, `${label}: positive control: a reconnect is counted`);
     }
 });
+
+// --- ml.sh stays out of the page's world (docs/spec/SHELL.md; exec-routing.ts) ---
+
+test("GAIN blocked — ml.sh is never handed to the main world: routeExec forces isolation or refuses", async () => {
+    const { routeExec, execNames } = await import("../src/sw/exec-routing.ts");
+    // A script naming ml.sh is forced isolated. With no isolation available it is REFUSED, never downgraded.
+    const named = execNames("ml.sh.run(['ls'])");
+    assert.equal(named.sh, true, "positive control: the lexical check sees ml.sh");
+    const noIso = { userScripts: false, cdp: false };
+    for (const approvedPage of [true, false]) {
+        const r = routeExec("ml.sh.run(['ls'])", approvedPage, noIso, {});
+        assert.equal(r.where, "refused", `approved=${approvedPage}: ml.sh with no isolation is refused, got ${JSON.stringify(r)}`);
+        assert.notEqual(r.where, "main", `approved=${approvedPage}: ml.sh never runs in the main world`);
+    }
+    // world: "page" never overrides the forced isolation for ml.sh.
+    const forced = routeExec("ml.sh.run(['ls'])", true, noIso, { world: "page" });
+    assert.equal(forced.where, "refused", `world:"page" cannot force ml.sh into the main world, got ${JSON.stringify(forced)}`);
+    // Positive control: a script that does NOT name ml.sh can run in the main world on an approved page.
+    const plain = routeExec("1 + 1", true, noIso, { world: "page" });
+    assert.equal(plain.where, "main", `positive control: a plain script runs in the main world, got ${JSON.stringify(plain)}`);
+});
+
+// --- the POLICIES message is extension-surface only (background.ts) ---
+
+test("GAIN blocked — a page cannot add, edit or remove a policy: POLICIES is refused from a content script", async () => {
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, local: { ml_site_always: ["https://evil.example"] }, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    const sender = hostilePage();
+    for (const op of ["add", "edit", "remove"]) {
+        const r = await bg.send({ type: "POLICIES", payload: { op, source: "(c) => true", label: "evil", effect: "allow", consumer: "fetch", id: "pol-x" } }, sender);
+        assert.equal(r?.error, "refused", `op=${op}: a page's POLICIES is refused`);
+    }
+    // Positive control: an extension page can list.
+    const ext = { id: "test", url: "chrome-extension://test/sidebar.html" };
+    const ok = await bg.send({ type: "POLICIES", payload: { op: "list" } }, ext);
+    assert.ok(ok?.data !== undefined || ok?.error === undefined, "positive control: an extension page's POLICIES list is answered");
+});
+
+// --- propose_policy is worker-built only, and never adds a policy on its own (propose-policy-tool.ts) ---
+
+test("GAIN blocked — propose_policy without the worker's deps refuses and adds nothing", async () => {
+    const { proposePolicyTool } = await import("../src/tools/propose-policy-tool.ts");
+    const tool = proposePolicyTool((d) => d);   // descriptor-only: no deps
+    const r = await tool.run({ effect: "allow", when: "(c) => true", label: "evil" });
+    assert.match(String(r), /Error.*only in a run the extension started/, `descriptor-only propose_policy refuses, got: ${r}`);
+});
+
+// --- the policy realm is a sandbox: a policy cannot escape its facade (policy-realm.ts) ---
+
+test("GAIN blocked — a policy cannot mutate its facts facade or read constructor/__proto__", async () => {
+    const { evalPolicy } = await import("../src/readonly-exec/policy-realm.ts");
+    const { fromFetch } = await import("../src/effects.ts");
+    const facts = { kind: "fetch", url: "https://x.example/", host: "x.example", method: "GET", credentials: false, rendered: false, effects: fromFetch({ url: "https://x.example/" }) };
+
+    // Mutating c fails (deep frozen facade).
+    const mut = evalPolicy("(c) => { c.host = 'evil'; return true; }", facts, "allow");
+    assert.ok(mut.broken, `mutating c must break the policy, got ${JSON.stringify(mut)}`);
+    assert.ok(!mut.decision, `a mutating policy must not decide, got ${JSON.stringify(mut)}`);
+
+    // Reading c.constructor breaks (strict facade).
+    const ctor = evalPolicy("(c) => c.constructor", facts, "allow");
+    assert.ok(ctor.broken, `reading c.constructor must break, got ${JSON.stringify(ctor)}`);
+
+    // Reading c.__proto__ breaks.
+    const proto = evalPolicy("(c) => c.__proto__", facts, "allow");
+    assert.ok(proto.broken, `reading c.__proto__ must break, got ${JSON.stringify(proto)}`);
+
+    // Reading a field the call does not have breaks (typo → broken, not silent false).
+    const typo = evalPolicy("(c) => c.urll === 'x'", facts, "allow");
+    assert.ok(typo.broken, `reading a missing field must break, got ${JSON.stringify(typo)}`);
+
+    // Positive control: a well-formed policy decides.
+    const ok = evalPolicy("(c) => c.host === 'x.example'", facts, "allow");
+    assert.equal(ok.decision, "allow", `positive control: a clean policy allows, got ${JSON.stringify(ok)}`);
+    const deny = evalPolicy("(c) => c.host === 'x.example'", facts, "deny");
+    assert.equal(deny.decision, "deny", `positive control: a deny policy denies, got ${JSON.stringify(deny)}`);
+});
+
+test("GAIN blocked — a policy cannot reach a function or the global scope through its root", async () => {
+    const { evalPolicy } = await import("../src/readonly-exec/policy-realm.ts");
+    const { fromFetch } = await import("../src/effects.ts");
+    const facts = { kind: "fetch", url: "https://x.example/", host: "x.example", method: "GET", credentials: false, rendered: false, effects: fromFetch({ url: "https://x.example/" }) };
+
+    // eval and Function are not in the policy root.
+    const evalTry = evalPolicy("(c) => eval('1')", facts, "allow");
+    assert.ok(evalTry.broken, `eval must break, got ${JSON.stringify(evalTry)}`);
+    const fnTry = evalPolicy("(c) => Function('return 1')()", facts, "allow");
+    assert.ok(fnTry.broken, `Function must break, got ${JSON.stringify(fnTry)}`);
+
+    // == and != are refused at parse time.
+    const loose = evalPolicy("(c) => c.host == 'x.example'", facts, "allow");
+    assert.ok(loose.broken, `== must break, got ${JSON.stringify(loose)}`);
+
+    // Positive control: === works.
+    const strict = evalPolicy("(c) => c.host === 'x.example'", facts, "allow");
+    assert.equal(strict.decision, "allow", `positive control: === works, got ${JSON.stringify(strict)}`);
+});
+
+// --- shell output pointers are bound to their run (sw-shell-call.ts shRead) ---
+
+test("GAIN blocked — the shell and policy message types are absent from HANDLE_MAP", () => {
+    // No page-started type maps to SHELL_EXEC, SHELL_HELLO, or any policy mutation.
+    for (const t of ["SHELL_EXEC", "SHELL_HELLO", "SHELL_RUN", "SHELL_READ", "POLICIES", "POLICY_ADD", "PROPOSE_POLICY"]) {
+        assert.ok(!PAGE_STARTED_TYPES.has(t), `${t} must not be a page-started type`);
+    }
+    // And the relay's own map has no shell/policy entry either.
+    for (const [req, entry] of Object.entries(HANDLE_MAP)) {
+        assert.ok(!/SHELL|POLIC/i.test(entry.type), `HANDLE_MAP[${req}] maps to ${entry.type} — shell/policy must not be relayable`);
+    }
+});
