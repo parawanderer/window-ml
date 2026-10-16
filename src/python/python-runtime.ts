@@ -7,6 +7,26 @@
 import { PY_PRELUDE_IMPORTS } from "./python-env";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 
+/**
+ * Hand the run's inputs to the interpreter as PYTHON values — `None` or `str`, never a JS null.
+ * `ns.set` of a JS null lands as `JsNull` (a JsProxy in the namespace — the P3 vector); `undefined`
+ * lands as Python `None`. Measured on Pyodide: `set(k, null)` → `JsNull`, `set(k, undefined)` → `None`,
+ * and `toPy(null)` is itself `JsNull` — only `undefined` converts.
+ *
+ * @param ns the namespace to set on — `py.globals`, or a bench namespace
+ * @param image the injected screenshot (data: URL / base64), or null for none
+ * @param tablesJson the injected tables already JSON-encoded, or null for none
+ * @param harness the harness module `lockdownReadonly` captured at boot. Re-bound HERE before every
+ *   cell, never looked up through `sys.modules`: a cell that pops `sys.modules["_ml_harness"]` cannot
+ *   force the next cell into the wrapper's `except ImportError` fallback (which imports the patched
+ *   `ast`/`json`). Absent (real-CPython tests without the lockdown): the wrapper falls back to imports.
+ */
+export function injectInputs(ns: any, image: string | null, tablesJson: string | null, harness?: unknown): void {
+    if (harness !== undefined) ns.set("_ml_harness", harness);
+    ns.set("INJECTED_IMAGE_B64", image == null ? undefined : String(image));
+    ns.set("INJECTED_TABLES_JSON", tablesJson == null ? undefined : String(tablesJson));
+}
+
 // Standard prelude injected before the model's code: numpy/PIL/pandas in scope, an optional
 // `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, a `to_base64()`
 // helper, and the injected tables as named DataFrames (+ a `tables` dict). Reads the JS-injected
@@ -33,7 +53,7 @@ img_np = None
 H = W = 0
 _b64 = globals().get("INJECTED_IMAGE_B64")
 if _b64:
-    _raw = base64.b64decode(_b64.split(",")[-1])   # tolerate a data: URL prefix
+    _raw = _ml_b64d(_b64.split(",")[-1])   # tolerate a data: URL prefix
     img = Image.open(io.BytesIO(_raw)).convert("RGB")
     img_np = np.array(img)
     H, W = img_np.shape[:2]
@@ -45,7 +65,6 @@ df = None
 tables = {}
 _tsj = globals().get("INJECTED_TABLES_JSON")
 if _tsj:
-    import json as _json
     def _build_df(_t):
         # A STORED table (the value store): its bytes were copied once into a bytearray bound as _t["buf"], and are
         # decoded here by the format they arrived in. A delimited body is re-read with the columns, delimiter and
@@ -75,7 +94,7 @@ if _tsj:
                 return pd.DataFrame(_rows, columns=_cols)
             return pd.DataFrame(_rows)
         return pd.read_html(io.StringIO(_t.get("html") or ""), flavor="bs4")[0]
-    for _entry in _json.loads(_tsj):
+    for _entry in _ml_loads(_tsj):
         _df = _build_df(_entry["data"])
         globals()[_entry["name"]] = _df
         tables[_entry["name"]] = _df
@@ -223,15 +242,69 @@ for _k in list(globals().keys()):
  *   scope would swallow them: `x = 1` is a LOCAL of `_user` and disappears when the run ends.
  */
 export const wrapUserCode = (code: string, hardened = true, persist = false): string => /* python */ `
+# THE HARNESS'S OWN REFS (lockdown.ts captured them at boot, before any cell ran). A cell that patches
+# \`ast.parse\` or \`json.loads\` changes what the RUN's own later cells see, never what the harness parses,
+# encodes or injects. Looked up in the NAMESPACE — \`injectInputs\` re-binds the module before every cell —
+# never through \`sys.modules\`: a cell that pops the entry there must not force this cell into the import
+# fallback below. Fallback to the plain module attributes when the module is absent (real-CPython tests).
+_ml_h = globals().get("_ml_harness")
+if _ml_h is not None and getattr(_ml_h, "ast_parse", None) is not None:
+    _ml_parse = _ml_h.ast_parse
+    _ml_loads = _ml_h.json_loads
+    _ml_dumps = _ml_h.json_dumps
+    _ml_ino = _ml_h.ast_increment_lineno
+    _ml_cloc = _ml_h.ast_copy_location
+    _ml_fix = _ml_h.ast_fix_missing_locations
+    _ml_Ret = _ml_h.ast_Return
+    _ml_Expr = _ml_h.ast_Expr
+    _ml_Call = _ml_h.ast_Call
+    _ml_Attr = _ml_h.ast_Attribute
+    _ml_Name = _ml_h.ast_Name
+    _ml_Assign = _ml_h.ast_Assign
+    _ml_walk = _ml_h.ast_walk
+    _ml_b64d = _ml_h.b64decode
+    _ml_b64e = _ml_h.b64encode
+    _ml_indent = _ml_h.indent
+    _ml_bytesio = _ml_h.bytes_io
+    _ml_stringio = _ml_h.string_io
+    _ml_fmt_exc = _ml_h.format_exc
+    _ml_redir_out = _ml_h.redirect_stdout
+    _ml_redir_err = _ml_h.redirect_stderr
+    _ml_real_out = _ml_h.sys_stdout
+else:
+    import ast as _ml_a2, json as _ml_j2, base64 as _ml_b2, textwrap as _ml_tw2, traceback as _ml_tb2, io as _ml_io2, contextlib as _ml_c2, sys as _ml_s2
+    _ml_parse, _ml_loads, _ml_dumps = _ml_a2.parse, _ml_j2.loads, _ml_j2.dumps
+    _ml_ino, _ml_cloc, _ml_fix = _ml_a2.increment_lineno, _ml_a2.copy_location, _ml_a2.fix_missing_locations
+    _ml_Ret, _ml_Expr = _ml_a2.Return, _ml_a2.Expr
+    _ml_Call, _ml_Attr, _ml_Name, _ml_Assign = _ml_a2.Call, _ml_a2.Attribute, _ml_a2.Name, _ml_a2.Assign
+    _ml_walk = _ml_a2.walk
+    _ml_b64d, _ml_b64e = _ml_b2.b64decode, _ml_b2.b64encode
+    _ml_indent, _ml_bytesio = _ml_tw2.indent, _ml_io2.BytesIO
+    _ml_stringio, _ml_fmt_exc = _ml_io2.StringIO, _ml_tb2.format_exc
+    _ml_redir_out, _ml_redir_err = _ml_c2.redirect_stdout, _ml_c2.redirect_stderr
+    _ml_real_out = _ml_s2.stdout
+# The harness module is GONE from the namespace before the user's code sees it: the refs are in local
+# names now, and neither \`import _ml_harness\` (it is not in \`sys.modules\`) nor \`globals()["_ml_harness"]\`
+# (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
+del _ml_h
+globals().pop("_ml_harness", None)
+${persist ? "" : `
+# The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
+# JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
+# the host's \`injectInputs\`, which is the one that converts at the boundary.
+def _ml_in(_v):
+    return _v if (isinstance(_v, str) or _v is None) else None
+INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
+INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
+`}
 ${persist ? PRELUDE_BASE : RESET + PRELUDE}
 ${netPolicy(hardened)}
 result = None
 _ml_src = ${JSON.stringify(code)}
 _ml_persist = ${persist ? "True" : "False"}
-# stdout capture that ALSO tees each write to a JS callback (\`_ml_stdout_cb\`, set by the worker ONLY when
-# the run opted into live streaming) so print() output streams live (Jupyter-style) — while _out still holds
-# the byte-exact full stdout for the final result. No callback set → pure capture, unchanged.
-class _MlTee(io.StringIO):
+# stdout capture that tees each write to the REAL stdout (Pyodide's \`setStdout\` wraps it on the JS side for
+# live streaming) — no JS callback in the namespace, so the namespace holds no JsProxy at all.
+class _MlTee(_ml_stringio):
     # Bounded (output-clip.ts OUTPUT_CEILING): past it a write is counted, not kept and not teed, so a print in a loop
     # costs a counter, not the worker's memory.
     _ml_kept = 0
@@ -242,23 +315,20 @@ class _MlTee(io.StringIO):
             return len(_s)
         self._ml_kept += len(_s)
         _n = super().write(_s)
-        _cb = globals().get("_ml_stdout_cb")
-        if _cb is not None:
-            try: _cb(_s)
-            except Exception: pass
+        try: _ml_real_out.write(_s)
+        except Exception: pass
         return _n
 _out = _MlTee()
 _err = None
 _ml_ret_latex = False
-with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
+with _ml_redir_out(_out), _ml_redir_err(_out):
     try:
-        import ast as _ast, textwrap as _tw
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
-        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    ")
+        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _ml_indent(_ml_src, "    ")
         try:
-            _ml_tree = _ast.parse(_ml_def_src, filename="<python_exec>")
+            _ml_tree = _ml_parse(_ml_def_src, filename="<python_exec>")
         except SyntaxError as _ml_se:
             # A SyntaxError is raised BY THE PARSE, so the correction below never runs for it — and it
             # carries the prefixed line number in its own fields, which is what gets printed. Shift it here
@@ -293,34 +363,32 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         # Only the user's own statements move; the injected \`global\`/\`pass\` keep their positions, since a
         # negative lineno will not compile.
         for _ml_n in _ml_body[2:]:
-            _ast.increment_lineno(_ml_n, -3)
-        if isinstance(_ml_body[-1], _ast.Expr):
-            _ml_body[-1] = _ast.copy_location(_ast.Return(_ml_body[-1].value), _ml_body[-1])
-            _ast.fix_missing_locations(_ml_tree)
+            _ml_ino(_ml_n, -3)
+        if isinstance(_ml_body[-1], _ml_Expr):
+            _ml_body[-1] = _ml_cloc(_ml_Ret(_ml_body[-1].value), _ml_body[-1])
+            _ml_fix(_ml_tree)
         # If the RETURNED value is a latex(...) call (sympy.latex / sp.latex / a bare latex from
         # "from sympy import latex"), the string it produces IS LaTeX — remember it so the epilogue flags the
         # render (typeset, no pipe cast) even for a plain scalar like sympy.latex(5) == "5". Covers a
         # trailing expr, an explicit return, and a result = ... assignment.
         def _ml_is_latex_call(_n):
-            return isinstance(_n, _ast.Call) and ((isinstance(_n.func, _ast.Attribute) and _n.func.attr == "latex") or (isinstance(_n.func, _ast.Name) and _n.func.id == "latex"))
-        for _n in _ast.walk(_ml_tree):
-            if isinstance(_n, _ast.Return) and _n.value is not None and _ml_is_latex_call(_n.value):
+            return isinstance(_n, _ml_Call) and ((isinstance(_n.func, _ml_Attr) and _n.func.attr == "latex") or (isinstance(_n.func, _ml_Name) and _n.func.id == "latex"))
+        for _n in _ml_walk(_ml_tree):
+            if isinstance(_n, _ml_Ret) and _n.value is not None and _ml_is_latex_call(_n.value):
                 _ml_ret_latex = True
-            elif isinstance(_n, _ast.Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ast.Name) and _t.id == "result" for _t in _n.targets):
+            elif isinstance(_n, _ml_Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ml_Name) and _t.id == "result" for _t in _n.targets):
                 _ml_ret_latex = True
         exec(compile(_ml_tree, "<python_exec>", "exec"), globals())
         _ret = _user()
         if _ret is not None:
             result = _ret
     except BaseException:
-        import traceback
-        _err = traceback.format_exc()
+        _err = _ml_fmt_exc()
         result = None
 _stdout = _out.getvalue()
 _ml_stdout_dropped = _out._ml_dropped
-import json as _json
 try:
-    _json_result = _json.dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
+    _json_result = _ml_dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
 except Exception:
     _json_result = None
 # Auto-render by RETURN TYPE (no cast needed): a sympy expression becomes its LaTeX (+ a 'latex' hint the UI
@@ -331,11 +399,10 @@ try:
     _rmod = (getattr(type(result), '__module__', '') or '').split('.')[0]
     if _rmod == 'sympy':
         import sympy as _sp
-        _json_result = _json.dumps(_sp.latex(result)); _json_render = 'latex'
+        _json_result = _ml_dumps(_sp.latex(result)); _json_render = 'latex'
     elif _rmod == 'PIL' and hasattr(result, 'save'):
-        import io as _io2, base64 as _b642
-        _pbuf = _io2.BytesIO(); result.save(_pbuf, format='PNG')
-        _json_result = _json.dumps('data:image/png;base64,' + _b642.b64encode(_pbuf.getvalue()).decode()); _json_render = 'img'
+        _pbuf = _ml_bytesio(); result.save(_pbuf, format='PNG')
+        _json_result = _ml_dumps('data:image/png;base64,' + _ml_b64e(_pbuf.getvalue()).decode()); _json_render = 'img'
     # The code RETURNED a latex(...) call's string (AST-detected above) — typeset it, even a bare "5".
     elif _ml_ret_latex and isinstance(result, str):
         _json_render = 'latex'
@@ -371,9 +438,9 @@ try:
                 _dfr = _dfr.assign(**{_c: _dfr[_c].map(_ml_cell)})
         except Exception:
             pass   # a frame this cannot walk still serialises the way it always did
-        _split = _json.loads(_dfr.to_json(orient='split', date_format='iso'))
+        _split = _ml_loads(_dfr.to_json(orient='split', date_format='iso'))
         _ml_n = len(_ml_full)
-        _json_table = _json.dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', []), **({'rowCount': _ml_n} if _ml_n > len(_dfr) else {})})
+        _json_table = _ml_dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', []), **({'rowCount': _ml_n} if _ml_n > len(_dfr) else {})})
         # PAST THE PREVIEW, the whole frame is written as Arrow IPC for the value store, so a later step reads every row by
         # pointer (POINTER_VALUES slice 6). The index is dropped, as the preview above drops it. A frame Arrow cannot
         # hold (mixed-type object columns, non-string column names) is simply not stored: its preview still says how
@@ -390,6 +457,18 @@ try:
                 _ipc_result = None
 except Exception:
     _json_table = None
+# Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5): a task
+# left pending would run during the next cell's pump of the event loop, observing its source and injected
+# inputs. Cancel is enough — a cancelled task's coroutine throws at its await point and never continues.
+# The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the run machinery.
+try:
+    import asyncio as _ml_aio
+    _ml_self = _ml_aio.current_task()
+    for _ml_task in _ml_aio.all_tasks():
+        if _ml_task is not _ml_self:
+            _ml_task.cancel()
+except Exception:
+    pass
 `;
 
 // --- Sandbox hardening (the `readonly` mode) --------------------------------------

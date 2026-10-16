@@ -225,7 +225,8 @@ test("no injected image → img/img_np are None", { skip }, async () => {
 
 test("stdout past the output ceiling: kept up to it, the rest counted, nothing teed past it", { skip, timeout: 120000 }, async () => {
     const teed = [];
-    py.globals.set("_ml_stdout_cb", (s) => teed.push(s.length));
+    // The live half is Pyodide's JS-side setStdout, which wraps the real stdout the tee writes through to.
+    py.setStdout({ batched: (s) => teed.push(s.length) });
     try {
         // Five 9 MB prints: three fit under 32 million, the fourth would pass it.
         const r = await pyRun(`s = "x" * 9000000\nfor _ in range(5):\n    print(s)\nreturn 1`);
@@ -233,7 +234,7 @@ test("stdout past the output ceiling: kept up to it, the rest counted, nothing t
         assert.equal(r.stdout.length, 3 * 9_000_001, "three whole writes of a line and its newline");
         assert.equal(Number(py.globals.get("_ml_stdout_dropped")), 2 * 9_000_001);
         assert.ok(teed.reduce((a, b) => a + b, 0) <= 3 * 9_000_001, "a write past the ceiling is not streamed");
-    } finally { py.globals.delete("_ml_stdout_cb"); }
+    } finally { py.setStdout({}); }
 });
 
 test("stdout under the ceiling reports nothing dropped", { skip, timeout: 120000 }, async () => {
@@ -471,9 +472,11 @@ test("auto-render: a sympy.latex(...) return is flagged latex by the CODE (AST),
     assert.equal(plain.render, undefined, "str(5) is not a latex() call → not flagged");
 });
 
-test("live stdout tee: _ml_stdout_cb streams each print() chunk while _stdout keeps the full capture", { skip }, async () => {
+test("live stdout tee: setStdout streams each print() chunk while _stdout keeps the full capture", { skip }, async () => {
     const chunks = [];
-    py.globals.set("_ml_stdout_cb", (s) => chunks.push(s));   // the worker sets this only when streaming is on
+    // The worker hooks Pyodide's JS-side setStdout when streaming is on: the tee writes through to the
+    // real stdout, so the live chunks arrive there and the namespace holds no JsProxy (P3).
+    py.setStdout({ batched: (s) => chunks.push(s) });
     try {
         const r = await pyRun("print('alpha'); print('beta'); 42");
         assert.equal(r.value, 42, "the trailing expression still returns");
@@ -481,11 +484,11 @@ test("live stdout tee: _ml_stdout_cb streams each print() chunk while _stdout ke
         const streamed = chunks.join("");
         assert.match(streamed, /alpha/, "alpha streamed live via the tee");
         assert.match(streamed, /beta/, "beta streamed live via the tee");
-    } finally { py.globals.delete("_ml_stdout_cb"); }
+    } finally { py.setStdout({}); }
 });
 
-test("live stdout tee: NO callback set → pure capture, the tee is a silent no-op", { skip }, async () => {
-    const r = await pyRun("print('quiet'); 1");   // (prior test deleted _ml_stdout_cb)
+test("live stdout tee: no setStdout hook → pure capture, the tee still keeps _stdout", { skip }, async () => {
+    const r = await pyRun("print('quiet'); 1");
     assert.equal(r.stdout, "quiet\n", "stdout captured normally");
     assert.equal(r.value, 1);
 });
