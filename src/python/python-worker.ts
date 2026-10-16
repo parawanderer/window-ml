@@ -65,6 +65,10 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
         await py.loadPackage(PY_PACKAGE_LOADS);
+        // Lazy tooling (jedi) loads BEFORE the lockdown too: `complete()` calls `py.loadPackage(PY_LAZY_LOADS)`
+        // after the strip has removed `fetch`, and Pyodide's loader needs it to fetch the wheel. Only readonly
+        // workers pay this at boot — a full worker still has `fetch` and can load it on demand.
+        if (READONLY && PY_LAZY_LOADS.length) await py.loadPackage(PY_LAZY_LOADS);
         // Before ANY run and before the lockdown: a package that needs the `js` bridge to import (pyarrow's
         // timezone helper) is imported here, where the bridge exists. See python-env.ts `prepare`.
         if (PY_STARTUP_PREPARE) py.runPython(PY_STARTUP_PREPARE);
@@ -245,21 +249,23 @@ async function complete(code: string, line: number, column: number, bench?: "rea
     return completeIn(py, code, line, column, bench ? benchNs.get(bench)?.ns : undefined);
 }
 
-// Frozen: the strip's `STRIPPED_NAMES` removes `addEventListener`, so `onmessage` is the only way in.
-// A frozen handler cannot be replaced after the lockdown.
-Object.defineProperty(self, "onmessage", {
-    value: (e: MessageEvent) => {
-        const msg = e.data as RunMsg;
-        if (!msg || typeof msg.id !== "number") return;
-        // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be
-        // handed a `full` run (the bridges are stripped), and a full worker must not be handed a readonly
-        // run under the assumption it is locked. Refuse rather than silently run in the wrong sandbox.
-        if (msg.hardened !== undefined && msg.hardened !== !READONLY && !msg.complete && !msg.env && !msg.benchReset && !(msg as { prewarm?: boolean }).prewarm) {
-            post({ id: msg.id, ok: false, stdout: "", error: READONLY ? "Refused: this worker is the readonly sandbox (locked down)." : "Refused: this worker is the full sandbox (not locked down)." });
-            return;
-        }
-        // A PRE-WARM: start the runtime now so the run that needs it later does not wait. Deliberately NOT on the
-        // run chain — a run arriving meanwhile must wait on the start itself (and be charged for that wait), not
+// The message handler. Registered via `addEventListener` at module load — BEFORE the lockdown strips
+// `addEventListener` — so the listener lives in the browser's C++ EventTarget list, unreachable from JS
+// after the strip. Setting `self.onmessage` instead would invoke the WebIDL setter (which starts the
+// MessagePort); `Object.defineProperty(self, "onmessage", ...)` shadows that setter WITHOUT invoking it,
+// and the port never starts — every message goes unanswered until the 120s timeout.
+function onMessage(e: MessageEvent): void {
+    const msg = e.data as RunMsg;
+    if (!msg || typeof msg.id !== "number") return;
+    // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be
+    // handed a `full` run (the bridges are stripped), and a full worker must not be handed a readonly
+    // run under the assumption it is locked. Refuse rather than silently run in the wrong sandbox.
+    if (msg.hardened !== undefined && msg.hardened !== READONLY && !msg.complete && !msg.env && !msg.benchReset && !(msg as { prewarm?: boolean }).prewarm) {
+        post({ id: msg.id, ok: false, stdout: "", error: READONLY ? "Refused: this worker is the readonly sandbox (locked down)." : "Refused: this worker is the full sandbox (not locked down)." });
+        return;
+    }
+    // A PRE-WARM: start the runtime now so the run that needs it later does not wait. Deliberately NOT on the
+    // run chain — a run arriving meanwhile must wait on the start itself (and be charged for that wait), not
     // queue behind a message that is itself waiting on it. Answers at once with whether it started anything.
     if ((msg as unknown as { prewarm?: boolean }).prewarm) {
         const started = pyodideReady == null;
@@ -307,7 +313,5 @@ Object.defineProperty(self, "onmessage", {
             (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
         );
-    },
-    writable: false,
-    configurable: false,
-});
+}
+self.addEventListener("message", onMessage as EventListener);

@@ -169,9 +169,10 @@ async function runFor(principal, code, opts) {
 
 // The names a JsProxy of the worker's global object must find nothing of (P4). Split by what
 // "gone" means: the host surface and the evaluators must be ABSENT; a timer may stay only if it
-// refuses a STRING argument (the indirect-eval path).
+// refuses a STRING argument (the indirect-eval path). `Function` is NOT here: it is an intrinsic
+// Pyodide's WASM runtime needs, so it stays in the allow list and `lockdown()` tames it instead.
 const HOST_SURFACE = ["fetch", "XMLHttpRequest", "WebSocket", "indexedDB", "caches", "navigator",
-    "postMessage", "addEventListener", "importScripts", "eval", "Function"];
+    "postMessage", "addEventListener", "importScripts", "eval"];
 const TIMER_STRING = ["setTimeout", "setInterval"];
 
 /** A stand-in for the worker's `globalThis`, carrying the whole P4 surface so every name is checkable in Node.

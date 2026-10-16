@@ -25,7 +25,7 @@ let locked = false;   // state: plumbing — the realm's lockdown latch, one-way
 export const ALLOWED_GLOBALS: readonly string[] = Object.freeze([
     // JS intrinsics Pyodide's WASM runtime and the stdlib reach.
     "globalThis", "undefined", "NaN", "Infinity",
-    "Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
+    "Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt", "Function",
     "Math", "JSON", "Reflect", "Proxy", "Promise", "Map", "Set", "WeakMap", "WeakSet", "WeakRef",
     "Date", "RegExp", "FinalizationRegistry", "Iterator",
     "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError",
@@ -45,11 +45,14 @@ export const ALLOWED_GLOBALS: readonly string[] = Object.freeze([
     "AbortController", "AbortSignal",
 ]);
 
-/** The evaluator and host-surface names the strip must ensure are ABSENT (never kept, even if a realm adds one). */
+/** The evaluator and host-surface names the strip must ensure are ABSENT (never kept, even if a realm adds one).
+ *  `Function` is NOT here: it is an intrinsic Pyodide's runtime needs, and `lockdown()` already tames it
+ *  (calling `Function("code")` throws). `eval` is stripped — Pyodide never uses it. */
 export const STRIPPED_NAMES: readonly string[] = Object.freeze([
-    "eval", "Function", "importScripts", "fetch", "XMLHttpRequest", "WebSocket", "EventSource",
+    "eval", "importScripts", "fetch", "XMLHttpRequest", "WebSocket", "EventSource",
     "Worker", "SharedWorker", "BroadcastChannel", "RTCPeerConnection",
     "postMessage", "addEventListener", "removeEventListener", "dispatchEvent",
+    "onmessage", "onerror", "onmessageerror",
     "navigator", "indexedDB", "caches", "localStorage", "sessionStorage",
     "chrome",
 ]);
@@ -130,12 +133,27 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
     // 1. Intrinsic taming: the Function/AsyncFunction/GeneratorFunction constructors reached through a
     //    prototype chain throw. `lockdown()` is once per realm; a second call is a no-op here.
     if (!locked) {
-        // ONE evaluation first. Pyodide's result-conversion path (the `callKwargs` helper that tags a
-        // return value) assigns `.constructor` on a plain object, which `lockdown()` then makes
-        // read-only. Measured: lock first and every later `runPythonAsync` throws
-        // `ConversionError: Cannot assign to read only property 'constructor'`; warm up first and they
-        // work. So the order is: evaluate once, then lockdown — never the other way round.
-        try { await py.runPythonAsync("1"); } catch { /* unwarmable: the later cells will say so */ }
+        // Pyodide's PyProxy class factory (`Module.getPyProxyClass`) builds a descriptor map with
+        // `n.constructor = ...` on a plain `{}`, which `lockdown()` then freezes non-writable so the
+        // assignment throws `Cannot assign to read only property 'constructor'`. The factory caches
+        // per flag bitfield, so a single warmup only pre-creates the class for ONE flag combination
+        // and the table/DataFrame path hits the uncached one. Fix: give `Object.prototype.constructor`
+        // an accessor setter BEFORE the freeze — `lockdown()` preserves accessors (just makes them
+        // non-configurable), so the setter still materialises an own property on every assignment.
+        try {
+            Object.defineProperty(Object.prototype, "constructor", {
+                get() { return Object; },
+                set(v: unknown) {
+                    Object.defineProperty(this, "constructor", {
+                        value: v, writable: true, enumerable: true, configurable: true,
+                    });
+                },
+                configurable: true,
+                enumerable: false,
+            });
+        } catch { /* already an accessor or non-configurable */ }
+        // Warm up the basic eval path too (cheap, keeps the first cell from being the first conversion).
+        try { await py.runPythonAsync("1", { globals: py.globals }); } catch { /* unwarmable: the later cells will say so */ }
         try { (globalThis as any).lockdown({ errorTaming: "unsafe" }); locked = true; } catch { /* already locked */ }
     }
 
@@ -146,7 +164,9 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
 
     // 3. The allow-list strip. Delete everything outside ALLOWED_GLOBALS; also force-remove the known
     //    evaluator/host names even if a realm invents an alias for one. Timers become string-refusing
-    //    wrappers. WebAssembly is kept whole — it compiles bytes, never a string.
+    //    wrappers. WebAssembly is kept whole — it compiles bytes, never a string. Prototype chain too:
+    //    `onmessage`, `postMessage` etc. live on `DedicatedWorkerGlobalScope.prototype`, not as own
+    //    properties of `self`, so an own-property delete alone leaves them reachable.
     const keep = new Set(ALLOWED_GLOBALS);
     for (const name of Object.getOwnPropertyNames(scope)) {
         if (keep.has(name)) continue;
@@ -154,6 +174,13 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
     }
     for (const name of STRIPPED_NAMES) {
         try { delete scope[name]; } catch { /* gone or non-configurable */ }
+        // Walk the prototype chain and delete there too (the WorkerGlobalScope methods are prototype
+        // accessors: `delete self.postMessage` is a no-op when `postMessage` is on the prototype).
+        let proto = Object.getPrototypeOf(scope);
+        while (proto && proto !== Object.prototype) {
+            try { delete proto[name]; } catch { /* non-configurable */ }
+            proto = Object.getPrototypeOf(proto);
+        }
     }
     // Timers: a STRING argument is the browser's indirect-eval path. Keep the function; refuse the string.
     for (const name of TIMER_NAMES) {
