@@ -35,6 +35,67 @@ import { releaseShOutputs } from "./sw-shell-call";
 // call. Deleted when the run settles. Aborting resolves the loop as { cancelled: true } (partial transcript).
 export const runControllers = new Map<string, AbortController>();
 
+/** A run whose START_RUN/RESUME_RUN is still in its pre-`hostRun` awaits (the worker's restore, the config
+ *  read, the start card). `runControllers` has nothing for it yet, so a CANCEL_RUN in that window would be
+ *  dropped and the run would start anyway — the person's Stop lost, including across a worker restart's
+ *  hydration. Aborting these makes each start refuse before `hostRun`. One entry per start message: two
+ *  starts under one id both wait on a stuck restore (and both report it), and only one hosts a turn
+ *  (`hostTurn` claims `runControllers`). `tabId` is each sender's, so a page's own PAGE_CANCEL_RUN can still
+ *  find its start and no other tab's. */
+export const startingControllers = new Map<string, Set<{ ctl: AbortController; tabId: number }>>();   // state: plumbing
+
+/**
+ * Begin a start that has not reached `hostRun` yet: from here a CANCEL_RUN can abort it through
+ * {@link startingControllers}. Never refused here — two starts under one id both wait, and `hostTurn`
+ * claims the live controller so only one runs — so a start still held by the restore still answers the
+ * restore's own bound rather than "already running".
+ * @param runId the run
+ * @param tabId the tab the start came from
+ * @returns the starting abort
+ */
+export function beginStart(runId: string, tabId: number): AbortController {
+    const ctl = new AbortController();
+    const set = startingControllers.get(runId) ?? new Set();
+    set.add({ ctl, tabId });
+    startingControllers.set(runId, set);
+    return ctl;
+}
+
+/**
+ * Drop a start's registration once it has been refused, or once `hostRun` has the real controller.
+ * @param runId the run
+ * @param ctl the start's own abort (only that one is dropped: another start under the same id is kept)
+ */
+export function endStart(runId: string, ctl: AbortController): void {
+    const set = startingControllers.get(runId);
+    if (!set) return;
+    for (const e of [...set]) if (e.ctl === ctl) set.delete(e);
+    if (!set.size) startingControllers.delete(runId);
+}
+
+/**
+ * Abort every start of a run that has not hosted yet, as a CANCEL_RUN does for a live one.
+ * @param runId the run
+ * @returns whether there was a start to stop
+ */
+export function abortStart(runId: string): boolean {
+    const set = startingControllers.get(runId);
+    if (!set?.size) return false;
+    for (const e of set) e.ctl.abort();
+    startingControllers.delete(runId);
+    return true;
+}
+
+/**
+ * Whether a tab owns a start of this run that has not hosted yet (the PAGE_CANCEL_RUN ownership rule).
+ * @param runId the run
+ * @param tabId the tab asking
+ */
+export function startingOwnedBy(runId: unknown, tabId: number | undefined): boolean {
+    if (typeof runId !== "string" || tabId == null) return false;
+    return [...(startingControllers.get(runId) ?? [])].some((e) => e.tabId === tabId);
+}
+
 // Design A resume (Phase 2): after a background-hosted run settles, keep enough to CONTINUE it — the
 // full message history + the original StartRunPayload (deps are rebuilt from it) + the owning tab. A
 // RESUME_RUN {runId, task} re-enters the loop from this history. In-memory only, so it's subject to

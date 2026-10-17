@@ -2361,9 +2361,9 @@ test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screensh
 test("CANCEL_RUN aborts a background run's in-flight model call → the run resolves cancelled", async () => {
     // The HUD's "Cancel agent run": abort the run's controller mid-generation. The loop threads the
     // signal into fetchLLM (kills the slow call) and converts the AbortError to a clean { cancelled }.
-    // Wait for the fetch to be IN FLIGHT before cancelling: the router awaits hydration, the config and
-    // the start gate first, so one tick is not enough, and a CANCEL_RUN that lands before the controller
-    // exists is a no-op (the next test's loop waits the same way).
+    // Wait for the fetch to be IN FLIGHT before cancelling: this test is about aborting the model call,
+    // and the router awaits hydration, the config and the start gate first. A CANCEL_RUN that lands
+    // before the controller exists refuses the start instead (the tests below).
     let sawSignal = false, inFlight = false;
     const bg = loadBackground({
         config: baseConfig(),
@@ -2421,6 +2421,148 @@ test("CANCEL_ALL_RUNS (the popup panic button) aborts every live run and reports
     // Idempotent: nothing live now → 0.
     const again = await bg.send({ type: "CANCEL_ALL_RUNS", payload: {} });
     assert.equal(again.data.cancelled, 0, "a second call finds nothing to stop");
+});
+
+// --- a cancel that lands while the run is still STARTING is not dropped (the pre-hostRun awaits) ---
+
+/** A START_RUN payload for `runId` on a tab, as a page's content script sends it. */
+const startPayload = (runId, task = "x") => ({
+    runId, task, systemPrompt: "sys", tools: [], model: "m", think: null,
+    maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+});
+
+test("CANCEL_RUN during the restore wait refuses the start: no model call, nothing left behind", async () => {
+    // The real window is a worker's post-restart hydration: START_RUN waits on it, and a Stop in that
+    // wait used to be dropped — the run then started anyway and its fetch hung on an abort that had
+    // already happened. `holdRestore` holds exactly that wait.
+    let releaseRestore;
+    const holdRestore = new Promise((r) => { releaseRestore = r; });
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        holdRestore,
+        onFetch: () => { fetches++; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); },
+    });
+    const pending = bg.send({ type: "START_RUN", payload: startPayload("runC") }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));   // the start is registered, waiting on the restore
+    assert.ok(bg.context.__mlRunStateForTest().starting.includes("runC"), "the start is registered while it waits");
+    bg.send({ type: "CANCEL_RUN", payload: { runId: "runC" } });   // fire-and-forget
+    releaseRestore();
+    const res = await pending;
+    assert.ok(res.data && res.data.cancelled, "the start answers cancelled (not an error, and not a hang)");
+    assert.equal(fetches, 0, "the run never reached a model call");
+    assert.deepEqual(bg.context.__mlRunStateForTest().starting, [], "the starting registration is gone");
+    assert.deepEqual(bg.context.__mlRunStateForTest().controllers, [], "and no live controller was created");
+});
+
+test("CANCEL_ALL_RUNS during the restore wait counts and stops a start that has not hosted yet", async () => {
+    let releaseRestore;
+    const holdRestore = new Promise((r) => { releaseRestore = r; });
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        holdRestore,
+        onFetch: () => { fetches++; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); },
+    });
+    const pending = bg.send({ type: "START_RUN", payload: startPayload("runP") }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));
+    const res = await bg.send({ type: "CANCEL_ALL_RUNS", payload: {} });
+    assert.equal(res.data.cancelled, 1, "the panic button counts the start that has not hosted yet");
+    releaseRestore();
+    const start = await pending;
+    assert.ok(start.data && start.data.cancelled, "the start answers cancelled");
+    assert.equal(fetches, 0, "the run never reached a model call");
+    assert.deepEqual(bg.context.__mlRunStateForTest().starting, [], "nothing starting is left behind");
+});
+
+test("PAGE_CANCEL_RUN stops the page's own starting run, and no other tab's", async () => {
+    // Ownership of a start that has not reached `runInboxes`/`bgRuns` yet is the start registration's
+    // `tabId`: the page's own is its own to stop, and another tab must not be able to stop it (a page
+    // knows every run id from the events).
+    let releaseRestore;
+    const holdRestore = new Promise((r) => { releaseRestore = r; });
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        holdRestore,
+        onFetch: () => { fetches++; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); },
+    });
+    const pending = bg.send({ type: "START_RUN", payload: startPayload("own1") }, { tab: { id: 8, url: "https://page.test/" } });
+    await new Promise(r => setTimeout(r, 0));
+    // Another tab names the id (it learned it from the run's events): must not stop it.
+    await bg.send({ type: "PAGE_CANCEL_RUN", payload: { runId: "own1" } }, { tab: { id: 9, url: "https://other.test/" } });
+    assert.ok(bg.context.__mlRunStateForTest().starting.includes("own1"), "another tab's cancel left the start alone");
+    // The owning tab's own cancel stops it.
+    await bg.send({ type: "PAGE_CANCEL_RUN", payload: { runId: "own1" } }, { tab: { id: 8, url: "https://page.test/" } });
+    releaseRestore();
+    const res = await pending;
+    assert.ok(res.data && res.data.cancelled, "the owning tab's cancel refused the start");
+    assert.equal(fetches, 0, "the run never reached a model call");
+    assert.deepEqual(bg.context.__mlRunStateForTest().starting, [], "nothing starting is left behind");
+});
+
+test("PAGE_CANCEL_RUN cannot stop a worker-built run that is still starting (only the person's Stop can)", async () => {
+    // A worker-built start is the person's from the first tick (`workerRunsStarting`). A page that learns
+    // its id must not be able to stop it while it starts, any more than while it runs.
+    let releaseAdopt;
+    const adoptHeld = new Promise((r) => { releaseAdopt = r; });
+    const bg = loadBackground({
+        config: baseConfig({ debugMode: "off" }),
+        openTabs: [{ id: 7, url: "https://site.example/page", title: "Site" }],
+        onFetch: (call) => call.url.includes("/chat/completions")
+            ? jsonResponse({ choices: [{ message: { content: "done" } }] })
+            : jsonResponse({}),
+        onTabMessage: async (_tabId, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") { await adoptHeld; return { pageInfo: "URL: https://site.example/page" }; }
+            return undefined;
+        },
+    });
+    const starting = bg.context.__mlStartUserRunForTest(7, { task: "do it", surface: "hud" });
+    await new Promise(r => setTimeout(r, 0));
+    const ids = bg.context.__mlRunStateForTest().starting;
+    assert.equal(ids.length, 1, "the worker-built start is registered while its adopt is in flight");
+    const runId = ids[0];
+    await bg.send({ type: "PAGE_CANCEL_RUN", payload: { runId } }, { tab: { id: 7, url: "https://site.example/page" } });
+    assert.ok(bg.context.__mlRunStateForTest().starting.includes(runId), "a page's cancel left the person's starting run alone");
+    bg.send({ type: "CANCEL_RUN", payload: { runId } });   // the shell's Stop (fire-and-forget)
+    releaseAdopt();
+    await assert.rejects(starting, /Cancelled before the run started/);
+    assert.deepEqual(bg.context.__mlRunStateForTest().starting, [], "the person's Stop refused the start");
+    assert.deepEqual(bg.context.__mlRunStateForTest().controllers, [], "and it left nothing live");
+});
+
+test("two START_RUNs under one run id while the first is still starting: one hosts, one is refused", async () => {
+    // Two starts under one id both wait out a stuck restore (so both still report RESTORE_PENDING — see
+    // nav-handover's HALTING case) and then race to `hostRun`. Only one may host a live turn: the other is
+    // refused rather than replacing the live controller and leaving the winner running with no Stop. The model
+    // call is held so the first turn is still live when the second arrives (a fast answer would finish the
+    // first turn first, and a second turn of a settled run is legitimate).
+    let releaseRestore;
+    const holdRestore = new Promise((r) => { releaseRestore = r; });
+    let releaseFetch;
+    const fetchHeld = new Promise((r) => { releaseFetch = r; });
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        holdRestore,
+        onFetch: async () => { fetches++; await fetchHeld; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); },
+    });
+    const first = bg.send({ type: "START_RUN", payload: startPayload("dup1") }, { tab: { id: 8 } });
+    const second = bg.send({ type: "START_RUN", payload: startPayload("dup1") }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));
+    assert.ok(bg.context.__mlRunStateForTest().starting.includes("dup1"), "both starts are registered while they wait");
+    releaseRestore();
+    // Let both starts reach hostRun (the first claims the controller, the second is refused) while the first
+    // turn's model call is still in flight.
+    await new Promise(r => setTimeout(r, 20));
+    releaseFetch();
+    const [a, b] = await Promise.all([first, second]);
+    const hosted = [a, b].filter((x) => x.data);
+    const refused = [a, b].filter((x) => x.error);
+    assert.equal(hosted.length, 1, "exactly one start hosted a turn");
+    assert.equal(refused.length, 1, "the other was refused");
+    assert.match(String(refused[0].error), /already running/, "the loser is told the run is busy, not left hanging");
+    assert.equal(fetches, 1, "only one turn reached the model");
 });
 
 test("RESUME_RUN continues a stored background run with its accumulated history (+ tab-ownership guard)", async () => {

@@ -22,7 +22,7 @@ import { pyMediaFor } from "./worker-media";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { hostRun } from "./sw-run-host";
 import { delegateSend } from "./delegate-send";
-import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting } from "./sw-runs";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting, beginStart, endStart } from "./sw-runs";
 import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
@@ -98,13 +98,19 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     // START_RUN, RESUME_RUN or INJECT_MESSAGE naming it is refused, so the page cannot host its own run under the hash
     // the person's UI is about to be given.
     workerRunsStarting.add(runId);
+    // A CANCEL_ALL_RUNS (or a Stop once the id is out) during the adopt/config awaits must stop this start: without
+    // the registration the panic button sees nothing live and the run starts anyway. `hostRun` takes the
+    // registration over when it registers the turn's real controller.
+    const starting = beginStart(runId, tabId);
     let cfg: Awaited<ReturnType<typeof getConfig>>;
     let adopted: Awaited<ReturnType<typeof adoptOnTab>>;
     try {
         adopted = await adoptOnTab(tabId, runId, rebuild);
         if (adopted.error) throw new Error(`The run could not start on this page: ${adopted.error}.`);
         cfg = await getConfig();
+        if (starting.signal.aborted) throw new Error("Cancelled before the run started.");
     } catch (e) {
+        endStart(runId, starting);
         workerRunsStarting.delete(runId);
         dropLocalTools(runId);
         throw e;
@@ -122,7 +128,15 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     };
     if (opts.keep) keepSession(runId);
     // The run's result reaches every surface through its own lifecycle events (`builtBy: "worker"`), so nobody
-    // waits on this reply.
+    // waits on this reply. Same tick as the registration's end: a cancel after this check finds the live
+    // controller (or, if `hostRun` refuses a race, nothing to cancel).
+    if (starting.signal.aborted) {
+        endStart(runId, starting);
+        workerRunsStarting.delete(runId);
+        dropLocalTools(runId);
+        throw new Error("Cancelled before the run started.");
+    }
+    endStart(runId, starting);
     hostRun({ type: "START_RUN", payload }, tabId, () => { workerRunsStarting.delete(runId); });
     return { hash: runId };
 }
@@ -202,9 +216,19 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     }
     if (!stored) return "none";
     // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
-    if (!stored.p.rebuild || (await adoptOnTab(tabId, hash, stored.p.rebuild)).error) return "none";
+    // Registered as a start for that await: a CANCEL_ALL_RUNS there must stop this resume, not find nothing live.
+    const starting = beginStart(hash, tabId);
+    try {
+        if (!stored.p.rebuild || (await adoptOnTab(tabId, hash, stored.p.rebuild)).error) { endStart(hash, starting); return "none"; }
+        if (starting.signal.aborted) { endStart(hash, starting); return "none"; }
+    } catch (e) {
+        endStart(hash, starting);
+        throw e;
+    }
     if (text) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}) });
     const steps = stepBudget(body.maxSteps);
+    if (starting.signal.aborted) { endStart(hash, starting); return "none"; }
+    endStart(hash, starting);
     hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
         tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined);
     return action === "continue" ? "continued" : "turn";
