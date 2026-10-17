@@ -116,13 +116,21 @@ Two invariants keep an interpreted-script manifest sound:
    files `scripts/index.mjs` imports. On the plain host (where there is no kernel envelope), pinning must hash the
    entrypoint's transitive local import closure, or the manifest applies only when `sandboxed: true`.
 
-**Two kinds of command, two kinds of manifest.** A registered command is either a PROCESS, described by a program
-manifest (standalone binary or `(program, entrypoint)` script) and bounded by the kernel envelope above, or an IN-PROCESS
-FUNCTION exposed in `exec` / `python_exec`, written in JavaScript or Python and described by a library manifest
-([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)). A function written in the read-only dialect of either
-language needs no effect or cost trust at all: tier 3 (`@cost interpret`) proves its effects and step bound by
-construction ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)). So the cheapest way to a free-tier helper is to write it in the
-dialect, and the two kinds meet the policy as the same facts.
+**Two kinds of command, two kinds of manifest — and how ad-hoc scripts graduate.** A registered command is either a
+PROCESS, described by a program manifest (standalone binary or `(program, entrypoint)` script) and bounded by the kernel
+envelope above, or an IN-PROCESS FUNCTION exposed in `exec` / `python_exec`, written in JavaScript or Python and
+described by a library manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)). A function written in
+the read-only dialect of either language needs no effect or cost trust at all: tier 3 (`@cost interpret`) proves its
+effects and step bound by construction ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)).
+
+When an agent works with Python (or Node) on a desktop runtime, three execution modes therefore coexist without
+overlapping:
+
+| Mode | Invocation | Gate & Pin | Why |
+| --- | --- | --- | --- |
+| **1. Local kernel (`python_exec` cell or `import` inside it)** | In-process cell or pure helper module | **In-interpreter `CO_RESTRICTED` gate** (step budget, `heap(owned)` write barrier + rollback, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)). No `open()`, `os`, `sys`, `argparse`. | Shares one persistent per-run heap (`dict`); must halt and never mutate unowned state. |
+| **2. Ad-hoc script written & edited mid-run (`python3 tmp/scratch.py`)** | `ml.sh.run(["python3", "tmp/scratch.py", ...])` while the agent iterates on `tmp/scratch.py` | **OS sandbox** (Seatbelt / Landlock confines writes to roots, denies `~/.ssh` and network) + Root L process-group memory/time cap + **run-scoped policy** (`propose_policy`, [`POLICIES.md`](POLICIES.md)). | A CLI script imports `sys`/`os`/`pathlib`/`open` (which `CO_RESTRICTED` refuses), and its `sha256` changes on every edit, so a hash-pinned manifest would invalidate on each turn. |
+| **3. Stabilized repo CLI (`python3 scripts/tool.py`, `node scripts/index.mjs`)** | `ml.sh.run(["python3", "scripts/tool.py", ...])` | **`ProgramManifest` `(program, entrypoint)` pinned by `sha256`** (`propose_manifest`) + **manifest-derived sandbox envelope** (`write: none`, `net: deny`, `exec: program-only`). | Once stationary, its flag grammar is described once and enforced as a tight read-only kernel envelope across runs without needing a run policy. |
 
 **What this adds, later (Root K):** `(program, entrypoint)` prefix matching in `describeCall`, profile derivation from a
 manifest's effects, `sha256` pinning of a resolved binary or script closure, a manifests store with workspace and global
