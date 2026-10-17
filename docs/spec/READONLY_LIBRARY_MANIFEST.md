@@ -296,6 +296,33 @@ class DataFrame:
     def agg(self, func, axis=0): ...           # the vocabulary above is an example; the corpus count sets the real one
 ```
 
+## Generating and importing a manifest into the runtime
+
+With `ml.sh` enabled, a user or an agent in the loop can use the wrapper itself to inspect a library (or annotate a
+library they just wrote in the workspace) and import the resulting manifest into the active runtime without rebuilding
+the extension.
+
+Whether a generated manifest requires trust or is self-verifying depends on which cost tier it uses:
+
+| Target | How it runs | Trust & verification boundary on import |
+| --- | --- | --- |
+| **Pure-JS or pure-Python module at Tier 3 (`@cost interpret`)** | The JS dialect AST evaluator or CPython `CO_RESTRICTED` mode steps directly into the library's functions | **Zero trust in annotations.** Ownership (`heap(owned)`), forbidden globals/dunders, and the step budget are enforced by construction on every primitive step inside the body. Importing the manifest into the runtime only admits the module (`sha256`-pinned) into the dialect's import allowlist and compiles its functions with `CO_RESTRICTED` (Python) or registers its parsed AST (JS). |
+| **Native C extension / unmediated host function at Tier 1 (`@lift` + closed-form `@cost`)** | The interpreter lifts its gate (`@lift`) for the dynamic extent of the call and charges the closed-form `@cost` expression beforehand | **Trusted claim; requires evidence before approval.** Unlike a CLI [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md) call (where Seatbelt/Landlock enforces `write: none` and `net: deny` at the kernel boundary even if the manifest lies), a `@lift` library entry suspends the in-process gate. When an agent drafts a Tier 1 sidecar (`propose_manifest`), the proposal harness runs an isolated probe over representative inputs to verify non-mutation of inputs (`@effects pure`), return non-aliasing (`@returns fresh`), and empirical runtime scaling against the declared `@cost` bound before raising the human's two-button approval card. |
+| **Interpreted CLI script (`node scripts/<name>.mjs`, `python3 <tool>.py`)** | Spawned as a separate process through `ml.sh.run` | Uses a **program manifest** (`(program, entrypoint)` pinned by script `sha256` in [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Interpreted script tools"), not a library manifest: the OS sandbox enforces the effect envelope externally, and process timeout + Root L's physical-footprint bound replace the in-interpreter cost tiers. |
+
+### The runtime import loop
+
+1. **Author or synthesize.** The user or agent either writes inline JSDoc / `@decorators` in their own workspace module
+   or generates a sidecar (`<name>.readonly.js` / `<name>.readonly.pyi`) from the library's source and type declarations.
+2. **Pin and propose (`propose_manifest`).** Parallel to `propose_policy` ([`POLICIES.md`](POLICIES.md)) and Root K in
+   [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), the compiled manifest is pinned to the content `sha256` of the target
+   module (or wheel) and submitted with its scope (`workspace` for repo-local modules, `global` for user-installed
+   packages) and verification evidence (Tier 3 AST/bytecode admission check, or Tier 1 isolated probe results).
+3. **Approve once, load live.** Once the person approves the card (or installs the file in DevTools Settings), the worker
+   and the Pyodide / CPython runtime merge the manifest's entries into the active lookup table keyed by `(module, sha256)`
+   for the current and subsequent runs. If the underlying file changes on disk, the `sha256` pin mismatches and calls
+   into it drop back to `unknown` (asking the person) until re-pinned.
+
 ## Open questions
 
 - **Size measures.** Which ones does an interpreter trust? `xs.length` on a host array is cheap and honest. On an

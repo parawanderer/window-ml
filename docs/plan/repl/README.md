@@ -71,20 +71,26 @@ Edges (what waits on what):
 Not a root, and not started this round: `mode` removal, the Pyodide build, the host's extension side, package install,
 secrets, placement, the hub desktop runtime.
 
-**Added 2026-10-15: K. registering a program** ([`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md), "Registering a
-program"): the sandbox profile derived from a manifest's claims (the description as the envelope), hash pinning of a
-resolved program, a manifests directory with workspace and global scope, drafting a manifest from `--help` or completion
-files as a card with evidence, and the registration page. Depends on I and F; unassigned this round. Details settled
-with lane 4 (2026-10-15): the host's sandbox plan gains `write: none|roots` and `exec: any|program-only`; on macOS
-Seatbelt restricts `process-exec` to a literal path; on Linux the same comes from Landlock's per-path EXECUTE right,
-applied by a small exec shim (`exec-under <ruleset> -- prog`, which composes with bubblewrap and keeps the host free of
-`unsafe`), with EXECUTE granted to the program, the ELF interpreter and a script's `#!` interpreter; the Landlock ABI is
-reported in `hello`, and best-effort is treated as unavailable, so a no-runner claim is never silently trusted where
-the kernel cannot enforce it. Landlock also closes a WRITE gap bubblewrap has (measured in the host's Linux CI, 29 of 30
-enforcement tests passing): bwrap binds only paths that EXIST when the call starts, so a protected path that is absent
-then (`.vscode/settings.json`) is writable on Linux while Seatbelt's regex denies it. K's Linux write rules are Landlock
-rules over the roots minus the protected NAMES, which hold whether or not the file exists; the gap is pinned by its own
-test in the host repo, which must flip when K lands.
+**Added 2026-10-15: K. registering a program or library manifest** ([`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md),
+"Registering a program" and "Interpreted script tools"; [`READONLY_LIBRARY_MANIFEST.md`](../../spec/READONLY_LIBRARY_MANIFEST.md),
+"Generating and importing a manifest into the runtime"): the sandbox profile derived from a program manifest's claims
+(the description as the envelope), `(program, entrypoint)` prefix matching so interpreted CLI scripts
+(`["node", "scripts/<name>.mjs", ...]`, `["python3", "<script>.py", ...]`) with no preceding interpreter flags get their
+own manifests keyed on `argv[0..1]`, `sha256` pinning of a resolved binary, script closure, or library module, a
+manifests store with workspace and global scope, `propose_manifest` (drafting a program manifest from `--help`/script
+source or a library manifest from module source/types into a card with sandbox or Tier 3/Tier 1 probe evidence, and
+loading it live into the runtime on approval), and the registration page in DevTools Settings. Depends on I and F;
+unassigned this round. Details settled with lane 4 (2026-10-15): the host's sandbox plan gains `write: none|roots` and
+`exec: any|program-only`; on macOS Seatbelt restricts `process-exec` to a literal path (the binary, or the interpreter
+binary when matching `(program, entrypoint)`); on Linux the same comes from Landlock's per-path EXECUTE right, applied by
+a small exec shim (`exec-under <ruleset> -- prog`, which composes with bubblewrap and keeps the host free of `unsafe`),
+with EXECUTE granted to the program, the ELF interpreter and a script's `#!` interpreter; the Landlock ABI is reported in
+`hello`, and best-effort is treated as unavailable, so a no-runner claim is never silently trusted where the kernel cannot
+enforce it. Landlock also closes a WRITE gap bubblewrap has (measured in the host's Linux CI, 29 of 30 enforcement tests
+passing): bwrap binds only paths that EXIST when the call starts, so a protected path that is absent then
+(`.vscode/settings.json`) is writable on Linux while Seatbelt's regex denies it. K's Linux write rules are Landlock rules
+over the roots minus the protected NAMES, which hold whether or not the file exists; the gap is pinned by its own test in
+the host repo, which must flip when K lands.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
