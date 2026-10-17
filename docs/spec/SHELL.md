@@ -110,7 +110,9 @@ never a page. The model learns which mode a call ran in from the call's result, 
   here it is **on by default**, and it **fails closed** (no sandbox available: every call asks, as a gap does
   everywhere else in this extension). Codex CLI is the precedent for on by default (writes confined to the workspace,
   network off). The person turns it off per workspace, knowingly; a tool that needs to write elsewhere (a package
-  cache, `~/.kube`) gets that path added rather than the sandbox removed.
+  cache, `~/.kube`) gets that path added through its [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md) `write(fs(p))` effect
+  or the workspace roots rather than the sandbox removed or a separate sandbox config file introduced
+  ([`EFFECTS.md`](EFFECTS.md), "No separate sandbox profile file").
 - **The sandbox widens the free tier, by definition.** An enforcer publishes the set of effects it bounds, and the free
   tier is "the call's effects are inside that set, plus reads in the roots" ([`EFFECTS.md`](EFFECTS.md)). Seatbelt
   publishes writes inside the roots and the network allowlist, so a sandboxed host-mode call is judged like a container
@@ -137,8 +139,12 @@ never a page. The model learns which mode a call ran in from the call's result, 
   reads `root/.env`). The manifest marks recursive readers (`rg`, `grep -r`, `find`, `ls -R`, `tar`, `du`); for one, a
   directory argument carries a `containsSecret` fact from a bounded walk by the host (past the cap it is `unknown`, and
   the call asks), and the default policy requires it false. A `.env` in the tree asks; a person whose dotenv test suite
-  needs it free writes a WORKSPACE policy saying so. The Seatbelt profile hides credential STORES (`~/.ssh`, `~/.aws`) at
-  any depth and does not hide project `.env` files, for that reason.
+  needs it free writes a WORKSPACE policy saying so. In the baseline host-mode sandbox (`v0.2.0`), Seatbelt hides
+  credential STORES (`~/.ssh`, `~/.aws`) at any depth and relies on `containsSecret` / `pathArgs` for project `.env`
+  files; under Root K's effect-compiled sandbox `Plan` ([`EFFECTS.md`](EFFECTS.md)), workspace secret files found by the
+  host's walk are also denied at the kernel level unless the call explicitly named them and was approved (`allow_read`
+  in `sandbox.rs`), so an interpreted script (`node scripts/tool.mjs`, `python3 scripts/tool.py`) cannot read `.env`
+  behind its declared `argv` operands.
 
 ## Where the script runs
 
