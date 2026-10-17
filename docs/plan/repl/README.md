@@ -74,7 +74,10 @@ secrets, placement, the hub desktop runtime.
 **Added 2026-10-15: K. registering a program or library manifest** ([`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md),
 "Registering a program" and "Interpreted script tools"; [`READONLY_LIBRARY_MANIFEST.md`](../../spec/READONLY_LIBRARY_MANIFEST.md),
 "Generating and importing a manifest into the runtime"): the sandbox profile derived from a program manifest's claims
-(the description as the envelope), `(program, entrypoint)` prefix matching so interpreted CLI scripts
+(the description as the envelope: no separate sandbox profile file is introduced — the host's per-call sandbox `Plan` is
+compiled directly from the call's approved `EffectsData` set $E(c)$, the workspace roots, and the fixed credential/hook
+safety floor, with workspace secret files denied at the kernel level unless present in `allow_read`, see
+[`EFFECTS.md`](../../spec/EFFECTS.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
 (`["node", "scripts/<name>.mjs", ...]`, `["python3", "<script>.py", ...]`) with no preceding interpreter flags get their
 own manifests keyed on `argv[0..1]`, `sha256` pinning of a resolved binary, script closure, or library module, a
 manifests store with workspace and global scope, `propose_manifest` (drafting a program manifest from `--help`/script
