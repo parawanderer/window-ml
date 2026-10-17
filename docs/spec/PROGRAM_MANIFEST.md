@@ -76,25 +76,67 @@ over the manifest's data so the profile is derived from the same source as the f
 
 - The person names it. The host resolves it, and a tool the person owns is pinned by the HASH of its binary or script,
   a better pin than `git` can have; a changed script drops back to `unknown`.
-- A draft manifest is generated from the program's `--help`, its man page or its shell completion files (which encode
-  the flags and whether they take file arguments). A model is good at the drafting, and it is safe because the draft
-  reaches the person as a card with its evidence and, under the sandbox, is enforced rather than believed.
-- Manifests have SCOPES, as policies do. A repository-local tool (`./scripts/<name>`) arrived with the repository, so
-  it is untrusted content, and its manifest belongs to the workspace, approved by the person. A tool on the person's
-  own `PATH` may be global. A page never registers anything.
+- A draft manifest is generated from the program's `--help`, its man page, its shell completion files (which encode
+  the flags and whether they take file arguments), or—for a script in the workspace—directly from its source and
+  argument parser (`parseArgs`, `argparse`, `process.argv` walk). A model with `ml.sh` enabled can draft the manifest
+  for a CLI or repo script it just wrote or inspected, and it is safe because the draft reaches the person as a card
+  with its evidence (`propose_manifest`, parallel to `propose_policy` in [`POLICIES.md`](POLICIES.md)) and, under the
+  sandbox, is enforced rather than believed.
+- Manifests have SCOPES, as policies do. A repository-local tool (`./scripts/<name>` or `node scripts/<name>.mjs`)
+  arrived with the repository, so it is untrusted content, and its manifest belongs to the workspace, approved by the
+  person. A tool on the person's own `PATH` may be global. A page never registers anything.
 - One page lists them, like the policy page: shipped, installed, proposed, each with its source, its pin and the
   measured evidence (calls run under it, failures under its envelope). It lives in DevTools Settings, the superset.
 
-**Two kinds of command, two kinds of manifest.** A registered command is either a BINARY, described by a program
-manifest and bounded by the envelope above, or a FUNCTION exposed as `ml.sh.<name>`, written in JavaScript or Python and
-described by a library manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)). A function written
-in the read-only dialect of either language needs no manifest at all: tier 3 proves its effects by construction
-([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)). So the cheapest way to a free-tier command is to write it in the dialect,
-and the two kinds meet the policy as the same facts.
+### Interpreted script tools (`node scripts/<name>.mjs`, `python3 <script>.py`)
 
-**What this adds, later:** profile derivation from a manifest's effects, hash pinning of a resolved program, a
-manifests directory with workspace and global scope, and the registration page. None of it blocks the host's first
-slices; it is a root of its own in [`docs/plan/repl/`](../plan/repl/README.md).
+In LLM agent workflows, almost every repository-specific CLI utility (`node scripts/index.mjs`,
+`node scripts/test-cover.mjs`, `python3 tools/check.py`) is invoked through a general language interpreter rather than
+compiled to a standalone binary. Keying a manifest solely on `argv[0]` fails on this pattern: `argv[0]` is `"node"` or
+`"python3"`, which as a bare binary is an un-describable universal code runner (`effects: ["unknown"]`, `runner: true`).
+
+A program manifest therefore matches a **command prefix** `(program, entrypoint?)` rather than `argv[0]` alone:
+
+| Field | For a standalone binary (`rg`, `git`) | For an interpreted script (`node scripts/index.mjs`) |
+| --- | --- | --- |
+| `program` | `"rg"` (`argv[0]` basename, resolved on `PATH`) | `"node"` or `"python3"` (`argv[0]` resolved on `PATH`) |
+| `entrypoint` | absent | `"scripts/index.mjs"` (workspace-relative path; must match `argv[1]` after `realpath`, with **no interpreter flags** between `argv[0]` and `argv[1]`) |
+| Option parsing | starts at `argv[1]` | starts at `argv[2]` |
+| Pin (`sha256` / `version`) | `version` range probed once per binary inode | `sha256` of the entrypoint script (or its static local import closure, computed the way `scripts/imports.mjs` walks local specifiers); no `--version` subprocess is needed |
+| Sandbox `exec` envelope (`exec: program-only`) | `process-exec` restricted to `{ resolved(program) }` | `process-exec` restricted to `{ resolved(program) }` (plus `/usr/bin/env` when invoked via a `#!` shebang on `./scripts/<name>.mjs`), with interpreter injection variables (`NODE_OPTIONS`, `PYTHONPATH`, `PYTHONSTARTUP`) already in `REFUSED_ENV` |
+
+Two invariants keep an interpreted-script manifest sound:
+
+1. **No interpreter flags before the entrypoint.** A call `["node", "--import", "./evil.mjs", "scripts/index.mjs"]` or
+   `["node", "-e", "..."]` has an option at `argv[1]`, so it does not match `(program: "node", entrypoint: "scripts/index.mjs")`
+   and falls back to `unknown` (asks).
+2. **Transitive imports vs. the sandbox envelope.** Unlike a static binary, `scripts/index.mjs` may import local modules.
+   Under the OS sandbox (Seatbelt / Landlock+bubblewrap), the kernel enforces the manifest's claimed effect envelope
+   (`write: none`, `net: deny`, `exec: program-only`, secret paths denied) across the entire process regardless of what
+   files `scripts/index.mjs` imports. On the plain host (where there is no kernel envelope), pinning must hash the
+   entrypoint's transitive local import closure, or the manifest applies only when `sandboxed: true`.
+
+**Two kinds of command, two kinds of manifest — and how ad-hoc scripts graduate.** A registered command is either a
+PROCESS, described by a program manifest (standalone binary or `(program, entrypoint)` script) and bounded by the kernel
+envelope above, or an IN-PROCESS FUNCTION exposed in `exec` / `python_exec`, written in JavaScript or Python and
+described by a library manifest ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)). A function written in
+the read-only dialect of either language needs no effect or cost trust at all: tier 3 (`@cost interpret`) proves its
+effects and step bound by construction ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md)).
+
+When an agent works with Python (or Node) on a desktop runtime, three execution modes therefore coexist without
+overlapping:
+
+| Mode | Invocation | Gate & Pin | Why |
+| --- | --- | --- | --- |
+| **1. Local kernel (`python_exec` cell or `import` inside it)** | In-process cell or pure helper module | **In-interpreter `CO_RESTRICTED` gate** (step budget, `heap(owned)` write barrier + rollback, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)). No `open()`, `os`, `sys`, `argparse`. | Shares one persistent per-run heap (`dict`); must halt and never mutate unowned state. |
+| **2. Ad-hoc script written & edited mid-run (`python3 tmp/scratch.py`)** | `ml.sh.run(["python3", "tmp/scratch.py", ...])` while the agent iterates on `tmp/scratch.py` | **OS sandbox** (Seatbelt / Landlock confines writes to roots, denies `~/.ssh` and network) + Root L process-group memory/time cap + **run-scoped policy** (`propose_policy`, [`POLICIES.md`](POLICIES.md)). | A CLI script imports `sys`/`os`/`pathlib`/`open` (which `CO_RESTRICTED` refuses), and its `sha256` changes on every edit, so a hash-pinned manifest would invalidate on each turn. |
+| **3. Stabilized repo CLI (`python3 scripts/tool.py`, `node scripts/index.mjs`)** | `ml.sh.run(["python3", "scripts/tool.py", ...])` | **`ProgramManifest` `(program, entrypoint)` pinned by `sha256`** (`propose_manifest`) + **manifest-derived sandbox envelope** (`write: none`, `net: deny`, `exec: program-only`). | Once stationary, its flag grammar is described once and enforced as a tight read-only kernel envelope across runs without needing a run policy. |
+
+**What this adds, later (Root K):** `(program, entrypoint)` prefix matching in `describeCall`, profile derivation from a
+manifest's effects, `sha256` pinning of a resolved binary or script closure, a manifests store with workspace and global
+scope, `propose_manifest` (drafting from `--help` or script source into an approval card with sandbox evidence), and the
+registration page. None of it blocks the host's first slices; it is a root of its own in
+[`docs/plan/repl/`](../plan/repl/README.md).
 
 ## Related
 

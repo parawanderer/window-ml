@@ -229,6 +229,22 @@ numpy and pandas are pinned to the versions in the Pyodide lock, the environment
 than pretended away. Running Pyodide under Node at the host would make placement bit-identical and is kept as an option
 for a case that needs it, not the default.
 
+**Local kernel Python vs. CLI Python scripts on disk (`ml.sh`).** Host-placed `python_exec` ("local kernel Python") and
+running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not share a gate:
+
+- **In-kernel (`python_exec`, or `import helper` inside a cell):** Runs inside the persistent per-run `dict` under
+  `CO_RESTRICTED` (tier 3 by default for pure-Python functions, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)
+  for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
+  write-barrier rollback on failure.
+- **Subprocess CLI (`ml.sh.run(["python3", ...])`):** Spawns a fresh OS process with `CO_RESTRICTED` off, because a CLI
+  script legitimately uses `sys.argv`, `argparse`, `pathlib` and `open()`. While an agent is actively writing and editing
+  an ad-hoc script (`tmp/scratch.py`, whose `sha256` changes on every turn), it is bounded by the OS sandbox (Seatbelt /
+  Landlock) plus Root L's process-group memory/time cap and authorised for the session by a run-scoped policy
+  (`propose_policy`, [`POLICIES.md`](POLICIES.md)). Once the script stabilises into a reusable repo tool
+  (`scripts/<name>.py`), it is registered under a `(program: "python3", entrypoint: "scripts/<name>.py")` program
+  manifest pinned by `sha256` (`propose_manifest`, [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Interpreted script
+  tools"), whose claimed effects derive a tighter read-only kernel sandbox envelope.
+
 ## Step 0: measure the subset before writing it
 
 The session plan that carries this and the vector corpus: [`docs/plan/repl/`](../plan/repl/README.md), lane 3.
