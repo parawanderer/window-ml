@@ -13,6 +13,7 @@
 //
 // CALM ONLY, and nothing is dropped: the busy view keeps the whole trace, and so do both exports. Design note and
 // the rules behind each clause: tmp/design-tool-streaks.md.
+import { createContext } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentStep } from "../store";
 import { rev, revealSeq } from "../store";
@@ -24,6 +25,10 @@ import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
+
+/** A member drawn inside a streak, where the GROUP owns the motion: a step that also slid itself in would fight
+ *  the collapse that is describing the same event. */
+export const InStreak = createContext(false);
 
 /** The fewest turns worth folding. Two is a pair; three is where a reader starts skipping. */
 export const STREAK_MIN = 3;
@@ -60,6 +65,21 @@ export const foldedInView = (s: ToolStreak, now = Date.now()): boolean => {
 
 /** How long a group's rows must have been on screen before folding them is worth animating. */
 export const FOLD_SEEN_MS = 600;
+
+/**
+ * Did this group COME TOGETHER in front of the reader, without the collapse above having been the motion?
+ *
+ * The ordinary fold's motion is the rows shrinking into one row, which only exists when they were on screen long
+ * enough to have been seen (`foldedInView`). A "group all" pair, or two calls that land within `FOLD_SEEN_MS`,
+ * never had separate rows to collapse — the component mounts already folded — and that is the case the user's eye
+ * actually reports as "the tool calls popped onto the screen and were suddenly one thing". So the head itself has
+ * to say they were grouped.
+ *
+ * Same clock as {@link foldedInView}, and history is excluded the same way: a transcript opened later is already
+ * a group and must simply be one.
+ */
+export const groupedInView = (s: ToolStreak, now = Date.now()): boolean =>
+    justArrived(lastTs(s), now) && !foldedInView(s, now);
 
 /** When this streak's earliest stamped call landed — 0 when none is stamped. */
 const firstTs = (s: ToolStreak): number => {
@@ -228,7 +248,27 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // how this streak came to exist, and re-reading the clock on later renders would make it decay mid-animation.
     const history = useHistoryPaint();
     const [refolding] = useState(() => !history && foldedInView(s));
+    // …AND A GROUP THAT NEVER HAD ROWS TO COLLAPSE still has to say it gathered them. `forming` is the pair
+    // `foldedInView` refuses: the component mounted already folded, so the head is the only motion there is.
+    // `grouped` is the wider set — a watched fold washes the head too, so the row you are left looking at is
+    // marked as the thing the vanished rows became.
+    const [forming] = useState(() => !history && groupedInView(s));
+    const grouped = refolding || forming;
     const [open, setOpen] = useState(refolding);
+    const { failed, ms, calls, pending } = streakFacts(s);
+    // A CALL JOINING A LIVING GROUP is the one moment the fold's own motion cannot speak: the row is already
+    // closed and nothing moves except a number. That number gets a pop — and only then. The counter is seeded
+    // with the count it already shows, so a streak drawn into a transcript (or one that formed a moment ago and
+    // is animating its head) does not also punch its own tally on the way in.
+    const prevCalls = useRef(calls);
+    const [bumped, setBumped] = useState(false);
+    useEffect(() => {
+        if (prevCalls.current === calls) return;
+        prevCalls.current = calls;
+        setBumped(true);
+        const t = setTimeout(() => setBumped(false), 320);
+        return () => clearTimeout(t);
+    }, [calls]);
     // THROUGH THE SAME CLOSE A STEP USES. Eleven turns arriving in one frame is most of a screen appearing at once,
     // which shoves whatever you were reading down the page — the shove `.astep-body` was given an animation for,
     // and this was the one disclosure on the surface still doing it. The surface declares the duration; the hook
@@ -260,22 +300,23 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // starts from where they were. An effect rather than a render-time call: `close` measures the duration off the
     // node, which does not exist until this has been painted once.
     useEffect(() => { if (refolding) close(() => setOpen(false)); }, []);
-    const { failed, ms, calls, pending } = streakFacts(s);
     // ONE TOOL NAMES ITSELF — `exec × 4` reads as the rows it replaced. SEVERAL cannot, so the row counts the calls
     // and names the tools beside it: "11 tool calls · exec, look, python_exec". Dropping the names would make the
     // one row standing for a whole run of work say less about it than any one of the rows did.
     const one = s.tools.length === 1;
     return (
-        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}${pending ? " running" : ""}`} data-rev={r}>
+        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}${grouped ? " grouped" : ""}${forming ? " forming" : ""}${pending ? " running" : ""}`} data-rev={r}>
             <button class="astreak-head" onClick={toggle}
                 aria-expanded={shown && !closing}
                 aria-label={one ? `${calls} ${s.tool} calls` : `${calls} tool calls: ${s.tools.join(", ")}`}>
                 {/* The chevron turns back on the CLICK, not when the body has finished leaving: it is the control's
                     acknowledgement, and the body collapsing behind it is the result. */}
                 <span class={`tri${shown && !closing ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                {/* The count POPS when a later call joins (`bumped` above): the one moment the fold's motion cannot
+                    describe, because the row is already closed and nothing else moves. */}
                 {one
-                    ? <><span class="astreak-tool">{s.tool}</span><span class="astreak-n">× {calls}</span></>
-                    : <><span class="astreak-n astreak-calls">{calls} tool calls</span>
+                    ? <><span class="astreak-tool">{s.tool}</span><span class={`astreak-n${bumped ? " bumped" : ""}`}>× {calls}</span></>
+                    : <><span class={`astreak-n astreak-calls${bumped ? " bumped" : ""}`}>{calls} tool calls</span>
                         <span class="astreak-tools">{s.tools.join(", ")}</span></>}
                 {failed ? <span class="astreak-bad">{failed} failed</span> : null}
                 {/* A GROUP THAT IS STILL GROWING SAYS SO. In "group all" the newest call joins a row that is already
@@ -294,7 +335,7 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                         waiting to happen on a phone, which is why the stylesheet takes this one's clicks away on a
                         coarse pointer. */}
                     <FoldRail onFold={toggle} tip="Collapse this group" />
-                    {s.turns.map(render)}
+                    <InStreak.Provider value={true}>{s.turns.map(render)}</InStreak.Provider>
                   </div>
                 : null}
         </div>

@@ -914,7 +914,28 @@ button.chat-page-go:hover { color: var(--fg); }
    the same rule runs over every item of a transcript somebody merely opened. */
 .chat.calm .aturn.fresh { animation: chat-turn-in .18s cubic-bezier(.4, 0, .2, 1); }
 @keyframes chat-turn-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .chat.calm .aturn.fresh { animation: none; } }
+/* A TOOL CALL ARRIVES ON ITS OWN CLOCK. A turn's drift carries a batch that landed together, but a call added to
+   a turn already on screen — the common agent shape: one model answer decides on three tools and the steps land
+   one event at a time — used to REPLACE a row in one frame. It slides in from the left and fades instead, on the
+   same family of curves as the pill (`chat-pill-in`), slightly softer because a tool row is wider and heavier than
+   a pill. A batch staggers itself by `--in-delay` (agent-detail.tsx) so three calls read as a cascade rather than
+   as a block. Same `justArrived` gate as the turn: history is drawn, not performed.
+
+   `backwards`, not `both`: the fill only has to hold the start pose during the stagger, and a `forwards` fill
+   would keep owning `transform`/`opacity` for the life of the class (which never comes off). Composed with
+   `busy-fade` on a PENDING step — this rule's shorthand would otherwise silently cancel the in-flight pulse,
+   which is exactly the step a live run introduces first. */
+.chat.calm .astep.tool.fresh {
+    animation: chat-tool-in .22s cubic-bezier(.2, .8, .2, 1) var(--in-delay, 0s) backwards;
+}
+.chat.calm .astep.tool.fresh.pending {
+    animation: chat-tool-in .22s cubic-bezier(.2, .8, .2, 1) var(--in-delay, 0s) backwards, busy-fade 1s infinite;
+}
+@keyframes chat-tool-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .aturn.fresh { animation: none; }
+    .chat.calm .astep.tool.fresh, .chat.calm .astep.tool.fresh.pending { animation: none; }
+}
 
 /* THE GRANT CARD IS NOT A WARNING HERE. In the panel it is a warm card because it establishes a session-long
    consent, and the panel is a debugging surface where an amber block reads as one more marked thing among many. In
@@ -1821,10 +1842,11 @@ button.chat-page-go:hover { color: var(--fg); }
    could not — how many, how many failed, how long. Reading view only: the panel is the developer's whole trace.
    The fold happens once the streak has ENDED, so the entrance is a thing arriving rather than rows vanishing
    under a reader. Design: tmp/design-tool-streaks.md. */
-/* NO ENTRANCE ANIMATION. It was written for a streak arriving in a transcript, and that case turned out not to
-   exist: a fold the reader WATCHED now collapses from the rows it replaced (`.refolding`), which is the motion
+/* NO SLIDE-IN ON THE ROW ITSELF. It was written for a streak arriving in a transcript, and that case turned out not
+   to exist: a fold the reader WATCHED now collapses from the rows it replaced (`.refolding`), which is the motion
    that actually describes what happened, and a fold drawn into a transcript somebody opened should simply be
-   there. What was left fired only in the second case — the one it is wrong for. */
+   there. What was left fired only in the second case — the one it is wrong for. What IS animated is the moment of
+   grouping itself: see `chat-streak-form` and `chat-streak-wash` below. */
 .astreak { margin: 3px 0; --astep-close-ms: 200; }
 /* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
    place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
@@ -1889,4 +1911,42 @@ button.chat-page-go:hover { color: var(--fg); }
 @media (prefers-reduced-motion: reduce) {
     .astreak { --astep-close-ms: 0; }
     .astreak-body, .astreak-body.closing { animation: none; }
+}
+
+/* THE MOMENT OF GROUPING. Two motions, because there are two ways a reader sees calls become one row.
+
+   `.forming` — the component mounted ALREADY FOLDED: a "group all" pair, or two calls that landed inside
+   `FOLD_SEEN_MS` so there were never separate rows to collapse (step-streak.tsx `groupedInView`). This is the
+   case the eye reports as "they were suddenly one thing", so the head itself arrives the way a tool call does
+   (slightly less far: it is a summary, not a new call) and washes.
+
+   `.grouped` — any grouping the reader WATCHED, the `.refolding` collapse included. The collapse is the main
+   motion there (rows shrink into the row); the wash is its punctuation, so the row left behind is marked as
+   what the vanished rows became rather than sitting there as if it had always been.
+
+   History is neither class and is simply there. */
+.chat.calm .astreak.grouped > .astreak-head { animation: chat-streak-wash .7s ease backwards; }
+.chat.calm .astreak.forming > .astreak-head {
+    animation: chat-streak-form .26s cubic-bezier(.2, .8, .2, 1) backwards, chat-streak-wash .7s ease backwards;
+}
+@keyframes chat-streak-form { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+/* A tinted wash rather than a border flash: the row is grey on purpose (the failure count is the only colour),
+   and a coloured ring here would spend that signal on "this is new" instead of "two of these failed". */
+@keyframes chat-streak-wash {
+    from { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+    to { background: transparent; }
+}
+/* A CALL JOINING A LIVING GROUP. In "group all" the newest call joins a row that is already closed, so nothing
+   moves and the only evidence is a number changing — which is the pop. `bumped` is set by the component only
+   when the tally grew (step-streak.tsx), never on the row's first paint. */
+.chat.calm .astreak-n.bumped { animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
+@keyframes chat-streak-bump {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.14); }
+    100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .astreak.grouped > .astreak-head,
+    .chat.calm .astreak.forming > .astreak-head,
+    .chat.calm .astreak-n.bumped { animation: none; }
 }
