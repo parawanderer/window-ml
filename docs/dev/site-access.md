@@ -81,8 +81,9 @@ INJECT_MESSAGE's and PAGE_CANCEL_RUN's), every list is bounded (`RUN_PAYLOAD_LIM
 no object at any depth has an own `__proto__` key. A field it does not read is left alone, so a new field the run host
 reads goes into the checker with it. Behind it, `hostRun` undoes the turn's registrations (controller, inbox, tab,
 snapshot, turn) when its setup throws (`settle`), and the listener answers a page whose handler threw. A START_RUN or
-RESUME_RUN naming a run whose turn is live is refused (`startBackgroundRun`), so a second turn never replaces the
-controller the person's Stop reaches, and a PAGE_CANCEL_RUN acts only on a run its sender's tab owns, as INJECT_MESSAGE
+RESUME_RUN naming a run whose turn is live **or still starting** is refused (`startBackgroundRun`), so a second turn never replaces the
+controller the person's Stop reaches, and a PAGE_CANCEL_RUN acts only on a run its sender's tab owns (its live
+controller, its snapshot, or its start registration), as INJECT_MESSAGE
 does.
 
 **A page's answer cannot carry a picture, a reply or a spend into a worker-built run.** For a run the worker built or
@@ -354,6 +355,14 @@ with no debug surface on, which keeps its own loop as before (its `approve` is w
 The content script relays a page's `CANCEL_RUN_REQUEST` as `PAGE_CANCEL_RUN`, not `CANCEL_RUN`. The shell's Stop button
 sends `CANCEL_RUN` from the same content-script world, so without its own type the gate could not refuse a page's
 cancel without refusing the person's Stop. A run the worker built cannot be cancelled by a page at all.
+
+A cancel reaches a run that is still STARTING too. `START_RUN`/`RESUME_RUN` wait on the worker's restore, the config
+and the start card before `hostRun` registers the turn's controller; a `CANCEL_RUN` in that window used to find nothing
+to abort and the run started anyway (the person's Stop lost, including across a worker restart's hydration). The start
+is registered in `startingControllers` (`sw-runs.ts`) for that window, aborted by `CANCEL_RUN`/`CANCEL_ALL_RUNS`/the
+page's own `PAGE_CANCEL_RUN`, and the start answers `{ cancelled: true }` instead of hosting. `tests/background.test.js`
+holds the cases; the ownership rule for `PAGE_CANCEL_RUN` is the same as for a live run, read from the start
+registration's `tabId`.
 
 ## The run's events, and the extension's own iframe
 

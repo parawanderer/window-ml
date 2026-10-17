@@ -567,6 +567,21 @@ export function resolveStart(requestId: unknown, decision: unknown, fromTabId?: 
     return true;
 }
 
+/**
+ * End every start card waiting on a run the person stopped (CANCEL_RUN, or a revoke that cancels it): the card
+ * goes away as `gone` — what it asked for does not start, and it is not counted as a denial (the person stopped
+ * the start, they did not refuse the site).
+ * @param runId the run whose starts to end
+ */
+export function cancelStarts(runId: string): void {
+    for (const [, p] of [...pending]) if (p.runId === runId) p.settle("gone");
+}
+
+/** End every start card still up (CANCEL_ALL_RUNS). Same as {@link cancelStarts}, for every run at once. */
+export function cancelAllStarts(): void {
+    for (const [, p] of [...pending]) p.settle("gone");
+}
+
 /** The asks waiting now, for a surface that opens after one was raised (the DevTools panel replays its buffer). */
 export function pendingStarts(): StartAsk[] {
     return [...pending.values()].map((p) => p.ask);

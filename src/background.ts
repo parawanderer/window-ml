@@ -40,12 +40,12 @@ import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, reso
 import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/sw-policies";
 
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { pageInject } from "./sw/sw-page-turn";
-import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart } from "./sw/sw-start-approval";
+import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart, cancelStarts, cancelAllStarts } from "./sw/sw-start-approval";
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
@@ -132,7 +132,7 @@ startValueSweeps();
     controllers: [...runControllers.keys()], inboxes: [...runInboxes.keys()], bgRuns: [...bgRuns.keys()],
     activeRuns: [...activeRuns.entries()].map(([tab, ids]) => [tab, [...ids]]), rebuilds: [...runRebuilds.keys()],
     replayTabs: [...runReplayBuffer.keys()], deref: [...derefByRun.keys()], context: [...contextByRun.keys()], turns: [...turnByRun.keys()],
-    starting: [...workerRunsStarting], sessions: sessionServer.index.list().map((s) => s.id.hash),
+    starting: [...new Set([...workerRunsStarting, ...startingControllers.keys()])], sessions: sessionServer.index.list().map((s) => s.id.hash),
 });
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
@@ -497,8 +497,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // run is its own tab's, as for INJECT_MESSAGE: an approved page on another tab knows the id from the run's events.
     if (message.type === "PAGE_CANCEL_RUN") {
         const runId = (message.payload as CancelRunPayload)?.runId;
+        // A start still in its pre-hostRun awaits is not in `runInboxes`/`bgRuns` yet; its registration holds the
+        // sender's tab so the page's own start is still its own to stop, and no other tab's.
         const owner = runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId;
-        if (!isWorkerRun(runId) && owner != null && owner === sender.tab?.id) cancelBackgroundRun(runId);
+        const ownsStart = startingOwnedBy(runId, sender.tab?.id);
+        if (!isWorkerRun(runId) && ((owner != null && owner === sender.tab?.id) || ownsStart)) cancelBackgroundRun(runId);
         return;
     }
     if (message.type === "CANCEL_RUN") {
@@ -511,11 +514,14 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     }
     if (message.type === "CANCEL_ALL_RUNS") {
         // The popup's "Stop all agent runs" panic button — the guaranteed kill switch for a runaway that has
-        // no visible surface (e.g. a resumed run whose card never mounted). Abort every live controller,
-        // resolve every open approval gate, and purge all persisted snapshots so nothing re-adopts + resumes.
-        const n = runControllers.size;
+        // no visible surface (e.g. a resumed run whose card never mounted). Abort every live controller AND every
+        // start still in its pre-hostRun awaits (a Stop during hydration is a Stop), resolve every open approval
+        // gate, and purge all persisted snapshots so nothing re-adopts + resumes.
+        const n = runControllers.size + startingControllers.size;
+        for (const runId of [...startingControllers.keys()]) abortStart(runId);
         for (const [, ctl] of [...runControllers]) { try { ctl.abort(); } catch { /* already gone */ } }
         for (const [key, entry] of [...pendingApprovals]) { pendingApprovals.delete(key); try { entry.resolve(false); } catch { /* gone */ } }
+        cancelAllStarts();
         void purgeAllBgRuns();
         sendResponse({ data: { cancelled: n } });
         return true;
@@ -1192,8 +1198,14 @@ chrome.runtime.onConnect.addListener(serveSessionsPort);
 
 /** Abort a background-hosted run and close its open gates. Returns whether there was anything live to stop. */
 function cancelBackgroundRun(runId: string): boolean {
+    // A start still waiting on the restore, the config or the start card has no controller yet: abort that
+    // registration too, or this Stop is dropped and the run starts anyway.
+    const starting = abortStart(runId);
     const ctl = runControllers.get(runId);
     if (ctl) ctl.abort();
+    // A start card for this run goes too: the person stopped the start, so nothing it asked for begins. Settled as
+    // `gone`, not a denial (the stop is not a refusal of the site).
+    cancelStarts(runId);
     let gates = 0;
     // If the run is BLOCKED on an OPEN approval gate, aborting the controller alone can't unblock it — the
     // gate promise only resolves via SET_APPROVAL. So resolve any pending gate for this run now with an
@@ -1205,7 +1217,7 @@ function cancelBackgroundRun(runId: string): boolean {
     for (const [key, entry] of [...pendingApprovals]) {
         if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve({ approved: false, cancelled: true }); gates++; }
     }
-    return !!ctl || gates > 0;
+    return starting || !!ctl || gates > 0;
 }
 
 // A site's agent cancelled because the site lost the agent level while it ran (Q9) is stopped like the Stop button.

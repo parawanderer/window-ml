@@ -54,7 +54,7 @@ import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated
 import { handOverSettled } from "./nav-handover";
 import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
@@ -166,6 +166,16 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
      *  controller and inbox, and whichever turn settled first would unregister the other, leaving it running with no Stop. */
     const running = (): boolean => typeof runId === "string" && runControllers.has(runId);
     const RUNNING = `Run "${String(runId)}" is already running: wait for its turn to end, or cancel it.`;
+    // Registered BEFORE the first await: every wait below (the restore, the config, the start card) is a window a
+    // CANCEL_RUN must reach, or the person's Stop is dropped and the run starts anyway. Two starts under one id
+    // both register (so a stuck restore still reports its own bound to both) and `hostTurn` claims the live
+    // controller, which refuses the second. `endStart` on every answer keeps a refused start from lingering.
+    const starting = typeof runId === "string" ? beginStart(runId, tabId) : undefined;
+    const startCancelled = (): boolean => !!starting?.signal.aborted;
+    const endStarting = (): void => { if (typeof runId === "string" && starting) endStart(runId, starting); };
+    const answer = (r: unknown): void => { endStarting(); sendResponse(r as Parameters<typeof sendResponse>[0]); };
+    /** How a start the person stopped before its loop existed answers: cancelled, like a run that was aborted mid-flight. */
+    const cancelledStart = (): { data: { cancelled: true; summary: string } } => ({ data: { cancelled: true, summary: "cancelled before the run started" } });
     // Bounded, and closed when the bound is hit: judged against maps not yet restored, a run the worker holds would
     // read as nobody's. A restore that never settles answers the page with an error rather than never.
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -175,47 +185,52 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     ]);
     void restored.then((done) => {
         clearTimeout(timer);
-        if (!done) { sendResponse({ error: RESTORE_PENDING }); return; }
-        if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
+        if (startCancelled()) { answer(cancelledStart()); return; }
+        if (!done) { answer({ error: RESTORE_PENDING }); return; }
+        if (workerHeld()) { answer({ error: WORKER_RUN_REFUSED }); return; }
         // A page's turn is a site's turn (docs/spec/SITE_ACCESS_SLICE3.md, PR 2): the start card's gate decides it, and
         // the model reads it as the page's. An extension page (the chat page, a panel) is not a site.
         const site = isExtensionSender(sender) ? null : grantableOrigin({ origin: sender.origin, url: sender.url ?? sender.tab?.url, frameId: sender.frameId });
-        if (site && "refused" in site) { sendResponse({ error: `Refused: ${site.refused}.` }); return; }
+        if (site && "refused" in site) { answer({ error: `Refused: ${site.refused}.` }); return; }
         const origin = site ? site.origin : null;
         const docId = typeof sender.documentId === "string" ? sender.documentId : undefined;
         if (message.type !== "START_RUN") {
-            if (running()) { sendResponse({ error: RUNNING }); return; }
-            if (!origin) { hostRun(message, tabId, sendResponse); return; }
+            if (running()) { answer({ error: RUNNING }); return; }
+            if (!origin) { endStarting(); hostRun(message, tabId, sendResponse); return; }
             const rp = (message.payload || {}) as ResumeRunPayload;
             const stored = typeof rp.runId === "string" ? bgRuns.get(rp.runId) : undefined;
-            if (!stored) { hostRun(message, tabId, sendResponse); return; }   // hostRun answers "no resumable run"
+            if (!stored) { endStarting(); hostRun(message, tabId, sendResponse); return; }   // hostRun answers "no resumable run"
             return getConfig().then(async (cfg) => {
+                if (startCancelled()) { answer(cancelledStart()); return; }
                 // The step budget this turn asks for: a raise is a widening, unless the person asked for it (Continue +N).
                 const p = { ...stored.p, maxSteps: stepBudget(rp.maxSteps) ?? stored.p.maxSteps };
                 const verdict = await gatePageTurn({ type: "RESUME_RUN", runId: rp.runId, tabId, origin, text: typeof rp.task === "string" ? rp.task : "",
                     p, model: stored.p.model || cfg.model || null, pageHistory: false, known: true, personClaimed: personClaimed(message), docId,
                     siteTools: ourToolTexts(stored.p, stored.p.pageUrl ?? "").siteTools });
-                if ("error" in verdict) { sendResponse({ error: verdict.error }); return; }
+                if (startCancelled()) { answer(cancelledStart()); return; }
+                if ("error" in verdict) { answer({ error: verdict.error }); return; }
                 // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile. A turn refused
                 // here gives back what it spent (a page turn, the person's message).
-                if (workerHeld()) { await verdict.refund(); sendResponse({ error: WORKER_RUN_REFUSED }); return; }
-                if (running()) { await verdict.refund(); sendResponse({ error: RUNNING }); return; }
+                if (workerHeld()) { await verdict.refund(); answer({ error: WORKER_RUN_REFUSED }); return; }
+                if (running()) { await verdict.refund(); answer({ error: RUNNING }); return; }
                 // The person's turn runs at the budget they chose, never at one the page named.
                 const resumed = verdict.person ? { ...message, payload: { ...rp, maxSteps: verdict.budget } } : message;
+                endStarting();
                 hostRun(resumed, tabId, sendResponse, undefined, { origin, person: verdict.person, first: false, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
-            }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+            }, (e) => answer({ error: (e as Error)?.message || String(e) }));
         }
         return getConfig().then(async (cfg) => {
+            if (startCancelled()) { answer(cancelledStart()); return; }
             // Again after the config read: a hand-over may have landed meanwhile.
-            if (workerHeld()) { sendResponse({ error: WORKER_RUN_REFUSED }); return; }
+            if (workerHeld()) { answer({ error: WORKER_RUN_REFUSED }); return; }
             // A run id another tab holds (running, or settled and resumable) is that tab's: starting a turn under it from
             // here would take over its abort, its inbox and its stored history. Checked after the config read, so a run
             // the other tab started meanwhile counts.
             const owner = typeof runId === "string" ? runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId : undefined;
-            if (owner != null && owner !== tabId) { sendResponse({ error: `Run "${String(runId)}" belongs to another tab.` }); return; }
-            if (running()) { sendResponse({ error: RUNNING }); return; }
+            if (owner != null && owner !== tabId) { answer({ error: `Run "${String(runId)}" belongs to another tab.` }); return; }
+            if (running()) { answer({ error: RUNNING }); return; }
             const p = pageStartPayload(message.payload, sender, cfg) as StartRunPayload;
-            if (!origin || !p || typeof p !== "object" || typeof p.runId !== "string" || !Array.isArray(p.tools)) { hostRun({ ...message, payload: p }, tabId, sendResponse); return; }
+            if (!origin || !p || typeof p !== "object" || typeof p.runId !== "string" || !Array.isArray(p.tools)) { endStarting(); hostRun({ ...message, payload: p }, tabId, sendResponse); return; }
             const stored = bgRuns.get(p.runId);
             // A tool named like one of ours reads to the model as ours; a site's own tool's text is shown on the card (S2).
             const texts = ourToolTexts(p, p.pageUrl ?? sender.url ?? "");
@@ -228,11 +243,12 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             const verdict = await gatePageTurn({ type: "START_RUN", runId: p.runId, tabId, origin, text: typeof p.task === "string" ? p.task : "", p,
                 model, pageHistory: Array.isArray(p.resumeMessages) && p.resumeMessages.length > 0, known: !!stored || !!approvalFor(p.runId),
                 images: p.images, personClaimed: personClaimed(message), docId, modelRefusal, siteTools: texts.siteTools });
-            if ("error" in verdict) { sendResponse({ error: verdict.error }); return; }
+            if (startCancelled()) { answer(cancelledStart()); return; }
+            if ("error" in verdict) { answer({ error: verdict.error }); return; }
             // Again after the wait for the card: a hand-over, or another turn, may have landed meanwhile. A turn refused
             // here gives back what it spent (a page turn, the person's message).
-            if (workerHeld()) { await verdict.refund(); sendResponse({ error: WORKER_RUN_REFUSED }); return; }
-            if (running()) { await verdict.refund(); sendResponse({ error: RUNNING }); return; }
+            if (workerHeld()) { await verdict.refund(); answer({ error: WORKER_RUN_REFUSED }); return; }
+            if (running()) { await verdict.refund(); answer({ error: RUNNING }); return; }
             // The page's context is the worker's to write, from the browser's facts (B1): whatever context the page wrote
             // into its prompt is the site's, shown on the card as its instructions. Added after the card's snapshot, since
             // the time in it changes every turn.
@@ -240,15 +256,17 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                 const title = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => null))?.title;
                 p.systemPrompt = withPageContext(p.systemPrompt, workerPageContext(p.pageUrl ?? sender.url ?? "", title));
             }
+            if (startCancelled()) { answer(cancelledStart()); return; }
             // The person's turn runs at the budget they chose (or the approved one), never at one the page named.
             if (verdict.person && verdict.budget) p.maxSteps = verdict.budget;
             // A later turn's history is the worker's, never the page's copy (Q4): what this run said and was told is what
             // the person allowed it, and a page could otherwise hand it a conversation it never had. None held (the worker
             // restarted between turns) is an empty one, which still continues the session rather than restarting it.
             const history = verdict.first ? undefined : (bgRuns.get(p.runId)?.messages ?? []);
+            endStarting();
             hostRun({ ...message, payload: { ...p, resumeMessages: history } }, tabId, sendResponse, undefined, { origin, person: verdict.person, first: verdict.first, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
-        }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
-    }).catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        }, (e) => answer({ error: (e as Error)?.message || String(e) }));
+    }).catch((e) => answer({ error: (e as Error)?.message || String(e) }));
 }
 
 /** The builtin tools whose factories set `requiresApproval`: the worker mints grants or consents for their calls, or
@@ -358,6 +376,23 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         priorSub = bgRuns.get(p.runId)?.sub;
     }
     const runId = p.runId;
+    // One turn per run id: a second start that raced through the same pre-hostRun awaits must not replace the
+    // live controller (whichever settled first would be unregistered by the other, leaving it running with no
+    // Stop). Same tick as the controller write below, so nothing can interleave between this check and that write.
+    if (runControllers.has(runId)) {
+        sendResponse({ error: `Run "${String(runId)}" is already running: wait for its turn to end, or cancel it.` });
+        return;
+    }
+    // A start the person cancelled while it was still in its pre-hostRun awaits must not reach the loop. Checked
+    // here as well as in `startBackgroundRun`: a worker-built start (`startUserRun`) and a chat-page resume come
+    // straight to this function, and a cancel can land in their awaits too.
+    const startingSet = startingControllers.get(runId);
+    const cancelledEntry = startingSet ? [...startingSet].find((e) => e.ctl.signal.aborted) : undefined;
+    if (cancelledEntry) {
+        for (const e of startingSet ?? []) endStart(runId, e.ctl);
+        sendResponse({ data: { cancelled: true, summary: "cancelled before the run started" } });
+        return;
+    }
     // A turn a site sent reaches the model marked as the site's, never as the person's (Q2a); the transcript shows the
     // site's words with its name instead. A turn the person sent through the extension, which the page only relayed, is
     // theirs (`site.person`).
@@ -540,6 +575,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let endSession: ((error: string) => void) | undefined;
     try {
         runControllers.set(runId, abortCtl);
+        // The live controller takes over from any start registration: from here a CANCEL_RUN finds this one.
+        for (const e of startingSet ?? []) endStart(runId, e.ctl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
         // Register the run against its tab so the navigation sensor watches it — UNLESS the run opted out of
         // cross-page persistence (navigate: false), in which case a nav simply ends it (no barrier, no adopt).
