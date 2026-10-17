@@ -6,7 +6,7 @@
 import { SentContext, SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useRef, useContext } from "preact/hooks";
 import type { PersistGrant } from "../../contract/contract-agent";
 import type { RenderDescriptor } from "../../contract/contract-render";
 import type { DebugAgentConfig } from "../../contract/contract-debug";
@@ -30,7 +30,7 @@ import {
 import { Disclosure } from "../disclosure";
 import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
-import { foldStreaks, StepStreak } from "./step-streak";
+import { foldStreaks, StepStreak, InStreak } from "./step-streak";
 import { FoldRail } from "./fold-rail";
 import { AskList } from "./ask-card";
 import { CALL_TITLE } from "../../tools/tool-params";
@@ -336,11 +336,21 @@ function TokenChip({ token }: { token: string }) {
 /** ONE TOOL CALL in a run — the header (name, status, approval badge, live preview), the approval gate
  *  when it is waiting on you, and both I/O halves when it is open. The step is where the two render
  *  descriptors meet, so it is also what passes the failing line and the reflow map from the Out to the
- *  In: neither renderer can see the other. */
-export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
+ *  In: neither renderer can see the other.
+ *
+ *  `slot` is the call's index in its turn, used only to stagger a batch that lands together. */
+export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slot?: number }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
     const [fading, setFading] = useState(false);     // …but keep the CARD on screen while it animates away
+    // A CALL ARRIVING slides itself in — the row is what the model just decided to do, and a turn that batched
+    // three of them would otherwise replace its whole height in one frame. Captured on mount, like the turn's own
+    // `fresh`: it is a fact about how this row got here. A member of a streak does NOT self-animate (`InStreak`):
+    // the group's collapse or head is already saying what happened, and a slide would fight it. Same clock test
+    // the turn uses, so a transcript opened later never plays a page of these.
+    const inStreak = useContext(InStreak);
+    const history = useHistoryPaint();
+    const [fresh] = useState(() => !inStreak && !history && justArrived(st.ts));
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     // The run's def for THIS tool — its summary (hover on the name) + its parameter schema (the raw In view
     // annotates each arg key with its schema description). Absent on older debug events (names only).
@@ -483,7 +493,12 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
-        <div ref={rootRef} data-astep-seq={st.seq} data-rev={stepRev} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${inFlight ? " pending" : ""}${(awaiting || askWaiting) && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        // A batch of calls from one model answer enters as a short cascade rather than as a block: `slot` sets
+        // each row's entrance delay on the custom property below (not `animationDelay`, which would also delay
+        // a pending step's own `busy-fade` pulse).
+        <div ref={rootRef} data-astep-seq={st.seq} data-rev={stepRev}
+            class={`astep tool${fresh ? " fresh" : ""}${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${inFlight ? " pending" : ""}${(awaiting || askWaiting) && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}
+            style={fresh && slot ? { "--in-delay": `${Math.min(slot, 5) * 45}ms` } : undefined}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 {/* WHEN and HOW LONG ride the dot's tip: both facts already existed on the step — the stamp in the
@@ -633,7 +648,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
             <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} /> : null}
-            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} />)}
+            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} slot={i} />)}
         </div>
     );
 }

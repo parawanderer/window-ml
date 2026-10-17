@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldStreaks, streakFacts, holdsSeq, foldedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
+import { foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
@@ -161,6 +161,28 @@ test("a stamp from a clock running fast is read as history, not as the future", 
 test("an unstamped streak is treated as history, so nothing animates on a guess", () => {
     // ts is optional on a step; without one there is no evidence the reader saw this happen.
     assert.equal(foldedInView({ kind: "streak", tool: "exec", step: 1, turns: [turn(1, "exec")] }, 1_000_000), false);
+});
+
+// --- the OTHER grouping motion: a group that never had rows to collapse ---
+// `foldedInView` is the collapse. The pair below is the case the eye actually reports as "they were suddenly one
+// thing": the component mounts ALREADY folded (a "group all" pair, or two calls inside FOLD_SEEN_MS). Those still
+// have to say they were grouped, which is what the head's own entrance is for.
+
+test("a group that formed too fast to have rows to collapse is the form-in case, not the collapse case", () => {
+    const now = 1_000_000;
+    // Both calls landed moments apart: watched, but never two separate rows to shrink.
+    assert.equal(foldedInView(streakAt(80, now, 40), now), false);
+    assert.equal(groupedInView(streakAt(80, now, 40), now), true);
+    // A fold the reader watched collapse is NOT the form-in case — the collapse already describes it.
+    assert.equal(foldedInView(streakAt(200, now, 1500), now), true);
+    assert.equal(groupedInView(streakAt(200, now, 1500), now), false);
+});
+
+test("history is neither motion: a transcript opened later is already a group and must simply be one", () => {
+    const now = 1_000_000;
+    assert.equal(groupedInView(streakAt(5 * 60_000, now), now), false);
+    assert.equal(groupedInView(streakAt(-60_000, now), now), false, "a clock running fast is history, same as the fold rule");
+    assert.equal(groupedInView({ kind: "streak", tool: "exec", step: 1, turns: [turn(1, "exec")] }, now), false, "unstamped");
 });
 
 // --- "group all tool calls": the reader has answered every argument the ordinary rule makes ---
