@@ -62,7 +62,7 @@ interface RunCtx {
     credOnce: Set<string>;
     /** What the python_exec call now running was approved for: external sheet ids, and full-mode code. Set around the
      *  one call (`grantRunPython`), never on the tab. */
-    pyCall?: { sheets: Set<string>; code: string | null };
+    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } } };
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
     media?: WorkerPyMedia;
 }
@@ -125,10 +125,11 @@ export function grantRunFetch(runId: string, url: string, credentials: boolean):
     return true;
 }
 
-/** Grant the python_exec call about to run in the worker what its approval covers; `null` ends the call's grant. */
-export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null } | null): void {
+/** Grant the python_exec call about to run in the worker what its approval covers, and the step it runs in (its `ml`
+ *  calls' asks are shown there); `null` ends the call's grant. */
+export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } } } | null): void {
     const ctx = runs.get(runId);
-    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code } : undefined;
+    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}) } : undefined;
 }
 
 /** Whether this run's worker-side fetch_url was already approved for `url` (a new one goes to the gate). */
@@ -298,7 +299,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         untrusted: async () => (await senderTrust({ tab: { id: ctx.tabId, url: ctx.tabUrl() } as chrome.tabs.Tab, url: ctx.tabUrl() })) === "untrusted",
         pyCodeOk: (c) => ctx.pyCall?.code === c, runGated: true,
         valueOk: (holders) => holders.includes(ctx.runId),
-        wireRun: ctx.runId, tabUrl: ctx.tabUrl,
+        wireRun: ctx.runId, tabUrl: ctx.tabUrl, ...(ctx.pyCall?.step ? { wireStep: ctx.pyCall.step } : {}),
         ...(opts.onStdout ? { stream: opts.onStdout } : {}),
     });
     if (r.error !== undefined) throw new Error(r.error);

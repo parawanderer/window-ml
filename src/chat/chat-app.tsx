@@ -283,12 +283,14 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // to the end underneath them.
     const ready = !!s && store.loaded.value.has(sessionKey);
     // Everything mounted in that first paint is history, however recent its stamp says it is (history-paint.ts).
+    // Flipped in a LAYOUT effect, not a rAF: the flag has to be false before anything else can mount, or a live
+    // step that lands in the same frame as the history draw is read as history and never animates in. The first
+    // commit's children have already mounted by here (they saw `true`); a later arrival sees `false`.
     const [paintedKey, setPaintedKey] = useState<string | null>(null);
     const firstPaint = ready && paintedKey !== sessionKey;
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!ready) return;
-        const t = requestAnimationFrame(() => setPaintedKey(sessionKey));
-        return () => cancelAnimationFrame(t);
+        setPaintedKey(sessionKey);
     }, [ready, sessionKey]);
     // Pin to the end BEFORE paint, in the commit that first draws the transcript.
     useLayoutEffect(() => {

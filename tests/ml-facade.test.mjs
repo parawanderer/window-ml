@@ -70,6 +70,14 @@ test("keyword arguments travel as one trailing options object; seq counts up per
     assert.deepEqual(sent.map((s) => [s.seq, s.args]), [[1, ["@tool:a1b2c3d", { pipe: ".rows | head 5" }]], [2, ["@tool:a1b2c3d"]]]);
 });
 
+test("a namespace member is one call named by its dotted path, one level deep; a private or deeper name is not", { skip }, async () => {
+    const { out, sent } = await facadeRun(`def answer(req): return {"value": {"code": 0}}`,
+        `out["r"] = await ml.sh.run(["ls"], cwd="src")\nfor k, f in (("private", lambda: ml.sh._call), ("deeper", lambda: ml.sh.run.x)):\n    try:\n        f()\n        out[k] = "allowed"\n    except AttributeError:\n        out[k] = "refused"`);
+    assert.deepEqual(out.r, { code: 0 });
+    assert.deepEqual(sent, [{ seq: 1, call: "sh.run", args: [["ls"], { cwd: "src" }] }]);
+    assert.deepEqual([out.private, out.deeper], ["refused", "refused"]);
+});
+
 // --- how each answer reaches the cell ---
 
 test("an error answer is an MlError the cell catches, with the wire's code, and the cell goes on", { skip }, async () => {
