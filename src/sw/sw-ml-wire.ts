@@ -14,7 +14,8 @@ import type { MlWireAnswer, MlWireRequest } from "../contract";
 import { ML_READONLY_METHODS, mlFacade } from "../readonly-exec/policy";
 import { workerReadonlyMl, derefWhole, type RunDeref } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
-import { derefByRun } from "./sw-runs";
+import { derefByRun, runControllers, sessionTokens } from "./sw-runs";
+import { shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
 import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom } from "./ml-wire-serve";
 
@@ -33,8 +34,8 @@ function senderIs(from: WireFrom, sender: chrome.runtime.MessageSender): boolean
 }
 
 /**
- * The members a client's realm has. `full` has the same set as `readonly` this round: the gated members (a live fetch,
- * `chat`, `click`) come with the consent path, each with its own gate.
+ * The members a client's realm has. `full` adds `sh.run`/`sh.read` for a client a running step of its run opened; the
+ * other gated members (a live fetch, `chat`, `click`) come with the consent path, each with its own gate.
  * @param client the client
  * @returns its members, by name
  */
@@ -47,7 +48,38 @@ function membersFor(client: WireClient): Record<string, WireMember> {
         if (typeof fn !== "function") continue;
         out[name] = { run: name === "dereference" && deref ? dereferenceOverWire(deref, client.run!) : fn as (...a: unknown[]) => unknown };
     }
+    // ml.sh: an approved (full) client of a run, opened by one of its steps, and only while that run runs. Bound to the run
+    // and step the HANDLE records, never to anything in the request; each call is judged or asked inside that step
+    // (sw-shell-call.ts). A read-only client never has it.
+    const sh = shContextFor(client);
+    if (sh) {
+        out["sh.run"] = { run: (...a: unknown[]) => shMember(shRun, sh, a) };
+        out["sh.read"] = { run: (...a: unknown[]) => shMember(shRead, sh, a) };
+    }
     return out;
+}
+
+/**
+ * The context an `ml.sh` call from this client runs in, or undefined when the client may not have `ml.sh`.
+ * @param client the client
+ */
+function shContextFor(client: WireClient): ShCallContext | undefined {
+    if (client.realm !== "full" || !client.run || !client.step) return undefined;
+    const ctl = runControllers.get(client.run);
+    if (!ctl) return undefined;
+    return { runId: client.run, seq: client.step.seq, local: { ...client.step.local }, signal: ctl.signal, tokens: sessionTokens(client.run) };
+}
+
+/**
+ * One `ml.sh` call as a wire member: its value, or a WireError with the call's own code.
+ * @param fn `shRun` or `shRead`
+ * @param ctx the call's context
+ * @param args the copied arguments
+ */
+async function shMember(fn: (c: ShCallContext, a: readonly unknown[]) => Promise<ShAnswer>, ctx: ShCallContext, args: unknown[]): Promise<unknown> {
+    const r = await fn(ctx, args);
+    if ("error" in r) throw new WireError(r.code, r.error);
+    return r.ok;
 }
 
 /**

@@ -936,7 +936,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name);
                     if (pyInWorker) {
                         await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
-                        grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
+                        grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null, ...(call ? { step: { seq: seqBase + call.seq, local: call } } : {}) });
                     }
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                     // fetch URLs, a server tool's exact call, and a page-built run's python_exec's full-mode code and sheets.

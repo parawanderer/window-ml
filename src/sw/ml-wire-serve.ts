@@ -198,6 +198,10 @@ export interface WireClient {
     run: string | null;
     realm: WireRealm;
     tabUrl: () => string;
+    /** The running step that started the code, as the opener knew it: where a nested ask for one of its calls is shown
+     *  (docs/spec/ML_WIRE.md, "the step an ask rides is a fact of the handle, never of the message"). Absent: code no
+     *  step started, which can raise no ask. */
+    step?: { seq: number; local: { step: number; seq: number } };
 }
 
 const clients = new Map<string, WireClient>();   // state: plumbing — one in-flight cell each
@@ -207,12 +211,13 @@ export const wireClient = (handle: string): WireClient | undefined => clients.ge
 
 /**
  * Open a client for code the worker is about to start, and get the handle its calls must carry.
- * @param c where its calls will come from, the run it is for (null: none), its realm, and its tab's URL now
+ * @param c where its calls will come from, the run it is for (null: none), its realm, its tab's URL now, and the
+ *   running step that started it (kept only with a run)
  * @returns the handle, and `close` to call when the code has finished: later calls on the handle are refused
  */
-export function openWireClient(c: { from: WireFrom; run: string | null; realm: WireRealm; tabUrl?: () => string }): { handle: string; close: () => void } {
+export function openWireClient(c: { from: WireFrom; run: string | null; realm: WireRealm; tabUrl?: () => string; step?: WireClient["step"] }): { handle: string; close: () => void } {
     const handle = `mlw-${crypto.randomUUID()}`;
-    clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => "") });
+    clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => ""), ...(c.run && c.step ? { step: { seq: c.step.seq, local: { ...c.step.local } } } : {}) });
     return { handle, close: () => { clients.delete(handle); } };
 }
 
