@@ -978,7 +978,7 @@ button.chat-page-go:hover { color: var(--fg); }
 /* COLLAPSED steps are a LIST — one line each, and a list is read as a group, so they sit close together. An OPEN
    one is a thing you are reading, and it gets the room that goes with that. */
 .chat.calm .astep.tool { margin: 3px 0; transition: margin .2s cubic-bezier(.4, 0, .2, 1), padding .2s cubic-bezier(.4, 0, .2, 1); }
-.chat.calm .astep.tool.open { margin: 16px 0; padding-bottom: 4px; }
+.chat.calm .astep.tool.open { margin: 3px 0; padding-bottom: 4px; }
 /* CLOSING takes the collapsed spacing at once, so it shrinks alongside the body instead of snapping after it: the
    step stays `.open` until its body unmounts, and its 16px margins used to drop to 3px in that last frame. */
 .chat.calm .astep.tool.open.closing { margin: 3px 0; padding-bottom: 0; }
@@ -1861,7 +1861,6 @@ button.chat-page-go:hover { color: var(--fg); }
     display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px 5px 0;
     background: none; border: none; border-radius: 8px; color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
 }
-.astreak-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
 /* QUIET UNTIL IT IS WANTED. A folded run is a thing to READ past, and a chevron standing permanently beside every
    one of them is a column of controls down a page whose whole point is to have less on it. It fades in on hover —
    and on keyboard focus, which is the half that is easy to leave out and the only way a non-pointer user finds it.
