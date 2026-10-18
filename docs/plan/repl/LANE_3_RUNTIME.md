@@ -93,3 +93,8 @@ test_asyncio.test_runners -v --timeout 120` under `ulimit -v 4000000`, against s
 sites slice 2 touched (`_DO_CALL`, `_PyRestricted_Vectorcall`) under asyncio's `Runner`, and at whether any hook runs when
 nothing is restricted. The fork holds slice 4 pushed (1c8b7db) and uncommitted edits in `~/git/cpython-restricted` (check
 `git status` there first). The suite rule in the plan's README applies to every later run.
+
+**Shown otherwise, 2026-10-15** (the same session's follow-up; the numbers are in [`LANE_3_RESULT_H.md`](LANE_3_RESULT_H.md)):
+the balloon did not reproduce on a clean build of the same commit (3/3 in 1 s, peak 45 MB), and the suite had been running
+while that tree was rebuilt and edited under it. Not a patch regression. The standing rule is the one above: never rebuild
+or edit a tree a suite runs from.
