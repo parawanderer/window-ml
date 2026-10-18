@@ -25,10 +25,12 @@ export const DATA_URL = "https://data.example/report.csv";
  *   approves every page; `calls`: the model's tool calls in order, in place of fetch_url then python_exec; `local` seeds
  *   `chrome.storage.local` (e.g. `ml_site_selfapprove` so a page-started PYTHON_EXEC is allowed to run); `store`: give
  *   the worker a value store (a `fake-indexeddb` database), with `budgetMB` as its budget; `idb` shares one store across
- *   two `wireRun`s (a cross-run read); `pageAnswer` is what the page's `RUN_TOOL_IN_PAGE` answers
+ *   two `wireRun`s (a cross-run read); `pageAnswer` is what the page's `RUN_TOOL_IN_PAGE` answers; `configExtra` goes
+ *   over the config (ml.sh's settings), `onNative` is a fake process host (tests/fake-native-host.mjs), and
+ *   `onStep(bg, event)` sees each step event on the run's tab (a nested ask arrives this way)
  * @returns the worker, the PY_RUN messages, and the tool results the model was last handed
  */
-export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer } = {}) {
+export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer, configExtra = {}, onNative, onStep } = {}) {
     let turns = 0;
     const pyRuns = [];
     const calls = script ?? [
@@ -37,7 +39,8 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
     ];
     const toolResults = [];
     const bg = loadBackground({
-        config: budgetMB == null ? config : { ...config, valueStoreBudgetMB: budgetMB }, siteGate, openTabs: [SITE], local,
+        config: { ...config, ...(budgetMB == null ? {} : { valueStoreBudgetMB: budgetMB }), ...configExtra }, siteGate, openTabs: [SITE], local,
+        ...(onNative ? { onNative } : {}),
         ...(store || idb ? { indexedDB: idb ?? new IDBFactory() } : {}),
         onFetch: (c) => {
             if (c.url in bodies) return new Response(bodies[c.url], { status: 200, headers: { "content-type": "text/plain" } });
@@ -59,6 +62,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.kind === "agent-step") await onStep?.(bg, msg.event);
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             return pageAnswer ? await pageAnswer(msg, bg) : { result: "" };
         },

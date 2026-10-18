@@ -75,6 +75,8 @@ export interface PythonCaller {
     /** The run the cell's `ml` calls are for (sw-ml-wire.ts): a run the worker hosts, never one a page names. Absent:
      *  none, so the cell's `ml` has no `dereference`. */
     wireRun?: string;
+    /** The running step of `wireRun` that started the cell, recorded on its wire client: where an ask it raises is shown. */
+    wireStep?: { seq: number; local: { step: number; seq: number } };
     /** The cell's tab URL now, for its `ml.config()`. */
     tabUrl?: () => string;
 }
@@ -170,7 +172,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         : caller.wireRun ? `run:${caller.wireRun}`
         : caller.tabId != null ? `page:${caller.tabId}`
         : "own";
-    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: hardened ? "readonly" : "full", tabUrl: caller.tabUrl });
+    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: hardened ? "readonly" : "full", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
     const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
     try {

@@ -106,6 +106,10 @@ def _ml_make(_send, _codec):
         def __init__(self, name): object.__setattr__(self, "_name", name)
         def __setattr__(self, k, v): raise AttributeError("ml is read-only")
         def __call__(self, *args, **kwargs): return _call(self._name, args, kwargs)
+        # A namespace member (ml.sh.run) is one call named by its dotted path: the server decides whether it exists.
+        def __getattr__(self, name):
+            if name.startswith("_") or "." in self._name: raise AttributeError(name)
+            return _Member(self._name + "." + name)
         def __repr__(self): return f"<ml.{self._name}: await it>"
 
     class _Ml:
