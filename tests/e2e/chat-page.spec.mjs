@@ -960,7 +960,25 @@ test("the start page holds through a worker restart, and its tab list is fresh a
         const cdp = await ext.context.newCDPSession(chat);
         await cdp.send("ServiceWorker.enable");
         await cdp.send("ServiceWorker.stopAllWorkers");
-        await expect.poll(() => chat.evaluate(() => document.querySelector(".chat-start-wait") == null), { timeout: 10_000 }).toBe(true);
+        // `.chat-start-wait` is NOT a ready signal here: LocalHost holds `online` for OFFLINE_GRACE_MS (3 s) after
+        // the port drops, so the wait badge is already gone while the worker is still down and a tabs.list would
+        // fail. Probe the sessions port for the `runtime` announce SessionServer.attach posts on connect — the same
+        // thing LocalHost itself waits for — so the next step starts against a worker that answers.
+        await expect.poll(() => chat.evaluate(() => new Promise((resolve) => {
+            let done = false;
+            const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+            let port;
+            try { port = chrome.runtime.connect({ name: "ml-sessions" }); } catch { finish(false); return; }
+            const t = setTimeout(() => { try { port.disconnect(); } catch { /* already gone */ } finish(false); }, 1500);
+            port.onMessage.addListener((msg) => {
+                if (msg && msg.type === "runtime") {
+                    clearTimeout(t);
+                    try { port.disconnect(); } catch { /* already gone */ }
+                    finish(true);
+                }
+            });
+            port.onDisconnect.addListener(() => { clearTimeout(t); finish(false); });
+        })), { timeout: 15_000 }).toBe(true);
         expect(await chat.evaluate(() => window.__gone)).toBe(0);
         await expect(box).toHaveValue("half a thought");
 

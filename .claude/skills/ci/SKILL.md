@@ -233,8 +233,6 @@ flaky), and the only entries that BLOCKED a run that day:
 
 Flaky only (passed on retry, never blocked a run), worth knowing because two may be PRODUCT bugs, not races:
 
-- **`chat-page.spec.mjs:935` › `the start page holds through a worker restart…`** (e2e 1/3) — flaky 3 times; the tab
-  list stays at one row for the whole 5 s instead of two. Possibly a stale tab list after a worker restart, a real bug.
 - **`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`**
   (e2e 3/3) — flaky 3 times, all on main: the run does not reach an ended status within 20 s of the approve click. The
   security assertions before that step passed; the stall itself is unexplained. A @security test going flaky is a bug
@@ -247,6 +245,13 @@ node:test had no real failures in that window: every `not ok` was a documented `
 
 Recently removed, recorded so nobody re-adds them from memory:
 
+- ~~`chat-page.spec.mjs:935` › `the start page holds through a worker restart, and its tab list is fresh and has the
+  sites' icons`~~ — **fixed.** Two cooperating defects: the test's wait on `.chat-start-wait == null` was a false
+  positive (LocalHost holds `online` for `OFFLINE_GRACE_MS` after the port drops, so the badge is already gone while a
+  `tabs.list` would fail), and `useTargetPick` never re-asked `tabs.list` when the same `local` re-announced after a
+  worker restart (`rt.id` is a constant, so the effect never moved) and a failed refresh kept the stale one-row list
+  with no retry. The test now probes the `ml-sessions` port for the `runtime` announce, and the picker watches the
+  runtime OBJECT so a re-announce refreshes the list.
 - ~~`chat-scroll.spec.mjs:89` › `a standalone tool call slides in, and a pair that becomes a group says so on the
   head`~~ — **fixed** (hard fail on main, 5/5; not flaky). A live tool step that landed in the same frame as the
   history draw mounted under `HistoryPaint=true`, captured `fresh=false` on mount, and never got `.fresh` /
