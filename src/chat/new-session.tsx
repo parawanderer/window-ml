@@ -106,12 +106,23 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
     // just left — and on a runtime with no tabs at all there was no list coming that could ever clear it. It goes back
     // to a new tab rather than to that device's active tab: picking one machine's foreground page because you chose
     // the machine is a second choice nobody made. What was TYPED stays, since a URL is not a tab.
+    //
+    // Deps are the runtime OBJECT, not its id: a worker restart re-announces the same `local` under a new object, and
+    // that is the only signal that a tab opened while the port was down has to reach this list. A different runtime is
+    // a full ask (and a dropped choice); the same one arriving again is a refresh, so the list on screen stays until
+    // the new one lands instead of flashing "Loading tabs…".
     const lastRt = useRef<string | undefined>(rt?.id);
+    const loaded = useRef(false);
     useEffect(() => {
-        if (lastRt.current !== rt?.id) { lastRt.current = rt?.id; setWhere("blank"); setTabId(null); }
-        load(true);
+        const first = !loaded.current;
+        loaded.current = true;
+        // `first` is not an id change: the mount's own `rt` is not a device switch, and forcing "A new tab" there
+        // dropped a perfectly good first list's choice.
+        const idChanged = !first && lastRt.current !== rt?.id;
+        if (idChanged) { lastRt.current = rt?.id; setWhere("blank"); setTabId(null); }
+        load(first || idChanged);
         return () => { seq.current++; };
-    }, [rt?.id, wantsTabs]);
+    }, [rt, wantsTabs]);
 
     const closed = where === "tab" && tabId != null && !!tabs && !tabs.some((t) => t.tabId === tabId);
     return {
