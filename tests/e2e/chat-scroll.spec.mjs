@@ -28,7 +28,7 @@ async function openLong(viewport, key, n, { reduced = false } = {}) {
     page.on("pageerror", (e) => errors.push(e.message));
     await page.addInitScript(() => {
         window.__arrivals = [];
-        document.addEventListener("animationstart", (e) => { if (/turn-in|fold|collapse/.test(e.animationName)) window.__arrivals.push(e.animationName); }, true);
+        document.addEventListener("animationstart", (e) => { if (/turn-in|tool-in|streak|fold|collapse/.test(e.animationName)) window.__arrivals.push(e.animationName); }, true);
         window.__firstPaint = null;
         const tick = () => {
             const t = document.querySelector(".chat-transcript");
@@ -59,7 +59,7 @@ test("a run whose last step landed moments ago is still history on a reload, and
     const page = await browser.newPage({ viewport: DESKTOP });
     await page.addInitScript(() => {
         window.__arrivals = [];
-        document.addEventListener("animationstart", (e) => { if (/turn-in/.test(e.animationName)) window.__arrivals.push(e.animationName); }, true);
+        document.addEventListener("animationstart", (e) => { if (/turn-in|tool-in|streak/.test(e.animationName)) window.__arrivals.push(e.animationName); }, true);
     });
     await page.goto(`${server.url}?long=0`);
     await page.locator(".chat").waitFor();
@@ -76,12 +76,49 @@ test("a run whose last step landed moments ago is still history on a reload, and
     await page.locator(".chat-transcript .aturn").first().waitFor();
     await page.waitForTimeout(400);
     expect(await page.evaluate(() => window.__arrivals), "history, however recent its stamp").toEqual([]);
+    await expect(page.locator(".chat-transcript .astep.tool.fresh"), "a drawn tool call does not slide in").toHaveCount(0);
     // A step that arrives while the page is watching does animate.
     await page.evaluate((k) => globalThis.__chatFake.emit(k, {
         kind: "agent-step", id: "feed5eed-live", ts: Date.now(), save: true, session: { hash: "feed5eed", turn: 99 },
         step: 99, seq: 99, tool: "python_exec", arguments: {}, result: "ok", toolMs: 5, thought: "now",
     }), key);
     await expect.poll(() => page.evaluate(() => window.__arrivals.length)).toBeGreaterThan(0);
+    await page.close();
+});
+
+test("a standalone tool call slides in, and a pair that becomes a group says so on the head", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await page.addInitScript(() => {
+        window.__arrivals = [];
+        document.addEventListener("animationstart", (e) => { if (/tool-in|streak/.test(e.animationName)) window.__arrivals.push(e.animationName); }, true);
+    });
+    await page.goto(`${server.url}?long=0`);
+    await page.locator(".chat").waitFor();
+    const key = await page.evaluate(() => {
+        const { longAgent } = globalThis.__longSession;
+        const s = longAgent(0, Date.now(), 100);
+        s.summary.id = { runtime: "laptop", hash: "a11e5001" };
+        s.events = s.events.map((e) => ({ ...e, id: e.id.replace(/^[0-9a-f]+/, "a11e5001"), session: { ...e.session, hash: "a11e5001" } }));
+        globalThis.__chatFake.addSession(s.summary, s.events);
+        return "laptop:a11e5001";
+    });
+    await page.evaluate((k) => { location.hash = `#/s/${encodeURIComponent(k)}`; }, key);
+    await page.locator(".chat-transcript").waitFor();
+    // One call on its own: the row slides in (and the turn may drift with it).
+    await page.evaluate((k) => globalThis.__chatFake.emit(k, {
+        kind: "agent-step", id: "solo-tool", ts: Date.now(), save: true, session: { hash: "a11e5001", turn: 1 },
+        step: 1, seq: 1, tool: "exec", arguments: {}, result: "ok", toolMs: 5,
+    }), key);
+    await expect(page.locator(".astep.tool.fresh").first()).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__arrivals.some((n) => n === "chat-tool-in"))).toBe(true);
+    // A second call of a different tool is one more row, not yet a group under the ordinary rule; under "group
+    // all" (the chat page's default) two calls are a group and the head is what says so.
+    await page.evaluate((k) => globalThis.__chatFake.emit(k, {
+        kind: "agent-step", id: "pair-tool", ts: Date.now(), save: true, session: { hash: "a11e5001", turn: 2 },
+        step: 2, seq: 2, tool: "look", arguments: {}, result: "ok", toolMs: 5,
+    }), key);
+    await expect(page.locator(".astreak").first()).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__arrivals.some((n) => n === "chat-streak-form" || n === "chat-streak-wash"))).toBe(true);
     await page.close();
 });
 

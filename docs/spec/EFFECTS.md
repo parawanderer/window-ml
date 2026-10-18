@@ -97,6 +97,19 @@ So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition,
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because
 the plain host publishes nothing.
 
+**No separate sandbox profile file (2026-10-17).** Layer 3 (the OS sandbox in `window-ml-host/src/sandbox.rs`) does not
+introduce a fourth configuration language alongside manifests (Layer 1) and policies (Layer 2). Instead, the per-call
+kernel sandbox `Plan` (macOS Seatbelt SBPL or Linux bubblewrap + Landlock) is compiled deterministically from the call's
+approved `EffectsData` set $E(c)$, the workspace roots, and a fixed safety floor:
+
+| Sandbox `Plan` Component | Source |
+| --- | --- |
+| **Invariant safety floor** (`denyRead` on `~/.ssh`, `~/.aws`, `~/.gnupg`, Keychains, `.netrc`; `denyWrite` on `.git/hooks`, `.git/config`, `.bashrc`, `.zshrc`, `.claude/`, `.vscode/`) | Hardcoded in `sandbox.rs` — never weakened by a manifest or policy |
+| **Workspace secret files** (`.env*`, `*.pem`, `id_*` inside a root) | Denied at the kernel level by default; added to `plan.allow_read` only when the call explicitly named that path in `pathArgs` and the person or a policy approved it |
+| **Writable directories (`plan.roots`)** | Empty (`write: none`, except the call's `$TMPDIR`) when $E(c)$ is described and contains no `write(fs)`; the workspace roots plus any manifest-declared `write(fs(p))` paths (such as a tool cache `~/.cache/uv` or `~/.cargo`) when approved |
+| **Process execution (`exec`)** | Restricted to the resolved program/interpreter binary (`exec: program-only`) when $E(c)$ is described and contains no `exec(process)` (`runner: false`); unrestricted within the sandbox when `exec(process)` or `unknown` is approved |
+| **Network (`net`) and memory (`alloc`)** | Network denied unless $E(c)$ carries an approved `net(host)`; physical footprint capped at the `alloc(process)` bound (Root L) |
+
 ## What a policy sees
 
 `c.effects` is this set, with helpers the policy realm provides so a policy is a set predicate and not a string compare:
