@@ -35,11 +35,18 @@
     ]
   },
   "leaves": {
-    "decimal.Decimal": {
+    "Decimal.max": {
       "effects": "pure",
       "returns": "fresh",
-      "cost": "digits",
-      "why": "a C type used by 10% of cells; ruled a day-one entry (repl-specs 2026-10-15)"
+      "cost": "O(1)",
+      "why": "a new Decimal (measured: not either argument); Decimal is immutable either way"
+    },
+    "csv.DictReader": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
+      "why": "_csv is C; ruled in as a leaf 2026-10-15"
     },
     "csv.reader": {
       "effects": "pure",
@@ -55,12 +62,59 @@
       "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
       "why": "_csv is C; ruled in as a leaf 2026-10-15"
     },
-    "csv.DictReader": {
+    "decimal.Decimal": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "digits",
+      "why": "a C type used by 10% of cells; ruled a day-one entry (repl-specs 2026-10-15)"
+    },
+    "decimal.getcontext": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "the live thread context: never owned"
+    },
+    "io.BytesIO": {
       "effects": "pure",
       "returns": "fresh",
       "cost": "input length",
-      "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
-      "why": "_csv is C; ruled in as a leaf 2026-10-15"
+      "why": "a fresh writable buffer; its contents are its own"
+    },
+    "io.StringIO": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "why": "a fresh writable buffer; its contents are its own"
+    },
+    "math.fsum": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "why": "a new float"
+    },
+    "random.choice": {
+      "effects": "reads-external (the RNG)",
+      "returns": "alias(0)",
+      "cost": "O(1)",
+      "why": "returns one of the sequence's items, never a new object (measured)"
+    },
+    "re.compile": {
+      "effects": "cache",
+      "returns": "fresh",
+      "cost": "input length",
+      "why": "a new pattern object; the re module's pattern cache is observational only"
+    },
+    "re.findall": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "why": "a new list of matches; the pattern is checked for backtracking before the call"
+    },
+    "re.search": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "input length",
+      "why": "a Match or None; the pattern is checked for backtracking before the call"
     }
   },
   "observed": {
@@ -114,5 +168,5 @@
     }
   },
   "min_cells": 2,
-  "note": "names only, except the ruled leaf; effects, return marking and cost shapes are the second pass"
+  "note": "effects, return marking (fresh/alias(i)/internal) and cost shapes: leafpass.py, second pass 2026-10-18 (docs/spec/READONLY_LIBRARY_MANIFEST.md); a listed name is admitted only with its row"
 }

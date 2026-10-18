@@ -57,5 +57,97 @@
       }
     }
   },
-  "note": "names only; effects, return marking (fresh/alias/internal) and cost shapes are the second pass, after the CPython restricted mode"
+  "note": "effects, return marking (fresh/alias(i)/internal) and cost shapes: leafpass.py, second pass 2026-10-18 (docs/spec/READONLY_LIBRARY_MANIFEST.md); a listed name is admitted only with its row",
+  "leaves": {
+    "ndarray.any": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new bool"
+    },
+    "ndarray.astype": {
+      "effects": "pure",
+      "returns": "fresh; alias(0) when copy=False",
+      "cost": "size",
+      "why": "a converted copy; copy=False returns self when the dtype already matches"
+    },
+    "ndarray.copy": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "an unconditional copy"
+    },
+    "ndarray.max": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new scalar"
+    },
+    "ndarray.mean": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new scalar"
+    },
+    "ndarray.round": {
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
+      "cost": "size",
+      "why": "a new rounded array, or the out array written in place"
+    },
+    "ndarray.sum": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new scalar"
+    },
+    "ndarray.tolist": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new list; object-dtype items alias the receiver's contents, and writes to those items are refused unless they are owned"
+    },
+    "numpy.abs": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new array of absolute values"
+    },
+    "numpy.any": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new bool, from a pass over the input"
+    },
+    "numpy.argwhere": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new index array"
+    },
+    "numpy.array": {
+      "effects": "pure",
+      "returns": "fresh; alias(0) when copy=False",
+      "cost": "size",
+      "why": "copies by default; copy=False returns the input itself"
+    },
+    "numpy.mean": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new float, from a pass over the input"
+    },
+    "numpy.sum": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new scalar, from a pass over the input"
+    },
+    "numpy.where": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "size",
+      "why": "a new array selected from the two inputs"
+    }
+  }
 }
