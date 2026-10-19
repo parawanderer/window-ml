@@ -188,11 +188,12 @@ test("a symlink's place is what it RESOLVED to: markers off `path`, never `given
     const { free, boundFor } = await import("../src/effects.ts");
     const B = boundFor("host-sandbox");
     const at = (paths, argv, cwd = { path: "/w", inRoot: true }) =>
-        shFacts(facts({ argv, cwd, paths }), null, { roots: ["/w"] });
+        shFacts(facts({ argv, cwd, paths }), "2.45.0", { roots: ["/w"] });
     // a: .envrc is a symlink to /tmp/x. The host resolved it out of the roots: inRoot false, path /tmp/x.
     // An in-place write to an "existing top-level file" must NOT be free — the write lands at /tmp/x.
     const out = at([{ arg: 2, given: ".envrc", path: "/tmp/x", inRoot: false, secret: false, exists: true }],
         ["git", "diff", "--output=.envrc"]);
+    assert.equal(out.described, true, out.why.join("; "));
     assert.equal(out.paths[0].path, "/tmp/x", "the fact carries the resolved target, not the typed name");
     assert.deepEqual([out.paths[0].topLevel, out.paths[0].isRoot], [false, false], "place markers off the resolved path: /tmp/x's parent is not a root");
     assert.equal(free(out.effects, B), false, "a write to a symlink whose target is outside the roots is covered by nothing");
@@ -209,6 +210,7 @@ test("a symlink's place is what it RESOLVED to: markers off `path`, never `given
     // Positive control: the same typed name resolving inside the roots at the top level is the ruled top-level claim.
     const real = at([{ arg: 2, given: ".envrc", path: "/w/.envrc", inRoot: true, secret: false, exists: false }],
         ["git", "diff", "--output=.envrc"]);
+    assert.equal(real.described, true, real.why.join("; "));
     assert.deepEqual([real.paths[0].topLevel, real.paths[0].isRoot], [true, false]);
     assert.equal(free(real.effects, B), false, "the same claim as a real top-level entry asks");
 });
