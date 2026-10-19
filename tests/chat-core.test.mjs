@@ -942,6 +942,59 @@ test("revokerItems: only a hub that KEEPS the record and holds none warns, and i
     assert.deepEqual(revokerItems("none", new Set(["this-account:no-revoker"])), [], "and it stays dismissed");
 });
 
+// --- renewing through a runtime paired without permission to pair devices (#815, #817) ---
+
+test("canSignRenewal: online and not known to lack may_pair; absent counts as able, the UPGRADE of a list that never carried it", async () => {
+    const { canSignRenewal, renewalSigners } = await import("../src/chat/renew.ts");
+    const rt = (name, online, mayPair) => ({ id: name, name, online, ...(mayPair === undefined ? {} : { mayPair }) });
+    // Every combination, the default included: a runtime list from before this was read has no `mayPair` at all.
+    for (const online of [true, false]) for (const mayPair of [true, false, undefined]) {
+        assert.equal(canSignRenewal(rt("x", online, mayPair)), online && mayPair !== false, `online=${online} mayPair=${mayPair}`);
+    }
+    assert.deepEqual(renewalSigners([rt("Work laptop", false, true), rt("Home desktop", true, false), rt("Old", true, undefined)]),
+        { signers: ["Work laptop"], cannot: ["Home desktop"] }, "only a definite yes names a signer, only a definite no rules one out");
+});
+
+test("certItems: a browser that is awake but may not pair is named, with who can, instead of 'open one of your browsers'", async () => {
+    const { certItems } = await import("../src/chat/attention.ts");
+    const now = 1_000_000_000_000;
+    const soon = now + 5 * 86_400_000;
+    const [named] = certItems({ notAfterMs: soon, renewable: true, issuerOnline: false, canRenew: true, signers: { signers: ["Work laptop"], cannot: ["Home desktop"] } }, now);
+    assert.match(named.detail, /Home desktop was paired without permission to pair devices, so it cannot renew this one\. Work laptop can: open it and try again\./);
+    assert.equal(named.fix, undefined, "no button: pressing it would ask the browser that cannot");
+    assert.doesNotMatch(named.detail, /root device/, "nothing on the root device renews another device");
+    const [nobody] = certItems({ notAfterMs: soon, renewable: true, issuerOnline: false, signers: { signers: [], cannot: ["Home desktop", "Den"] } }, now);
+    assert.match(nobody.detail, /Home desktop and Den were paired without permission to pair devices, so they cannot renew this one\. None of your browsers that can is known here, so pair this device again/);
+    // Control: with nobody awake at all, the old sentence stands.
+    const [asleep] = certItems({ notAfterMs: soon, renewable: true, issuerOnline: false, signers: { signers: ["Work laptop"], cannot: [] } }, now);
+    assert.match(asleep.detail, /None is right now/);
+});
+
+test("renewSelf: never asks a runtime that may not pair, and turns either refusal into a sentence naming who can", async () => {
+    const { renewSelf } = await import("../src/chat/renew.ts");
+    const rt = (name, online, mayPair) => ({ id: name, name, online, ...(mayPair === undefined ? {} : { mayPair }) });
+    const world = (answer) => { const asked = []; return { asked, host: { async send(c) { asked.push(c.runtime); return answer(c); } }, pairing: { install: async () => {} } }; };
+    // Known not to be able: not asked at all.
+    let w = world(() => ({ ok: true, data: { notAfterMs: 1 } }));
+    let r = await renewSelf(w.host, w.pairing, [rt("Home desktop", true, false), rt("Work laptop", false, true)], "p");
+    assert.deepEqual(w.asked, []);
+    assert.match(r.problem, /^Home desktop was paired without permission to pair devices.*Work laptop can: open it and try again\.$/);
+    // Not known (an older client list, or a runtime seen before this was read): asked, and BOTH refusals map, #817's and
+    // the pre-#817 chain checker's, since a runtime on the old code still answers with the latter.
+    for (const message of ["an intermediate may not pair",
+        "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from the root device, or from a browser paired with that permission",
+        "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from a browser paired with that permission, or pair the device again"]) {
+        w = world(() => ({ ok: false, error: { code: "conflict", message } }));
+        r = await renewSelf(w.host, w.pairing, [rt("Den", true, undefined), rt("Work laptop", false, true)], "p");
+        assert.deepEqual(w.asked, ["Den"]);
+        assert.equal(r.problem, "Den was paired without permission to pair devices, so it cannot renew this one. Work laptop can: open it and try again.", message);
+    }
+    // Control: any other refusal is passed through as it was.
+    w = world(() => ({ ok: false, error: { code: "conflict", message: "its own certificate is expiring" } }));
+    r = await renewSelf(w.host, w.pairing, [rt("Den", true, true)], "p");
+    assert.equal(r.problem, "its own certificate is expiring");
+});
+
 // --- renewing this device's own certificate: asking a runtime, and keeping only what checks out ---
 
 test("renewSelf: tries each browser that is awake, installs what comes back, and stops dead on a chain that does not check out", async () => {

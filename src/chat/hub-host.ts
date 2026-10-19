@@ -473,6 +473,7 @@ export class HubHost implements SessionHost {
                 id: p.id, name: p.name, kind: d.kind, online: p.online, lastSeen: p.lastSeen,
                 contractVersion: d.contractVersion, capabilities: d.capabilities, grants, clockOffsetMs: d.clockOffsetMs,
                 ...(p.mayRevoke ? { mayRevoke: true as const } : {}),
+                ...(p.mayPair !== undefined ? { mayPair: p.mayPair } : {}),
             });
         }
         return out;

@@ -1009,6 +1009,14 @@ resume and reset already are the reconciliation.
   scheduled for next month must still be true when it arrives. Nothing about a session, a task or a page ever goes on
   a lock screen. `expo-notifications` is installed but deliberately NOT in `app.json`'s plugins: its iOS plugin writes
   a push entitlement a free signing certificate cannot grant.
+- **Who can renew this device is a runtime that MAY PAIR, not any runtime online** (`canSignRenewal`, `renew.ts`). A
+  runtime paired with `may_pair` off (the phone's default since #815) cannot sign another device's renewal, so the
+  inbox, both auto-renew starters and `renewSelf` all read it from `RuntimeInfo.mayPair`, which comes off the runtime's
+  VERIFIED presence leaf like `mayRevoke`. Absent is "not known" and counts as able, which keeps an older list working.
+  With a browser awake that cannot sign, the inbox names it and names the ones that can (`noSignerOnline`), instead of
+  "open one of your browsers". A runtime's refusal for this reason, #817's `unsupported` or the older "an intermediate
+  may not pair", becomes that same sentence, because it can name the browsers that can sign and the runtime's cannot.
+  Nothing on the root device renews another device: `device.renew` is answered by runtimes only.
 - **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
   `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
   runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools
