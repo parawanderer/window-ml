@@ -76,7 +76,8 @@ export interface MlSh {
     /** Run one program and wait for it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`,
      *  `Refused`, `BadRequest`) throws with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
      *  `complete`) and a `@tool:` pointer (`token`) to the whole. `ran` says where it ran: `host-sandbox` (writes only
-     *  inside the workspace folders, no network) or `host-plain`.
+     *  inside the workspace folders, no network) or `host-plain`. A call past its memory bound is killed: `killed`
+     *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` */
@@ -86,6 +87,7 @@ export interface MlSh {
         stdout: { token: string | null; size: number; truncated: boolean; text: string; complete: boolean };
         stderr: { token: string | null; size: number; truncated: boolean; text: string; complete: boolean };
         approvedBy?: string; waitedMs?: number; error?: string;
+        killed?: "oom"; peakFootprint?: number; memoryBound?: number;
     }>;
     /** Read a range of an output past its head (`complete` false), by its `token`, while the run lasts. Text comes back
      *  as `text`; binary output as `bytes` (`{ $bytes: base64 }`).

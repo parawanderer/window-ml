@@ -295,6 +295,11 @@ export interface ShResult {
     /** How long the call waited for the person, when it did: a reading taken after the wait is not simultaneous with
      *  one taken before. */
     waitedMs?: number;
+    /** `"oom"`: the call passed its memory bound (`memoryBound`, bytes) and the host killed it. */
+    killed?: "oom";
+    /** The highest physical footprint the host measured, in bytes (absent from a host older than 0.3.0). */
+    peakFootprint?: number;
+    memoryBound?: number;
 }
 
 /**
@@ -334,11 +339,14 @@ export function shOut(s: HostStream, token: string | null, head: Uint8Array): Sh
  */
 export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }): ShResult {
     const okCodes = description?.okCodes ?? [0];
-    const ok = !done.error && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
+    const ok = !done.error && !done.killed && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
     return {
         code: done.code, signal: done.signal, ok, timedOut: done.timedOut, cancelled: done.cancelled, durationMs: done.durationMs,
         ran: facts.placement, stdout: out.stdout, stderr: out.stderr,
         ...(done.error ? { error: `${done.error.code}: ${done.error.message}` } : {}),
+        ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
+        ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),
+        ...(typeof done.memoryBound === "number" ? { memoryBound: done.memoryBound } : {}),
     };
 }
 

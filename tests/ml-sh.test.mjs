@@ -166,6 +166,41 @@ test("an output past its head stays held: ml.sh.read reads a range of it, and a 
     assert.equal(released.length, 1, "the short stderr was released; the long stdout is held");
 });
 
+// --- every call has an owner and a memory bound (SHELL.md, Root L) ---
+
+test("each spawn names its run and step as its owner; a script cannot name one", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0 }) });
+    const { results, hash } = await runOn("userScripts", [runs(["ls"], { owner: { run: "someone-else" } }), runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    assert.equal(valueOf(results[0]).code, "BadRequest", "an owner option is refused before anything is spawned");
+    const spawns = host.calls.filter((c) => c.call === "spawn");
+    assert.equal(spawns.length, 1);
+    assert.equal(spawns[0].args.owner?.run, hash, JSON.stringify(spawns[0].args));
+    assert.equal(typeof spawns[0].args.owner?.seq, "number");
+});
+
+test("a call the host killed past its memory bound is a result with killed oom and its peak, and the run log says so", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0, killed: "oom", peakFootprint: 140 << 20, memoryBound: 128 << 20 }) });
+    const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, false);
+    assert.equal(r.killed, "oom");
+    assert.equal(r.peakFootprint, 140 << 20);
+    assert.equal(r.memoryBound, 128 << 20);
+    assert.match(r.error, /memory bound/);
+    const ran = (await bg.context.__mlRunLog.all()).filter((x) => x.run === hash && x.subsystem === "shell" && x.kind === "run");
+    assert.equal(ran.length, 1);
+    assert.equal(ran[0].level, "warn");
+    assert.deepEqual([ran[0].detail.killed, ran[0].detail.peakFootprint], ["oom", 140 << 20]);
+});
+
+test("an older host's done (no footprint fields) still makes a result, with none of them", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0 }) });
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true);
+    assert.deepEqual([r.killed, r.peakFootprint, r.memoryBound], [undefined, undefined, undefined]);
+});
+
 // --- what the script is and is not given ---
 
 test("a script that does not name ml.sh gets none, even in an isolated world reached by another key", T, async () => {
