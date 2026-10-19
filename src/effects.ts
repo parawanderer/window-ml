@@ -13,11 +13,12 @@ export type Op = "read" | "write" | "exec" | "use" | "alloc";
 export type HeapOwner = "owned" | "unowned" | { arg: number };
 
 /** What a call affects. An `fs` path's `inRoot` and `secret` are the host's to resolve: unset means "not vouched for",
- *  which no bound covers. A `net` host of `"*"` is any host. A `secret` is only ever `use`d. `unknown` is the top
+ *  which no bound covers. `exists`, `topLevel` (the path's parent is a root) and `isRoot` are resolved facts too; `names`
+ *  marks a `write` that creates, removes or renames the ENTRY rather than writing bytes into it (`write-names`). A `net` host of `"*"` is any host. A `secret` is only ever `use`d. `unknown` is the top
  *  element's resource, shown where a list of resources is asked of a set nobody described. */
 export type Resource =
     | { kind: "heap"; of: HeapOwner }
-    | { kind: "fs"; path: string; inRoot?: boolean; secret?: boolean }
+    | { kind: "fs"; path: string; inRoot?: boolean; secret?: boolean; exists?: boolean; topLevel?: boolean; isRoot?: boolean; names?: boolean }
     | { kind: "net"; host: string }
     | { kind: "process" }
     | { kind: "entropy" }
@@ -50,7 +51,7 @@ export type EffectSet = {
 /** Every field any resource kind has. A policy sees each resource with ALL of them (absent ones `undefined`), so
  *  `reads.every((r) => r.inRoot)` over a network read is false rather than a broken policy, while a misspelt field
  *  is still refused by the policy realm. */
-export const RESOURCE_FIELDS = ["kind", "of", "path", "inRoot", "secret", "host", "name"] as const;
+export const RESOURCE_FIELDS = ["kind", "of", "path", "inRoot", "secret", "exists", "topLevel", "isRoot", "names", "host", "name"] as const;
 
 /** A resource as a policy reads it: every field of {@link RESOURCE_FIELDS} present, frozen. */
 function asRecord(r: Resource): Resource {
@@ -113,11 +114,18 @@ export function effectKey(e: Effect): string {
     const r = e.res;
     switch (r.kind) {
         case "heap": return `${e.op}:heap:${typeof r.of === "string" ? r.of : `arg${r.of.arg}`}`;
-        case "fs": return `${e.op}:fs:${r.path}:${r.inRoot ?? "?"}:${r.secret ?? "?"}`;
+        case "fs": return `${e.op}${r.names ? "-names" : ""}:fs:${r.path}:${r.inRoot ?? "?"}:${r.secret ?? "?"}${fsPlace(r)}`;
         case "net": return `${e.op}:net:${r.host.toLowerCase()}`;
         case "secret": return `${e.op}:secret:${r.name}`;
         default: return `${e.op}:${r.kind}`;
     }
+}
+
+/** The resolved place facts of a path, for its key: empty when none was resolved, so a described-as-given path keys as
+ *  it always has (the host's port and the shared vectors end in `:?:?`). */
+function fsPlace(r: Resource & { kind: "fs" }): string {
+    if (r.exists === undefined && r.topLevel === undefined && r.isRoot === undefined) return "";
+    return `:${r.exists ?? "?"}:${r.topLevel ?? "?"}:${r.isRoot ?? "?"}`;
 }
 
 function dedupe(effects: readonly Effect[]): Effect[] {
@@ -165,14 +173,15 @@ export function fromLibraryEffect(term: LibraryEffect, arity: number): EffectsDa
 /** A program manifest's effect term (PROGRAM_MANIFEST.md) for one subcommand or flag. `network` names its direction;
  *  absent, it is both, since any outbound request can carry data out. */
 export type ProgramEffect =
-    | "read" | "write" | "runs-code" | "unknown"
+    | "read" | "write" | "write-names" | "runs-code" | "unknown"
     | { network: { direction?: "read" | "write" | "both" } };
 
 /** What the call resolved for a program term: the concrete path arguments (inRoot/secret from the host, or unset), and
  *  the network destination when the manifest says where it comes from. */
 export type ProgramCallFacts = { paths?: readonly Resource[]; host?: string };
 
-/** Project a program manifest's term over one call's facts. `read`/`write` touch each path argument and nothing else;
+/** Project a program manifest's term over one call's facts. `read`/`write` touch each path argument and nothing else,
+ *  and `write-names` is a `write` of each marked `names` (it creates, removes or renames the entry: `rm`, `mv`, `sed -i`);
  *  `runs-code` is `exec(process)`; `network` reads and/or writes the named host, or any host when none is named. */
 export function fromProgramEffect(term: ProgramEffect, facts: ProgramCallFacts = {}): EffectsData {
     if (term === "unknown") return "unknown";
@@ -180,6 +189,10 @@ export function fromProgramEffect(term: ProgramEffect, facts: ProgramCallFacts =
     if (term === "read" || term === "write") {
         const paths = (facts.paths ?? []).filter((p) => p.kind === "fs");
         return paths.map((p) => ({ op: term, res: p }));
+    }
+    if (term === "write-names") {
+        const paths = (facts.paths ?? []).filter((p) => p.kind === "fs");
+        return paths.map((p) => ({ op: "write", res: { ...p, names: true } }));
     }
     const res: Resource = { kind: "net", host: facts.host || ANY_HOST };
     const dir = term.network.direction ?? "both";
@@ -221,10 +234,11 @@ export function fromInstall(f: InstallFacts): EffectsData {
 // --- bounds and the free tier (EFFECTS.md, "What an enforcer bounds") ---
 
 /** A resource class an enforcer bounds: owned heap, any path inside the roots (or a container's mounts, which the host
- *  resolves as `inRoot`), a network host or `"*"`, processes, entropy. */
+ *  resolves as `inRoot`), the roots less their top-level NAMES (the OS sandbox's writes: {@link claimsTopLevelName}), a
+ *  network host or `"*"`, processes, entropy. */
 export type BoundResource =
     | { kind: "heap"; of: "owned" }
-    | { kind: "fs"; within: "roots" }
+    | { kind: "fs"; within: "roots" | "roots-less-top-names" }
     | { kind: "net"; host: string }
     | { kind: "process" }
     | { kind: "entropy" };
@@ -254,7 +268,7 @@ export function boundFor(placement: Placement, opts: BoundOptions = {}): readonl
                 (["read", "write"] as const).map((op) => ({ op, res: { kind: "net", host: host.toLowerCase() } })));
             return [
                 { op: "read", res: { kind: "fs", within: "roots" } },
-                { op: "write", res: { kind: "fs", within: "roots" } },
+                { op: "write", res: { kind: "fs", within: placement === "host-sandbox" ? "roots-less-top-names" : "roots" } },
                 { op: "exec", res: { kind: "process" } },
                 ...net,
             ];
@@ -263,7 +277,7 @@ export function boundFor(placement: Placement, opts: BoundOptions = {}): readonl
 }
 
 /** Whether one bound pair covers one effect. A path the host has not resolved, an unresolved `heap(arg i)` and a
- *  secret-flagged path are covered by nothing; `net` matches the host exactly, or any host under a `"*"` bound. A
+ *  secret-flagged path are covered by nothing, and a claim on a top-level NAME of a root by no `roots-less-top-names`; `net` matches the host exactly, or any host under a `"*"` bound. A
  *  secret path is outside every bound, the sandbox and a container included: the harm of reading it is disclosure to
  *  the model, the run log and the export, which no enforcer bounds. */
 export function covers(b: BoundPair, e: Effect): boolean {
@@ -271,13 +285,26 @@ export function covers(b: BoundPair, e: Effect): boolean {
     const r = e.res, br = b.res;
     switch (r.kind) {
         case "heap": return r.of === "owned" && br.kind === "heap";
-        case "fs": return r.inRoot === true && r.secret !== true && br.kind === "fs";
+        case "fs": return r.inRoot === true && r.secret !== true && br.kind === "fs"
+            && !(br.within === "roots-less-top-names" && claimsTopLevelName(e));
         case "net":
             if (br.kind !== "net") return false;
             return br.host === ANY_HOST || (r.host !== ANY_HOST && br.host === r.host.toLowerCase());
         case "process": case "entropy": return true;
         default: return false;
     }
+}
+
+/** Whether a write claims a top-level NAME of a root, which no enforcer holds under the floor (EFFECTS.md, "The top-level
+ *  names of a root are outside `B`"): a write to a top-level entry that does not exist, or a `names` write that reaches
+ *  the top level (on a top-level entry, or on a root itself, whose entries are the top level). An in-place write to an
+ *  existing top-level file is not one. A `names` write whose place was not resolved counts as one; a plain write with no
+ *  `topLevel` fact does not, as a path described as given has no `inRoot` either and is covered by nothing anyway. */
+export function claimsTopLevelName(e: Effect): boolean {
+    if (e.op !== "write" || e.res.kind !== "fs") return false;
+    const r = e.res;
+    if (r.names) return r.topLevel !== false || r.isRoot !== false;
+    return r.topLevel === true && r.exists !== true;
 }
 
 /** Whether an effect is a read of a path the host resolved inside the roots and did not flag secret (`ReadsInRoots`). */

@@ -242,7 +242,11 @@ export const holdsSeq = (s: ToolStreak, seq: number | null | undefined): boolean
     seq != null && s.turns.some(t => t.tools.some(st => st.seq === seq));
 
 /** One folded streak: a row saying what the calls did, and the calls themselves when it is open. `render` draws a
- *  member, so this never duplicates what a turn looks like. */
+ *  member, so this never duplicates what a turn looks like.
+ *  @group transcript
+ *  @gallery mixed tools, one failed {"s": {"kind": "streak", "tool": "fetch_url", "tools": ["fetch_url", "agent_api_docs", "exec"], "turns": [{"step": 1, "localStep": 1, "tools": [{"step": 1, "tool": "fetch_url", "result": "ok", "toolMs": 120}]}, {"step": 2, "localStep": 2, "tools": [{"step": 2, "tool": "agent_api_docs", "result": "ok", "toolMs": 86}]}, {"step": 3, "localStep": 3, "tools": [{"step": 3, "tool": "exec", "result": "Error: boom", "toolMs": 40}]}, {"step": 4, "localStep": 4, "tools": [{"step": 4, "tool": "exec", "result": "ok", "toolMs": 140}]}], "step": 1}}
+ *  @gallery-flow summary slides away tests/gallery-flows/StepStreak.mjs {"s": {"kind": "streak", "tool": "fetch_url", "tools": ["fetch_url", "agent_api_docs", "exec"], "turns": [{"step": 1, "localStep": 1, "tools": [{"step": 1, "tool": "fetch_url", "result": "ok", "toolMs": 120}]}, {"step": 2, "localStep": 2, "tools": [{"step": 2, "tool": "agent_api_docs", "result": "ok", "toolMs": 86}]}, {"step": 3, "localStep": 3, "tools": [{"step": 3, "tool": "exec", "result": "Error: boom", "toolMs": 40}]}, {"step": 4, "localStep": 4, "tools": [{"step": 4, "tool": "exec", "result": "ok", "toolMs": 140}]}], "step": 1}}
+ */
 export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurnGroup) => preact.JSX.Element }) {
     // FOLDING IN FRONT OF A READER, as a collapse rather than a cut. Captured ONCE, on mount: it is a fact about
     // how this streak came to exist, and re-reading the clock on later renders would make it decay mid-animation.
@@ -304,8 +308,11 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // and names the tools beside it: "11 tool calls · exec, look, python_exec". Dropping the names would make the
     // one row standing for a whole run of work say less about it than any one of the rows did.
     const one = s.tools.length === 1;
+    // `expanded` is the reader's INTENT, like the chevron's turn below: it goes on at the click and comes off at the
+    // click that folds, while `open` lingers until the body has finished leaving. The summary slides away and back
+    // on that flag (chat.css), so it moves with the click and not after the rows.
     return (
-        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}${grouped ? " grouped" : ""}${forming ? " forming" : ""}${pending ? " running" : ""}`} data-rev={r}>
+        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${shown && !closing ? " expanded" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}${grouped ? " grouped" : ""}${forming ? " forming" : ""}${pending ? " running" : ""}`} data-rev={r}>
             <button class="astreak-head" onClick={toggle}
                 aria-expanded={shown && !closing}
                 aria-label={one ? `${calls} ${s.tool} calls` : `${calls} tool calls: ${s.tools.join(", ")}`}>

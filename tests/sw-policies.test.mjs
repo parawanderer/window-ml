@@ -211,3 +211,46 @@ test("policies are kept in local storage, never sync", () => {
     assert.ok(writes.length > 0);
     assert.ok(!globalThis.chrome.storage.sync, "the store never reached for sync");
 });
+
+test("a stored policy over writes sees a names write: has(\"write\") and c.effects.writes both carry it (#786)", () => {
+    // Universals over writes must not fail open for rm/mv/sed -i: the names write is a write, not an operation of its own.
+    P.addRunPolicy("h-names", { consumer: "sh", effect: "deny", source: '(c) => c.effects.has("write")', label: "no writes", origin: "person" });
+    P.addRunPolicy("h-names2", { consumer: "sh", effect: "allow", source: '(c) => c.effects.writes.every((r) => r.path.startsWith("/r/src/"))', label: "src only", origin: "person" });
+    const rmTop = { argv: ["find", ".envrc", "-delete"], effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, exists: true, topLevel: true, isRoot: false, names: true } }] };
+    assert.equal(P.judgeCall("h-names", "sh", rmTop, "host-sandbox").decision, "deny", "a has(\"write\") deny fires for a names write");
+    assert.notEqual(P.judgeCall("h-names2", "sh", rmTop, "host-sandbox").decision, "allow", "a writes-under-src allow does not cover a top-level names write");
+});
+
+// --- SHELL.md's name-immutable top level at the judge (2026-10-19): a name claim at the top level is not the builtin's allow ---
+
+test("judgeCall: a shell call that claims a top-level name in a root is not the builtin's allow", () => {
+    // Vector: git diff --output=.envrc claims a write to an ABSENT top-level entry and must run ASKED.
+    const topLevelWrite = {
+        argv: ["git", "diff", "--output=.envrc"],
+        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true, exists: false } }],
+    };
+    const j = P.judgeCall("h-top", "sh", topLevelWrite, "host-sandbox");
+    assert.notEqual(j.decision, "allow", "a write that creates a top-level name is never the built-in default's allow");
+    assert.notEqual(j.by, "builtin", "…so it is never the builtin that allows it");
+    // A write-names claim at the top level (sed -i, rm, mv over .envrc) asks the same way.
+    const names = {
+        argv: ["sed", "-i", "s/.*/pwned/", ".envrc"],
+        // write-names projects onto a write marked names (#786), so has("write") and c.effects.writes still see it.
+        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true, exists: true, names: true } }],
+    };
+    const jn = P.judgeCall("h-top", "sh", names, "host-sandbox");
+    assert.notEqual(jn.decision, "allow", "a name operation at the top level is never the built-in default's allow");
+    // Positive control: an in-place write to an existing top-level file stays free (the ruling's refinement).
+    const inplace = {
+        argv: ["sed", "-i", "s/.*/pwned/", ".envrc"],
+        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true, exists: true } }],
+    };
+    const okInplace = P.judgeCall("h-top", "sh", inplace, "host-sandbox");
+    assert.equal(okInplace.decision, "allow", "an in-place write to an existing top-level file is still free");
+    assert.equal(okInplace.by, "builtin", "…and the builtin is what allows it");
+    // Positive control: the same call writing below a top-level directory is the builtin's allow.
+    const nested = { ...topLevelWrite, effects: [{ op: "write", res: { kind: "fs", path: "/r/src/a.ts", inRoot: true, secret: false, topLevel: false } }] };
+    const ok = P.judgeCall("h-top", "sh", nested, "host-sandbox");
+    assert.equal(ok.decision, "allow", "a write below a top-level directory is free under the OS sandbox");
+    assert.equal(ok.by, "builtin", "…and the builtin is what allows it");
+});

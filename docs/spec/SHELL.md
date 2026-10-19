@@ -397,7 +397,12 @@ What follows from it:
   original (`sed -i`, `perl -i`, npm's `write-file-atomic`, many formatters) creates a top-level name too, so an edit
   of an existing top-level file by such a program is counted as a claim on a new top-level name and does not get
   `write: "roots"` either (lane 4, 2026-10-19); under the narrow envelope it would fail as `ok: false` and look like
-  the program's own error. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
+  the program's own error. A call whose claims carry `exec(process)` (a RUNNER: `xargs`, `find -exec`, `npm run`,
+  `timeout`, a git alias) gets NO envelope at all (ruled 2026-10-19, lane 4's correction of its own derivation): the
+  envelope's two keys are both required, a runner starts programs no manifest describes, and `find . -exec rm` claims
+  no write of its own, so `exec: "any"` with a derived `write: "none"` would fail the approved call as `ok: false`. The
+  rule generalises: the worker sends an envelope only when BOTH keys derive from the approved claims; when either does
+  not, it sends none and the floor applies, never a guess. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
   then protects nothing; the tripwire above is what covers the gap's threat. `done` reports the envelope the host
   APPLIED, and for an absent one that is the floor, which is neither `none` nor `roots`: the reported `write` takes a
@@ -417,9 +422,21 @@ What follows from it:
   changed so far. What an orphan changes between the last `status` and its deadline kill is NOT reported (ruled
   2026-10-19, lane 4's K3b question: at the kill nobody is listening, and a record written for the next session is a
   new `status` surface with its own consume-once semantics; left as a named open item, not built in K3b, see
-  the plan). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
+  the plan). The report is BOUNDED (ruled 2026-10-19, the generalist's #13 review: an unbounded `.git/hooks` walk could push `done`
+  past the output cap and lose the call's result): the host reads at most 256 `.git/hooks` entries per root, and the list
+  stops at 256 changes or 512 KiB of JSON, whichever comes first (a count alone proves nothing: a root path can be 4096
+  bytes and an escaped control character six). A report that hit a bound says so with the sibling key
+  `protectedChangedTruncated: true` (`protectedChanged` is an array and carries no flag of its own), on `done` and on
+  `status.orphans[]` alike; absent means complete. The measured worst case is 522,575 bytes, and the rest of `done` is
+  fixed-shape under 1 KB, so `done` provably fits the output cap and a lost `done` never happens for the tripwire's
+  sake (the host's SANDBOX.md and PROTOCOL.md carry the numbers). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
   and never attributes: two calls in one root see each other's change, so the card and the run log say "changed
-  during this call". The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
+  during this call". The script reads the same fact (ruled 2026-10-19, the generalist's question on lane 4's K3b
+  extension side): `ShResult` carries `protectedChanged` under the envelope's convention, the host's list or `null`
+  for a host that reported none (an old host, unknown, never "nothing"; `[]` is "nothing changed"), with
+  `protectedChangedTruncated` beside it exactly as on `done`; one fact, three surfaces, and the model that made the
+  change is told what the person is told. The field is lane 4's, in the K3b extension PR after host #13, not the
+  generalist's envelope PR. The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
   design, and the person decides what to do with the report.
 - **No secret crosses into a process by the script's hand**: the backend URL and API key never reach the host; the
   host's environment is scrubbed to a whitelist, and a container sees only its mounts. A credential a process NEEDS

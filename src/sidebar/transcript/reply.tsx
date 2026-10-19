@@ -7,6 +7,7 @@ import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useJustArrived } from "./history-paint";
+import { StreamingMd } from "./streaming-md";
 import type { ExtendProfile } from "../../contract/contract-chat";
 import { view } from "../store";
 import type { Session, Turn, Status, AgentStep } from "../store";
@@ -121,6 +122,10 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     const bodyRef = useRef<HTMLDivElement>(null);
     const msgRef = useRef<HTMLDivElement>(null);
     useReplyArrival(msgRef, bodyRef, status, !!streaming, ts);
+    // A reply that STREAMED keeps its streaming renderer once it settles, so the words still fading finish rather than
+    // snapping in; it then draws exactly what the plain renderer would.
+    const streamed = useRef(false);
+    if (streaming) streamed.current = true;
     const [closing, setClosing] = useState(false);
     const [opening, setOpening] = useState(false);
     const swapMs = (): number => cssDurationMs(bodyRef.current, "--asst-close-ms");
@@ -212,7 +217,9 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                             ? <Code text={content} lang="markdown" />
                             : tokenRun && hasTokens(content, aliasOf(tokenRun))
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" scope={tokenScope} />
-                                : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
+                                : streamed.current
+                                    ? <StreamingMd content={content} live={!!streaming} />
+                                    : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
             </div>
             {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
                 run's latest answer (s.answer is single-valued) and only in the normal, expanded view. */}
@@ -262,7 +269,11 @@ export function EmbedRunView({ s }: { s: Session }) {
 }
 
 /** ONE CHAT TURN — your message, the reply, its thinking disclosure, sources and token usage. The chat
- *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these. */
+ *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these.
+ *  @group sidebar/transcript
+ *  @gallery {"t": {"id": "t1", "ts": 1760000000000, "user": "What does the stamp look like at rest?", "assistant": "The time shows; the buttons wait for the pointer.", "status": "ok"}}
+ *  @gallery-flow user-stamp tests/gallery-flows/MessageTurn.mjs
+ */
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>

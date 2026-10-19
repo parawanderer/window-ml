@@ -127,7 +127,7 @@ for (const p of ["container", "host-sandbox"]) {
     test(`${p} bounds read/write inside its roots, exec(process) inside it, and the allowlisted hosts`, () => {
         const b = boundFor(p, { netAllowlist: ["PyPI.org"] });
         assert.deepEqual(b.map((x) => `${x.op}:${x.res.kind}:${x.res.within ?? x.res.host ?? ""}`).sort(),
-            ["exec:process:", "read:fs:roots", "read:net:pypi.org", "write:fs:roots", "write:net:pypi.org"]);
+            ["exec:process:", "read:fs:roots", "read:net:pypi.org", `write:fs:${p === "host-sandbox" ? "roots-less-top-names" : "roots"}`, "write:net:pypi.org"]);
         assert.equal(free([{ op: "write", res: fs("/r/a", true, false) }], b), true, "a write inside the roots is free under this enforcer");
         assert.equal(free([{ op: "write", res: fs("/etc/a", false, false) }], b), false, "a write outside is not");
         assert.equal(free([{ op: "read", res: net("other.org") }], b), false, "a host off the allowlist is not");
@@ -265,4 +265,90 @@ test("an effect set is frozen all the way down", () => {
     assert.equal(Object.isFrozen(s.pairs[0].res.of), true);
     assert.equal(Object.isFrozen(s.writes), true);
     assert.equal(Object.isFrozen(effectSet("unknown").reads), true);
+});
+
+// --- SHELL.md's name-immutable top level (2026-10-19): name operations at the top level are inside no bound ---
+
+test("a write that creates a top-level name in a root is not free — the name-immutable rule reaches the free tier", () => {
+    // Ruling 2026-10-19 (repl-specs, #783): the top-level names of a root are outside the sandbox's B. A claimed
+    // write to an absent top-level entry, or a new write-names(fs) effect (create/remove/rename an entry: mkdir,
+    // rm, mv, sed -i, write-file-atomic) at the top level, is covered by no bound and asks; an in-place write to an
+    // existing top-level file stays free. Universal over the top level, no list of names. `.envrc`, `.mcp.json`,
+    // `.vscode/` are the threat; Landlock cannot hold "roots minus protected names" for a name that does not exist.
+    // Creation is expressed by exists: false under a plain write; write-names is for the programs that write the
+    // entry itself. Do not fold one into the other.
+    const b = boundFor("host-sandbox");
+    // A claimed write to an ABSENT top-level entry (creating .envrc) is inside no enforcer's bound.
+    assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true, exists: false } }], b), false,
+        "a write that creates a top-level name is inside no enforcer's bound");
+    // Positive control: an in-place write to an EXISTING top-level file stays free (the ruling's refinement).
+    assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true, exists: true } }], b), true,
+        "an in-place write to an existing top-level file is still free");
+    // Positive control: a nested write inside the roots is free under the OS sandbox.
+    assert.equal(free([{ op: "write", res: { ...fs("/r/src/a.ts", true, false), topLevel: false } }], b), true,
+        "a write below a top-level directory is bounded by the sandbox");
+    // Positive control: the same call with no top-level marker is free — the marker is the claim.
+    assert.equal(free([{ op: "write", res: fs("/r/.envrc", true, false) }], b), true,
+        "an unmarked in-root write is still free (the marker is the claim)");
+});
+
+test("a removal or a rename of a top-level name is not free, whichever direction the claim runs", () => {
+    // The rule names three verbs: created, removed or renamed. A `git clean` that removes `.envrc`, and an
+    // atomic-rename editor (SHELL.md's third bullet) that swaps a temp over `.envrc`, both claim a top-level name
+    // and are expressed as write-names(fs), not write. The projection must carry the claim through to free().
+    const b = boundFor("host-sandbox");
+    for (const [label, exists] of [["mkdir", false], ["rm", true], ["mv-in", true], ["mv-out", true], ["sed -i", true]]) {
+        const topLevelPath = { ...fs("/r/.envrc", true, false), topLevel: true, exists };
+        const projected = fromProgramEffect("write-names", { paths: [topLevelPath] });
+        // write-names is a manifest WORD projected onto a write marked names, not an operation of its own (#786).
+        assert.deepEqual(projected, [{ op: "write", res: { ...topLevelPath, names: true } }], label);
+        assert.equal(free(projected, b), false, `${label}: a name claim is inside no bound`);
+    }
+    // Positive control: the same path as an in-place write of an existing top-level file stays free (the
+    // ruling's refinement) — write-names is what changes the answer, not the path's position.
+    assert.equal(free(fromProgramEffect("write", { paths: [{ ...fs("/r/.envrc", true, false), topLevel: true, exists: true }] }), b), true,
+        "an in-place write to an existing top-level file is still free");
+    // Positive control: a nested write is free in every one of those verbs' place.
+    assert.equal(free([{ op: "write", res: { ...fs("/r/src/a.ts", true, false), topLevel: false } }], b), true,
+        "a nested write is free");
+});
+
+// --- K3c: claimsTopLevelName enumerated, and which bound it reaches (EFFECTS.md, "The top-level names of a root are outside `B`") ---
+
+test("claimsTopLevelName over every combination of names, topLevel, isRoot and exists, against the rule as written", () => {
+    // The rule, read off EFFECTS.md: a names write reaches the top level unless it is known to be neither a top-level
+    // entry nor a root; a plain write claims a name only on a top-level entry not known to exist.
+    const { claimsTopLevelName } = effectsModule;
+    const tri = [true, false, undefined];
+    for (const names of [true, false]) for (const topLevel of tri) for (const isRoot of tri) for (const exists of tri) {
+        const res = { kind: "fs", path: "/r/x", inRoot: true, secret: false, ...(names ? { names } : {}), topLevel, isRoot, exists };
+        const want = names ? !(topLevel === false && isRoot === false) : topLevel === true && exists !== true;
+        assert.equal(claimsTopLevelName({ op: "write", res }), want, JSON.stringify({ names, topLevel, isRoot, exists }));
+        assert.equal(claimsTopLevelName({ op: "read", res }), false, "a read claims no name");
+    }
+});
+
+test("a top-level name is outside the OS sandbox's write bound only; a container and a nested names write are unaffected", () => {
+    const absentTop = { op: "write", res: { ...fs("/r/.envrc", true, false), exists: false, topLevel: true, isRoot: false } };
+    const existingTop = { op: "write", res: { ...fs("/r/README.md", true, false), exists: true, topLevel: true, isRoot: false } };
+    const renameTop = { op: "write", res: { ...existingTop.res, names: true } };
+    const removeRootEntries = { op: "write", res: { ...fs("/r", true, false), exists: true, topLevel: false, isRoot: true, names: true } };
+    const nestedNames = { op: "write", res: { ...fs("/r/src/a.ts", true, false), exists: true, topLevel: false, isRoot: false, names: true } };
+    const sandbox = boundFor("host-sandbox");
+    assert.equal(free([absentTop], sandbox), false, "creating an absent top-level file asks");
+    assert.equal(free([existingTop], sandbox), true, "an in-place write to an existing top-level file stays free");
+    assert.equal(free([renameTop], sandbox), false, "an atomic-rename edit of an existing top-level file asks");
+    assert.equal(free([removeRootEntries], sandbox), false, "removing entries of a root itself (find . -delete) asks");
+    assert.equal(free([nestedNames], sandbox), true, "creating, removing or renaming below the top level stays free");
+    assert.equal(free([{ op: "read", res: absentTop.res }], sandbox), true, "a read of a top-level path is unaffected");
+    for (const e of [absentTop, renameTop, removeRootEntries, nestedNames]) assert.equal(free([e], boundFor("container")), true, "a container's bound is unchanged");
+});
+
+test("write-names projects to a write marked names, keyed apart from a plain write of the same path", () => {
+    const p = { ...fs("/r/a", true, false), exists: true, topLevel: true, isRoot: false };
+    const named = fromProgramEffect("write-names", { paths: [p] });
+    assert.deepEqual(named, [{ op: "write", res: { ...p, names: true } }]);
+    assert.equal(effectSet(named).writes.length, 1, "a policy reading c.effects.writes sees it as a write");
+    assert.equal(union(named, fromProgramEffect("write", { paths: [p] })).length, 2, "not de-duplicated into the plain write");
+    assert.deepEqual(keys(fromProgramEffect("write-names", { paths: [fs("/r/a")] })), ["write-names:fs:/r/a:?:?"], "unresolved keys as the vectors do");
 });

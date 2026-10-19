@@ -99,7 +99,10 @@ Settings checkbox (a user gesture), is open: it has to work from both the overla
 - **An ask is shown only once it can be answered.** `raiseAsk` registers the pending approval BEFORE it emits the
   step: an approver that answers on the same turn (an external one, or the harness) otherwise finds no gate.
 - **Reads inside the roots are free on the plain host too** (EFFECTS.md, `ReadsInRoots`); what the sandbox adds to
-  the free tier is writes inside the roots.
+  the free tier is writes inside the roots, less the top-level NAMES of each root: creating an absent top-level file,
+  or a `write-names` claim (create, remove, rename) that reaches the top level, asks (`claimsTopLevelName`, the
+  `roots-less-top-names` bound). It needs the `topLevel`/`isRoot` facts, which `shFacts` computes only when it is
+  given the roots; a `names` write with no such fact counts as top-level.
 
 - **`chrome.runtime.lastError` is the only place a native port says why it closed**, and only inside the disconnect
   listener (`nativePort`). Read later, it is gone.
