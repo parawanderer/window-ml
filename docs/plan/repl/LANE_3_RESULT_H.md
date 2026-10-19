@@ -6,8 +6,8 @@ mechanical hand-off (Claude Code, `openrouter.xiaomi/mimo-v2.6-pro`, session
 `50cb17e9-1790-434d-8eb4-9783e2c01644`), 2026-10-18, per the handover `20261015-2230Z-repl-lane3-to-coordinator-handover-H-mechanical.md`
 in `~/git/session-mail/window-ml/`.
 
-The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `962ede6` on `v3.14.2` (slices 1, 2, 4, 5, 6,
-the two mid-slice landings and the print fix; the measurements of 2026-10-15 were taken at `59bee6b`, those of
+The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `eac9d75` on `v3.14.2` (slices 1, 2, 4, 5, 6,
+the two mid-slice landings, the print fix and the lifted-generator removal fix; the measurements of 2026-10-15 were taken at `59bee6b`, those of
 2026-10-19 at `29069ba`). On 2026-10-19 the branch was rebased from `v3.14.0` onto `v3.14.2`, the version Pyodide
 builds ([`LANE_3_PYODIDE.md`](LANE_3_PYODIDE.md)). The commit hashes below are the pre-rebase ones, kept on the branch
 `ml/restricted-mode-pre-3.14.2`; the slice table gives both. Root H's design is [`LANE_3_RUNTIME.md`](LANE_3_RUNTIME.md); the dialect it implements is
@@ -30,7 +30,7 @@ ephemeral; the scripts are named so the measurement is re-runnable).
   every test in `Lib/test/test_restricted.py` (BuildTest, CompileTest, ExtentTest, GateTest, BudgetTest,
   OwnershipTest, MemoryTest, LiftedDunderTest, UndoTest, PrintTest, StockWheelsTest). The 87 vectors pass again at
   `29069ba` (2026-10-19, fixtures at `d42895d6`), and both counts hold again after the rebase onto `v3.14.2`, at
-  `962ede6`: 121 tests with none skipped, 87 of 87 vectors.
+  `962ede6`: 121 tests with none skipped, 87 of 87 vectors. At `eac9d75`: 122 tests, 87 of 87 vectors.
 - **Stock wheels run unrebuilt.** `numpy==2.5.4` and `pandas==3.0.6` (cp314 macosx arm64, from PyPI) import and run on
   the patched build: StockWheelsTest, and `numpy.arange(10).sum() == 45` plus a DataFrame sum in the venv check of
   `scratchpad/corpus-perf/report.md`. **No object-header or stable-ABI change.** The patch touches only internal
@@ -128,6 +128,7 @@ The fork's commit messages carry every design choice and its reason; read them i
 | `ec7ebb4` / `b7db965` | 5: ownership (writes need an owned target; a mutating method is not read off an unowned value), the memory cap (raw allocator + pymalloc arenas, 256 MiB default, `run(..., memory=)`), pandas dunders through type slots, generators resume lifted, the crossing check on `[]^` keys/values, `re`'s backtracking check |
 | `59bee6b` / `0a48cfc` | 6: the undo log at the write barrier — a refused run leaves the namespace and every value it reaches as before the cell (one snapshot per owned value per run; globals dict restored; an ordinary error keeps its writes) |
 | `29069ba` / `962ede6` | print: a cell's `print(...)` is rewritten at check time to `__cell_print__(str(a), …)`, so each argument goes through the cell's own gated `str()`; the writer, lifted behind a check, takes only strings (`sep`/`end` str or None, `flush` bool); `file=`, `**` and print as a value are refused |
+| — / `eac9d75` | the reference tracer removes a freed generator from the owned set AND the lifted generators' table; it removed one or the other, so a generator a FRESH leaf returned from a lifted extent left a stale `lifted_gens` entry, and a later generator at that address resumed lifted. Found while building the owned-set filter below |
 
 ## What a spec got wrong (each ruled by `repl-specs`)
 
@@ -194,10 +195,29 @@ from `d42895d6`. Scripts: `scratchpad/corpus-perf/runner3.py` (conditions), `rou
   +4.4%, the call gate (`_PyRestricted_Vectorcall`) +2.9%, the step budget (`_Py_HandlePending` and
   `_PyRestricted_Tick`, taken at every call and backward jump while the run's eval-breaker bit is set, in lifted
   library frames too) +2.0%; the rest is spread thin. Neither memory counting nor the Python entry checks show.
-- **Two cheap cuts if this matters:** a pointer filter in front of the owned set (a few-thousand-bit array indexed by
-  pointer bits, set on insert) so that `ref_tracer`'s destroy path skips the hashtable for the many library dicts and
-  lists that were never owned; and charging the budget in the eval breaker's fast path rather than through
-  `_Py_HandlePending`. Neither is built.
+- **The two cheap cuts, measured or ruled out (2026-10-19, at `962ede6`).** The first is a 2^16-bit address filter
+  in front of the owned set and `lifted_gens`, set for every member, so that `ref_tracer`'s destroy path skips the type
+  scan and the hashtable for the objects that were never owned. It is parked on the fork's branch `ml/owned-filter`
+  (`9466088`), not merged:
+
+  | Measure | Base | Filter |
+  | --- | --- | --- |
+  | 1000 empty lists made and freed, tracer installed (`timeit`, best of 5, three alternations) | 27.4 µs | 25.7 µs |
+  | the same, no tracer | 21.6 µs | 21.6 µs |
+  | corpus, a run (filter C / base C, 386 cells, 8 interleaved rounds) | | total 1.004, geomean 1.009 |
+  | corpus, a run, cells of 100 µs and more (146) | | total 1.003, geomean 1.006 |
+  | corpus, tracer idle (filter T / base T, 684 cells) | | total 1.010, geomean 1.007 |
+
+  The filter removes about a third of the tracer's own cost on container churn. What is left is the call itself,
+  about 2 ns per object event, which no filter reaches. On the corpus that third is about 1.3% of a run, below the
+  rounds' noise (A against A, even rounds over odd: 1.075). It is not worth an invariant whose failure is a false
+  "owned": a missed removal leaves a freed address in the set. A first version that rebuilt the filter after every run
+  made sub-10 µs cells up to 27x slower, because `_Py_hashtable` never shrinks and the rebuild walks every bucket. The
+  parked version amortizes the rebuild over a quarter of the bits. The second cut, charging the step budget in the eval
+  breaker's fast path, is the 2.0% term, smaller than the tracer's 4.5%. It is not built, for the same reason: a third
+  of the larger term was invisible on the corpus. What is left of a run's cost is the attribute and call gates, the
+  policy checks themselves. The runs are scratchpad `corpus-perf/rounds7.sh` and `cmp7.py`, and the first set, kept
+  in `r7a-rebuild-every-run/`.
 
 ## Specialized forms the corpus reaches, for option A (2026-10-19)
 
