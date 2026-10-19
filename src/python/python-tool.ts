@@ -62,6 +62,12 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
         : singleTable ? " Or `'current'` for the one table on this page." : "";
     const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON.tables + currentClause;
+    // Only a worker-hosted run keeps a namespace across its cells (root C), and only the worker's `ml` has `_mintToken`;
+    // a page-hosted agent's cells have no run, so they stay stateless.
+    const stateClause = mintVia
+        ? "Names you define persist across your python_exec calls in this run (`df`/`tables`/`img` are re-bound when a " +
+          "call passes them); after a sandbox restart the output opens with `namespace reset at <time>: <reason>` and they are gone."
+        : "Each call is STATELESS — a fresh namespace, nothing persists.";
     return ml.defineTool({
         name: "python_exec",
         summary: "Runs sandboxed Python (numpy/pandas/Pillow) for data & math.",
@@ -73,7 +79,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box). RETURN TYPE " +
             "auto-renders: a sympy expression → typeset LaTeX, a PIL Image (or to_base64()) → an image, a DataFrame " +
             "→ a table — so just `return sympy.diff(...)` / `return img` and cite `![…](@tool:…:out)` (no cast; add " +
-            "`| raw` to force the literal text). Each call is STATELESS — a fresh namespace, nothing persists. In scope: " +
+            "`| raw` to force the literal text). " + stateClause + " In scope: " +
             PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…). `mode` 'readonly' (default) is a pure " +
             "function over the inputs (may be auto-approved); 'full' enables network but ALWAYS asks the user." +
             currentHint,

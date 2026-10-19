@@ -5,6 +5,7 @@
 
 import { runBackgroundAgent } from "../agent/agent-host";
 import { evalReadonlyInWorker } from "./sw-readonly";
+import { deletePythonRun } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
@@ -585,7 +586,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let hasNavigated = false;
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
-    const settle = (): void => { unhostAsks?.(); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks)
+    const settle = (): void => { unhostAsks?.(); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {

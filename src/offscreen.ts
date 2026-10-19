@@ -21,6 +21,7 @@ const PY_START_TIMEOUT_MS = 120000;
 import { ValueStore } from "./pointers/value-store";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
+import { defineState } from "./state-registry";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -74,7 +75,7 @@ async function withStoredTables(tables: unknown): Promise<{ tables: unknown; tra
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
-type PyResult = { prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
+type PyResult = { prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number; nsReset?: string };
 
 // One worker per PRINCIPAL (PYODIDE_LOCKDOWN.md step 1): a worker-hosted run, a page, `full`. A principal
 // change is a new worker, never a reused one — a patch one principal left in module state must not reach
@@ -86,8 +87,30 @@ const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one P
 // the old worker, and the new one starts from empty. The respawn writes the housekeeping record that the
 // bench's "sandbox restarted" banner is the human face of (docs/dev/housekeeping.md).
 const respawned = new Set<string>();   // state: plumbing — principals awaiting a respawn housekeeping record
+// ROOT C (docs/spec/PYTHON_DIALECT.md, "The namespace"): a run's kept namespace and what it holds, from the
+// last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
+// the copy the state inspector and `ml.current.env` read. Dropped with the run (`PY_DELETE_RUN`) or its worker.
+const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
+// Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
+// ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
+// held. Recorded when a cell of the run is posted to a worker, since the worker creates the dict before the cell runs:
+// this is the ONE record of "has a dict", and nothing reads a returned manifest as a proxy for it.
+const runPrincipals = new Map<string, Set<string>>();   // state: plumbing — run id → principals holding its dict
+// A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run.
+const nsLoss = new Map<string, { at: number; reason: string }>();   // state: plumbing — one loss note per wiped run
+defineState({
+    id: "python.run-namespace", scope: "run", realm: "offscreen", audience: "model", lostOn: ["offscreen-close", "browser-restart"],
+    describe: "The run's kept Python namespace: the live names and their types, shared across the run's cells until the run ends or its worker dies.",
+    read: ({ runId }) => runId ? runNsVars.get(runId) : undefined,
+});
 let nextId = 1;
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string }>();   // state: plumbing
+type WireStamp = { client: string; run: string | null };
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp }>();   // state: plumbing
+// THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
+// document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
+// `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
+// push, matched by `client`, arrives here.
+const wireByClient = new Map<string, { post: (m: unknown) => void; runMsgId: number }>();   // state: plumbing — one in-flight cell each
 
 /** Arm a kill for run `id`: when it fires, that run fails with `error` and its worker is terminated,
  *  failing anything queued behind it on that principal. */
@@ -113,13 +136,22 @@ function reportHousekeeping(report: { subsystem: string; kind: string; reason?: 
 // loss message reads (docs/dev/housekeeping.md): the kept bench namespace died with the worker.
 function killWorker(principal: string, reason: string): void {
     const entry = workers.get(principal);
+    // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
+    // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
+    const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
+    const named = reason === "timeout" || reason === "start-timeout";
+    const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
         workers.delete(principal);
         respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
+        for (const runId of killedRuns) {
+            runPrincipals.get(runId)?.delete(principal);
+            nsLoss.set(runId, { at: Date.now(), reason: lossReason });
+            runNsVars.delete(runId);
+        }
         // A timeout names itself; anything else is the worker's own error message, kept as detail under "crashed".
-        const named = reason === "timeout" || reason === "start-timeout";
-        reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: named ? reason : "crashed", key: principal, detail: { queuedRuns: [...pending.values()].filter((p) => p.principal === principal).length, ...(named ? {} : { message: reason }) } });
+        reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: lossReason, key: principal, detail: { queuedRuns: [...pending.values()].filter((p) => p.principal === principal).length, ...(named ? {} : { message: reason }) } });
     }
     for (const [id, p] of [...pending.entries()]) {
         if (p.principal !== principal) continue;
@@ -168,10 +200,47 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             }
             return;
         }
+        // THE `ml` WIRE CALL (ML_WIRE.md): the cell's request, stamped HERE with the client handle and the run
+        // this document is executing for it. The worker never sees either — it posts `{ seq, call, args }` only.
+        if (e.data?.mlCall && typeof e.data.id === "number") {
+            const entry = pending.get(e.data.id);
+            const wire = entry?.wire;
+            const { seq, call, args } = e.data.mlCall as { seq: number; call: string; args: unknown[] };
+            if (!wire) {
+                w.postMessage({ id: e.data.id, mlAnswer: { seq, answer: { seq, error: { code: "Refused", message: "this cell has no ml wire" } } } });
+                return;
+            }
+            chrome.runtime.sendMessage({ type: "ML_CALL", client: wire.client, run: wire.run, seq, call, args: args ?? [] })
+                .then((answer: { seq?: number; ask?: unknown } | undefined) => {
+                    // An `ask` first answer is NOT final: the cell suspends, and the later `ML_ANSWER` push
+                    // (matched by client) is what resolves it. Hold here; do not post `mlAnswer` yet.
+                    if (answer && typeof answer === "object" && "ask" in answer) return;
+                    w.postMessage({ id: e.data.id, mlAnswer: { seq, answer: answer ?? { seq, error: { code: "Failed", message: "the wire returned no answer" } } } });
+                })
+                .catch((err: unknown) => {
+                    w.postMessage({ id: e.data.id, mlAnswer: { seq, answer: { seq, error: { code: "Failed", message: String((err as Error)?.message || err) } } } });
+                });
+            return;
+        }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
         // The first run after a pre-warm: did it find the runtime warm, and how long did it still wait?
         if (result.prewarm === "warm" || result.prewarm === "starting") reportHousekeeping({ subsystem: "pyodide", kind: "prewarm-used", ms: result.bootMs ?? 0, detail: { warm: result.prewarm === "warm" } });
+        // ROOT C: keep the run's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md) and open the result
+        // with the loss line when this is the first cell after its namespace was wiped (docs/spec/PYTHON_DIALECT.md).
+        if (entry?.wire?.run) {
+            const runId = entry.wire.run;
+            if (result.bench) {
+                runNsVars.set(runId, { id: result.bench.id, vars: result.bench.vars });
+                if (entry.principal) (runPrincipals.get(runId) ?? runPrincipals.set(runId, new Set()).get(runId)!).add(entry.principal);
+            }
+            const loss = nsLoss.get(runId);
+            if (loss) {
+                nsLoss.delete(runId);
+                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason}`;
+                Object.assign(result, { stdout: result.stdout ? `${line}\n${result.stdout}` : line, nsReset: line });
+            }
+        }
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
@@ -186,7 +255,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full"): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -206,8 +275,14 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // START bound, and the worker's `started` (runtime up, script about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
-        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal });   // streamId → the background can key live stdout chunks
-        w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) }, transfer);
+        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire });   // streamId → the background can key live stdout chunks
+        // The worker creates the run's dict BEFORE the cell runs, so the principal is recorded at the post, not only from
+        // a returned manifest: a cell that throws or is killed still leaves a dict the delete must reach.
+        if (wire?.run) (runPrincipals.get(wire.run) ?? runPrincipals.set(wire.run, new Set()).get(wire.run)!).add(principal);
+        // THE `ml` WIRE: the handle stays HERE. The worker is told only that this run has a wire and which
+        // run's namespace it is — never `client` (LANE_1_PR2_DESIGN.md, "Who stamps the handle").
+        if (wire) wireByClient.set(wire.client, { post: (m) => { try { w.postMessage(m); } catch { /* worker gone */ } }, runMsgId: id });
+        w.postMessage({ id, code, image, hardened, tables, stream, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) }, transfer);
     });
 }
 
@@ -316,13 +391,58 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     }
     // The worker serializes runs internally (one Pyodide instance per worker = one per principal),
     // so we can forward straight through — no need to chain here.
+    // THE `ml` WIRE: `msg.wire` is `{ client, run }` from the service worker. It is kept HERE and stamped
+    // on each `ML_CALL`; the worker is told only `wire: true` + the run id (LANE_1_PR2_DESIGN.md).
+    const wireStamp: WireStamp | undefined = msg.wire && typeof msg.wire.client === "string"
+        ? { client: String(msg.wire.client), run: msg.wire.run ?? null }
+        : undefined;
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
-            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")))
+            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp)
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
+});
+
+// THE `ml` WIRE'S LATER ANSWER (ML_WIRE.md): a call that answered `ask` first is resolved here when the
+// person decides. Matched by the client handle this document stamped; the worker is told only `seq` +
+// the answer. Not in HANDLE_MAP — only the worker's `deliverLater` push reaches this listener.
+chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+    if (msg?.type !== "ML_ANSWER" || typeof msg.client !== "string") return undefined;
+    const entry = wireByClient.get(msg.client);
+    if (!entry) return undefined;
+    entry.post({ id: entry.runMsgId, mlAnswer: { seq: msg.answer?.seq, answer: msg.answer } });
+    sendResponse({ ok: true });
+    return undefined;
+});
+
+// ROOT C: drop a run's kept namespace when the run closes or is archived. The service worker sends this
+// from the run-end path; it is forwarded as `deleteRun` to EVERY worker holding a dict for the run (`runPrincipals`):
+// the run's own `run:<id>` and, for its full-mode cells, the shared `full` worker, where a dict left behind is readable
+// from another full-mode run's cell. The principal the message names is asked too.
+chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+    if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
+    const run = String(msg.run);
+    const principals = new Set(runPrincipals.get(run) ?? []);
+    principals.add(String(msg.principal ?? `run:${run}`));
+    runPrincipals.delete(run);
+    runNsVars.delete(run);
+    nsLoss.delete(run);
+    const asks: Promise<void>[] = [];
+    for (const principal of principals) {
+        const entry = workers.get(principal);
+        if (!entry) continue;
+        const id = nextId++;
+        asks.push(new Promise<void>((resolve) => {
+            pending.set(id, { resolve: () => resolve(), timer: 0 as unknown as ReturnType<typeof setTimeout>, principal });
+            try { entry.w.postMessage({ id, deleteRun: run }); }
+            catch { pending.delete(id); resolve(); }
+        }));
+    }
+    if (!asks.length) { sendResponse({ ok: true }); return undefined; }
+    void Promise.all(asks).then(() => sendResponse({ ok: true }));
+    return true;
 });
 
 // HTML→Markdown for a fetch the WORKER made (sw-offscreen.ts `htmlToMarkdownOffscreen`): the converter needs a DOM. Only

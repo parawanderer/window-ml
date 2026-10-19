@@ -474,3 +474,19 @@ test("a cast over an image whose crop transform is unknown is refused with a fix
     assert.match(ok, /@pt:abcdef12 at \(310, 205\)/, "positive control");
     assert.deepEqual(minted, [{ pt: { x: 310, y: 205 } }]);
 });
+
+// --- python_exec's description: whether names persist depends on who hosts the run ---
+
+test("python_exec tells a worker-hosted run its names persist, and a page-hosted one that each call is stateless", T, async () => {
+    const { buildPythonTool } = await import("../src/python/python-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const desc = (ml) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => ({ ok: true }), ...ml }).description;
+    const worker = desc({ _mintToken: async () => "@pt:abcdef12" });
+    const page = desc({});
+    assert.match(worker, /Names you define persist across your python_exec calls in this run/);
+    assert.match(worker, /namespace reset at <time>: <reason>/, "it names the notice a lost namespace prints");
+    assert.doesNotMatch(worker, /STATELESS/);
+    assert.match(page, /Each call is STATELESS/, "a page-hosted run's cells have no run, so nothing persists");
+    assert.doesNotMatch(page, /persist across/);
+    assert.doesNotMatch(worker + page, / {2}/, "no padding in model-facing text");
+});

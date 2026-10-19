@@ -19,8 +19,9 @@ thin id-matched relay. Pyodide is
 (numpy/Pillow/**pandas**/**scipy**, bundled offline in `dist/pyodide/`, lazy-loaded — the
 package set is single-sourced in `python-env.ts` `PY_PACKAGES`, which drives `loadPackage`, the
 prelude imports, the tool-description labels, AND the wheel-fetch script; scipy is loaded but
-not pre-imported, so a quick coord/table run doesn't pay its import cost). Each call is
-**stateless** (the per-run namespace reset, above) — nothing carries between calls. The relay is the usual
+not pre-imported, so a quick coord/table run doesn't pay its import cost). A call
+made inside a worker-hosted run shares ONE namespace with the run's other cells ("A run's namespace", further down);
+any other call (a page's `ml.pythonExec`, a page-hosted agent) is **stateless**: the reset, above. The relay is the usual
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
 (numpy). In a worker-built run the image is shot by the worker from its own capture, and a `cast` mints its token in
@@ -131,8 +132,8 @@ are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by 
 (dom.ts, shared with `exec`) with a `[first K of M chars]` note so a runaway result can't
 flood context. The code runs in a **sandboxed namespace** (no DOM/fs) under
 `contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
-(traceback captured, partial stdout preserved). A per-run namespace reset wipes non-`_`
-globals so one run can't leak state into the next; the result is serialized via Python
+(traceback captured, partial stdout preserved). For a call with no run, a reset wipes non-`_`
+globals so one call can't leak state into the next (a run's cells instead share a kept namespace); the result is serialized via Python
 `json.dumps` (leak-proof — no nested JsProxy) with a numpy-scalar `.item()` coercer. THREE return
 conventions all work (`wrapUserCode` builds `_user`'s body at runtime via `ast`): an explicit
 `return X`, a bare top-level `result = X` (`global result`), AND a bare **trailing expression**
@@ -240,7 +241,7 @@ are **stated in words, not drawn as controls that no-op**: an affordance that si
 told from a bug, so you try it twice.
 
 **The bench editor's COMPLETION is Jedi, in the sandbox (`COMPLETE_HELPER`/`completeIn`, python-runtime.ts).**
-Static analysis of the script being typed — it is never RUN — so the stateless sandbox is no limit for
+Static analysis of the script being typed — it is never RUN — so a sandbox that holds no state is no limit for
 anything reached through an import or written in the script: module attributes (`np.ara`), pandas frames
 (`pd.read_csv(...).he`, via pandas' own stubs), literals, and the script's own functions all complete. It
 **cannot** type an array returned by a numpy call (`grid = np.arange(24).reshape(4, 6)` → `grid.` offers
@@ -279,9 +280,42 @@ announces itself). Six things are load-bearing:
   really is a loaded module (`sys.modules`); otherwise it is `""`. Only module/class/function/property/keyword
   are printed beside a name at all — `statement`/`instance`/`param` are Jedi's internals, not a reader's.
 
+**A run's namespace (root C).**
+
+ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespace"). Which cells share one dict:
+
+- **Cells of the same worker-hosted run**, by run id: `wire.run` on `PY_RUN`, set only from `wireRun` (`worker-tools.ts`).
+  The worker keeps `runs: Map<runId, { ns, id }>` (`python-worker.ts`), so the key is the run and nothing else.
+- **Not** a page's `ml.pythonExec` or a page-hosted agent's `python_exec`: no run id, so the main namespace and the reset
+  as before. **Not** the bench (`persist`): its own `benchNs`, per mode.
+- **Both modes, and no crossing.** A `readonly` cell runs on the worker of principal `run:<id>`, a `full` cell on the
+  `full` worker. Each keeps its own dict for the run, so a name defined in a `full` cell is not visible to a `readonly`
+  cell of the same run.
+- **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
+  wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
+- **Ends** with the run: `settle()` (`sw-run-host.ts`) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
+  sends `PY_DELETE_RUN { run, principal: "run:<id>" }`; the offscreen document forwards it to that principal's worker as
+  `deleteRun`, which destroys the dict, and clears its own `runPrincipals`, `runNsVars` and `nsLoss` entries.
+- **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
+  the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next cell opens its
+  stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries `nsReset`. The
+  offscreen document closing loses the dict without a record: the note comes only from a kill the document saw.
+- **The state registry:** `python.run-namespace` (`defineState`, offscreen, audience `model`); its `read` is the last
+  cell's scope manifest (`bench.vars`: names and type names).
+- **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
+  `offscreen.ts`), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
+- **Known residual:** two full-mode runs ALIVE at once share the `full` interpreter and can read each other's dicts
+  (`gc.get_objects()`); the approval card says so. Pinned by a test that asserts it exists
+  (`docs/plan/repl/LANE_1_RESULT_C.md`, "Known residual").
+- **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only).
+
+Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) and `tests/python-run-namespace-py.test.mjs`
+(the dicts in real Pyodide).
+
 **The bench KEEPS ITS VARIABLES between runs, like a notebook** (`wrapUserCode(..., persist)`, the worker's
-`benchNs`). `python_exec` stays stateless; the bench does not, and six things make that safe:
-- **Its own namespace, not main.** Main belongs to the model's `python_exec`, which wipes it every run — so the
+`benchNs`). A `python_exec` outside a run stays stateless; the bench and a run's cells do not (a run's:
+"A run's namespace", above), and six things make that safe for the bench:
+- **Its own namespace, not main.** Main belongs to a `python_exec` with no run, which wipes it every call — so the
   first agent run would have erased a person's variables, and could have read them.
 - **One namespace per MODE.** A `full` run can keep a live handle to the browser's network functions in a
   variable; carried into a `readonly` run it would quietly end the sandbox. Nothing crosses between them.

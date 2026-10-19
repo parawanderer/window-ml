@@ -128,6 +128,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
     const tabsRemoved = [];     // chrome.tabs.remove ids
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
+    const pyDeletes = [];       // PY_DELETE_RUN messages (a settled run's kept Python namespace is dropped)
     const htmlToMd = [];        // HTML the worker asked the offscreen document to convert to Markdown
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
@@ -314,6 +315,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // capture the payload (esp. `hardened`) so tests can assert what the sandbox is told to run.
                 sendMessage: async (msg) => {
                     if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
+                    if (msg?.type === "PY_DELETE_RUN") { pyDeletes.push(msg); return { ok: true }; }
                     if (msg?.type === "PY_PREWARM") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, prewarm: "started" }; }
                     // The session archive's worker, behind the offscreen document: `onArchiveOp(msg)` answers for it.
                     if (msg?.type === "ARCHIVE_OP" && onArchiveOp) return onArchiveOp(msg);
@@ -432,6 +434,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         tabsCreated,
         tabsRemoved,
         pyRuns,
+        pyDeletes,
         htmlToMd,
         debuggerCalls,
         debuggerEventListeners,

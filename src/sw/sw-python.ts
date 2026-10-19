@@ -208,6 +208,21 @@ function pyCodeGranted(tabId: number | undefined, mode: "readonly" | "full", cod
     return !!g && pyCodeCovers(g, mode, code);
 }
 
+/**
+ * ROOT C: tell the offscreen host to drop a run's kept Python namespace when the run closes or is archived
+ * (docs/spec/PYTHON_DIALECT.md, "The namespace"). Fire-and-forget: a namespace left behind costs memory, not
+ * correctness, and a run ending must never wait on the sandbox. The offscreen forwards it as `deleteRun` to every
+ * worker that holds a dict for the run, the shared `full` worker included (it keeps which, `runPrincipals`).
+ * @param runId the run whose namespace to drop
+ */
+export function deletePythonRun(runId: string): void {
+    if (!runId) return;
+    try {
+        chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
+            .catch(() => { /* no offscreen listening: the worker is gone with its Map */ });
+    } catch { /* context gone */ }
+}
+
 /** PY_STDOUT: relay one live stdout chunk from the offscreen host to whoever is awaiting that stream — a page
  *  through its content script, one of our own surfaces over the runtime channel. */
 export function relayPyStdout(message: any): void {

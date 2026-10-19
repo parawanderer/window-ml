@@ -68,7 +68,7 @@ const TIMER_NAMES = ["setTimeout", "setInterval"];
  * falls back to the normal module attributes.
  */
 const HARNESS_BOOT = /* python */ `
-import ast as _ml_a, json as _ml_j, base64 as _ml_b, textwrap as _ml_tw, traceback as _ml_tb, types as _ml_t, sys as _ml_s, io as _ml_io, contextlib as _ml_c
+import ast as _ml_a, json as _ml_j, base64 as _ml_b, textwrap as _ml_tw, traceback as _ml_tb, types as _ml_t, sys as _ml_s, io as _ml_io, contextlib as _ml_c, inspect as _ml_i, asyncio as _ml_aio
 
 class _MlHarnessMod(_ml_t.ModuleType):
     """The harness's captured module references. A cell cannot patch through this."""
@@ -114,6 +114,12 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "redirect_stdout": _ml_c.redirect_stdout,
     "redirect_stderr": _ml_c.redirect_stderr,
     "sys_stdout": _ml_s.stdout,
+    # ASYNC CELL DRIVERS: the wrapper builds \`async def _user()\` so \`await ml.*\` is legal, and drives
+    # the coroutine on the active loop (or a fresh one). Captured so a cell that patches
+    # \`inspect.iscoroutine\` or \`asyncio.get_running_loop\` cannot change how the harness runs its own
+    # code (LANE_1_PR2_DESIGN.md).
+    "inspect": _ml_i,
+    "asyncio": _ml_aio,
 })
 _h
 `;

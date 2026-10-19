@@ -55,7 +55,7 @@ import { RUN_CONTROL_TYPES } from "./page-relay";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
-import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
@@ -1245,7 +1245,7 @@ configureSessionCommands({
     forgetRun: (hash) => {
         if (runControllers.has(hash)) return;   // never a live run: the command refuses those first
         bgRuns.delete(hash); hydratedRuns.delete(hash); releaseSessionTokens(hash);
-        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash);
+        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash); deletePythonRun(hash);
     },
 });
 

@@ -15,7 +15,7 @@
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
+import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
 import { lockdownReadonly } from "./lockdown";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
@@ -28,7 +28,7 @@ const READONLY = self.name !== "full";
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, re-bound into every cell's namespace
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; run?: string | null; deleteRun?: string };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
@@ -37,6 +37,36 @@ type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?:
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
+
+// THE `ml` WIRE (ML_WIRE.md): one pending call per `seq`, matched to the answer the offscreen document
+// relays back. The worker never sees the client handle — the offscreen document stamps it — so this map
+// is only `seq → resolve`, and a call that answers `ask` stays pending until the final `ML_ANSWER`.
+const pendingWire = new Map<number, { resolve: (answerJson: string) => void }>();   // state: plumbing — one in-flight ml call each
+
+/**
+ * The transport `_ml_make` closes over: one wire request out, the FINAL answer back, as JSON text.
+ * Posts `{ mlCall }` through the closure-held `post`; the offscreen document stamps `{ client, run }`
+ * and relays `ML_CALL`. An `ask` answer does not resolve — the offscreen holds the promise until the
+ * later `ML_ANSWER` push (LANE_1_PR2_DESIGN.md).
+ * @param id the run message id this call rides (so a late answer can be dropped if the run is gone)
+ * @returns `send(request_json) -> answer_json`, awaiting through a per-call ask
+ */
+function makeWireSend(id: number): (requestJson: string) => Promise<string> {
+    return (requestJson: string) => new Promise((resolve) => {
+        let seq: number;
+        try { seq = Number(JSON.parse(requestJson)?.seq); } catch { resolve(JSON.stringify({ seq: -1, error: { code: "Failed", message: "the request was not readable" } })); return; }
+        if (!Number.isFinite(seq)) { resolve(JSON.stringify({ seq: -1, error: { code: "Failed", message: "the request carried no seq" } })); return; }
+        pendingWire.set(seq, { resolve });
+        // The request is `{ seq, call, args }` only: which client and run it is for is stamped outside.
+        try {
+            const { call, args } = JSON.parse(requestJson) as { call: string; args: unknown[] };
+            post({ id, mlCall: { seq, call, args: args ?? [] } });
+        } catch (e) {
+            pendingWire.delete(seq);
+            resolve(JSON.stringify({ seq, error: { code: "Failed", message: String((e as Error)?.message || e) } }));
+        }
+    });
+}
 
 let pyodideReady: Promise<any> | null = null;
 // Whether the runtime has finished starting. A run that finds it false WAITED for the start, and that wait is
@@ -120,11 +150,39 @@ function benchVars(py: any, ns: any): BenchSession["vars"] {
     try {
         return JSON.parse(py.runPython(`import json as _jv
 _jv.dumps([{"name": _k, "type": type(_v).__name__} for _k, _v in sorted(_ml_v_ns.items())
-           if not _k.startswith("_") and _k not in ${JSON.stringify(PY_BENCH_BASE_NAMES)}])`) as string);
+           if not _k.startswith("_") and _k not in ${JSON.stringify([...PY_BENCH_BASE_NAMES, "INJECTED_IMAGE_B64", "INJECTED_TABLES_JSON"])}])`) as string);
     } finally { try { py.globals.delete("_ml_v_ns"); } catch { /* */ } }
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void): Promise<RunResult> {
+// ROOT C: ONE NAMESPACE PER RUN (docs/spec/PYTHON_DIALECT.md "The namespace"). A run's cells share a
+// dict; injected names (`df`/`tables`/`img`) are assigned into it without wiping the run's other
+// bindings; RESET never wipes it. Deleted when the run closes (`deleteRun`), and a worker restart under
+// a live run is told as a loss (the housekeeping record the offscreen document writes on respawn).
+const runs = new Map<string, { ns: any; id: string }>();   // state: python.run-namespace — per-run Python namespace, lost on worker kill
+/**
+ * The run's kept namespace, created fresh on first use. `id` is new whenever it is created afresh, so a
+ * reader can tell a restart from a continuation (the same shape as the bench's).
+ * @param py the interpreter
+ * @param runId the run
+ * @returns the kept entry
+ */
+function runNamespace(py: any, runId: string): { ns: any; id: string } {
+    let entry = runs.get(runId);
+    if (!entry) {
+        entry = { ns: py.globals.get("dict")(), id: `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` };
+        runs.set(runId, entry);
+    }
+    return entry;
+}
+/** Drop a run's kept namespace: the run closed or was archived (`releaseNamespace` empties it first). */
+function deleteRunNamespace(runId: string): void {
+    const entry = runs.get(runId);
+    if (!entry) return;
+    releaseNamespace(entry.ns);
+    runs.delete(runId);
+}
+
+async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0): Promise<RunResult> {
     const wasLive = pyodideLive;
     const w0 = Date.now();
     const py = await getPyodide();
@@ -138,22 +196,36 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // rather than overlapping — which is what lets the panel show them as one bar split in two.
     const t0 = Date.now();
     const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}), ...(prewarm ? { prewarm } : {}) });
-    // Where this run executes: the bench's kept namespace for its mode, or the main one a `python_exec` resets.
+    // Where this run executes: a kept namespace (the bench's per-mode one, or ROOT C's per-run dict), or
+    // the main one a one-off `python_exec` resets. A run's dict is the ROOT C namespace (PYTHON_DIALECT.md):
+    // cells of the same run share it, RESET never wipes it, and injected names are assigned into it.
     const bench = persist ? benchNamespace(py, hardened) : null;
-    const ns = bench ? bench.ns : py.globals;
+    const keptRun = !bench && runId ? runNamespace(py, runId) : null;
+    const kept = bench ?? keptRun;
+    const ns = kept ? kept.ns : py.globals;
     // Read only by PRELUDE_DATA, which a kept-state run does not execute — so never put into a bench namespace,
     // where they were listed as two variables no script had defined (and offered by completion).
     const tableBufs: string[] = [];
-    if (!bench) {
+    if (!kept) {
         // Python None/str, never a JS null: `set` of a null lands as `JsNull`, a JsProxy in the namespace.
         const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
         injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
+    } else if (keptRun) {
+        // ROOT C: a run's kept dict still gets the injected names and the harness, assigned WITHOUT
+        // wiping the run's other bindings. `injectInputs` sets the injected inputs; the wrapper's
+        // wrapper's `"run"` prelude decodes `img`/`tables` only when they are present.
+        const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
+        injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
     } else {
-        // A kept-state run still needs the harness module in its namespace — the wrapper looks it up there.
+        // A kept-state bench run still needs the harness module in its namespace — the wrapper looks it up there.
         // Only the harness: `injectInputs` would also set INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON as
         // undefined (→ Python None) in the bench namespace, and `benchVars()` would list them as kept.
         if (harness !== undefined) ns.set("_ml_harness", harness);
     }
+    // THE `ml` WIRE TRANSPORT: a leading-underscore global the wrapper folds into `_ml_make` and drops.
+    // The worker never sees the client handle (the offscreen document stamps it); this only posts
+    // `{ seq, call, args }` and resolves when the answer comes back (LANE_1_PR2_DESIGN.md).
+    if (wire) ns.set("_ml_send", makeWireSend(msgId));
     // LIVE stdout tee (opt-in streaming): Pyodide's JS-side setStdout wraps the interpreter's real stdout,
     // which the prelude's _MlTee writes through to. No callback object lands in the namespace — a JsProxy
     // of one is a JS `Function` constructor to a hostile cell. Cleared in finally.
@@ -164,7 +236,9 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // the exact script is exercised against real CPython in tests). Reads back _stdout/_err/_json_result.
         // The readonly worker's `hardened` flag is the wrapper's netPolicy belt — the lockdown already
         // stripped the JS realm. The full worker passes false and keeps the bridges.
-        await py.runPythonAsync(wrapUserCode(code, hardened, persist), { globals: ns });
+        // `persist` is true for ANY kept namespace (bench or ROOT C's per-run dict): no RESET, and the
+        // wrapper's async `await _user()` drives `await ml.*` cells.
+        await py.runPythonAsync(wrapUserCode(code, hardened, bench ? true : keptRun ? "run" : false), { globals: ns });
         const stdout = String(ns.get("_stdout") ?? "");
         // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
         const dropped = Number(ns.get("_ml_stdout_dropped") ?? 0) || 0;
@@ -172,8 +246,8 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         const err = ns.get("_err");
         // A kept-state run reports its namespace either way — what you defined before the line that failed
         // is still there, and the bench says so.
-        const kept = bench ? { bench: { id: bench.id, vars: benchVars(py, ns) } } : {};
-        if (err) return timed({ ok: false, stdout, error: String(err), ...over, ...kept });
+        const keptResult = bench ? { bench: { id: bench.id, vars: benchVars(py, ns) } } : keptRun ? { bench: { id: keptRun.id, vars: benchVars(py, ns) } } : {};
+        if (err) return timed({ ok: false, stdout, error: String(err), ...over, ...keptResult });
         // A DataFrame/Series result also arrives structurally ({columns, rows}) so the UI can draw a real table.
         const tableJson = ns.get("_json_table");
         let table: RunResult["table"];
@@ -187,18 +261,23 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         const render = renderHint === "latex" || renderHint === "img" ? renderHint : undefined;
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
-            return timed({ ok: true, value, stdout, ...over, ...(table ? { table } : {}), ...(ipc ? { ipc } : {}), ...(render ? { render } : {}), ...kept });
+            return timed({ ok: true, value, stdout, ...over, ...(table ? { table } : {}), ...(ipc ? { ipc } : {}), ...(render ? { render } : {}), ...keptResult });
         }
         // Fallback for a non-JSON-serializable return (rare — models return images via
         // to_base64): convert via toJs, then destroy the proxy so it can't leak.
         const r = ns.get("result");
         const value = r && r.toJs ? r.toJs({ dict_converter: Object.fromEntries }) : r;
         if (r && r.destroy) r.destroy();
-        return timed({ ok: true, value: sanitize(value), stdout, ...over, ...(ipc ? { ipc } : {}), ...kept });
+        return timed({ ok: true, value: sanitize(value), stdout, ...over, ...(ipc ? { ipc } : {}), ...keptResult });
     } catch (e: any) {
-        return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
+        // The wrapper itself failed (a user syntax error is caught INSIDE it, as `_err`). A kept namespace still exists,
+        // and may hold the names earlier cells defined, so the scope manifest rides this result too.
+        let keptCatch = {};
+        if (kept) { try { keptCatch = { bench: { id: kept.id, vars: benchVars(py, ns) } }; } catch { /* the namespace is unreadable */ } }
+        return timed({ ok: false, stdout: "", error: String((e && e.message) || e), ...keptCatch });
     } finally {
-        if (!bench) injectInputs(ns, null, null, harness);
+        if (!kept) injectInputs(ns, null, null, harness);
+        if (wire) { try { ns.delete("_ml_send"); } catch { /* the wrapper dropped it */ } }
         if (onStdout) { try { py.setStdout({}); } catch { /* ignore */ } }
         for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
         try { ns.delete("_ipc_result"); } catch { /* not set */ }
@@ -257,8 +336,26 @@ async function complete(code: string, line: number, column: number, bench?: "rea
 // MessagePort); `Object.defineProperty(self, "onmessage", ...)` shadows that setter WITHOUT invoking it,
 // and the port never starts — every message goes unanswered until the 120s timeout.
 function onMessage(e: MessageEvent): void {
-    const msg = e.data as RunMsg;
+    const msg = e.data as RunMsg & { mlAnswer?: { seq: number; answer: unknown } };
+    // THE `ml` WIRE ANSWER (ML_WIRE.md): a call's final answer, matched by `seq`. An `ask` is not final —
+    // the offscreen document holds the promise and only relays the later `ML_ANSWER`. Not a run message,
+    // so it is handled before the `id` check.
+    if (msg?.mlAnswer && typeof msg.mlAnswer.seq === "number") {
+        const pending = pendingWire.get(msg.mlAnswer.seq);
+        if (pending) {
+            pendingWire.delete(msg.mlAnswer.seq);
+            try { pending.resolve(JSON.stringify(msg.mlAnswer.answer)); }
+            catch { pending.resolve(JSON.stringify({ seq: msg.mlAnswer.seq, error: { code: "Failed", message: "the answer was not readable" } })); }
+        }
+        return;
+    }
     if (!msg || typeof msg.id !== "number") return;
+    // ROOT C: drop a run's kept namespace when the run closes or is archived. Through the chain so it
+    // cannot land mid-run.
+    if (typeof msg.deleteRun === "string" && msg.deleteRun) {
+        runChain = runChain.then(() => { deleteRunNamespace(msg.deleteRun!); post({ id: msg.id, ok: true, stdout: "" }); });
+        return;
+    }
     // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be
     // handed a `full` run (the bridges are stripped), and a full worker must not be handed a readonly
     // run under the assumption it is locked. Refuse rather than silently run in the wrong sandbox.
@@ -310,7 +407,7 @@ function onMessage(e: MessageEvent): void {
     const onStdout = msg.stream ? (chunk: string) => post({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
     const onStarted = () => post({ id: msg.id, started: true });
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id))
         .then(
             (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),

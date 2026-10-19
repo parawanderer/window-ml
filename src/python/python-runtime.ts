@@ -5,7 +5,19 @@
 // + hardening) so this drift-prone Python can be exercised against REAL CPython in tests
 // (tests/python.test.js) instead of a re-implementation. Chrome-free (only imports python-env).
 import { PY_PRELUDE_IMPORTS } from "./python-env";
+import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
+
+/**
+ * Release a kept namespace (ROOT C's per-run dict) so no other cell in the interpreter can reach it. Emptied FIRST:
+ * the functions a cell defined hold the dict through their `__globals__`, so releasing the proxy alone leaves a cycle
+ * that `gc.get_objects()` from another run's cell still walks to until a collection happens.
+ * @param ns the namespace dict (a PyProxy)
+ */
+export function releaseNamespace(ns: any): void {
+    try { ns.clear(); } catch { /* already gone */ }
+    try { ns.destroy(); } catch { /* already gone */ }
+}
 
 /**
  * Hand the run's inputs to the interpreter as PYTHON values — `None` or `str`, never a JS null.
@@ -157,6 +169,26 @@ if "_ml_orig_read_html" not in globals():
     pd.read_html = _ml_read_html
 `;
 export const PRELUDE = PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA.slice(0, -1) + PRELUDE_LOADERS;
+/**
+ * Replace one exact piece of a prelude, refusing when it is not there exactly once, so an edit to `PRELUDE_DATA`
+ * cannot silently leave the kept variant resetting what it must not.
+ * @param src the prelude source
+ * @param from the exact text to replace
+ * @param to its replacement
+ * @returns the edited source
+ */
+const replaceOnce = (src: string, from: string, to: string): string => {
+    if (src.split(from).length !== 2) throw new Error(`prelude: expected exactly one ${JSON.stringify(from)}`);
+    return src.replace(from, to);
+};
+// ROOT C's per-run dict: the same DATA, but `img`/`img_np`/`H`/`W` and `df`/`tables` are bound only by a cell that
+// passes an image or tables, so a later cell that passes none keeps them. No LOADERS: they patch module attributes
+// once per namespace and read that namespace, so a second run's dict would chain onto the first's and could be handed
+// the first run's `img`.
+const PRELUDE_DATA_KEPT = replaceOnce(replaceOnce(PRELUDE_DATA,
+    "img = None\nimg_np = None\nH = W = 0\n", ""),
+    "df = None\ntables = {}\n_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n",
+    "_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n    df = None\n    tables = {}\n");
 
 // Network policy. pandas' read_csv/read_html and urllib all funnel through
 // `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported). The
@@ -236,12 +268,13 @@ for _k in list(globals().keys()):
  * The script the sandbox runs: prelude, network policy, and the user's code wrapped so a top-level `return`,
  * a trailing expression and a traceback all come back.
  *
- * @param persist the bench's KEEP-STATE mode. No per-run reset and only `PRELUDE_BASE`, and the script's own
- *   top-level names are declared `global` in the wrapper, so they land in the namespace it runs in (the
- *   worker hands it a bench-only one) and are still there next run. Without that the wrapper's function
- *   scope would swallow them: `x = 1` is a LOCAL of `_user` and disappears when the run ends.
+ * @param persist a KEEP-STATE mode: `true` is the bench (only `PRELUDE_BASE`), `"run"` is ROOT C's per-run dict
+ *   (`PRELUDE_BASE` and the injected image/tables, bound only when a cell passes them). Neither resets, and the
+ *   script's own top-level names are declared `global` in the wrapper, so they land in the namespace it runs in and
+ *   are still there next run. Without that the wrapper's function scope would swallow them: `x = 1` is a LOCAL of
+ *   `_user` and disappears when the run ends.
  */
-export const wrapUserCode = (code: string, hardened = true, persist = false): string => /* python */ `
+export const wrapUserCode = (code: string, hardened = true, persist: boolean | "run" = false): string => /* python */ `
 # THE HARNESS'S OWN REFS (lockdown.ts captured them at boot, before any cell ran). A cell that patches
 # \`ast.parse\` or \`json.loads\` changes what the RUN's own later cells see, never what the harness parses,
 # encodes or injects. Looked up in the NAMESPACE — \`injectInputs\` re-binds the module before every cell —
@@ -283,12 +316,21 @@ else:
     _ml_stringio, _ml_fmt_exc = _ml_io2.StringIO, _ml_tb2.format_exc
     _ml_redir_out, _ml_redir_err = _ml_c2.redirect_stdout, _ml_c2.redirect_stderr
     _ml_real_out = _ml_s2.stdout
+# ASYNC CELL DRIVERS (the harness captures them; the fallback imports them). A cell's \`_user\` is a
+# coroutine function so \`await ml.*\` is legal — the runner is \`runPythonAsync\`, which allows top-level
+# await. When no loop is running (a sync \`exec()\` of this wrapper, compiled with
+# \`ast.PyCF_ALLOW_TOP_LEVEL_AWAIT\` if the cell awaits), asyncio drives the coroutine instead.
+if _ml_h is not None and getattr(_ml_h, "ast_parse", None) is not None:
+    _ml_inspect = _ml_h.inspect
+    _ml_asyncio = _ml_h.asyncio
+else:
+    import inspect as _ml_inspect, asyncio as _ml_asyncio
 # The harness module is GONE from the namespace before the user's code sees it: the refs are in local
 # names now, and neither \`import _ml_harness\` (it is not in \`sys.modules\`) nor \`globals()["_ml_harness"]\`
 # (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
 del _ml_h
 globals().pop("_ml_harness", None)
-${persist ? "" : `
+${persist === true ? "" : `
 # The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
 # JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
 # the host's \`injectInputs\`, which is the one that converts at the boundary.
@@ -297,8 +339,28 @@ def _ml_in(_v):
 INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
 INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
 `}
-${persist ? PRELUDE_BASE : RESET + PRELUDE}
+${persist === true ? PRELUDE_BASE : persist === "run" ? PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA_KEPT : RESET + PRELUDE}
 ${netPolicy(hardened)}
+# THE \`ml\` OBJECT A CELL CALLS THE WIRE THROUGH (ML_FACADE). Built from the harness's transport and
+# its own codec refs, then those pieces are dropped: the cell sees \`ml\`/\`MlError\` and nothing that
+# reaches the worker's closure-held post (LANE_1_PR2_DESIGN.md). The transport is \`_ml_send\`, a
+# leading-underscore global the worker installs before the cell and this drops after building \`ml\` —
+# the same shape as the stdout tee, carrying data rather than a JS function the cell holds. Absent
+# when the worker installed no channel (real-CPython tests, a completion): \`ml\` is simply not bound
+# and a cell that names it gets NameError.
+${ML_FACADE}
+_ml_send_fn = globals().get("_ml_send")
+if _ml_send_fn is not None:
+    class _MlCodec:
+        loads = staticmethod(_ml_loads)
+        dumps = staticmethod(_ml_dumps)
+        b64encode = staticmethod(_ml_b64e)
+        b64decode = staticmethod(_ml_b64d)
+    ml, MlError = _ml_make(_ml_send_fn, _MlCodec)
+    globals().pop("_ml_make", None)
+    globals().pop("_ml_send", None)
+else:
+    globals().pop("_ml_make", None)
 result = None
 _ml_src = ${JSON.stringify(code)}
 _ml_persist = ${persist ? "True" : "False"}
@@ -326,7 +388,11 @@ with _ml_redir_out(_out), _ml_redir_err(_out):
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
-        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _ml_indent(_ml_src, "    ")
+        # ASYNC so \`await ml.dereference(...)\` is legal inside the cell (LANE_1_PR2_DESIGN.md). The
+        # runner is \`runPythonAsync\`, which allows top-level await; a plain sync \`exec()\` of this
+        # source must compile with \`ast.PyCF_ALLOW_TOP_LEVEL_AWAIT\` (or drive the coroutine from
+        # asyncio once no loop is running).
+        _ml_def_src = "async def _user():\\n    global result\\n    pass\\n" + _ml_indent(_ml_src, "    ")
         try:
             _ml_tree = _ml_parse(_ml_def_src, filename="<python_exec>")
         except SyntaxError as _ml_se:
@@ -379,7 +445,22 @@ with _ml_redir_out(_out), _ml_redir_err(_out):
             elif isinstance(_n, _ml_Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ml_Name) and _t.id == "result" for _t in _n.targets):
                 _ml_ret_latex = True
         exec(compile(_ml_tree, "<python_exec>", "exec"), globals())
-        _ret = _user()
+        # ASYNC CELL: \`_user\` is a coroutine function so \`await ml.*\` is legal in the cell. Drive it
+        # on the active loop (this source is run under \`runPythonAsync\`, which allows top-level await).
+        # A sync \`exec()\` of this wrapper must compile with \`ast.PyCF_ALLOW_TOP_LEVEL_AWAIT\`, or fall
+        # back to the harness/asyncio runner below when no loop is running.
+        _ml_user_ret = _user()
+        if _ml_inspect.iscoroutine(_ml_user_ret):
+            try:
+                _ml_loop = _ml_asyncio.get_running_loop()
+            except RuntimeError:
+                _ml_loop = None
+            if _ml_loop is None:
+                _ret = _ml_asyncio.new_event_loop().run_until_complete(_ml_user_ret)
+            else:
+                _ret = await _ml_user_ret
+        else:
+            _ret = _ml_user_ret
         if _ret is not None:
             result = _ret
     except BaseException:
@@ -510,7 +591,7 @@ export function unharden(py: any, saved: Hardened): void {
 
 // ── THE BENCH EDITOR'S COMPLETION ENGINE ─────────────────────────────────────────────────────────────────
 // Jedi, loaded lazily (`PY_LAZY_LOADS`) the first time the bench asks. It never RUNS the script being typed:
-// completion is static analysis, so the stateless sandbox is no limit for anything reached through an
+// completion is static analysis, so the sandbox holding no state is no limit for anything reached through an
 // import or written in the script — measured in Pyodide: module attributes (`np.ara`, `np.linalg.i`,
 // `from numpy import lin`), pandas frames (`pd.read_csv(...).he` → `head`, via pandas' own stubs), literals,
 // and the script's own functions and classes all complete. The prelude's own names (`np`, `pd`, `Image`,
