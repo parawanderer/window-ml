@@ -669,9 +669,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mv mobile/android/app/build/outputs/apk/release/app-release.apk window-ml.apk
-          gh release delete android-latest --yes --cleanup-tag || true
-          gh release create android-latest window-ml.apk --prerelease --target "$GITHUB_SHA" \
-            --title "Android build (rolling)" --notes "$(cat <<'EOF'
+          notes="$(cat <<'EOF'
           The phone app, built from the newest commit on main. Download `window-ml.apk` on the phone and open it;
           Android will ask whether the browser may install apps.
 
@@ -681,6 +679,16 @@ jobs:
           arm64-v8a only.
           EOF
           )"
+          # One rolling tag, deleted and remade so it points at the commit the APK was actually built from. A second
+          # main run can land between the delete and the create (or the delete's tag cleanup can 404 because the
+          # release went away mid-call), and that used to redden the whole run on a publish race: 1 of 8 main runs
+          # died with `cleaning up draft failed: HTTP 404`. Retry the cycle once rather than blaming the push.
+          publish() {
+            gh release delete android-latest --yes --cleanup-tag || true
+            gh release create android-latest window-ml.apk --prerelease --target "$GITHUB_SHA" \
+              --title "Android build (rolling)" --notes "$notes"
+          }
+          publish || publish
 
   # iOS needs a macOS runner, which is an order of magnitude dearer per minute, and the thing it catches is a
   # packaging break rather than a behaviour one. So it runs nightly and on demand rather than on every PR, the same
