@@ -110,7 +110,7 @@ compare at `done` and at `status` for a live orphan; the compare at an orphan's 
 the ledger, returned by the next session's `status`) is an open item, unassigned, because it adds persistence and a
 consume-once semantic that need their own design (ruled 2026-10-19).
 **K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
-`git diff --output=.envrc` ran free) is window-ml #788, lane 4's, ahead of K3b: the top-level names of a root are
+`git diff --output=.envrc` ran free) is window-ml #788 (merged 2026-10-19, a6826b0), lane 4's, ahead of K3b: the top-level names of a root are
 outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
 acceptance tests come first unchanged; flaky-3f reviews, never the red team (rule 10). Host follow-up, unassigned: the
 host's manifest reader (`ProgramEffect`, a closed enum) needs a `WriteNames` variant at the next vector sync; until
