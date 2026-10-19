@@ -15,14 +15,36 @@ export const HOST_PROTOCOL = 1;
 /** The largest `length` one `read` may ask for: 512 KiB, which is 683 KiB as base64, inside Chrome's 1 MiB message. */
 export const READ_CHUNK = 524288;
 
-/** What `hello` answers: the host's identity, and what it can do on this machine. */
+/** What `hello` answers: the host's identity, and what it can do on this machine. `sandbox.landlockAbi` (host K3) is
+ *  a number on Linux, `null` on macOS, and absent from a host older than K3: its `start` silently ignores `envelope`. */
 export interface HostHello {
     host: string;
     version: string;
     protocol: number;
     platform: string;
-    sandbox: { kind: "seatbelt" | "bwrap" | null; available: boolean; reason?: string };
+    sandbox: { kind: "seatbelt" | "bwrap" | null; available: boolean; reason?: string; landlockAbi?: number | null };
     modes: ("host" | "container")[];
+}
+
+/** The worker's narrowing envelope on `start`/`pipe`. Both keys are required and there are no others. `"today"` is the
+ *  host's report name for the floor; a worker never sends it (the host refuses it as malformed). */
+export type HostEnvelope = { write: "roots" | "none"; exec: "any" | "program-only" };
+
+/** What `done` reports as applied. `"today"` is the floor, which is also what an absent envelope on `done` means from
+ *  a worker that sent none; an absent `envelope` on `done` itself is an older host, which the extension reads as
+ *  unknown, never as narrow. */
+export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only" };
+
+/** Whether this host understands AND can hold `envelope` on `start`/`pipe`. K3 put `landlockAbi` on `hello.sandbox`,
+ *  present on both platforms (`null` on macOS); an older host has `sandbox` without that key and silently ignores
+ *  `envelope`. Key presence is only the wire test: the host still has to be able to APPLY the bound. Seatbelt always
+ *  can; bwrap needs a numeric Landlock ABI, and without one it reports `landlockAbi: null` — the same null macOS
+ *  reports — and refuses anything narrower than today's floor (`can_hold` in window-ml-host `src/sandbox.rs`). Every
+ *  envelope the worker derives is `exec: "program-only"`, so that refusal would fail the call `SandboxFailed`. */
+export function hostTakesEnvelope(hello: Pick<HostHello, "sandbox">): boolean {
+    const s = hello.sandbox;
+    if (s === null || typeof s !== "object" || !Object.hasOwn(s, "landlockAbi")) return false;
+    return s.kind === "seatbelt" || typeof s.landlockAbi === "number";
 }
 
 /** The session's settings, from the person's DevTools Settings: never from a page or the model. */
@@ -118,6 +140,8 @@ export interface HostDone {
     /** The highest physical footprint the host measured, in bytes, and the bound it ran under (host 0.3.0). */
     peakFootprint?: number;
     memoryBound?: number;
+    /** The scope the host APPLIED (host K3). Absent from an older host: unknown, never "narrow". */
+    envelope?: HostDoneEnvelope;
 }
 
 /** `read`'s answer: a range of held output, as base64 bytes. */
@@ -237,7 +261,16 @@ export class HostClient {
     hello(): Promise<HostHello> { return this.call("hello"); }
     configure(c: HostConfigure): Promise<HostConfigured> { return this.call("configure", c); }
     spawn(s: HostSpawn): Promise<HostFacts> { return this.call("spawn", s); }
-    start(id: string): Promise<{ id: string; pid: number }> { return this.call("start", { id }); }
+    /**
+     * Start a pending call after its verdict. `envelope` optionally narrows the sandbox further (host K3); absent is
+     * today's floor. A host older than K3 silently ignores it, so the worker sends one only when `hello` has
+     * `sandbox.landlockAbi` ({@link hostTakesEnvelope}).
+     * @param id the call's id
+     * @param envelope the narrowing to ask for, or absent for the floor
+     */
+    start(id: string, envelope?: HostEnvelope): Promise<{ id: string; pid: number }> {
+        return this.call("start", envelope === undefined ? { id } : { id, envelope });
+    }
     discard(id: string): Promise<Record<string, never>> { return this.call("discard", { id }); }
     cancel(id: string): Promise<{ signalled: boolean }> { return this.call("cancel", { id }); }
     release(ptr: string): Promise<Record<string, never>> { return this.call("release", { ptr }); }

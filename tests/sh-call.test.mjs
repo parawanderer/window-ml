@@ -4,8 +4,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS } from "../src/shell/sh-call.ts";
-import { HostClient, HostError, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
+import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor } from "../src/shell/sh-call.ts";
+import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
 const refused = (args, code, re) => assert.throws(() => parseShRun(args), (e) => e instanceof ShRefused && e.code === code && re.test(e.message), `${JSON.stringify(args)} → ${code}`);
@@ -371,6 +371,171 @@ test("a stream the host could not keep is an error, and a truncated one is never
     assert.equal(t.token, "@tool:abc1234");
 });
 
+// --- the sandbox envelope (K3): what the worker asks the host to apply, derived from the approved facts alone ---
+
+/** ShFacts with `effects` over them, for the envelope's rule. `runner` and `effects` are the only inputs it reads. */
+const envFacts = (effects, runner = false) => ({ effects, runner });
+
+/** One fs resource as the host resolves it. `over` can set exists/topLevel/isRoot/secret/names. */
+const fsRes = (path, over = {}) => ({ kind: "fs", path, inRoot: true, secret: false, exists: false, topLevel: false, isRoot: false, ...over });
+const W = (res, names = false) => ({ op: "write", res: names ? { ...res, names: true } : res });
+const R = (res) => ({ op: "read", res });
+const ALLOC = (res) => ({ op: "alloc", res });
+
+test("K3: write none when there is no write effect at all, and alloc on fs counts as a write", () => {
+    assert.deepEqual(envelopeFor(envFacts([])), { write: "none", exec: "program-only" }, "no effects at all");
+    assert.deepEqual(envelopeFor(envFacts([R(fsRes("/w/a.txt"))])), { write: "none", exec: "program-only" }, "read only");
+    assert.deepEqual(envelopeFor(envFacts([R(fsRes("/w/a.txt")), { op: "read", res: { kind: "net", host: "x" } }])), { write: "none", exec: "program-only" }, "reads of net are not writes");
+    assert.deepEqual(envelopeFor(envFacts([{ op: "write", res: { kind: "heap", of: "owned" } }])) === undefined, true, "a heap write is a write effect with no path: no envelope");
+    assert.deepEqual(envelopeFor(envFacts([ALLOC(fsRes("/w/src/gen/out", { exists: true }))])), { write: "roots", exec: "program-only" }, "alloc on fs is a write where it allocates");
+    assert.deepEqual(envelopeFor(envFacts([{ op: "use", res: { kind: "secret", name: "s" } }])), { write: "none", exec: "program-only" }, "using a secret is not a write");
+});
+
+test("K3: write roots only when EVERY write is a resolved, non-secret, non-root path that claims no top-level name", () => {
+    const nested = fsRes("/w/src/gen/out.txt", { exists: true });
+    const nestedNew = fsRes("/w/src/gen/out.txt", { exists: false });
+    const topNew = fsRes("/w/.envrc", { exists: false, topLevel: true });
+    const topInPlace = fsRes("/w/README.md", { exists: true, topLevel: true });
+    const root = fsRes("/w", { exists: true, isRoot: true });
+    const noPath = { kind: "fs", path: "x" };
+    const secret = fsRes("/w/src/gen/.env", { exists: true, secret: true });
+    const wantRoots = { write: "roots", exec: "program-only" };
+    assert.deepEqual(envelopeFor(envFacts([W(nested)])), wantRoots, "a nested write");
+    assert.deepEqual(envelopeFor(envFacts([W(nestedNew)])), wantRoots, "a nested write to a new file");
+    assert.deepEqual(envelopeFor(envFacts([W(nested), W(nestedNew)])), wantRoots, "every write nested");
+    assert.deepEqual(envelopeFor(envFacts([W(topInPlace)])), wantRoots, "an in-place write to an existing top-level file is not a name claim");
+    assert.equal(envelopeFor(envFacts([W(topNew)])), undefined, "creating a top-level name is the floor's gap: no envelope");
+    assert.equal(envelopeFor(envFacts([W(nested), W(topNew)])), undefined, "one top-level claim withholds it for the whole call");
+    assert.equal(envelopeFor(envFacts([W(root)])), undefined, "a write whose path IS a root acts on the top level");
+    assert.equal(envelopeFor(envFacts([W(noPath)])), undefined, "a write with no path argument cannot be judged");
+    assert.equal(envelopeFor(envFacts([W(secret)])), undefined, "a secret path is outside every bound");
+    assert.equal(envelopeFor(envFacts([W(nested), W(noPath)])), undefined, "one path-less write withholds it");
+});
+
+test("K3: write-names claims a top-level name whenever its place is not known to be below one", () => {
+    const nested = fsRes("/w/src/gen/x", { exists: true });
+    const top = fsRes("/w/src", { exists: true, topLevel: true });
+    const root = fsRes("/w", { exists: true, isRoot: true });
+    const unresolved = { kind: "fs", path: "x" };
+    assert.deepEqual(envelopeFor(envFacts([W(nested, true)])), { write: "roots", exec: "program-only" }, "a names write below the top level");
+    assert.equal(envelopeFor(envFacts([W(top, true)])), undefined, "a names write at the top level");
+    assert.equal(envelopeFor(envFacts([W(root, true)])), undefined, "a names write on a root");
+    assert.equal(envelopeFor(envFacts([W(unresolved, true)])), undefined, "a names write whose place was not resolved counts as a top-level claim");
+});
+
+test("K3: any claim of exec(process) means no envelope; every envelope this function returns is exec program-only", () => {
+    const nested = fsRes("/w/src/gen/out.txt", { exists: true });
+    assert.deepEqual(envelopeFor(envFacts([W(nested)])), { write: "roots", exec: "program-only" }, "no exec claim: program-only");
+    assert.equal(envelopeFor(envFacts([W(nested), { op: "exec", res: { kind: "process" } }])), undefined, "runs-code: no envelope, runner or not");
+    assert.equal(envelopeFor(envFacts([{ op: "exec", res: { kind: "process" } }])), undefined, "runs-code with no write");
+    assert.equal(envelopeFor(envFacts([W(nested)], true)), undefined, "a runner starts programs no manifest describes: no envelope");
+    assert.equal(envelopeFor(envFacts([], true)), undefined, "find -exec rm claims no write of its own; write none would fail rm as ok:false");
+    assert.deepEqual(envelopeFor(envFacts([{ op: "exec", res: { kind: "heap", of: "unowned" } }])), { write: "none", exec: "program-only" }, "an exec that is not exec(process) does not by itself withhold");
+    // `exec: "any"` is unreachable: the floor is no envelope at all, so exec is never narrowed on its own.
+    for (const effects of [[], [R(fsRes("/w/a.txt"))], [W(fsRes("/w/src/gen/x", { exists: true }))], [ALLOC(fsRes("/w/src/gen/x", { exists: true }))], [{ op: "exec", res: { kind: "heap", of: "owned" } }]]) {
+        for (const runner of [false, true]) {
+            const env = envelopeFor(envFacts(effects, runner));
+            if (env !== undefined) assert.equal(env.exec, "program-only", `exec: "any" is unreachable (${JSON.stringify(effects)}, runner ${runner})`);
+        }
+    }
+});
+
+test("K3: effects unknown means no envelope at all, even for a call the person approved", () => {
+    assert.equal(envelopeFor(envFacts("unknown")), undefined);
+    assert.equal(envelopeFor(envFacts("unknown", true)), undefined);
+});
+
+test("K3: a network write has no path to vouch for, so it withholds the envelope; a network read does not", () => {
+    const nested = fsRes("/w/src/gen/out.txt", { exists: true });
+    assert.equal(envelopeFor(envFacts([W(nested), { op: "write", res: { kind: "net", host: "example.com" } }])), undefined, "write to the network");
+    assert.deepEqual(envelopeFor(envFacts([W(nested), { op: "read", res: { kind: "net", host: "example.com" } }])), { write: "roots", exec: "program-only" }, "read from the network");
+    assert.equal(envelopeFor(envFacts([{ op: "write", res: { kind: "net", host: "*" } }])), undefined, "write to any host");
+});
+
+test("K3: the script cannot set or widen the envelope — there is no option for it", () => {
+    refused([["ls"], { envelope: { write: "roots", exec: "any" } }], "BadRequest", /no option "envelope"/);
+    refused([["ls"], { sandbox: "none" }], "BadRequest", /no option "sandbox"/);
+    assert.deepEqual(parseShRun([["ls"]]), { argv: ["ls"], env: {} }, "positive control: the ordinary options still parse");
+});
+
+test("K3: the same facts derive the same envelope whoever approved them", () => {
+    const f = shFacts(facts({ argv: ["cat", "a.txt"] }));
+    const a = envelopeFor(f);
+    const b = envelopeFor({ ...f, why: [...f.why] });
+    assert.deepEqual(a, b);
+    assert.deepEqual(a, { write: "none", exec: "program-only" });
+});
+
+test("K3: every shipped manifest vector gets an envelope only when it claims no top-level name", async () => {
+    const { free, boundFor } = await import("../src/effects.ts");
+    const B = boundFor("host-sandbox");
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const dir = new URL("./fixtures/program-calls/", import.meta.url);
+    const place = { roots: ["/w"] };
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+        const fx = JSON.parse(readFileSync(new URL(file, dir), "utf8"));
+        for (const c of fx.calls) {
+            const paths = (c.pathArgs ?? []).map((arg, i) => {
+                const given = c.argv[arg.arg] ?? ".";
+                // A nested target: the envelope's job is the top level of the ROOTS, and these are below them.
+                const path = given.startsWith("/") ? given : `/w/src/${given.replace(/^\.\//, "")}`;
+                return { arg: arg.arg, given, path, inRoot: true, secret: false, exists: true };
+            });
+            const f = shFacts(facts({ argv: c.argv, paths, cwd: { path: "/w", inRoot: true }, repo: { root: "/w", reasons: [] }, repoConfigRunsCode: false }), null, place);
+            const env = envelopeFor(f);
+            const claimsTop = f.effects !== "unknown" && f.effects.some((e) => e.op === "write" && e.res.kind === "fs" && (e.res.topLevel === true && e.res.exists !== true || (e.res.names && (e.res.topLevel !== false || e.res.isRoot !== false))));
+            if (claimsTop) assert.notEqual(env?.write, "roots", `${c.argv.join(" ")} claims a top-level name and must not get write: "roots"`);
+            if (env?.write === "roots") {
+                assert.equal(f.effects !== "unknown" && f.effects.some((e) => e.op === "write" || e.op === "alloc"), true, `${c.argv.join(" ")} has a write`);
+                assert.equal(f.effects !== "unknown" && f.effects.every((e) => e.op !== "write" && e.op !== "alloc" || (e.res.kind === "fs" && e.res.inRoot === true && e.res.secret !== true && e.res.isRoot !== true && !(e.res.topLevel === true && e.res.exists !== true))), true,
+                    `${c.argv.join(" ")} → roots only when every write is resolved and claims no top-level name`);
+            }
+        }
+    }
+});
+
+test("K3: an older host is not sent an envelope; a K3 host is, only when it can hold one", () => {
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true } }), false, "pre-K3: the key is absent");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "seatbelt", available: true } }), false, "pre-K3 on macOS too");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "seatbelt", available: true, landlockAbi: null } }), true, "K3 on macOS: seatbelt can hold any bound");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true, landlockAbi: 4 } }), true, "K3 on Linux with Landlock: a number");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true, landlockAbi: null } }), false, "Linux without Landlock reports the same null as macOS, and cannot hold program-only");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: null, available: false, reason: "no", landlockAbi: null } }), false, "no sandbox kind: nothing to hold a bound");
+});
+
+test("K3: done.envelope is the only truth; an absent one is unknown, never narrow", () => {
+    const out = { stdout: shOut({ ptr: "o", size: 0, sha256: "", truncated: false }, null, new Uint8Array()), stderr: shOut({ ptr: "e", size: 0, sha256: "", truncated: false }, null, new Uint8Array()) };
+    const done = (over) => ({ event: "done", id: "c1", code: 0, signal: null, ok: true, timedOut: false, cancelled: false, durationMs: 3, stdout: {}, stderr: {}, ...over });
+    const r = shResult(done({}), { placement: "host-sandbox" }, null, out);
+    assert.equal(r.envelope, null, "an older host reported nothing: null, not a narrow claim");
+    assert.equal(r.asked, undefined, "and nothing was asked");
+    const applied = { write: "roots", exec: "program-only" };
+    const asked = { write: "roots", exec: "program-only" };
+    const r2 = shResult(done({ envelope: applied }), { placement: "host-sandbox" }, null, out, asked);
+    assert.deepEqual(r2.envelope, applied);
+    assert.deepEqual(r2.asked, asked);
+    const r3 = shResult(done({ envelope: { write: "today", exec: "any" } }), { placement: "host-sandbox" }, null, out);
+    assert.deepEqual(r3.envelope, { write: "today", exec: "any" }, "the floor has its own report name");
+    assert.equal(r3.asked, undefined);
+});
+
+test("K3: the card's Sandbox applied line is the host's report, and a mismatch with what was asked for says so", () => {
+    const f = shFacts(facts({ argv: ["cat", "a.txt"] }));
+    const lines = shCardLines(f);
+    assert.equal(lines.find((l) => l.label === "Sandbox applied"), undefined, "the approval card is shown before anything is applied");
+    const unknown = shCardLines(f, null);
+    const u = unknown.find((l) => l.label === "Sandbox applied");
+    assert.deepEqual(u, { label: "Sandbox applied", value: "unknown (the host did not report it)" }, "an older host: unknown, without warn");
+    const match = shCardLines(f, { write: "none", exec: "program-only" }, { write: "none", exec: "program-only" });
+    assert.deepEqual(match.find((l) => l.label === "Sandbox applied"), { label: "Sandbox applied", value: "write none, exec program-only" });
+    const floor = shCardLines(f, { write: "today", exec: "any" });
+    assert.deepEqual(floor.find((l) => l.label === "Sandbox applied"), { label: "Sandbox applied", value: "write today, exec any" }, "nothing asked, floor applied: not a mismatch");
+    const mismatch = shCardLines(f, { write: "today", exec: "any" }, { write: "roots", exec: "program-only" });
+    const m = mismatch.find((l) => l.label === "Sandbox applied");
+    assert.equal(m.warn, true, "asked for roots, got the floor: look twice");
+    assert.match(m.value, /not the write roots, exec program-only that was asked for/);
+});
+
 test("ok is the manifest's answer codes, and a kill, a timeout, a cancel or a sandbox failure is never ok", () => {
     const out = { stdout: shOut({ ptr: "o", size: 0, sha256: "", truncated: false }, null, new Uint8Array()), stderr: shOut({ ptr: "e", size: 0, sha256: "", truncated: false }, null, new Uint8Array()) };
     const done = (over) => ({ event: "done", id: "c1", code: 0, signal: null, ok: true, timedOut: false, cancelled: false, durationMs: 3, stdout: {}, stderr: {}, ...over });
@@ -419,6 +584,19 @@ test("answers are matched by seq in any order, and an error answer is a HostErro
     f.reply({ seq: 999, value: "stray" });
     assert.deepEqual(await a, { protocol: 1 });
     await assert.rejects(b, (e) => e instanceof HostError && e.code === "CwdOutsideRoots");
+});
+
+test("start sends the envelope as `envelope`, and omits the key entirely when there is none", async () => {
+    const f = fakePort();
+    const c = new HostClient(f.port);
+    void c.start("c1");
+    void c.start("c2", { write: "roots", exec: "program-only" });
+    void c.start("c3", { write: "none", exec: "any" });
+    assert.deepEqual(f.sent.map((m) => m.args), [
+        { id: "c1" },
+        { id: "c2", envelope: { write: "roots", exec: "program-only" } },
+        { id: "c3", envelope: { write: "none", exec: "any" } },
+    ], "absent is the floor: no envelope key at all, never `envelope: null` (the host refuses null as malformed)");
 });
 
 test("a done event that arrives before anyone waits is kept and claimed once", async () => {
