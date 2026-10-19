@@ -169,6 +169,8 @@ test("the validator refuses a misspelt key, a runner that runs nothing, a bad ef
     assert.match(bad({ command: { ...base.command, flags: { "-x": { runer: true } } } }).join(), /unknown key runer/);
     assert.match(bad({ command: { ...base.command, flags: { "-x": { runner: true } } } }).join(), /runner's effects/);
     assert.match(bad({ command: { ...base.command, effects: ["delete"] } }).join(), /not a program effect/);
+    assert.deepEqual(bad({ command: { ...base.command, effects: ["write-names"] } }), [], "write-names is a program effect (PROGRAM_MANIFEST.md, 2026-10-19)");
+    assert.match(bad({ command: { ...base.command, effects: ["write_names"] } }).join(), /not a program effect/);
     assert.match(bad({ command: { ...base.command, effects: [{ network: { direction: "out" } }] } }).join(), /not a program effect/);
     assert.match(bad({ version: { range: "latest", args: [], pattern: "x" } }).join(), /range/);
     assert.match(bad({ command: { ...base.command, flags: { "-x": { valueIsPath: "write" } } } }).join(), /needs value: true/);

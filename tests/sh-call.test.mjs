@@ -98,9 +98,9 @@ const facts = (over = {}) => ({
 test("the facts' effects are the manifest's over the HOST's resolution: inRoot and secret come from the host, never the script", () => {
     const f = shFacts(facts());
     assert.equal(f.described, true);
-    assert.deepEqual(f.effects, [{ op: "read", res: { kind: "fs", path: "/w/a.txt", inRoot: true, secret: false } }]);
+    assert.deepEqual(f.effects, [{ op: "read", res: { kind: "fs", path: "/w/a.txt", inRoot: true, secret: false, exists: true } }]);
     const out = shFacts(facts({ paths: [{ arg: 1, given: "../x/.env", path: "/x/.env", inRoot: false, secret: true, exists: true }], argv: ["cat", "../x/.env"] }));
-    assert.deepEqual(out.effects, [{ op: "read", res: { kind: "fs", path: "/x/.env", inRoot: false, secret: true } }]);
+    assert.deepEqual(out.effects, [{ op: "read", res: { kind: "fs", path: "/x/.env", inRoot: false, secret: true, exists: true } }]);
 });
 
 test("a walked directory with a secret beneath it, or one too large to tell, counts as a secret", () => {
@@ -137,6 +137,44 @@ test("the facts are plain data: no reference into the host's answer survives", (
     assert.deepEqual(f.argv, ["cat", "a.txt"]);
     assert.equal(f.paths[0].inRoot, true);
     assert.deepEqual(f.env.set, []);
+});
+
+test("K3c: a call naming a top-level entry of a root asks under the OS sandbox; the same call one level down is free", async () => {
+    // The red team's vector end to end: git diff --output=.envrc, described by the shipped manifest over the host's facts.
+    const { free, boundFor } = await import("../src/effects.ts");
+    const B = boundFor("host-sandbox");
+    const at = (path, exists, argv) => shFacts(facts({ argv, cwd: { path: "/w", inRoot: true }, repo: { root: "/w", reasons: [] }, repoConfigRunsCode: false,
+        paths: [{ arg: 2, given: argv[2].split("=")[1] ?? argv[2], path, inRoot: true, secret: false, exists }] }), "2.45.0", { roots: ["/w"] });
+    const envrc = at("/w/.envrc", false, ["git", "diff", "--output=.envrc"]);
+    assert.equal(envrc.described, true, envrc.why.join("; "));
+    assert.equal(envrc.paths[0].topLevel, true, "the fact says the path's parent is a root");
+    assert.equal(envrc.paths[0].isRoot, false);
+    assert.deepEqual([envrc.cwd.topLevel, envrc.cwd.isRoot], [false, true], "a policy reading c.cwd sees the cwd is a root itself");
+    assert.equal(free(envrc.effects, B), false, "creating .envrc at the top of a root is not free");
+    const lines = shCardLines(envrc);
+    const does = lines.find((l) => l.label === "Does");
+    assert.match(does.value, /\/w\/\.envrc \(a name at the top of a workspace root\)/, "the card names the top-level entry");
+    assert.equal(does.warn, true);
+    assert.equal(free(at("/w/README.md", true, ["git", "diff", "--output=README.md"]).effects, B), true, "an in-place write to an existing top-level file stays free");
+    const nested = at("/w/out/d.patch", false, ["git", "diff", "--output=out/d.patch"]);
+    assert.equal(nested.paths[0].topLevel, false);
+    assert.equal(free(nested.effects, B), true, "a new file below a top-level directory stays free");
+    assert.equal(shFacts(facts({ argv: ["git", "diff", "--output=.envrc"], paths: [{ arg: 2, given: ".envrc", path: "/w/.envrc", inRoot: true, secret: false, exists: false }] }), "2.45.0").paths[0].topLevel,
+        undefined, "without the roots there is no topLevel fact, never a guessed false");
+});
+
+test("K3c: find -delete is a names write, so deleting under a root itself or a top-level directory asks, and deeper does not", async () => {
+    const { free, boundFor } = await import("../src/effects.ts");
+    const B = boundFor("host-sandbox");
+    const del = (argv, paths, cwd = "/w") => shFacts(facts({ argv, cwd: { path: cwd, inRoot: true }, paths }), null, { roots: ["/w"] });
+    const dir = (arg, given, path) => ({ arg, given, path, inRoot: true, secret: false, exists: true });
+    assert.equal(free(del(["find", "-delete"], []).effects, B), false, "no operand: the cwd, here the root itself, whose entries are the top level");
+    const dot = del(["find", ".", "-delete"], [dir(1, ".", "/w")]);
+    assert.equal(free(dot.effects, B), false, "find . -delete: the operand . resolves to the root itself, whose entries are the top level");
+    assert.deepEqual([dot.paths[0].isRoot, dot.cwd.isRoot], [true, true], "isRoot is read off the resolved path, for an operand and for the cwd");
+    assert.equal(free(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")]).effects, B), false, "find src -delete removes the top-level src");
+    assert.equal(free(del(["find", "src/gen", "-delete"], [dir(1, "src/gen", "/w/src/gen")]).effects, B), true, "two levels down is free");
+    assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);
 });
 
 // --- interpreted scripts: (program, entrypoint) pinned by sha256 (PROGRAM_MANIFEST.md, rulings of 2026-10-19) ---
@@ -181,7 +219,7 @@ test("ruling 3: any interpreter flag before the entrypoint, -u, -X, -W, -- or --
 test("ruling 2: the pin is the RESOLVED file's hash, the path must resolve to the entrypoint itself, and the card names both paths", () => {
     const ok = shFacts(scriptFacts(), null, placeOf);
     assert.equal(ok.described, true);
-    assert.deepEqual(ok.effects, [{ op: "read", res: { kind: "fs", path: "/w/a.txt", inRoot: true, secret: false } }]);
+    assert.deepEqual(ok.effects, [{ op: "read", res: { kind: "fs", path: "/w/a.txt", inRoot: true, secret: false, exists: true, topLevel: true, isRoot: false } }]);
     // a link to a file outside the scripts folder
     const moved = shFacts(scriptFacts({ path: "/w/tmp/evil.mjs" }), null, placeOf);
     assert.equal(moved.described, false);
