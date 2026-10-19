@@ -264,13 +264,18 @@ async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Pr
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }
-    const j = judgeCall(ctx.runId, "sh", { ...asPolicyFacts(shFacts(probe)), effects: [] }, "host-sandbox");
+    // Judged with no effects, and that same judged object derives its envelope below (ruled 2026-10-19: the approved
+    // claims are the judge's facts, so `git --version` gets write none like any other probe).
+    const judged: ShFacts = { ...shFacts(probe), effects: [] };
+    const j = judgeCall(ctx.runId, "sh", asPolicyFacts(judged), "host-sandbox");
     // Only an allow starts it: a store not loaded yet ("ask") or no answer would need a card, which a probe never raises.
     if (j.decision !== "allow") { await drop(); log(j.decision === "deny" ? "denied" : "would-ask"); return null; }
     if (ctx.signal.aborted) { await drop(); return null; }
     let version: string | null = null;
     try {
-        await h.client.start(probe.id);
+        // The probe's envelope derives from what was judged, as every start's does: a probe never runs under the floor
+        // while its claims permit narrower (K3 audit, red team #827).
+        await h.client.start(probe.id, hostTakesEnvelope(h.hello) ? envelopeFor(judged) : undefined);
         const done = await h.client.waitDone(probe.id);
         for (const s of [done.stdout, done.stderr]) {
             if ("error" in s) continue;

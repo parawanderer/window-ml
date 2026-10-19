@@ -511,10 +511,7 @@ test("the same script and the same approval derive the same envelope wherever th
 // derivation path: shRun's start goes through `envelopeFor`, the probe's does not. A probe is judged with
 // `effects: []` — zero approved claims, which derive `write: "none"` — and then started under today's floor.
 
-test("every start on a K3 host carries the envelope its claims derive — the version probe included", {
-    ...T,
-    todo: "versionOf starts its probe with `h.client.start(probe.id)` and no envelope (sw-shell-call.ts), while that probe is judged with effects: [] — which derive { write: \"none\", exec: \"program-only\" }. The probe therefore runs under today's floor (writes inside roots, top level mutable) on the first use of a version-ranged program. Fails: start 0 (argv [\"/usr/bin/jq\",\"--version\"]): actual undefined, expected { write: \"none\", exec: \"program-only\" }.",
-}, async () => {
+test("every start on a K3 host carries the envelope its claims derive — the version probe included", T, async () => {
     // jq lists `--version` (flag {}) and has a version range, so a first call raises a probe AND starts the call.
     const host = fakeNativeHost({
         landlockAbi: null,
@@ -535,15 +532,29 @@ test("every start on a K3 host carries the envelope its claims derive — the ve
     }
 });
 
+test("git's version probe sends write none too: the approved claims are the judge's facts, never an unlisted option (ruled 2026-10-19)", T, async () => {
+    // `git --version` is an option git's manifest does not list, so unoverridden facts would be unknown and derive no
+    // envelope; the probe is JUDGED with effects: [], and that is what derives what it is sent (SHELL.md, #829).
+    const host = fakeNativeHost({ landlockAbi: null, done: (_id, spawn) => spawn?.argv?.[1] === "--version" ? { out: "git version 2.44.0\n", err: "", code: 0 } : { out: "", err: "", code: 0 } });
+    await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: answering(true).onStep });
+    const probe = host.calls.find((c) => c.call === "spawn" && c.args.argv[1] === "--version");
+    assert.ok(probe, "the probe was spawned");
+    const start = host.calls.find((c) => c.call === "start" && c.args.id === probe.id);
+    assert.deepEqual(start?.args.envelope, { write: "none", exec: "program-only" });
+    // Positive control: a host that cannot hold an envelope is sent none, the probe included.
+    const pre = fakeNativeHost({ done: (_id, spawn) => spawn?.argv?.[1] === "--version" ? { out: "git version 2.44.0\n", err: "", code: 0 } : { out: "", err: "", code: 0 } });
+    await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: pre.onNative, configExtra: ON, onStep: answering(true).onStep });
+    const starts = pre.calls.filter((c) => c.call === "start");
+    assert.ok(starts.length >= 2, "the probe and the call started");
+    for (const s of starts) assert.equal(s.args.envelope, undefined, "a pre-K3 host gets no envelope");
+});
+
 // --- a done that does not match what was sent is a fact on the run log, never accepted silently (K3 audit) ---
 // `done.envelope` is what the host APPLIED (SHELL.md). `shResult` keeps it beside `asked`, and
 // `sandboxAppliedLine` knows how to say they differ — but nothing on the live path compares them for a
 // person: the run-log `shell`/`run` detail carries neither, and the card's only caller omits both.
 
-test("a done report that does not match what was sent is a fact on the run log: the difference is never accepted silently", {
-    ...T,
-    todo: "the run-log shell/run detail carries no envelope fields (sw-shell-call.ts's recordRunLog: { seq, program, code, placement, … }), and shCardLines' only caller (ask-card.tsx) omits applied/asked, so sandboxAppliedLine never runs on the live path. A done reporting a different envelope than was sent is invisible to a person reading the machinery's log. Fails: the record names what was SENT — record is {\"subsystem\":\"shell\",\"kind\":\"run\",…,\"detail\":{\"seq\":1,\"program\":\"find\",\"code\":0,\"placement\":\"host-sandbox\"}}, expected /roots/.",
-}, async () => {
+test("a done report that does not match what was sent is a fact on the run log: the difference is never accepted silently", T, async () => {
     // Mismatch: the worker sent write roots (a nested in-root delete); the host reports the floor.
     const mismatch = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "today", exec: "program-only" } }) });
     const a = await runOn("userScripts", [runs(["find", "src/gen", "-delete"])], { ...NO_FETCH, onNative: mismatch.onNative, configExtra: ON });
