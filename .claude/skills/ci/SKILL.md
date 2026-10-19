@@ -259,11 +259,14 @@ Recently removed, recorded so nobody re-adds them from memory:
   with no retry. The test now probes the `ml-sessions` port for the `runtime` announce, and the picker watches the
   runtime OBJECT so a re-announce refreshes the list.
 - ~~`chat-scroll.spec.mjs:89` › `a standalone tool call slides in, and a pair that becomes a group says so on the
-  head`~~ — **fixed** (hard fail on main, 5/5; not flaky). A live tool step that landed in the same frame as the
-  history draw mounted under `HistoryPaint=true`, captured `fresh=false` on mount, and never got `.fresh` /
+  head`~~ — **fixed** in two halves. (1) Hard fail on main, 5/5: a live tool step that landed in the same frame as
+  the history draw mounted under `HistoryPaint=true`, captured `fresh=false` on mount, and never got `.fresh` /
   `chat-tool-in`. `SessionPane` flipped the flag on a `requestAnimationFrame` after the first commit, so anything
-  arriving in that window was wrongly history. Now flipped in a layout effect of the same commit (chat-app.tsx):
-  the first commit's children have already mounted; anything after is a live arrival.
+  arriving in that window was wrongly history. Now flipped in a layout effect of the same commit (chat-app.tsx).
+  (2) Residual CI flake after that: the test emitted the live step after waiting only on `.chat-transcript`, which
+  `?long=0` had already drawn, and `longAgent(0)` left nothing else to wait on. Under load the emit landed before
+  THIS session's first paint, so the step was correctly read as history (everything mounted in that commit is). The
+  test now waits for the session's own task bubble (`.msg.user`), the first paint's visible marker, before emitting.
 
 - ~~`detection-surface.spec.mjs:446` › `rendered fetch: a real tab on the site, focus emulated, visibility flipped,
   window.ml injected there`~~ — **fixed.** The assertion demanded `tab.visibility` be exactly `["hidden","visible"]`,
