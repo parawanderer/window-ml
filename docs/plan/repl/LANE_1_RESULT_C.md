@@ -45,7 +45,7 @@ PR #757, branch `repl-lane1/ml-wiring`.
 - **Deletion:** `PY_DELETE_RUN` reaches the worker of the run's own principal and not another run's. A run with no
   worker answers `ok` and spawns nothing. A deleted run that runs again gets no loss notice.
 - **Loss:** a worker killed between two cells puts `namespace reset at …: crashed` at the head of the second cell's
-  stdout, once. A run that never returned a scope manifest, and a cell with no wire, are told nothing.
+  stdout, once, whether or not the run ever returned a scope manifest. A cell with no wire is told nothing.
 - **Stamping:** the handle never reaches the worker; a forged `client`/`run` in the worker's message is ignored; an `ask`
   first answer is not relayed and the later `ML_ANSWER` resolves it.
 - **Settling:** a worker-hosted run that ends sends `PY_DELETE_RUN` for its own run and principal (built worker in
@@ -139,7 +139,8 @@ with every other full-mode run in this browser" (`card-approval.tsx`), so approv
 - A "run" for the namespace is the worker-hosted run id, and nothing else: no per-tab or per-page key.
 - Reasons in the loss line are the housekeeping reasons (`timeout`, `start-timeout`) or `crashed`; the worker's own
   error text stays in the housekeeping record's detail.
-- A kill when the run has never returned a scope manifest is not a loss.
+- A kill of a worker the run has posted a cell to is a loss, manifest or not: the worker creates the dict before the
+  cell runs (changed in `e4da2267`; it was "no manifest, no loss").
 
 ## What I think a spec got wrong
 
