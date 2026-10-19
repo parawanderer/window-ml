@@ -146,7 +146,7 @@ listed as remaining is DONE unless named below.
   model (#743), the OS sandbox `Plan` as a compiler over `EffectsData` (#744), the checkpoint primitive and receiver
   routing (#759, #762), the host's session events over the hub (#768).
 - **Open decisions for Shane**: whether a desktop host's call events may reach a second `view` device (today: the caller
-  only, `SHELL.md`); #647's go (site access, agent level).
+  only, `SHELL.md`). #647 (site access, agent level) merged 2026-10-15 as ac417a98 and no longer waits on anyone.
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
   telling a run that relied on a removed policy why its next call asks, lane 1's four follow-ups above, and the phone's
   UX for pairing a desktop runtime (chat-hub topic).
