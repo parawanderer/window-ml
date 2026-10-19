@@ -338,7 +338,7 @@ test("the write envelope is derived from the approved claims: none / roots / NO 
     assert.equal("envelope" in starts[2].args, false, "a top-level name claim gets the floor: no envelope at all");
 });
 
-test("a runner gets NO envelope: both keys must derive, and a runner's writes derive from no manifest", { todo: "OPEN (K3 envelope, 2026-10-19): ruled 2026-10-19 (window-ml #805). A call whose approved claims carry exec(process) (a RUNNER: find -exec, xargs, npm run) gets NO envelope at all: the envelope's two keys are both required, a runner starts programs no manifest describes, and find . -exec rm claims no write of its own, so exec: \"any\" with a derived write: \"none\" would fail the approved call as ok:false. General rule: the worker sends an envelope only when BOTH keys derive from the approved claims; when either does not, it sends none and the floor applies. exec: \"any\" WITH an envelope belongs to a non-runner whose manifest claims runs-code and whose writes are nested or absent — the shipped manifests have no such call; a fixture manifest can provide one (not yet wired into this harness)." }, T, async () => {
+test("a runner gets NO envelope: both keys must derive, and a runner's writes derive from no manifest", { todo: "OPEN (K3 envelope, 2026-10-19): ruled 2026-10-19 (window-ml #805). A call whose approved claims carry exec(process) (a RUNNER: find -exec, xargs, npm run) gets NO envelope at all: the envelope's two keys are both required, a runner starts programs no manifest describes, and find . -exec rm claims no write of its own. Under #805, exec: \"any\" with an envelope is NEVER sent — a runner gets none. General rule: the worker sends an envelope only when BOTH keys derive from the approved claims; when either does not, it sends none and the floor applies." }, T, async () => {
     const host = fakeNativeHost({ landlockAbi: null });
     const ask = answering(true);
     const two = () => `(async () => {
@@ -348,12 +348,16 @@ test("a runner gets NO envelope: both keys must derive, and a runner's writes de
     })()`;
     await runOn("userScripts", [two], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
     const starts = host.calls.filter((c) => c.call === "start");
-    const plain = starts.find((c) => host.calls.find((x) => x.call === "spawn" && x.id === c.args.id)?.args.argv?.[0] === "ls");
-    const runner = starts.find((c) => host.calls.find((x) => x.call === "spawn" && x.id === c.args.id)?.args.argv?.[0] === "find");
+    assert.equal(starts.length, 2, "both calls reached start");
+    // Correlate by order: the k-th spawn is answered c<k>. Assert both lookups are defined (never vacuous).
+    const spawns = host.calls.filter((c) => c.call === "spawn");
+    assert.equal(spawns.length, 2, "both calls reached spawn");
     // Non-runner, no exec(process): both keys derive → envelope sent.
-    assert.deepEqual(plain?.args.envelope, { write: "none", exec: "program-only" }, "a non-runner is spawned with both keys derived");
+    assert.deepEqual(starts[0].args.envelope, { write: "none", exec: "program-only" }, "a non-runner is spawned with both keys derived");
     // Runner (exec(process) approved): NO envelope — a runner's writes derive from no manifest.
-    assert.equal("envelope" in (runner?.args ?? {}), false, "a runner gets NO envelope: both keys must derive");
+    assert.equal("envelope" in starts[1].args, false, "a runner gets NO envelope: both keys must derive");
+    // Under #805, no start ever carries exec: "any".
+    for (const s of starts) assert.notEqual(s.args.envelope?.exec, "any", "exec: \"any\" is never sent under #805");
 });
 
 test("the script cannot set, widen or remove the envelope: an envelope key in options, env or argv never reaches start as a wider one", { todo: "OPEN (K3 envelope, 2026-10-19): rule 4 (sender, never message) — authority comes from what the worker verifies about who sent a call, never from a field in it. The envelope is derived from the APPROVED ShFacts and what the worker SENDS on start is that, whatever the script put in ml.sh.run's options, its env or its argv. parseShRun refuses an unknown option by name (sh-call.ts:130, safe: nothing sent). The env and argv legs are ignored by construction. Assert on start, not spawn (envelope rides start/pipe)." }, T, async () => {
