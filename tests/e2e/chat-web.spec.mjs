@@ -1190,7 +1190,8 @@ test("desktop: the copy button on your own prompt stays lit while you reach for 
     const copy = acts.locator('button[aria-label="Copy this message"]');
     await expect(acts).toHaveCSS("opacity", "0");
     await msg.hover();
-    await expect(acts).toHaveCSS("opacity", "1");
+    // Over the bubble they show at the row's resting brightness; the row itself under the pointer lights them fully.
+    await expect(acts).toHaveCSS("opacity", "0.75");
     // Now leave the message for the buttons, which is where it broke.
     await copy.hover();
     await expect(acts).toHaveCSS("opacity", "1");
