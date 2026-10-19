@@ -173,7 +173,12 @@ listed as remaining is DONE unless named below.
   one uploaded, never that it is what the fork's source builds; trust in it is trust in the uploader's machine, which is
   the fetch-hub precedent's standing too; 85 of 87 dialect vectors pass under wasm32, the two memory vectors end in
   `MemoryError`/`OverflowError` instead of `NotInDialect` because the per-cell byte count never fires for an
-  allocation wasm32 cannot make (pinned as `WASM32_GAPS`; the fork's, lane 3's).
+  allocation wasm32 cannot make (pinned as `WASM32_GAPS`; the fork's, lane 3's). Lane 3's diagnosis (2026-10-19) is
+  larger than the two vectors: Pyodide builds CPython without pymalloc, so the cap, hooked on the RAW domain and the
+  arenas, counted almost nothing under wasm32; the fix wraps the MEM and OBJ domains whenever the allocator is not
+  pymalloc and judges a repeat's size before the overflow guards (`PYTHON_DIALECT.md`, the memory row; fork PR against
+  `ml/restricted-mode` from `~/git/cpython-wasm32`). Until it lands and lane 5 rebuilds, the per-cell memory bound does
+  not hold under Pyodide; the step budget and the static halting rules do.
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
   (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
