@@ -238,9 +238,15 @@ function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren;
             {label ? <span class="tok-fold-name" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : <span class="tok-fold-name">{name}</span>}
         </span>;
     }
+    const fold = (): void => close(() => setFolded(true));
     return <span ref={ref} class={`tok-ref tok-block${railed ? " railed" : ""}`}>
-        {railed ? <FoldRail cls="fold-rail-cite" onFold={() => close(() => setFolded(true))} tip="Collapse this output" /> : null}
+        {railed ? <FoldRail cls="fold-rail-cite" onFold={fold} tip="Collapse this output" /> : null}
         <span class={`tok-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} onAnimationEnd={() => setOpening(false)}>{node}</span>
+        {/* The rail is no tap target on a touch screen (sidebar.css), and an embed has no header row to fold from, so
+            there the caption's line carries the fold as a chevron: the same mark, in the same place, as the folded row
+            that opens it again. Drawn only for a coarse pointer; before the caption, so `.tok-anno ~ .tok-tip` holds. */}
+        {railed ? <button class="tok-fold-btn" aria-label="Collapse this output" aria-expanded="true"
+            onClick={(e) => { e.stopPropagation(); fold(); }}><span class="tri" aria-hidden="true"><IconChevron /></span></button> : null}
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
             as safe as the answer prose. It is the one part of the embed that goes to the source step, so an embed the

@@ -399,11 +399,25 @@ What follows from it:
   `write: "roots"` either (lane 4, 2026-10-19); under the narrow envelope it would fail as `ok: false` and look like
   the program's own error. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
-  then protects nothing; the tripwire above is what covers the gap's threat.
-- **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
-  proposal): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
-  at `done` and at an orphan's deadline, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
-  host, unknown, never "nothing"). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
+  then protects nothing; the tripwire above is what covers the gap's threat. `done` reports the envelope the host
+  APPLIED, and for an absent one that is the floor, which is neither `none` nor `roots`: the reported `write` takes a
+  third value, `"today"`, that names the floor; a worker never sends it, and a host refuses it as malformed
+  (window-ml-host #12, 2026-10-19). The decide layer mirrors the rule (ruled
+  2026-10-19, after the red team's shell-policy audit found `git diff --output=.envrc` free): a claim on a top-level
+  NAME, an absent file or a `write-names` effect at the top level of a root, is outside the sandbox's `B` and asks
+  ([`EFFECTS.md`](EFFECTS.md), "The top-level names of a root are outside `B`"), so the floor's Linux gap is never
+  reached by a call that names its target; a policy may allow it.
+- **Every call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
+  proposal; EVERY call, sandboxed or not, ruled the same day on lane 4's K3b, window-ml-host #13: the compare refuses
+  nothing, costs 143 µs over 36 names against 1.04 ms to spawn `true`, and an unsandboxed call without the field would
+  read as an old host): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
+  at `done`, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
+  host, unknown, never "nothing"). An ORPHAN outlives `done`: its ledger entry keeps the start snapshot, and `status`
+  reports `protectedChanged` for each live orphan, computed when `status` is read, so a session that asks sees what
+  changed so far. What an orphan changes between the last `status` and its deadline kill is NOT reported (ruled
+  2026-10-19, lane 4's K3b question: at the kill nobody is listening, and a record written for the next session is a
+  new `status` surface with its own consume-once semantics; left as a named open item, not built in K3b, see
+  the plan). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
   and never attributes: two calls in one root see each other's change, so the card and the run log say "changed
   during this call". The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
   design, and the person decides what to do with the report.

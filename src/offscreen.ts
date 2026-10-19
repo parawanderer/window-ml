@@ -191,7 +191,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
             return;
         }
-        // The script is starting (the runtime is up and it is this run's turn): its own 15s begins now.
+        // The USER'S CELL is starting (runtime up, prelude done, this run's turn): its own 15s begins now.
         if (e.data?.started) {
             const entry = pending.get(e.data.id);
             if (entry?.armOnStart) {
@@ -272,7 +272,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // And the 15s is the SCRIPT's. It used to run from the post, so a cold start (and any queue ahead) was
         // charged to it: under load a first `time.sleep(4)` was killed with "simplify the computation", and a
         // run queued behind a 10s one could expire 5s into its own work. So the post arms only the generous
-        // START bound, and the worker's `started` (runtime up, script about to run) swaps in the script's cap.
+        // START bound, and the worker's `started` (the user's cell is about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
         pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire });   // streamId → the background can key live stdout chunks
