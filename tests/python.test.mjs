@@ -731,7 +731,12 @@ test("run dict loaders: tables are served per run, and a later run's prelude ins
     assert.deepEqual(await runCell("return int(pd.read_csv('t')['a'].sum())", a, { tables: [rows("t", ["a"], [[1], [2]])] }), { value: 3 });
     const bRead = await runCell("return int(pd.read_csv('t')['a'].sum())", b, { tables: [rows("u", ["a"], [[10]])] });
     assert.deepEqual(bRead, { value: 10 }, "run B's only table is the one they meant, not run A's");
-    assert.deepEqual(await runCell("import PIL.Image as m\nn = 0\nf = m.open\nwhile hasattr(f, '__wrapped__'): f = f.__wrapped__; n += 1\nreturn n", a), { value: 0 }, "no chain of wrappers");
+    // No chain: a later prelude run installs nothing, so the patched slots are the very same objects afterwards.
+    const ids = "import PIL.Image as m\nreturn [id(m.open), id(pd.read_csv), id(pd.read_html)]";
+    const before = await runCell(ids, a);
+    await runCell("return 1", freshNs());
+    await runCell("return 1", b);
+    assert.deepEqual(await runCell(ids, a), before, "the slots hold the same wrappers after other runs' preludes");
 });
 
 // --- the _ml_in coercion runs on every run-dict cell, not only the first ---
