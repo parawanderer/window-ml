@@ -8,7 +8,7 @@
 
 import type { CallDescription, ProgramManifest } from "./program-manifest";
 import { describeCall, hardenArgv } from "./program-manifest";
-import type { EffectsData, Resource } from "../effects";
+import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostFacts, HostPathArg, HostPlacement, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
 import cat from "./manifests/cat.json";
@@ -195,7 +195,16 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
  *  tell. */
-export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; containsSecret?: boolean | null; sha256?: string | null }
+export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null; sha256?: string | null }
+
+/** Where a resolved path sits among the roots: a root itself, or a top-level entry of one (its parent is a root).
+ *  Both are textual over the host's realpaths, which the roots are too. Unset when the roots are not known. */
+function placeAmongRoots(path: string, roots: readonly string[] | undefined): { topLevel?: boolean; isRoot?: boolean } {
+    if (!roots) return {};
+    const p = normalPath(path), rs = roots.map(normalPath);
+    const parent = p === "/" ? null : normalPath(p.slice(0, p.lastIndexOf("/")) || "/");
+    return { topLevel: parent !== null && rs.includes(parent), isRoot: rs.includes(p) };
+}
 
 /**
  * One call as a policy's `c` and the card see it: everything resolved by the host or read from the manifest, nothing
@@ -206,7 +215,8 @@ export interface ShFacts {
     argv: string[];
     /** `version`: what the program reported (the worker's version probe), null when it was not read. */
     program: { path: string; inRoot: boolean; version: string | null };
-    cwd: { path: string; inRoot: boolean; containsSecret?: boolean | null };
+    /** `topLevel`/`isRoot` as on a path, present only when the roots were given. */
+    cwd: { path: string; inRoot: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null };
     env: { set: string[]; free: boolean };
     secrets: string[];
     paths: ShPathFact[];
@@ -243,10 +253,10 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     else {
         const byArg = new Map(facts.paths.map((p) => [p.arg, p]));
         const resolve = (p: { arg: number | "cwd"; given: string }): Resource => {
-            if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret) };
+            if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
             const f = byArg.get(p.arg);
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
-            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret) } : { kind: "fs", path: p.given };
+            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeAmongRoots(f.path, place?.roots) } : { kind: "fs", path: p.given };
         };
         const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
         effects = d.effects;
@@ -266,10 +276,10 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     return {
         argv: [...facts.argv],
         program: { path: facts.program.path, inRoot: facts.program.inRoot, version },
-        cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
+        cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeAmongRoots(p.path, place?.roots), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,
@@ -309,7 +319,7 @@ export function shCardLines(f: ShFacts): ShCardLine[] {
     if (secretBeneath(f.cwd.containsSecret)) lines.push({ label: "Reads", value: f.cwd.containsSecret ? "the whole directory, which has secret-looking files in it" : "the whole directory, too large to check for secrets", warn: true });
     if (f.repoConfigRunsCode) lines.push({ label: "Repository", value: `its own config makes git run a program: ${f.repo?.reasons.join(", ") || "see .git/config"}`, warn: true });
     if (f.runner) lines.push({ label: "Starts", value: "another program, which this card does not show", warn: true });
-    lines.push({ label: "Does", value: effectsText(f.effects), ...(f.effects === "unknown" ? { warn: true } : {}) });
+    lines.push({ label: "Does", value: effectsText(f.effects), ...(f.effects === "unknown" || f.effects.some(claimsTopLevelName) ? { warn: true } : {}) });
     if (!f.described && f.why.length) lines.push({ label: "Why unknown", value: f.why.join("; ") });
     return lines;
 }
@@ -324,7 +334,7 @@ function quoteArg(a: string): string {
 function effectsText(e: EffectsData): string {
     if (e === "unknown") return "unknown";   // why is the card's own line: no manifest, an unknown flag, no version
     if (!e.length) return "nothing beyond running";
-    return e.map((x) => `${x.op} ${x.res.kind === "fs" ? x.res.path + (x.res.inRoot === false ? " (outside the roots)" : "") : x.res.kind === "net" ? `network ${x.res.host}` : x.res.kind === "secret" ? `secret ${x.res.name}` : x.res.kind}`).join("; ");
+    return e.map((x) => `${x.res.kind === "fs" && x.res.names ? "create, remove or rename" : x.op} ${x.res.kind === "fs" ? x.res.path + (x.res.inRoot === false ? " (outside the roots)" : claimsTopLevelName(x) ? " (a name at the top of a workspace root)" : "") : x.res.kind === "net" ? `network ${x.res.host}` : x.res.kind === "secret" ? `secret ${x.res.name}` : x.res.kind}`).join("; ");
 }
 
 /** How much of each stream the script is handed with the result; the rest is read by range. 64 KiB. */

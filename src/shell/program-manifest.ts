@@ -414,7 +414,7 @@ function compareVersions(a: number[], b: number[]): number {
 
 // --- the validator ---
 
-const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "runs-code", "unknown"]);
+const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "write-names", "runs-code", "unknown"]);
 const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive"]);
 const PRIMARY_KEYS = new Set(["args", "until", "effects", "argIsPath", "runner"]);
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden"]);
