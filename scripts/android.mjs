@@ -11,6 +11,10 @@
 //   node scripts/android.mjs launch          start the app (cold: it is stopped first)
 //   node scripts/android.mjs shot [file]     a screenshot of the device (default test-results/android.png)
 //   node scripts/android.mjs flows [file…]   run Maestro flows (default: every tests/mobile/*.yaml) against the device
+//   node scripts/android.mjs drag <from> <to> [--record file.mp4]
+//                                            long-press the element showing <from>, drag it onto <to>, release: the
+//                                            gesture Maestro has no step for (a list row put in a new place)
+//   node scripts/android.mjs order <text…>   exit 1 unless these texts are on screen, top to bottom, in this order
 //   node scripts/android.mjs stop            shut the emulator down
 //
 // Every step works against a real phone too, when it is the only device adb sees (USB debugging on); `boot` is then
@@ -141,6 +145,59 @@ function flows(files) {
     run(m, ["test", ...targets], { env: { ...env, PATH: `${path.dirname(bin.adb)}:${process.env.PATH}`, MAESTRO_CLI_NO_ANALYTICS: "1", MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true" } });
 }
 
+/** Every element on screen that shows text, with its box, from the device's accessibility dump. */
+function onScreen() {
+    const xml = spawnSync(bin.adb, ["exec-out", "uiautomator", "dump", "/dev/tty"], { env, encoding: "utf8", maxBuffer: 64 << 20 }).stdout ?? "";
+    const ent = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+    return [...xml.matchAll(/text="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)]
+        .filter((m) => m[1])
+        .map((m) => ({ text: m[1].replace(/&(\w+);/g, (_, e) => ent[e] ?? `&${e};`), x: (+m[2] + +m[4]) >> 1, y: (+m[3] + +m[5]) >> 1 }));
+}
+/** The element showing exactly `text`; the run ends, naming what IS on screen, when there is none. */
+function find(text) {
+    const all = onScreen();
+    const hit = all.find((e) => e.text === text);
+    if (!hit) { console.error(`✗ nothing on screen reads "${text}". On screen: ${all.map((e) => JSON.stringify(e.text)).join(", ")}`); process.exit(1); }
+    return hit;
+}
+
+/**
+ * Long-press the element showing `from` and drag it onto `to`, the way a thumb does: down, hold past the long press,
+ * move in small steps, a beat, up. `input draganddrop` was tried first and moved a React Native row about a third as
+ * far as the finger went; `input motionevent` delivers every step.
+ */
+async function drag(from, to, record) {
+    const a = find(from), b = find(to);
+    // Aim just past the target's middle, so the dragged row's leading edge has crossed it whichever way it goes.
+    const end = b.y + (b.y < a.y ? -4 : 4);
+    const step = end < a.y ? -20 : 20;
+    const ys = [];
+    for (let y = a.y + step; step < 0 ? y > end : y < end; y += step) ys.push(y);
+    ys.push(end);
+    let rec;
+    if (record) { rec = spawn(bin.adb, ["shell", "screenrecord", "--time-limit", "6", "/sdcard/wml-drag.mp4"], { env, stdio: "ignore" }); await sleep(1000); }
+    const moves = ys.map((y) => `input motionevent MOVE ${a.x} ${y}`).join("; ");
+    run(bin.adb, ["shell", `input motionevent DOWN ${a.x} ${a.y}; sleep 0.7; ${moves}; sleep 0.3; input motionevent UP ${a.x} ${end}`]);
+    if (rec) {
+        await new Promise((r) => rec.on("exit", r));
+        mkdirSync(path.dirname(record), { recursive: true });
+        run(bin.adb, ["pull", "/sdcard/wml-drag.mp4", record], { stdio: "ignore" });
+        console.log(`✓ recorded ${record}`);
+    }
+    await sleep(800);   // the drop settles before anything reads the screen
+    console.log(`✓ dragged "${from}" onto "${to}"`);
+}
+
+/** Exit 1 unless every text is on screen and they read top to bottom in the order given. */
+function order(texts) {
+    const all = onScreen();
+    const at = texts.map((t) => ({ t, y: all.find((e) => e.text === t)?.y }));
+    for (const { t, y } of at) console.log(`  ${y ?? "—"}\t${t}`);
+    const ok = at.every((e) => e.y != null) && at.every((e, i) => i === 0 || e.y > at[i - 1].y);
+    console.log(ok ? "✓ in order" : "✗ not in this order");
+    if (!ok) process.exit(1);
+}
+
 const [cmd, arg] = process.argv.slice(2);
 switch (cmd) {
     case "doctor": doctor(); break;
@@ -150,8 +207,16 @@ switch (cmd) {
     case "launch": launch(); break;
     case "shot": shot(arg); break;
     case "flows": flows(process.argv.slice(3)); break;
+    case "drag": {
+        const [from, to] = process.argv.slice(3).filter((x, i, xs) => !x.startsWith("--") && xs[i - 1] !== "--record");
+        const r = process.argv.indexOf("--record");
+        if (!from || !to) { console.error("usage: node scripts/android.mjs drag <from text> <to text> [--record file.mp4]"); process.exit(2); }
+        await drag(from, to, r > 0 ? process.argv[r + 1] : undefined);
+        break;
+    }
+    case "order": order(process.argv.slice(3)); break;
     case "stop": run(bin.adb, ["emu", "kill"]); break;
     default:
-        console.error("usage: node scripts/android.mjs <doctor|setup|boot [--window]|install|launch|shot [file]|flows [file…]|stop>");
+        console.error("usage: node scripts/android.mjs <doctor|setup|boot [--window]|install|launch|shot [file]|flows [file…]|drag <from> <to> [--record f]|order <text…>|stop>");
         process.exit(2);
 }
