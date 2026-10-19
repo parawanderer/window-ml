@@ -6,7 +6,7 @@
 // The core (injected/content/background/popup) has no runtime deps and compiles
 // to plain JS; the sidebar/ entry may pull in bundled deps (e.g. a highlighter).
 import * as esbuild from "esbuild";
-import { cpSync, rmSync, mkdirSync, existsSync, readdirSync, renameSync } from "node:fs";
+import { cpSync, rmSync, mkdirSync, existsSync, readdirSync, renameSync, readFileSync } from "node:fs";
 import { generatePreview } from "./tools/preview-annotate.mjs";
 import { generatePreview as generateLegendPreview } from "./tools/preview-legend.mjs";
 import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
@@ -155,6 +155,12 @@ function copyPyodide() {
     if (!existsSync("node_modules/pyodide")) { console.warn("⚠ pyodide not installed — python_exec disabled (npm i)."); return; }
     mkdirSync(`${BUILD_DIR}/pyodide`, { recursive: true });
     // The restricted-mode core (npm run fetch-pyodide) wins when it is there; the stock npm core is the fallback.
+    // A core left by an older pin must not ship under a bumped one: fetch-pyodide records "<name> <sha256>" in .pin.
+    if (existsSync("pyodide-core/.pin")) {
+        const pinned = JSON.parse(readFileSync("tools/pyodide-dist.json", "utf8")).artefact.sha256;
+        const have = readFileSync("pyodide-core/.pin", "utf8").trim().split(" ")[1];
+        if (pinned && have !== pinned) throw new Error(`pyodide-core/ holds sha256 ${have} but tools/pyodide-dist.json pins ${pinned}: run \`npm run fetch-pyodide\``);
+    }
     const coreDir = PYODIDE_CORE.every(f => existsSync(`pyodide-core/${f}`)) ? "pyodide-core" : "node_modules/pyodide";
     if (coreDir === "node_modules/pyodide") console.warn("⚠ pyodide-core/ missing — python_exec runs STOCK Pyodide, without the restricted-mode fork.");
     for (const f of PYODIDE_CORE) cpSync(`${coreDir}/${f}`, `${BUILD_DIR}/pyodide/${f}`);

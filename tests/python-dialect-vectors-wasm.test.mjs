@@ -124,6 +124,14 @@ function judge(vec, out) {
     return [status, reason];
 }
 
+// --- under CI the fork's core is required: a skip must not pass for a run ---
+
+test("under CI with an artefact pinned, dist/pyodide is the restricted-mode core", (t) => {
+    const pinned = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../tools/pyodide-dist.json"), "utf8")).artefact.sha256;
+    if (!process.env.CI || !pinned) return t.skip("only under CI, once an artefact sha256 is pinned");
+    assert.strictEqual(skip, false, `the vectors would be skipped: ${skip}`);
+});
+
 // --- the build gate: specialization, tier 2 and the JIT off, or the warm vectors pass by chance ---
 
 test("the interpreter is the patched build with specialization, tier 2 and the JIT off", (t) => {
