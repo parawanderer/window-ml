@@ -108,8 +108,8 @@ keeps one namespace per mode (`benchNs`), promoting the script's names to global
 namespace is recreated, which is how a loss is noticed (`benchLost`).
 
 - **Leaks between calls today:** `_`-prefixed globals (a model's own `global _x`) and module state.
-- **The tool description contradicts itself:** "ONE cell of a live Jupyter notebook" and "Each call is STATELESS"
-  (`python-tool.ts`).
+- **The tool description** said "Each call is STATELESS" beside "a live Jupyter notebook"; it now says a run's names
+  persist (`python-tool.ts`).
 - **Loss:** a watchdog kill (15 s script, 120 s start), a worker crash, the offscreen document closing, an extension
   reload. The housekeeping log records pyodide kills and cold starts with a time and a reason.
 

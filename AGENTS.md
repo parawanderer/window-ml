@@ -161,7 +161,7 @@ learned by shipping the wrong version first.
   event. → resource-panel.md
 - **Pointers.** `PIPE_CMDS` is the single source for every description of the dialect. The three reference
   forms (`@tool:"label"`, 7-hex id, bare tool name) are told apart by SHAPE, never tried in order.
-- **Python.** Each call is stateless; `readonly` mode hardens the sandbox and may auto-approve, `full` always asks.
+- **Python.** A worker-hosted run keeps one namespace across its cells (not a page call or the bench); `readonly` mode hardens the sandbox and may auto-approve, `full` always asks.
   The wheels (`pyodide-wheels/`) are gitignored and a missing set fails only at run time.
 - **Tables.** One representation (`TableLike`) and one set of parsers (`table-data.ts`); the delimiter is
   DISCOVERED, never assumed a comma; `shape` is the SOURCE's row count, so pass `rowCount` when you cap; the `Table`

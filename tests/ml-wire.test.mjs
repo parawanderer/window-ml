@@ -5,7 +5,7 @@
 // copy rules. What a hostile page must not get from the wire is tests/redteam-ml-wire.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { serveWireCall, toWire, wirePointer, WireError, openWireClient, deliverIfOpen } from "../src/sw/ml-wire-serve.ts";
+import { serveWireCall, toWire, fromWire, wirePointer, WireError, openWireClient, deliverIfOpen } from "../src/sw/ml-wire-serve.ts";
 import { ML_READONLY_METHODS } from "../src/readonly-exec/policy.ts";
 import { wireRun, wireCall } from "./ml-wire-harness.mjs";
 
@@ -158,4 +158,44 @@ test("toWire copies plain data and bytes, and refuses functions, accessors, clas
     }
     const shared = { x: 1 };
     assert.deepEqual(toWire([shared, shared]), [{ x: 1 }, { x: 1 }], "a repeated object is not a cycle");
+});
+
+// --- tag-shaped data crosses wrapped one level and comes back exactly (ML_WIRE.md, "What crosses") ---
+
+test("fromWire(toWire(x)) is x for tag-shaped data: nested, doubly tag-shaped, in arrays, and bytes-shaped", () => {
+    const cases = [
+        { $x: 1 },
+        { a: { $x: 1 }, b: [{ $y: { $z: 2 } }] },
+        { $: 1 },
+        { $: { $: 1 } },
+        { $: { $secret: "s" } },
+        [{ $a: 1 }, [{ $b: 2 }, { $: { $c: 3 } }]],
+        { $bytes: "aGk=" },
+        { plain: 1, list: [1, { $k: null }] },
+    ];
+    for (const x of cases) assert.deepEqual(fromWire(toWire(x)), x, JSON.stringify(x));
+    assert.deepEqual(toWire({ $x: 1 }), { $: { $x: 1 } }, "positive control: tag-shaped data is wrapped on the way out");
+    assert.deepEqual(toWire({ x: 1 }), { x: 1 }, "positive control: ordinary data is not");
+    assert.deepEqual(fromWire({ $: { $: 1 } }), { $: 1 }, "exactly one level is unwrapped, not every `$`");
+});
+
+test("a cell's args in wire form are unwrapped once: data shaped like a tag arrives as data, never as a handle or bytes", async () => {
+    const echo = { echo: { run: (...a) => a } };
+    const asData = await serveWireCall(req("echo", [{ $: { $secret: "s" } }, { $: { $bytes: "aGk=" } }, { $: { $: 1 } }, [{ $: { $k: 1 } }]]), ctxOf(echo));
+    assert.deepEqual(asData, { seq: 7, value: [{ $: { $secret: "s" } }, { $: { $bytes: "aGk=" } }, { $: { $: 1 } }, [{ $: { $k: 1 } }]] }, "the member got the dicts; the answer wraps them again");
+    const seen = [];
+    await serveWireCall(req("echo", [{ $: { $secret: "s" } }]), ctxOf({ echo: { run: (...a) => { seen.push(a); return null; } } }));
+    assert.deepEqual(seen, [[{ $secret: "s" }]], "the member's own argument is the unwrapped dict");
+});
+
+test("a real $secret handle in a call's args is refused as SecretHandle, at any depth, and its member never runs", async () => {
+    const ran = [];
+    const members = { use: { run: (...a) => { ran.push(a); return 1; } } };
+    for (const args of [[{ $secret: "gh" }], [[1, { k: { $secret: "gh" } }]], [{ $: { v: { $secret: "gh" } } }]]) {
+        const a = await serveWireCall(req("use", args), ctxOf(members));
+        assert.equal(a.error?.code, "SecretHandle", JSON.stringify(args));
+        assert.match(a.error.message, /\(gh\)/, "the handle's name is told, never a value");
+    }
+    assert.deepEqual(ran, [], "no member saw a handle");
+    assert.equal((await serveWireCall(req("use", [{ k: 1 }]), ctxOf(members))).value, 1, "positive control: plain data runs the member");
 });

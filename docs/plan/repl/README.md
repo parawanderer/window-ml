@@ -110,7 +110,7 @@ surfaces it.
   fallback kept on Shane's decision; PR 2a (the Python `ml` facade in `python-runtime.ts` against a transport callback)
   merged (#728). Unblocked by the Pyodide lockdown (#735): remaining are PR 2b (wiring `_ml_make` over the worker's
   closure-held `post` through `offscreen.ts` and `sw-python.ts`) and root C (persistent per-run `dict`, housekeeping
-  loss notice, `LANE_1_RESULT_C.md`).
+  loss notice, [`LANE_1_RESULT_C.md`](LANE_1_RESULT_C.md); tests and text landed 2026-10-19).
 - **Lane 2**: **DONE** — D (#672), E (#686), 3a (#699), the `sh` consumer and archive removal (#706), the policy vectors
   (#709), 3b (#716: the `POLICIES` message, the policy page in DevTools Settings, re-judging a showing card), 3c (#723:
   `propose_policy`, derived breadth probe, policy syntax/eval hardening), and results `LANE_2_RESULT_E.md` +

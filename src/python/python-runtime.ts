@@ -5,6 +5,7 @@
 // + hardening) so this drift-prone Python can be exercised against REAL CPython in tests
 // (tests/python.test.js) instead of a re-implementation. Chrome-free (only imports python-env).
 import { PY_PRELUDE_IMPORTS } from "./python-env";
+import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 
 /**
@@ -283,6 +284,15 @@ else:
     _ml_stringio, _ml_fmt_exc = _ml_io2.StringIO, _ml_tb2.format_exc
     _ml_redir_out, _ml_redir_err = _ml_c2.redirect_stdout, _ml_c2.redirect_stderr
     _ml_real_out = _ml_s2.stdout
+# ASYNC CELL DRIVERS (the harness captures them; the fallback imports them). A cell's \`_user\` is a
+# coroutine function so \`await ml.*\` is legal — the runner is \`runPythonAsync\`, which allows top-level
+# await. When no loop is running (a sync \`exec()\` of this wrapper, compiled with
+# \`ast.PyCF_ALLOW_TOP_LEVEL_AWAIT\` if the cell awaits), asyncio drives the coroutine instead.
+if _ml_h is not None and getattr(_ml_h, "ast_parse", None) is not None:
+    _ml_inspect = _ml_h.inspect
+    _ml_asyncio = _ml_h.asyncio
+else:
+    import inspect as _ml_inspect, asyncio as _ml_asyncio
 # The harness module is GONE from the namespace before the user's code sees it: the refs are in local
 # names now, and neither \`import _ml_harness\` (it is not in \`sys.modules\`) nor \`globals()["_ml_harness"]\`
 # (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
@@ -299,6 +309,26 @@ INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
 `}
 ${persist ? PRELUDE_BASE : RESET + PRELUDE}
 ${netPolicy(hardened)}
+# THE \`ml\` OBJECT A CELL CALLS THE WIRE THROUGH (ML_FACADE). Built from the harness's transport and
+# its own codec refs, then those pieces are dropped: the cell sees \`ml\`/\`MlError\` and nothing that
+# reaches the worker's closure-held post (LANE_1_PR2_DESIGN.md). The transport is \`_ml_send\`, a
+# leading-underscore global the worker installs before the cell and this drops after building \`ml\` —
+# the same shape as the stdout tee, carrying data rather than a JS function the cell holds. Absent
+# when the worker installed no channel (real-CPython tests, a completion): \`ml\` is simply not bound
+# and a cell that names it gets NameError.
+${ML_FACADE}
+_ml_send_fn = globals().get("_ml_send")
+if _ml_send_fn is not None:
+    class _MlCodec:
+        loads = staticmethod(_ml_loads)
+        dumps = staticmethod(_ml_dumps)
+        b64encode = staticmethod(_ml_b64e)
+        b64decode = staticmethod(_ml_b64d)
+    ml, MlError = _ml_make(_ml_send_fn, _MlCodec)
+    globals().pop("_ml_make", None)
+    globals().pop("_ml_send", None)
+else:
+    globals().pop("_ml_make", None)
 result = None
 _ml_src = ${JSON.stringify(code)}
 _ml_persist = ${persist ? "True" : "False"}
@@ -326,7 +356,11 @@ with _ml_redir_out(_out), _ml_redir_err(_out):
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
-        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _ml_indent(_ml_src, "    ")
+        # ASYNC so \`await ml.dereference(...)\` is legal inside the cell (LANE_1_PR2_DESIGN.md). The
+        # runner is \`runPythonAsync\`, which allows top-level await; a plain sync \`exec()\` of this
+        # source must compile with \`ast.PyCF_ALLOW_TOP_LEVEL_AWAIT\` (or drive the coroutine from
+        # asyncio once no loop is running).
+        _ml_def_src = "async def _user():\\n    global result\\n    pass\\n" + _ml_indent(_ml_src, "    ")
         try:
             _ml_tree = _ml_parse(_ml_def_src, filename="<python_exec>")
         except SyntaxError as _ml_se:
@@ -379,7 +413,22 @@ with _ml_redir_out(_out), _ml_redir_err(_out):
             elif isinstance(_n, _ml_Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ml_Name) and _t.id == "result" for _t in _n.targets):
                 _ml_ret_latex = True
         exec(compile(_ml_tree, "<python_exec>", "exec"), globals())
-        _ret = _user()
+        # ASYNC CELL: \`_user\` is a coroutine function so \`await ml.*\` is legal in the cell. Drive it
+        # on the active loop (this source is run under \`runPythonAsync\`, which allows top-level await).
+        # A sync \`exec()\` of this wrapper must compile with \`ast.PyCF_ALLOW_TOP_LEVEL_AWAIT\`, or fall
+        # back to the harness/asyncio runner below when no loop is running.
+        _ml_user_ret = _user()
+        if _ml_inspect.iscoroutine(_ml_user_ret):
+            try:
+                _ml_loop = _ml_asyncio.get_running_loop()
+            except RuntimeError:
+                _ml_loop = None
+            if _ml_loop is None:
+                _ret = _ml_asyncio.new_event_loop().run_until_complete(_ml_user_ret)
+            else:
+                _ret = await _ml_user_ret
+        else:
+            _ret = _ml_user_ret
         if _ret is not None:
             result = _ret
     except BaseException:
@@ -510,7 +559,7 @@ export function unharden(py: any, saved: Hardened): void {
 
 // ── THE BENCH EDITOR'S COMPLETION ENGINE ─────────────────────────────────────────────────────────────────
 // Jedi, loaded lazily (`PY_LAZY_LOADS`) the first time the bench asks. It never RUNS the script being typed:
-// completion is static analysis, so the stateless sandbox is no limit for anything reached through an
+// completion is static analysis, so the sandbox holding no state is no limit for anything reached through an
 // import or written in the script — measured in Pyodide: module attributes (`np.ara`, `np.linalg.i`,
 // `from numpy import lin`), pandas frames (`pd.read_csv(...).he` → `head`, via pandas' own stubs), literals,
 // and the script's own functions and classes all complete. The prelude's own names (`np`, `pd`, `Image`,

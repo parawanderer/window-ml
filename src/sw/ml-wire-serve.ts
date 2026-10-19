@@ -30,7 +30,8 @@ export function wirePointer(p: MlWirePointer): unknown {
 
 /** Thrown by a member to answer with a specific error code rather than `Failed`. */
 export class WireError extends Error {
-    constructor(readonly code: MlWireErrorCode, message: string) { super(message); }
+    readonly code: MlWireErrorCode;
+    constructor(code: MlWireErrorCode, message: string) { super(message); this.code = code; }
 }
 
 /** How long a call waits on the person before it fails: the dialect's step budget does not run while it waits, so this
@@ -40,16 +41,56 @@ export const ASK_TIMEOUT_MS = 5 * 60_000;
 /** How deep a value may nest before it is refused rather than copied. */
 const MAX_DEPTH = 64;
 
+/** A tag is a single-key object whose key starts with `$` (ML_WIRE.md, "What crosses"). */
+const isTagShaped = (o: Record<string, unknown>): boolean => {
+    const keys = Object.keys(o);
+    return keys.length === 1 && keys[0].startsWith("$");
+};
+
+/**
+ * Unwrap the one level of `{ "$": <object> }` a tag-shaped data value crossed wrapped as, recursively through
+ * arrays and objects. Tags proper (`$bytes`, `$secret`) are left as they are: they are the encoding, not data.
+ * @param v the value as it arrived on the wire
+ * @returns the unwrapped copy
+ */
+export function fromWire(v: unknown): unknown {
+    if (Array.isArray(v)) return v.map(fromWire);
+    if (v && typeof v === "object") {
+        const o = v as Record<string, unknown>;
+        const keys = Object.keys(o);
+        // Exactly one level: the wrapped object's own contents are unwrapped, but the object itself is DATA, so
+        // `{"$": {"$": 1}}` is the data `{"$": 1}` and `{"$": {"$secret": "s"}}` is a dict, never a handle.
+        if (keys.length === 1 && keys[0] === "$") {
+            const inner = o.$;
+            if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+                const out: Record<string, unknown> = {};
+                for (const k of Object.keys(inner)) out[k] = fromWire((inner as Record<string, unknown>)[k]);
+                return out;
+            }
+            return fromWire(inner);
+        }
+        const out: Record<string, unknown> = {};
+        for (const k of keys) out[k] = fromWire(o[k]);
+        return out;
+    }
+    return v;
+}
+
 /**
  * A fresh plain-data copy of `v`: JSON values, arrays and objects from OWN enumerable data properties, bytes as
  * `{ $bytes: base64 }`. A function, a symbol, a bigint, an accessor, a cycle or a class instance is refused, so the copy
  * is never a live object and never a proxy, whatever `v` was.
+ *
+ * TAG WRAPPING (ML_WIRE.md, "What crosses"): a plain object whose copy is tag-shaped (one key starting with `$`)
+ * crosses wrapped as `{ "$": <object> }`, so the receiver's unwrap returns exactly the data and a value that
+ * looks like a tag is never read as one. Bytes are the exception: they ARE the `$bytes` tag, not data.
  * @param v the value
  * @param depth how deep the copy already is
  * @param seen the objects on the current path, for cycles
+ * @param wrap false for a value ALREADY in wire form (a cell's arguments): copied and checked, never wrapped a second time
  * @returns the copy
  */
-export function toWire(v: unknown, depth = 0, seen: Set<object> = new Set()): unknown {
+export function toWire(v: unknown, depth = 0, seen: Set<object> = new Set(), wrap = true): unknown {
     if (v === null || typeof v === "boolean" || typeof v === "string") return v;
     if (typeof v === "number") return Number.isFinite(v) ? v : null;
     if (v === undefined) return null;
@@ -72,7 +113,7 @@ export function toWire(v: unknown, depth = 0, seen: Set<object> = new Set()): un
             for (let i = 0; i < v.length; i++) {
                 const d = Object.getOwnPropertyDescriptor(v, i);
                 if (d && !("value" in d)) throw new WireError("Failed", "an accessor cannot cross the wire");
-                out.push(toWire(d?.value, depth + 1, seen));
+                out.push(toWire(d?.value, depth + 1, seen, wrap));
             }
             return out;
         }
@@ -88,24 +129,34 @@ export function toWire(v: unknown, depth = 0, seen: Set<object> = new Set()): un
                 if (typeof d.value === "function") throw new WireError("Failed", "a function cannot cross the wire");
                 continue;
             }
-            out[k] = toWire(d.value, depth + 1, seen);
+            out[k] = toWire(d.value, depth + 1, seen, wrap);
         }
-        return out;
+        // Data that looks like a tag crosses wrapped one level (ML_WIRE.md). `{ "$": … }` itself is the wrap, not data.
+        return wrap && isTagShaped(out) ? { $: out } : out;
     } finally {
         seen.delete(v);
     }
 }
 
 /**
- * Whether `v` names a secret anywhere inside it: an object with an own `$secret` key (docs/spec/SECRET_HANDLES.md).
- * @param v the value, already a plain copy
- * @returns true when it does
+ * The objects in WIRE-FORM `v` that are secret handles: an own `$secret` key (docs/spec/SECRET_HANDLES.md), outside
+ * the contents of a `{ "$": {…} }` wrap. A wrapped object is DATA that merely looks like a tag, which {@link fromWire}
+ * unwraps to a dict, so its own keys are not looked at; the values inside it are, because a real handle can sit there.
+ * @param v the value as it arrived on the wire, before {@link fromWire}
+ * @returns each handle object, in encounter order
  */
-function namesSecret(v: unknown): boolean {
-    if (!v || typeof v !== "object") return false;
-    if (Array.isArray(v)) return v.some(namesSecret);
-    if (Object.prototype.hasOwnProperty.call(v, "$secret")) return true;
-    return Object.values(v).some(namesSecret);
+function handlesIn(v: unknown, out: Record<string, unknown>[] = []): Record<string, unknown>[] {
+    if (!v || typeof v !== "object") return out;
+    if (Array.isArray(v)) { for (const x of v) handlesIn(x, out); return out; }
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o);
+    if (keys.length === 1 && keys[0] === "$" && o.$ && typeof o.$ === "object" && !Array.isArray(o.$)) {
+        for (const x of Object.values(o.$)) handlesIn(x, out);
+        return out;
+    }
+    if (Object.prototype.hasOwnProperty.call(o, "$secret")) out.push(o);
+    for (const x of Object.values(o)) handlesIn(x, out);
+    return out;
 }
 
 /** An error answer, with its text through `scrub` (the server URL, the key and the model filter never cross). */
@@ -164,8 +215,21 @@ export async function serveWireCall(req: Partial<MlWireRequest> | null | undefin
         return fail(seq, "Absent", `ml.${name} is not available here${have.length ? `: this code has ml.${have.join(", ml.")}` : ""}`, ctx.scrub);
     }
     let args: unknown[];
-    try { args = toWire(req.args) as unknown[]; } catch (e) { return fail(seq, "BadRequest", `ml.${name}: ${(e as Error).message}`, ctx.scrub); }
-    if (namesSecret(args)) return fail(seq, "SecretHandle", `ml.${name}: a secret handle is never read as a value; pass it to a call that uses it`, ctx.scrub);
+    // ARGS ARRIVE IN WIRE FORM (the facade's `_out`): tag-shaped data is wrapped as `{ "$": … }`, bytes as
+    // `{ "$bytes": … }`. Copy them as data, then unwrap the one wrap level so the member sees the data the
+    // cell meant. A `$secret` key OUTSIDE a wrap is a HANDLE, never data; it is looked for before the unwrap, since after it
+    // data that looks like a handle and a handle are the same shape (ML_WIRE.md).
+    let wireArgs: unknown[];
+    try { wireArgs = toWire(req.args, 0, new Set(), false) as unknown[]; args = fromWire(wireArgs) as unknown[]; } catch (e) { return fail(seq, "BadRequest", `ml.${name}: ${(e as Error).message}`, ctx.scrub); }
+    const handles = handlesIn(wireArgs);
+    if (handles.length) {
+        // THE SECRET'S NAME IS NEVER ITS AUTHORITY (ML_WIRE.md): resolve each against the run's own grants at
+        // the sink and judge the use here. No member consumes a secret yet, so a handle that reaches this
+        // check is refused rather than silently granted — the same `Denied` a name the run holds no grant
+        // for would get. When a sink exists, this becomes `resolveSecret(run, name)` at that member.
+        const names = [...new Set(handles.map((h) => h.$secret).filter((n): n is string => typeof n === "string"))];
+        return fail(seq, "SecretHandle", `ml.${name}: a secret handle is never read as a value; pass it to a call that uses it${names.length ? ` (${names.join(", ")})` : ""}`, ctx.scrub);
+    }
     const member = ctx.members[name];
     if (!member.gate) return answerOf(seq, name, member, args, ctx.scrub);
     let decision: WireGateDecision;

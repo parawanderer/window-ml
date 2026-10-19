@@ -78,6 +78,7 @@ const preludeBinding = (line: string): string | null => {
 // may name one `df`, overriding the single-source default.)
 export const PY_RESERVED_NAMES: string[] = [
     "io", "base64", "sys", "contextlib", "to_base64", "img", "img_np", "H", "W", "result", "tables",
+    "ml", "MlError",
     ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
 ];
 
