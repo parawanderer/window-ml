@@ -5,39 +5,40 @@ Written 2026-10-19 by the mechanical hand-off (Claude Code, `openrouter.xiaomi/m
 `20261015-2230Z-repl-lane3-to-coordinator-handover-H-mechanical.md` in `~/git/session-mail/window-ml/`, piece 3. It
 is the plumbing note `LANE_3_RUNTIME.md` line 73 asked for ("The Pyodide build of the patch is NOT this round: it
 needs the emscripten toolchain and hours per build. Write down what it will take when you know"). The wasm build
-itself is not done here. The desktop numbers are in [`LANE_3_RESULT_H.md`](LANE_3_RESULT_H.md); the design is
-[`LANE_3_RUNTIME.md`](LANE_3_RUNTIME.md).
+itself is not done here. Updated the same day by session `834c05ec` after the rebase onto `v3.14.2` (below). The
+desktop numbers are in [`LANE_3_RESULT_H.md`](LANE_3_RESULT_H.md); the design is [`LANE_3_RUNTIME.md`](LANE_3_RUNTIME.md).
 
 ## What the series is
 
-The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `59bee6b` (8 commits on `v3.14.0`: slices 1,
-2, 4, 5, 6 plus the two mid-slice landings). Export it from a clean checkout of that branch:
+The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `962ede6` (9 commits on `v3.14.2`: slices 1,
+2, 4, 5, 6, the two mid-slice landings and the print fix; rebased from `v3.14.0` on 2026-10-19, below). Export it from a clean checkout of that branch:
 
 ```sh
-git -C ~/git/cpython-restricted format-patch v3.14.0..ml/restricted-mode \
+git -C ~/git/cpython-restricted format-patch v3.14.2..ml/restricted-mode \
     --start-number 10 -o /tmp/pyodide-cpython-patches/ \
     -- . ':(exclude)Tools/restricted'
 ```
 
-8 patches, 20 files, +3794/−31. `--start-number 10` is required: Pyodide's own `cpython/patches/` already holds
-`0001`–`0009`, and the build concatenates them in glob order (below). Without the exclusion the series is 8 patches
-and 21 files — the only extra is `Tools/restricted/run_vectors.py` (created in 0005, a 7-line touch in 0006), the
+9 patches (`0010`–`0018`), 20 files, +3660/−31. `--start-number 10` is required: Pyodide's own `cpython/patches/` already holds
+`0001`–`0009`, and the build concatenates them in glob order (below). Without the exclusion the series is 9 patches
+and 21 files — the only extra is `Tools/restricted/run_vectors.py` (created in 0014, a 7-line touch in 0015), the
 desktop vector runner. It is a test harness, not part of the interpreter, and it does not belong in a wasm build.
 `Lib/restricted.py` and `Lib/test/test_restricted.py` stay in: the test file is what "run `test_restricted` under
 node" means.
 
-The 8 patches and the files each touches (0005 and 0006 are the ones that carry the excluded runner):
+The 9 patches and the files each touches (0014 and 0015 are the ones that carry the excluded runner):
 
 | patch | files | touches |
 | --- | --- | --- |
-| 0001 slice 1 | 8 | `code.h`, `pycore_code.h`, `pycore_restricted.h`, `pycore_tstate.h`, `Lib/restricted.py`, `Lib/test/test_restricted.py`, `Setup.bootstrap.in`, `_restrictedmodule.c` |
-| 0002 slice 2 | 11 | `pycore_restricted.h`, `test_restricted.py`, `Makefile.pre.in`, `_restrictedmodule.c`, `abstract.c`, `object.c`, `bytecodes.c`, `ceval.c`, `executor_cases.c.h`, `generated_cases.c.h`, `restricted.c` |
-| 0003 lifted leaves | 3 | `Lib/restricted.py`, `abstract.c`, `restricted.c` |
-| 0004 membership pre-pass | 2 | `Lib/restricted.py`, `test_restricted.py` |
-| 0005 entry checks / dynamic attrs | 8 | `pycore_restricted.h`, `Lib/restricted.py`, `_restrictedmodule.c`, `object.c`, `bytecodes.c`, `generated_cases.c.h`, `restricted.c`, **`Tools/restricted/run_vectors.py`** |
-| 0006 slice 4 (budget) | 9 | `pycore_ceval.h`, `pycore_restricted.h`, `pycore_tstate.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `ceval_gil.c`, `restricted.c`, **`Tools/restricted/run_vectors.py`** |
-| 0007 slice 5 (ownership) | 8 | `pycore_restricted.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `abstract.c`, `genobject.c`, `typeobject.c`, `restricted.c` |
-| 0008 slice 6 (undo log) | 5 | `pycore_restricted.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `restricted.c` |
+| 0010 slice 1 | 8 | `code.h`, `pycore_code.h`, `pycore_restricted.h`, `pycore_tstate.h`, `Lib/restricted.py`, `Lib/test/test_restricted.py`, `Setup.bootstrap.in`, `_restrictedmodule.c` |
+| 0011 slice 2 | 11 | `pycore_restricted.h`, `test_restricted.py`, `Makefile.pre.in`, `_restrictedmodule.c`, `abstract.c`, `object.c`, `bytecodes.c`, `ceval.c`, `executor_cases.c.h`, `generated_cases.c.h`, `restricted.c` |
+| 0012 lifted leaves | 3 | `Lib/restricted.py`, `abstract.c`, `restricted.c` |
+| 0013 membership pre-pass | 2 | `Lib/restricted.py`, `test_restricted.py` |
+| 0014 entry checks / dynamic attrs | 8 | `pycore_restricted.h`, `Lib/restricted.py`, `_restrictedmodule.c`, `object.c`, `bytecodes.c`, `generated_cases.c.h`, `restricted.c`, **`Tools/restricted/run_vectors.py`** |
+| 0015 slice 4 (budget) | 9 | `pycore_ceval.h`, `pycore_restricted.h`, `pycore_tstate.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `ceval_gil.c`, `restricted.c`, **`Tools/restricted/run_vectors.py`** |
+| 0016 slice 5 (ownership) | 8 | `pycore_restricted.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `abstract.c`, `genobject.c`, `typeobject.c`, `restricted.c` |
+| 0017 slice 6 (undo log) | 5 | `pycore_restricted.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `restricted.c` |
+| 0018 print | 2 | `Lib/restricted.py`, `test_restricted.py` |
 
 ## How Pyodide applies patches
 
@@ -60,10 +61,11 @@ Pyodide's `Makefile.envs` currently pins `PYVERSION ?= 3.14.2`, archive `Python-
 Pyodide's own (pymain_run_python, LONG_BIT, JsProxy_GetMethod, jsproxy modules, emscripten_syscalls, json/JsNull,
 ZoneInfo warning, the emscripten signal-clock exports, the emcc-4.0.19 trampoline). Ours must come after all of them.
 
-## The version gap: the series is against 3.14.0, Pyodide builds 3.14.2
+## The version gap: closed, the series is against 3.14.2
 
-**This is the one thing that will bite.** The fork is `v3.14.0`-based; Pyodide's `Makefile.envs` builds `3.14.2`.
-Between those tags, 10 of the files our patches touch move:
+The fork was `v3.14.0`-based and Pyodide's `Makefile.envs` builds `3.14.2`. On 2026-10-19 the branch was rebased onto
+`v3.14.2` (`29069ba` → `962ede6`; the pre-rebase branch is kept as `ml/restricted-mode-pre-3.14.2`). Between those tags,
+10 of the files the series touches move:
 
 | file | 3.14.0..3.14.2 |
 | --- | --- |
@@ -78,17 +80,21 @@ Between those tags, 10 of the files our patches touch move:
 | `Python/executor_cases.c.h` | 8 |
 | `Python/generated_cases.c.h` | 46 |
 
-Two paths, in order of preference:
+None of those moves overlapped a hunk of ours: `git rebase v3.14.2` applied all nine commits with no conflict,
+`ceval.c` included. The generated cases were then checked at EVERY commit, not only the head (`git rebase --exec`
+running `make regen-cases` and `git diff --quiet`): the committed `generated_cases.c.h` and `executor_cases.c.h`
+equal what the generator makes from that commit's `bytecodes.c`, so nothing needed amending. After the rebase, at
+`962ede6`: 121 of 121 fork tests (none skipped) and 87 of 87 vectors. The exported series was applied with
+`patch -p1`, in glob order, to a `git archive v3.14.2` tree, and the result equals the branch's tree except
+`Tools/restricted/`, the excluded runner.
 
-1. **Rebase the fork onto `v3.14.2` (or whatever tag Pyodide names when the build starts) and re-export.** The
-   restricted-mode change is an abstract-layer gate plus a few thread-state fields plus one eval-breaker bit; none of
-   it is in the code 3.14.0..3.14.2 rewrote heavily (`ceval.c` is the worry — 213 lines). Regenerate
-   `generated_cases.c.h` / `executor_cases.c.h` from the rebased `bytecodes.c` with `make regen-cases` on a host
-   build, and land the regenerated files in the same commit as the `bytecodes.c` change (below).
-2. **Rebase only when a hunk fails**, and record which. Cheaper first try, and the failure list is the rebase's
-   worklist. Do not hand-edit a rejected hunk into the generated cases.
+When Pyodide moves to a later tag, do the same: rebase, `--exec` the regen check at each commit, and land any
+regenerated file in the commit that changed `bytecodes.c`. Never hand-edit a rejected hunk into the generated cases.
 
-Either way the export command above is unchanged once the branch is rebased.
+**A host build trap, not the fork's.** Xcode's macOS 27.0 SDK declares `pipe2` and `dup3`, which configure then finds,
+but a host on macOS 26 has a lower deployment target, and `posixmodule.c` fails with `-Wunguarded-availability-new`.
+Configure the host build with `ac_cv_func_pipe2=no ac_cv_func_dup3=no ./configure`. The emscripten build does not see
+this.
 
 ## `ENABLE_SPECIALIZATION` under emscripten: already off, unconditionally
 
@@ -157,17 +163,18 @@ alongside their `bytecodes.c` hunks. They are not a build-time artifact: a build
 what is committed. Two rules follow.
 
 - **The series carries the regenerated cases.** Applying it to a tarball puts the fork's cases next to the fork's
-  `bytecodes.c`, which is what the desktop build compiles and what the 111 tests and 87 vectors ran against. The
+  `bytecodes.c`, which is what the desktop build compiles and what the 121 tests and 87 vectors ran against. The
   wasm build should compile those, and must not `make regen-cases` on the emscripten side (the generator runs on a
   host CPython and is not part of the emscripten build).
-- **A rebase onto 3.14.2 must regenerate them.** 3.14.0..3.14.2 moves 46 lines in `generated_cases.c.h` and 8 in
-  `executor_cases.c.h`. A rebase that resolves a `bytecodes.c` hunk without re-running `make regen-cases` on a host
+- **A rebase must regenerate them.** 3.14.0..3.14.2 moved 46 lines in `generated_cases.c.h` and 8 in
+  `executor_cases.c.h`; the rebase onto 3.14.2 checked that the committed cases still equal the generator's output at
+  every commit (above). A rebase that resolves a `bytecodes.c` hunk without re-running `make regen-cases` on a host
   build produces a tree whose cases and bytecodes disagree — the failure mode is wrong instruction dispatch, not a
   build error. Land the regenerated files in the same commit as the `bytecodes.c` change.
 
 ## What running `test_restricted` under node will take
 
-The test file is `Lib/test/test_restricted.py` (905 lines, 111 tests). It imports `unittest`, `_restricted`, and
+The test file is `Lib/test/test_restricted.py` (999 lines, 121 tests). It imports `unittest`, `_restricted`, and
 `restricted` — all of which ship in the patched build — and `numpy`/`pandas` only in `StockWheelsTest`, which is
 `@unittest.skipIf(pandas is None, …)`. It does not import the vector runner, so the `Tools/restricted` exclusion
 above does not affect it.
@@ -207,14 +214,15 @@ and [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md) for what stands in the meantime
 
 ## What this note claims, and what it infers
 
-Checked: the export command and its 8-patch / 20-file output (ran in `~/git/cpython-restricted` at `59bee6b`); the
+Checked: the export command and its 9-patch / 20-file output (ran in `~/git/cpython-restricted` at `962ede6`, on
+`v3.14.2`); that the series applies with `patch -p1` to a `git archive v3.14.2` tree and reproduces the branch; the
 file list per patch; `pyodide/pyodide`'s `cpython/Makefile` patch application and `Makefile.envs`'s `PYVERSION` and
 archive hash (read 2026-10-19 via the GitHub API); the `pycore_code.h` specialization block and the
 `configure.ac` JIT default; the `RESUME_CHECK` / `emscripten_signal.c` / `_Py_HandlePending` chain as the code
 stands in the fork; the 3.14.0..3.14.2 per-file diffstat; `test_restricted.py`'s import list and skip condition.
 
-Inferred: that `patch -p1` accepts `git format-patch` output (standard GNU patch behaviour, not run against
-Pyodide's tarball here); that the wasm `StockWheelsTest` should take Pyodide's own wheels rather than PyPI's (the
+Inferred: that Pyodide's `Python-3.14.2.tgz` matches the `v3.14.2` tag for every file the series touches (the
+tarball itself was not fetched; `patch -p1` was run against a `git archive` of the tag); that the wasm `StockWheelsTest` should take Pyodide's own wheels rather than PyPI's (the
 ABI rule is about the runtime, so this is the sensible reading, not a measurement); that `make rebuild` is the
 incremental path after touching `abstract.h` (Pyodide's `rebuild-all` target does exactly that, and is named in
 `cpython/Makefile`).

@@ -6,9 +6,11 @@ mechanical hand-off (Claude Code, `openrouter.xiaomi/mimo-v2.6-pro`, session
 `50cb17e9-1790-434d-8eb4-9783e2c01644`), 2026-10-18, per the handover `20261015-2230Z-repl-lane3-to-coordinator-handover-H-mechanical.md`
 in `~/git/session-mail/window-ml/`.
 
-The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `29069ba` (slices 1, 2, 4, 5, 6, the two
-mid-slice landings and the print fix; the measurements of 2026-10-15 were taken at `59bee6b`, those of 2026-10-19 at
-`29069ba`). Root H's design is [`LANE_3_RUNTIME.md`](LANE_3_RUNTIME.md); the dialect it implements is
+The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `962ede6` on `v3.14.2` (slices 1, 2, 4, 5, 6,
+the two mid-slice landings and the print fix; the measurements of 2026-10-15 were taken at `59bee6b`, those of
+2026-10-19 at `29069ba`). On 2026-10-19 the branch was rebased from `v3.14.0` onto `v3.14.2`, the version Pyodide
+builds ([`LANE_3_PYODIDE.md`](LANE_3_PYODIDE.md)). The commit hashes below are the pre-rebase ones, kept on the branch
+`ml/restricted-mode-pre-3.14.2`; the slice table gives both. Root H's design is [`LANE_3_RUNTIME.md`](LANE_3_RUNTIME.md); the dialect it implements is
 [`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md). Every figure below is either read from a run artifact named
 beside it or recomputed from one; the two measurement scratchpads of session `834c05ec` are named where they are the
 source (`scratchpad/…` is that session's scratchpad under `/private/tmp/claude-501/-Users-sb-git-window-ml/`,
@@ -27,7 +29,8 @@ ephemeral; the scripts are named so the measurement is re-runnable).
 - **111 fork tests pass** at `59bee6b`, **121** at `29069ba` (the print fix adds PrintTest and a pandas print test):
   every test in `Lib/test/test_restricted.py` (BuildTest, CompileTest, ExtentTest, GateTest, BudgetTest,
   OwnershipTest, MemoryTest, LiftedDunderTest, UndoTest, PrintTest, StockWheelsTest). The 87 vectors pass again at
-  `29069ba` (2026-10-19, fixtures at `d42895d6`).
+  `29069ba` (2026-10-19, fixtures at `d42895d6`), and both counts hold again after the rebase onto `v3.14.2`, at
+  `962ede6`: 121 tests with none skipped, 87 of 87 vectors.
 - **Stock wheels run unrebuilt.** `numpy==2.5.4` and `pandas==3.0.6` (cp314 macosx arm64, from PyPI) import and run on
   the patched build: StockWheelsTest, and `numpy.arange(10).sum() == 45` plus a DataFrame sum in the venv check of
   `scratchpad/corpus-perf/report.md`. **No object-header or stable-ABI change.** The patch touches only internal
@@ -114,17 +117,17 @@ build must not specialize, and a runner must refuse an interpreter that does:
 
 The fork's commit messages carry every design choice and its reason; read them in full. In order:
 
-| Commit | Slice |
+| Commit (3.14.0 / rebased on 3.14.2) | Slice |
 | --- | --- |
-| `5b1d921` | 1: `CO_RESTRICTED` on the cell's code objects, the three internal thread-state fields, `_PyRestricted_Active()`, specialization/tier-2/JIT off, `Lib/test/test_restricted.py` |
-| `c7e0d04` | 2: the gate in the abstract object layer and the interpreter's call path (attributes, items, imports, the six call sites); `NotInDialect`; a listed C callable runs UNLIFTED by default |
-| `56c3794` | lifted leaves by function (including a bound method's `__func__`), a kind's lifted item protocol (`[]^`), `restricted.load_manifests` |
-| `3ed826f` | the membership pre-pass: AST against the node whitelist, generator expressions only in consumer position (rewritten to a list comprehension), dunder names refused, `NotInDialect` before anything runs |
-| `69293c5` | entry checks (`allow_call(f, lift=True, checker)`, closed method-name vocabulary, own-functions-only callbacks), `allow_dynamic` for DataFrame columns, the vector runner |
-| `1c8b7db` | 4: the step budget at a ninth eval-breaker bit, the depth at a `CO_RESTRICTED` frame (256 default), `range`'s unlifted cost checker (`MAX_COLLECTION` 1e6), tripped runs; default budget 15M steps, about a second at the measured ~15M steps/s |
-| `ec7ebb4` | 5: ownership (writes need an owned target; a mutating method is not read off an unowned value), the memory cap (raw allocator + pymalloc arenas, 256 MiB default, `run(..., memory=)`), pandas dunders through type slots, generators resume lifted, the crossing check on `[]^` keys/values, `re`'s backtracking check |
-| `59bee6b` | 6: the undo log at the write barrier — a refused run leaves the namespace and every value it reaches as before the cell (one snapshot per owned value per run; globals dict restored; an ordinary error keeps its writes) |
-| `29069ba` | print: a cell's `print(...)` is rewritten at check time to `__cell_print__(str(a), …)`, so each argument goes through the cell's own gated `str()`; the writer, lifted behind a check, takes only strings (`sep`/`end` str or None, `flush` bool); `file=`, `**` and print as a value are refused |
+| `5b1d921` / `1cffd6a` | 1: `CO_RESTRICTED` on the cell's code objects, the three internal thread-state fields, `_PyRestricted_Active()`, specialization/tier-2/JIT off, `Lib/test/test_restricted.py` |
+| `c7e0d04` / `5bbf0a8` | 2: the gate in the abstract object layer and the interpreter's call path (attributes, items, imports, the six call sites); `NotInDialect`; a listed C callable runs UNLIFTED by default |
+| `56c3794` / `c436b9e` | lifted leaves by function (including a bound method's `__func__`), a kind's lifted item protocol (`[]^`), `restricted.load_manifests` |
+| `3ed826f` / `117174b` | the membership pre-pass: AST against the node whitelist, generator expressions only in consumer position (rewritten to a list comprehension), dunder names refused, `NotInDialect` before anything runs |
+| `69293c5` / `061977d` | entry checks (`allow_call(f, lift=True, checker)`, closed method-name vocabulary, own-functions-only callbacks), `allow_dynamic` for DataFrame columns, the vector runner |
+| `1c8b7db` / `58098eb` | 4: the step budget at a ninth eval-breaker bit, the depth at a `CO_RESTRICTED` frame (256 default), `range`'s unlifted cost checker (`MAX_COLLECTION` 1e6), tripped runs; default budget 15M steps, about a second at the measured ~15M steps/s |
+| `ec7ebb4` / `b7db965` | 5: ownership (writes need an owned target; a mutating method is not read off an unowned value), the memory cap (raw allocator + pymalloc arenas, 256 MiB default, `run(..., memory=)`), pandas dunders through type slots, generators resume lifted, the crossing check on `[]^` keys/values, `re`'s backtracking check |
+| `59bee6b` / `0a48cfc` | 6: the undo log at the write barrier — a refused run leaves the namespace and every value it reaches as before the cell (one snapshot per owned value per run; globals dict restored; an ordinary error keeps its writes) |
+| `29069ba` / `962ede6` | print: a cell's `print(...)` is rewritten at check time to `__cell_print__(str(a), …)`, so each argument goes through the cell's own gated `str()`; the writer, lifted behind a check, takes only strings (`sep`/`end` str or None, `flush` bool); `file=`, `**` and print as a value are refused |
 
 ## What a spec got wrong (each ruled by `repl-specs`)
 
