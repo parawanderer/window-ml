@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const { describeCall, hardenArgv, validateManifest, inRange } = await import("../src/shell/program-manifest.ts");
-const { effectKey, free, boundFor } = await import("../src/effects.ts");
+const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
 
 const MANIFESTS = new URL("../src/shell/manifests/", import.meta.url);
 const FIXTURES = new URL("./fixtures/program-calls/", import.meta.url);
@@ -145,6 +145,50 @@ test("under the sandbox a write inside the roots is free, a runner is not if it 
 test("network effects keep their direction, and an unnamed host is any host", () => {
     assert.deepEqual(keys(describeCall(["git", "fetch"], git, { ...V, resolve: resolveIn(true) }).effects).filter((k) => k.includes("net")), ["read:net:*"]);
     assert.deepEqual(keys(describeCall(["git", "push"], git, { ...V, resolve: resolveIn(true) }).effects).filter((k) => k.includes("net")), ["read:net:*", "write:net:*"]);
+});
+
+// --- SHELL.md's name-immutable top level reaches find -delete (2026-10-19): a removal of a top-level name is not free ---
+
+test("find -delete removes names: a removal at a root's top level is inside no bound", () => {
+    // The removal counterpart of the `.envrc` creation guard (effects.test.mjs, sw-policies.test.mjs). find.json
+    // claims -delete as write-names (K3c, #788): the effect is a write marked names over the OPERAND's resolved
+    // place, and claimsTopLevelName fails CLOSED when that place was not resolved as neither a top-level entry nor
+    // a root. So find /r -delete (isRoot) and find /r/src -delete (topLevel) ask, and a nested removal stays free.
+    const sb = boundFor("host-sandbox");
+    const find = manifests.find;
+    // The host resolved the operand under a root at /r: depth 0 is the root itself, depth 1 a top-level entry.
+    const at = (inRoot, secret = false) => ({ arg, given }) => {
+        const depth = given === "/r" ? 0 : given.replace(/^\/r\/?/, "").split("/").filter(Boolean).length;
+        return { kind: "fs", path: given, inRoot, secret, exists: true, isRoot: depth === 0, topLevel: depth === 1 };
+    };
+    const d = (argv) => describeCall(argv, find, { version: "*", resolve: at(true) });
+    // Vector: find /r -delete removes .envrc, .mcp.json, .vscode/ — every top-level name of the root.
+    assert.equal(free(d(["find", "/r", "-delete"]).effects, sb), false,
+        "find -delete on a root removes its top-level names");
+    // The same claim when the operand is itself a top-level entry: find /r/src -delete unlinks src.
+    assert.equal(free(d(["find", "/r/src", "-delete"]).effects, sb), false,
+        "find -delete that unlinks a top-level entry is inside no bound");
+    // Positive control: a nested removal is free (the rule is universal over the top level, not over every path).
+    assert.equal(free(d(["find", "/r/src/a.ts", "-delete"]).effects, sb), true,
+        "a nested removal is free");
+    // Positive control: a read-only find is free.
+    assert.equal(free(d(["find", "/r", "-name", "*.ts"]).effects, sb), true,
+        "a read-only find is free");
+});
+
+test("an UNMARKED names write asks: claimsTopLevelName fails closed when the place was not resolved", () => {
+    // The fail-closed line is worth pinning (effects.ts claimsTopLevelName): a names write whose fact carries no
+    // topLevel/isRoot is treated as a top-level claim, so a resolver that forgets the markers degrades to ASKING,
+    // never to running free. This is what the first draft of the test above missed — its stub resolver returned
+    // bare facts, and a nested removal asked for the wrong reason.
+    const sb = boundFor("host-sandbox");
+    const unmarked = fromProgramEffect("write-names", { paths: [{ kind: "fs", path: "/r/src/a.ts", inRoot: true, secret: false }] });
+    assert.equal(free(unmarked, sb), false,
+        "a names write with no place facts is inside no bound");
+    // Positive control: the same path with the markers the resolver computes is free (nested names write).
+    const marked = fromProgramEffect("write-names", { paths: [{ kind: "fs", path: "/r/src/a.ts", inRoot: true, secret: false, exists: true, isRoot: false, topLevel: false }] });
+    assert.equal(free(marked, sb), true,
+        "a nested names write the host resolved is free");
 });
 
 // --- versions ---
