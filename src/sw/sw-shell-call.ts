@@ -47,6 +47,8 @@ export const PROBE_TIMEOUT_MS = 2000, PROBE_BYTES = 4096;
 
 /** The calls a step has made and its tool result has not yet carried to the timeline, by run and the step's OFFSET seq. */
 const spansByStep = new Map<string, ShCallSpan[]>();   // state: plumbing — filled by shRun, drained when the step's tool returns
+/** At most this many steps' spans wait to be drained; past it the oldest go (a call whose step is never drained). */
+const SPAN_STEPS_MAX = 256;
 
 /**
  * The span the event lane draws for one finished call: the program's basename, its duration and what the host measured.
@@ -150,6 +152,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                     ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}) } });
             const k = `${ctx.runId}:${ctx.seq}`;
             spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result)]);
+            if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
             return { ok: result };
         });
     } catch (e) { return failure(e); }
