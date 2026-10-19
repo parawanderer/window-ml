@@ -1040,6 +1040,12 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A reply arriving in front of you grows into place over this long (`useReplyArrival`, reply.tsx): quieter than your
    own message's 300ms rise, with no scale, because it is the page answering rather than something you did. */
 .chat.calm .asst-body { --asst-arrive-ms: 260; }
+/* A STREAMING REPLY'S WORDS FADE IN as they arrive (streaming-md.tsx), the way Gemini's do, instead of each burst of
+   the stream landing as a block. The component paces them and keeps each fade going across redraws by its delay;
+   this says how long one takes. Opacity only: a word that moved as it arrived would make the line it is on shimmer. */
+.chat.calm .asst-body { --word-fade-ms: 380; }
+.chat.calm .asst-body .w-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
+@keyframes chat-word-in { from { opacity: 0; } }
 @keyframes chat-asst-shrink { from { height: auto; opacity: 1; } to { height: 1lh; opacity: 0; } }
 @keyframes chat-asst-grow { from { height: 1lh; opacity: 0; } to { height: auto; opacity: 1; } }
 @keyframes chat-asst-sum-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
@@ -1049,7 +1055,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .asst-body.folded.closing > .asst-collapsed { animation: chat-asst-sum-out .18s cubic-bezier(.4, 0, 1, 1) both; }
 .chat.calm .asst-body:not(.folded).opening { animation: chat-asst-grow .18s cubic-bezier(.4, 0, .2, 1) both; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
-    .chat.calm .asst-body { --asst-close-ms: 0; --asst-arrive-ms: 0; }
+    .chat.calm .asst-body { --asst-close-ms: 0; --asst-arrive-ms: 0; --word-fade-ms: 0; }
     .chat.calm .asst-body.closing, .chat.calm .asst-body.opening,
     .chat.calm .asst-body > .asst-collapsed { animation: none; }
 }
