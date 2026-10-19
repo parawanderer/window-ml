@@ -321,6 +321,7 @@ test("a resumed session is told once that an archive took its run policies; a se
     P.addRunPolicy("h-told", allowUrl("https://told.example/a"));
     P.forgetRunPolicies("h-told", "archived");
     const first = P.takeArchiveNotice("h-told");
+    assert.match(first, /^window\.ml note \(from the extension, not from the person\)/);
     assert.match(first, /archived on .* run policies were removed .*fetch https:\/\/told\.example\/a/);
     assert.equal(P.takeArchiveNotice("h-told"), undefined, "once");
     assert.equal(writes.at(-1).ml_policies_archived["h-told"].told, true, "and not again after a worker restart");

@@ -183,7 +183,7 @@ to the decision, and a call's payload cannot name a policy to claim it.
   `detail` to the tool result, so the export's `result` is what the model read. A nested `sh` ask carries it as
   `StepAsk.why` (the ask card) and its refusal text. Both write a `policy`/`lapsed` run log record.
 - **Told on resume.** `takeArchiveNotice` returns once a sentence naming the policies an archive removed; the worker
-  pushes it as a user message before a resumed run's first model call (`sw-run-host.ts`), logs `policy`/`archive-told`,
+  pushes it as a SYSTEM message (the worker's note, marked as the extension's, never the person's words) before a resumed run's first model call (`sw-run-host.ts`), logs `policy`/`archive-told`,
   and marks the stored record `told`, so a later resume does not repeat it. The resume note's `dropped` and
   `ml.current.policiesRemoved` are unchanged.
 - Trap: the sentence quotes the policy's label, which a person or an approved proposal wrote (length-capped, no line

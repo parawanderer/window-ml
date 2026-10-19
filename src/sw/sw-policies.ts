@@ -261,7 +261,7 @@ export function takeArchiveNotice(runId: string): string | undefined {
     if (!l || l.told) return undefined;
     l.told = true;
     saveRuns();
-    return `Note: this session was archived on ${new Date(l.at).toISOString()} and its run policies were removed then (${l.labels.join("; ")}). Calls those policies allowed without asking will ask the person again.`;
+    return `window.ml note (from the extension, not from the person): this session was archived on ${new Date(l.at).toISOString()} and its run policies were removed then (${l.labels.join("; ")}). Calls those policies allowed without asking will ask the person again.`;
 }
 
 /** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */

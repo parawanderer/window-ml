@@ -826,9 +826,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (!historyScrubbed) {
                         historyScrubbed = true;
                         if (resumeMessages?.length) await forModelHistory(messages);
-                        // A session that comes back after an archive is told once, before its first step, that its run policies went.
+                        // A session that comes back after an archive is told once, before its first step, that its run policies went. A SYSTEM
+                        // message, never a user one: the note is the worker's, and must not read as the person's words.
                         const gone = resumeMessages?.length ? takeArchiveNotice(runId) : undefined;
-                        if (gone) { (messages as { role: string; content: string }[]).push({ role: "user", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
+                        if (gone) { (messages as { role: string; content: string }[]).push({ role: "system", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
