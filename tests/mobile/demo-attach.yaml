@@ -25,12 +25,14 @@ appId: dev.wander.windowml
       - extendedWaitUntil:
           visible: "Photo taken on.*"
           timeout: 15000
+      # Index 0 both times: a selected photo's accessible name no longer starts "Photo taken on", so the first
+      # UNSELECTED photo is always index 0 (with only the two seeded photos, index 1 does not exist after one tap).
       - tapOn:
           text: "Photo taken on.*"
           index: 0
       - tapOn:
           text: "Photo taken on.*"
-          index: 1
+          index: 0
       - tapOn: "Done|Add"
 - runFlow:
     when:
