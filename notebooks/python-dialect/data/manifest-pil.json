@@ -11,20 +11,25 @@
     ]
   },
   "leaves": {
-    "PIL.Image.fromarray": {
+    "Image.save": {
+      "effects": "write(buffer arg)",
+      "returns": "None",
       "cost": "pixels",
-      "returns": "fresh"
+      "over": "an in-memory buffer the cell owns (a BytesIO), never a path",
+      "why": "save writes to the file or buffer it is given: allowed only into an owned BytesIO"
+    },
+    "PIL.Image.fromarray": {
+      "effects": "pure",
+      "returns": "alias(0)",
+      "cost": "pixels",
+      "why": "wraps the array's buffer for some dtypes (measured: L and RGBA share, RGB copies); never plain fresh"
     },
     "PIL.Image.open": {
-      "cost": "pixels",
-      "returns": "fresh",
       "effects": "read(buffer arg)",
-      "why": "open reads the path or buffer it is given: allowed only over an owned BytesIO, never a path"
-    },
-    "Image.save": {
+      "returns": "fresh",
       "cost": "pixels",
-      "effects": "write(buffer arg)",
-      "why": "save writes to the file or buffer it is given: allowed only into an owned BytesIO"
+      "over": "an in-memory buffer the cell owns (a BytesIO), never a path",
+      "why": "open reads the path or buffer it is given: allowed only over an owned BytesIO, never a path"
     }
   },
   "cells": 10,
@@ -39,5 +44,5 @@
       }
     }
   },
-  "note": "every name the corpus calls, however rare (MIN_CELLS does not apply: the list is short); the prelude binds Image; effects and return marking per method are the second pass, cost is in pixels (ruled 2026-10-15)"
+  "note": "effects, return marking (fresh/alias(i)/internal) and cost shapes: leafpass.py, second pass 2026-10-18 (docs/spec/READONLY_LIBRARY_MANIFEST.md); a listed name is admitted only with its row"
 }

@@ -399,6 +399,48 @@ pd.concat([chains.head(30).rename_axis("chain").rename("cells").reset_index(), m
 """)
 
 md("""
+## The second pass: effects, return marking and cost shapes
+
+The name lists above say WHAT a cell reaches; a leaf is admitted only once the manifest also says what it DOES. This
+cell fills `leaves` in from `leafpass.py`, one row per listed name: `effects` (`pure`, `mutates(i)`, `cache`,
+`read`/`write(buffer arg)`, `reads-external`, `external`), `returns` (`fresh`, `alias(i)`, `internal`, `None`, or a
+conditioned form naming both branches) and a cost SHAPE in size measures. The marking rule and what was measured to
+settle it live in `leafpass.py`'s docstring: `fresh` only when every path allocates buffers that alias no argument,
+and anything that can return a view sharing memory with an unowned input is `alias(i)` or `internal`, never `fresh`.
+`test_leafpass.py` enumerates every listed name against the table.
+""")
+
+code("""
+import leafpass
+
+NOTE = ("effects, return marking (fresh/alias(i)/internal) and cost shapes: leafpass.py, second pass 2026-10-18 "
+        "(docs/spec/READONLY_LIBRARY_MANIFEST.md); a listed name is admitted only with its row")
+
+def listed_keys(mod, m):
+    # The leaf keys a manifest's name lists name: `<module>.<function>` and `<Kind>.<method>`.
+    if mod in ("pandas", "numpy"):
+        fns = {f"{m['module']}.{s}" for s in m.get("functions", [])}
+    elif mod == "PIL":
+        fns = {s if s.startswith("PIL.") else f"PIL.{s}" for s in m.get("functions", [])}
+    else:
+        fns = {f"{name}.{s}" for name, names in m.get("modules", {}).items() if name != "PIL" for s in names}
+    kinds = {f"{kind}.{s}" for kind, ms in m.get("kinds", {}).items() for s in ms}
+    return fns | kinds
+
+for mod, fname in (("pandas", "manifest-pandas.json"), ("numpy", "manifest-numpy.json"),
+                   ("stdlib", "manifest-stdlib.json"), ("PIL", "manifest-pil.json")):
+    path = OUT / fname
+    m = json.loads(path.read_text())
+    m["leaves"] = leafpass.leaves_for(mod)
+    m["note"] = NOTE
+    path.write_text(json.dumps(m, indent=2) + "\\n")
+    listed = listed_keys(mod, m)
+    miss = sorted(listed - set(m["leaves"]))
+    print(f"{fname}: {len(m['leaves'])} leaves for {len(listed)} listed names" + (f"; MISSING {miss}" if miss else ""))
+pd.DataFrame({k: v for k, v in list(leafpass.LEAVES.items())[:3]}).T
+""")
+
+md("""
 ## Name-resolving leaves and callbacks
 
 Ruled 2026-10-15 (repl-specs): a pandas leaf that resolves a method NAME from a string (`df.agg("sum")`) admits only a
