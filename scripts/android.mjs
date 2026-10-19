@@ -18,7 +18,7 @@
 // unnecessary. The SDK is the command-line one (`brew install --cask android-commandlinetools`), not Android Studio.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensurePrebuild } from "./mobile-prebuild.mjs";
 
@@ -152,6 +152,12 @@ function flows(argv) {
     const m = maestro();
     if (!m) { console.error("✗ Maestro is not installed (node scripts/android.mjs doctor)"); process.exit(1); }
     const targets = files.length ? files : ["tests/mobile"];
+    // A fresh emulator's library is empty and demo-attach.yaml picks two photos from it. Maestro's `addMedia` cannot
+    // reach a fixture when several flows run at once ("not found in workspace"), so they are pushed here and scanned.
+    for (const f of readdirSync("tests/mobile").filter((n) => /^photo-.*\.png$/.test(n))) {
+        run(bin.adb, ["push", path.join("tests/mobile", f), `/sdcard/Pictures/${f}`]);
+        run(bin.adb, ["shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", `file:///sdcard/Pictures/${f}`]);
+    }
     // No analytics prompt: its first-run banner made the first invocation exit 1 with every flow unrun.
     run(m, ["test", ...report, ...targets], { env: { ...env, PATH: `${path.dirname(bin.adb)}:${process.env.PATH}`, MAESTRO_CLI_NO_ANALYTICS: "1", MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true" } });
 }

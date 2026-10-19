@@ -10,6 +10,11 @@ appId: dev.wander.windowml
     visible: "KV cache size at 32k"
     timeout: 60000
 - tapOn: "Settings"
+# Settings is longer than a screen (appearance, notifications, updates come first): scroll to the row.
+- scrollUntilVisible:
+    element: "Devices"
+    direction: DOWN
+    timeout: 20000
 - tapOn: "Devices"
 - tapOn: "Pair a device"
 - tapOn: "Scan its QR code"

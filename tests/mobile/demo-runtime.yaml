@@ -10,6 +10,11 @@ appId: dev.wander.windowml
     visible: "KV cache size at 32k"
     timeout: 60000
 - tapOn: "Settings"
+# Settings is longer than a screen: the Runtimes group is at the bottom.
+- scrollUntilVisible:
+    element: "Work laptop: what it is, its models and its storage"
+    direction: DOWN
+    timeout: 20000
 - tapOn: "Work laptop: what it is, its models and its storage"
 - extendedWaitUntil:
     visible: "Contract"

@@ -32,8 +32,12 @@ on:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
+# A `labeled` event for any OTHER label is a run that skips its job, and in the branch's group it would cancel the real
+# run still in flight (a PR opened with three labels fires three `labeled` events). It gets a group of its own.
 concurrency:
-  group: android-flows-${{ github.ref }}
+  group: >-
+    ${{ github.event.action == 'labeled' && github.event.label.name != 'run:android-flows'
+        && format('android-flows-skip-{0}', github.run_id) || format('android-flows-{0}', github.ref) }}
   cancel-in-progress: true
 
 permissions:

@@ -13,7 +13,9 @@ appId: dev.wander.windowml
     visible: "Model: qwen3:32b"
     timeout: 30000
 - tapOn: "Session menu"
-- tapOn: "Look at the page.*"
+# The sheet row's whole label: a bare "Look at the page.*" matches the page's own header button first (a zero-height
+# node still in the accessibility tree behind the sheet), and the tap lands on the backdrop and closes the sheet.
+- tapOn: "Look at the page, The page this run is on.*"
 - extendedWaitUntil:
     visible: "Image, full size"
     timeout: 15000
