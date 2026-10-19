@@ -212,27 +212,12 @@ gh run list --branch main --limit 3             # does MAIN fail it too? then it
 - **`cross-page.spec.mjs` › `fetch_url rendered: the DOM-quiet settle…`** — timing-sensitive, carries
   `retries: 2`, and usually passes on retry. Reported as *flaky*, not failed. A **flaky** line is not a
   red check; a **failed** one is.
-- **`resource-stream.spec.mjs` › `a self-contradicting ps frame does not make a resident model vanish`** —
-  INTERMITTENT on main itself: 1 of 10 locally against a build of `4e2a385`, and it failed #43's CI, whose
-  diff never touches the resource panel. Always the same assertion — `t=100: the row lost the model's
-  memory`, the row reading "evicted" — right after the first `loading` frame, and it has no `retries`, so it
-  reports as *failed*. Unconfirmed lead: the test seeds only the event stream, so the fake box's `/api/ps`
-  reports nothing resident, and a poll landing in the 150ms window disagrees with the stream.
-
 - **`cross-page.spec.mjs` › `cross-domain (HUD card): a RESUME that navigates cross-origin still shows the card on
   the destination origin`** — failed #235 (2026-09-21) on both its tries, a diff of two scripts and docs that touches
   no extension code; a rerun of the shard passed. Treat a single failure as flaky, rerun the shard
   (`gh run rerun <id> --failed`), and look properly only if it fails twice running on the same branch.
 
-- **`mobile-android` › Publish it as the rolling Android build** (main only, not a PR gate) — the Gradle build
-  succeeds and `gh release delete android-latest` / `gh release create` races on the rolling tag; the job dies
-  with `HTTP 404` / `cleaning up draft failed`. 1 of 8 recent main runs (39115250209, a docs merge whose diff
-  touches no native code). Rerun the job; do not blame the PR. A fix would retry the publish once after a
-  failed delete/create cycle.
-
-The three entries above did not occur once in the 80 `tests` runs of 2026-10-15 (08:09–14:02Z, 24 with e2e): each
-passed first try everywhere it ran. Six hours is weak evidence for events this rare, so they stay listed until a longer
-window says otherwise.
+The two remaining entries above did not occur once in the 80 `tests` runs of 2026-10-15 (08:09–14:02Z, 24 with e2e): each passed first try everywhere it ran. Six hours is weak evidence for events this rare, so they stay listed until a longer window says otherwise.
 
 Measured from CI logs on 2026-10-15 (the same 80 runs; method: read every e2e shard log, count per test failed vs
 flaky), and the only entries that BLOCKED a run that day:
@@ -242,7 +227,9 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
 - **`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`**
   (e2e 3/3) — flaky 3 times, all on main: the run does not reach an ended status within 20 s of the approve click. The
   security assertions before that step passed; the stall itself is unexplained. A @security test going flaky is a bug
-  report until proven otherwise.
+  report until proven otherwise. Local: 0 of 660 green on 2026-10-19 (15 solo, 5x full suite at 3 workers, 5x two parallel
+  full suites at 3 workers). No CI artifact yet of a stall. Next failure: download `e2e-results-3` and read the page
+  snapshot before theorising; do not raise the 20s and do not touch `idx.settled`'s meaning of "ended" without that.
 - Seen once each: `site-access` 16a (@security), `cross-page` composer seq collision, `output-scroll` tail-follow,
   `chat-web` phone tooltip, `focus-restore`, `bench-editor` traceback, `chat-page` PAGE-hosted run, `resource-panel`
   narrow window.
@@ -250,6 +237,19 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`resource-stream.spec.mjs` › `a self-contradicting ps frame does not make a resident model vanish`~~ —
+  **fixed** in `f0245376` (2026-09-12), a product bug and not a flake: `pollPs`/`fetchCapacity` checked
+  `streamLive` only when SENDING, so the panel's mount-time `/api/ps` reply landing after the stream's first
+  sample was recorded over it, and against an empty `/api/ps` the resident model read as "evicted". Both
+  callbacks now re-check at reply time, and `resource-stream.spec.mjs` pins it ("a poll answered after the
+  stream went live does not overwrite the stream's reading", via `setPsDelay`). The old "unconfirmed lead"
+  was that race; the 1-in-10 count was measured on `4e2a385`, which predates the fix. 40/40 local on
+  2026-10-19 (12+8 repeats of both tests, 4 and 8 workers); main green. Do not add as flake.
+
+- ~~`mobile-android` › Publish it as the rolling Android build~~ — **fixed** in #752 (`ea87a78c`): the rolling `android-latest` publish is retried once after a failed delete/create cycle, which was the race (`cleaning up draft failed: HTTP 404` after a second main run landed between the delete and the create).
+
+- ~~`chat-web.spec.mjs` › `a citation takes you to the step on the FIRST click, not the second`~~ — **fixed** in #809 (`ecdf04c3`), a product bug and not a flake: after a citation jump the step's growth scroll-anchored the view to exactly the bottom, `onScroll` re-set `stuck`, and #795's glide then cancelled the smooth `scrollIntoView` to the step. Fails 2–5 of 5 locally from #795 on; the failing subject is outside every branch that reddened for it. Do not add as flake.
 
 - ~~`chat-page.spec.mjs:935` › `the start page holds through a worker restart, and its tab list is fresh and has the
   sites' icons`~~ — **fixed.** Two cooperating defects: the test's wait on `.chat-start-wait == null` was a false
