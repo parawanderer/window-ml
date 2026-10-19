@@ -117,7 +117,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -424,7 +424,16 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         }
     };
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.join(DIST, "background.js"), "utf8"), context);
+    // `dialectInside`: a substring that marks a python_exec cell as INSIDE the read-only dialect. The built worker has no
+    // real membership predicate yet (agent/python-dialect.ts), and a bundle in a vm cannot reach the source module's test
+    // seam, so the default verdict is replaced in the bundle's text.
+    let bgSrc = fs.readFileSync(path.join(DIST, "background.js"), "utf8");
+    if (dialectInside) {
+        const patched = bgSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
+        if (patched === bgSrc) throw new Error("loadBackground: dialectInside found no membership default in dist/background.js");
+        bgSrc = patched;
+    }
+    vm.runInContext(bgSrc, context);
 
     return {
         calls,
@@ -544,7 +553,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -679,7 +688,13 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
     };
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
-    vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
+    let injectedSrc = fs.readFileSync(path.join(DIST, "injected.js"), "utf8");
+    if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
+        const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
+        if (patched === injectedSrc) throw new Error("loadPageWorld: dialectInside found no membership default in dist/injected.js");
+        injectedSrc = patched;
+    }
+    vm.runInContext(injectedSrc, context);
 
     // Simulate the background delivering a message to this tab's content script (chrome.tabs.sendMessage
     // → chrome.runtime.onMessage). Resolves with whatever sendResponse is eventually called with — for

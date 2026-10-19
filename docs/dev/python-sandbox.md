@@ -206,11 +206,15 @@ before a cell's result is returned. The strip, the harness capture and the wrapp
 **escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
-cell the import fallback, and `loadPackage` of a wheel still works after the strip. `full` mode
-leaves the bridges intact (outbound network) and **always** requires manual approval.
+cell the import fallback, and `loadPackage` of a wheel still works after the strip. There is **no `mode`**
+(removed 2026-10-19, lane 7): every cell runs in a hardened worker, and `pythonCellInDialect` (`agent/python-dialect.ts`)
+decides whether it is inside the read-only dialect (no card, the read-only slice of `ml`) or outside it (asks, the full
+gated `ml`). It returns false for every cell until the Pyodide build carries a membership predicate, so **no cell
+auto-approves yet**; the plug-in point is that one function. A grant keeps the old prefixes (`full:` outside,
+`readonly:` inside), so a stored `full:` grant still covers its code and a stored `readonly:` one no longer does.
 Config `autoApprovePython`
-(ON by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
-`sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
+(ON by default, Advanced settings) auto-approves calls **inside the dialect** (badge provenance
+`sandbox`) — but code outside it, or containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
 retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
 exist"). The sandbox's third-party packages are a **single source of truth** in
@@ -315,10 +319,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
 - **Cells of the same worker-hosted run**, by run id: `wire.run` on `PY_RUN`, set only from `wireRun` (`worker-tools.ts`).
   The worker keeps `runs: Map<runId, { ns, id }>` (`python-worker.ts`), so the key is the run and nothing else.
 - **Not** a page's `ml.pythonExec` or a page-hosted agent's `python_exec`: no run id, so the main namespace and the reset
-  as before. **Not** the bench (`persist`): its own `benchNs`, per mode.
-- **Both modes, and no crossing.** A `readonly` cell runs on the worker of principal `run:<id>`, a `full` cell on the
-  `full` worker. Each keeps its own dict for the run, so a name defined in a `full` cell is not visible to a `readonly`
-  cell of the same run.
+  as before. **Not** the bench (`persist`): its own `benchNs`.
 - **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
   wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
 - **Ends** with the run: `settle()` (`sw-run-host.ts`) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
@@ -332,9 +333,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   cell's scope manifest (`bench.vars`: names and type names).
 - **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
   `offscreen.ts`), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
-- **Known residual:** two full-mode runs ALIVE at once share the `full` interpreter and can read each other's dicts
-  (`gc.get_objects()`); the approval card says so. Pinned by a test that asserts it exists
-  (`docs/plan/repl/LANE_1_RESULT_C.md`, "Known residual").
+- **The `full` worker is unreachable from the service worker** since `mode` went (`runPython` always sends `hardened: true`); its branch in `offscreen.ts` and `python-worker.ts` stays for the Pyodide-build lanes to delete. The residual it carried (two full-mode runs sharing one interpreter) is gone with it.
 - **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only).
 
 Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) and `tests/python-run-namespace-py.test.mjs`

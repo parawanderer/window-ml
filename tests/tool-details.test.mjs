@@ -53,10 +53,10 @@ test("locate keeps a trigger for every option, its full text is served as detail
     for (const t of [LOCATE.description, ...Object.values(LOCATE.params)]) assert.doesNotMatch(t, / {2}/);
 });
 
-test("python_exec keeps a trigger for each of tables/cast/mode, its full texts are served as details, and nothing pads", async () => {
+test("python_exec keeps a trigger for each of tables/cast, its full texts are served as details, and nothing pads", async () => {
     // Round 3 (PROMPT_BUDGET.md): the cut shipped once #650 and the derived-name fix removed what it had cost glm-4.7-flash.
     const { PYTHON, PYTHON_FULL, TOOL_DETAILS } = await import("../src/tools/tool-details.ts");
-    for (const k of ["tables", "cast", "mode"]) {
+    for (const k of ["tables", "cast"]) {
         assert.ok(PYTHON[k].length > 0 && PYTHON[k].length < PYTHON_FULL[k].length, k);
         assert.ok(TOOL_DETAILS.python_exec.includes(PYTHON_FULL[k]), `${k}'s full text is served`);
         assert.doesNotMatch(PYTHON[k], / {2}/, k);

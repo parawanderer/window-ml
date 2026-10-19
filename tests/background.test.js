@@ -3398,10 +3398,10 @@ test("SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata targets
 
 test("SECURITY (positive): a TRUSTED surface (sender.tab undefined) keeps full python", async () => {
     // Guard against over-blocking: internal extension surfaces (popup / offscreen / a future REPL) must
-    // still get unhardened mode. This passes today and must keep passing after the hardening pass.
+    // still run Python. There is no unhardened mode any more: every cell runs hardened.
     const bg = loadBackground({ config: baseConfig() });
     await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1", hardened: false } });   // no sender.tab
-    assert.equal(bg.pyRuns.find(m => m.type === "PY_RUN")?.hardened, false, "trusted surface may run full mode");
+    assert.equal(bg.pyRuns.find(m => m.type === "PY_RUN")?.hardened, true, "a trusted surface runs, hardened");
 });
 
 test("SECURITY (grant): an approved agent run lets THAT sheet read (untrusted page) mid-run, then clears", async () => {
@@ -4251,7 +4251,7 @@ test("SECURITY (PYTHON_EXEC): a PAGE-started readonly cell is refused without ap
     const res = await bg.send(
         { type: "PYTHON_EXEC", payload: { code: "1+1" } },
         { tab: { id: 9 }, url: "https://evil.example/attack" });
-    assert.match(String(res?.error), /Refused: Python from a page needs approval on this page/);
+    assert.match(String(res?.error), /Refused: Python outside the read-only dialect needs approval on this page/);
     assert.equal(bg.pyRuns.filter(m => m.type === "PY_RUN").length, 0, "nothing reached the sandbox");
 });
 
@@ -4434,7 +4434,7 @@ test("SECURITY (PYTHON_EXEC): a PAGE cannot reset the bench's variables", async 
     assert.equal(bg.pyRuns.filter(m => m.type === "PY_RUN").length, 0);
 });
 
-test("PYTHON_EXEC: the bench's keep-state run, reset and mode-scoped completion all reach the sandbox", async () => {
+test("PYTHON_EXEC: the bench's keep-state run, reset and completion all reach the sandbox", async () => {
     const bg = loadBackground({ config: baseConfig() });
     const own = { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" };
     await bg.send({ type: "PYTHON_EXEC", payload: { code: "x = 1", persist: true } }, own);
@@ -4444,8 +4444,7 @@ test("PYTHON_EXEC: the bench's keep-state run, reset and mode-scoped completion 
     const runs = bg.pyRuns.filter(m => m.type === "PY_RUN");
     assert.equal(runs[0].persist, true);
     assert.equal(runs[1].benchReset, true);
-    assert.equal(runs[2].complete.bench, "full");
-    assert.ok(!("bench" in runs[3].complete), "an unknown namespace name is dropped, never forwarded");
+    assert.ok(!("bench" in runs[2].complete) && !("bench" in runs[3].complete), "there is no namespace name to forward: mode is gone");
 });
 
 // ---- Request hints (RequestHint → `hint` on the wire; a patched ollama records it on gen.end) ----

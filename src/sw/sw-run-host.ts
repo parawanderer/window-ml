@@ -4,6 +4,7 @@
 // over and keeps the channel open until the run finishes.
 
 import { runBackgroundAgent } from "../agent/agent-host";
+import { pythonCellInDialect } from "../agent/python-dialect";
 import { evalReadonlyInWorker } from "./sw-readonly";
 import { deletePythonRun } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
@@ -945,17 +946,17 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // while the grant authorises another.
                     const remote = p.tools.find(t => t.name === name)?.remote;
                     // A python_exec the WORKER runs gets its grants as the RUN's call grant (worker-tools.ts): on the tab
-                    // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
+                    // they were a sheet read with the person's cookies, and outside-the-dialect Python, that any script on the
                     // page could use while the call ran. Every python_exec of a run the worker drives runs there (an image
                     // and a page table are asked of the page as data, worker-media.ts, worker-page-read.ts); only a
                     // page-built run's still runs on its page, an approved site's, and mints the tab's.
                     const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name);
                     if (pyInWorker) {
                         await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
-                        grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null, ...(call ? { step: { seq: seqBase + call.seq, local: call } } : {}) });
+                        grantRunPython(runId, { sheets: externalSheetIds(args), code: pythonCellInDialect(String((args as { code?: unknown }).code ?? "")) ? null : String((args as { code?: unknown }).code ?? ""), ...(call ? { step: { seq: seqBase + call.seq, local: call } } : {}) });
                     }
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
-                    // fetch URLs, a server tool's exact call, and a page-built run's python_exec's full-mode code and sheets.
+                    // fetch URLs, a server tool's exact call, and a page-built run's python_exec's outside-the-dialect code and sheets.
                     // Minted only when there is something to mint, so a call with none holds no entry.
                     const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: byWorker(), pyInWorker,
                         ...(remote ? { remoteKey: serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>) } : {}) });

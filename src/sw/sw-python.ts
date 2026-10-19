@@ -11,6 +11,7 @@ import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
 import { pyCodeCovers } from "./grant-extract";
+import { pythonCellInDialect } from "../agent/python-dialect";
 import { openWireClient } from "./ml-wire-serve";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
@@ -40,7 +41,7 @@ export function pythonPrewarm(message: any, sender: chrome.runtime.MessageSender
     const trigger = (message.payload as { trigger?: string } | undefined)?.trigger;
     if (trigger !== "run-start" && trigger !== "commander") { sendResponse({ error: "PYTHON_PREWARM needs a trigger: run-start or commander." }); return; }
     // Prewarm warms the SPECIFIC principal's worker the next run will use. A page's run-start is its tab's
-    // sandbox; the Commander is our own surface's. Readonly always — a full-mode run is never prewarmed.
+    // sandbox; the Commander is our own surface's. Every cell runs hardened.
     const principal = trigger === "commander" ? "own" : sender?.tab?.id != null ? `page:${sender.tab.id}` : "own";
     ensureOffscreen()
         .then(() => chrome.runtime.sendMessage({ type: "PY_PREWARM", principal, hardened: true }))
@@ -57,12 +58,12 @@ export interface PythonCaller {
     ownSurface: boolean;
     /** The tab it is for, when it has one. */
     tabId?: number;
-    /** Not a trusted surface or a whitelisted domain: `full` mode needs a grant. Asked only when it matters. */
+    /** Not a trusted surface or a whitelisted domain: a cell outside the dialect needs a grant. Asked only when it matters. */
     untrusted: () => Promise<boolean>;
-    /** Whether `full` mode is approved for exactly this code. Absent: the call grants on the tab (`tabGrants(tabId).pyCode`, sw-consent.ts). */
+    /** Whether a cell outside the dialect is approved for exactly this code. Absent: the call grants on the tab (`tabGrants(tabId).pyCode`, sw-consent.ts). */
     pyCodeOk?: (code: string) => boolean;
-    /** A run the worker drives, whose own gate decided a readonly cell (autoApprovePython or the person): no tab grant
-     *  is asked for it. Absent: a page-started cell, which runs readonly code only under a grant. */
+    /** A run the worker drives, whose own gate decided an inside-the-dialect cell (autoApprovePython or the person): no tab grant
+     *  is asked for it. Absent: a page-started cell, which runs only under a grant. */
     runGated?: boolean;
     /** Whether this caller may read a stored table held by `holders`. Absent: a run hosted on its tab, or the tab the
      *  key was disclosed to. */
@@ -94,9 +95,9 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
 }
 
 /**
- * Run one sandboxed-Python call in the offscreen host. THE choke point for `full` mode, which is network at the
- * extension origin: readonly is safe for any caller, full needs a trusted surface, a whitelisted domain, or a grant for
- * exactly this code. Rejected with a clear error, never silently downgraded to readonly.
+ * Run one sandboxed-Python call in the offscreen host. THE choke point for a cell outside the read-only dialect, which
+ * runs as full Python with the gated `ml` set: it needs a trusted surface, a whitelisted domain, or a grant for exactly
+ * this code. Rejected with a clear error, never silently downgraded.
  * @param payload what `PYTHON_EXEC` carries
  * @param requestId the caller's request id, which keys its live stdout
  * @param caller who it is for
@@ -109,9 +110,8 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // to the single sandbox. Always HARDENED, whatever it asked for.
     const rawComplete = payload?.complete;
     if (rawComplete && !ownSurface) return { error: "Refused: code completion is a workbench feature." };
-    const benchMode = rawComplete?.bench === "full" ? "full" : rawComplete?.bench === "readonly" ? "readonly" : undefined;
     const complete = rawComplete
-        ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0), ...(benchMode ? { bench: benchMode } : {}) }
+        ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0) }
         : null;
     // The bench's KEPT STATE is ours alone: a page's run always executes in the namespace every run resets, and a page
     // cannot clear a person's variables.
@@ -137,18 +137,19 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     }
     const persist = !!payload?.persist && ownSurface;
     const benchReset = !!payload?.benchReset;
-    const wantsFull = !complete && payload?.hardened === false;
-    if (wantsFull && await caller.untrusted()) {
+    // Decided by the worker from the code itself, never from a field the caller sent: inside the dialect, or outside it.
+    const outside = !complete && !pythonCellInDialect(String(payload?.code ?? ""));
+    if (outside && !ownSurface && await caller.untrusted()) {
         const code = String(payload?.code ?? "");
-        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : pyCodeGranted(caller.tabId, "full", code);
-        if (!approved) return { error: "Refused: network-enabled (full) Python needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
+        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : pyCodeGranted(caller.tabId, true, code);
+        if (!approved) return { error: "Refused: Python outside the read-only dialect needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
     }
-    // A PAGE-STARTED readonly cell is never auto-approved: it runs only code a person approved on this tab, in either mode.
-    // The readonly sandbox is being hardened, and until it is, readonly code from a page is not assumed harmless. Our own
+    // A PAGE-STARTED cell inside the dialect is never auto-approved: it runs only code a person approved on this tab.
+    // The sandbox is being hardened, and until it is, code from a page is not assumed harmless. Our own
     // surfaces, a self-approving site and a run the worker drives (whose own gate decided) are unchanged.
-    if (!complete && !wantsFull && !ownSurface && !caller.runGated && await caller.untrusted()) {
+    if (!complete && !outside && !ownSurface && !caller.runGated && await caller.untrusted()) {
         const code = String(payload?.code ?? "");
-        if (!pyCodeGranted(caller.tabId, "readonly", code)) return { error: "Refused: Python from a page needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
+        if (!pyCodeGranted(caller.tabId, false, code)) return { error: "Refused: Python from a page needs approval on this page. Run it through an agent and approve it, or add this site to the list of sites that approve their own actions (DevTools Settings → Permissions)." };
     }
     // LIVE stdout streaming (opt-in): record where this run's chunks go.
     const streamId: string | undefined = payload?.stream ? requestId : undefined;
@@ -161,19 +162,17 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const noTimeout = !!payload?.noTimeout && ownSurface;
     // A run whose returned frame may become a pointer carries the store's budget; the bench's and a completion's never do.
     const valueBudget = persist || complete ? 0 : await valueBudgetBytes().catch(() => 0);
-    // The cell's `ml` over the wire: a client bound to the offscreen document, this call's run and its mode. A completion
-    // runs no code, so it gets none.
-    const hardened = complete ? true : payload?.hardened !== false;
-    // WHOSE sandbox: `full` mode is its own worker; a readonly cell belongs to the worker-hosted run that
+    // The cell's `ml` over the wire: a client bound to the offscreen document, this call's run and the cell's verdict
+    // (the read-only slice inside the dialect, the full gated set outside). A completion runs no code, so it gets none.
+    // Every cell runs in a HARDENED worker. WHOSE sandbox: a cell belongs to the worker-hosted run that
     // called it, the tab whose page called it, or one of our own surfaces (the bench). One Worker per
     // principal (PYODIDE_LOCKDOWN.md step 1) so a patch one principal left in module state cannot reach the next.
-    const principal = !hardened ? "full"
-        : caller.ownSurface ? "own"
+    const principal = caller.ownSurface ? "own"
         : caller.wireRun ? `run:${caller.wireRun}`
         : caller.tabId != null ? `page:${caller.tabId}`
         : "own";
-    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: hardened ? "readonly" : "full", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
+    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
     try {
         const res = await attempt().catch((err) => {
@@ -197,15 +196,15 @@ export async function runPython(payload: any, requestId: string | undefined, cal
 }
 
 /**
- * Whether a person approved exactly this code on the tab, in this mode: a `full` approval also covers `readonly`.
+ * Whether a person approved exactly this code on the tab with this verdict: an outside approval also covers inside.
  * @param tabId the tab
- * @param mode the mode the cell runs in
+ * @param outside whether the cell is outside the dialect
  * @param code the exact code
  * @returns true when granted
  */
-function pyCodeGranted(tabId: number | undefined, mode: "readonly" | "full", code: string): boolean {
+function pyCodeGranted(tabId: number | undefined, outside: boolean, code: string): boolean {
     const g = tabId != null ? tabGrants(tabId)?.pyCode : undefined;
-    return !!g && pyCodeCovers(g, mode, code);
+    return !!g && pyCodeCovers(g, outside, code);
 }
 
 /**
