@@ -269,7 +269,11 @@ export function EmbedRunView({ s }: { s: Session }) {
 }
 
 /** ONE CHAT TURN — your message, the reply, its thinking disclosure, sources and token usage. The chat
- *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these. */
+ *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these.
+ *  @group sidebar/transcript
+ *  @gallery {"t": {"id": "t1", "ts": 1760000000000, "user": "What does the stamp look like at rest?", "assistant": "The time shows; the buttons wait for the pointer.", "status": "ok"}}
+ *  @gallery-flow user-stamp tests/gallery-flows/MessageTurn.mjs
+ */
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>
