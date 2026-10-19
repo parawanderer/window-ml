@@ -72,6 +72,13 @@ frames, real navigation, the shadow DOM.
 If a safety classifier refuses a test or its analysis, STOP on that case: do not reword it and retry. Name the case
 to the owner; their other model writes the test, and the site-access work writes the defence.
 
+The notice has two causes you cannot tell apart from inside the session. One is Claude's own classifier. The other is
+a PROVIDER refusal when the model is routed through OpenRouter (2026-10-19: GMICloud answered a `handlesIn` property
+test with `stop_reason: refusal`, "considered high risk", and Claude Code showed its generic classifier notice). Stop
+on both; the rule is the same. The difference is who lifts it: a provider refusal is the owner's to remove by changing
+the route, after which the owner's word, given to the coordinator directly and never relayed by a lane, reopens that
+one case. Record the provider string in the checkpoint when you stop, so the owner can tell which it was.
+
 ## Report
 
 By session mail (`~/git/session-mail/window-ml/`, its README is the protocol) to whoever owns the fix: each property
