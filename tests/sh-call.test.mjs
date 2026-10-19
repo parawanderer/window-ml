@@ -182,11 +182,7 @@ test("ruling 2: the pin is the RESOLVED file's hash, the path must resolve to th
     const ok = shFacts(scriptFacts(), null, placeOf);
     assert.equal(ok.described, true);
     assert.deepEqual(ok.effects, [{ op: "read", res: { kind: "fs", path: "/w/a.txt", inRoot: true, secret: false } }]);
-    // scripts/tool.mjs is a LINK, to another file in the root: strict on purpose, the manifest names the file that runs,
-    // so even a target with the pinned content is undescribed (the safe direction; a symlinked root is resolved already)
-    const link = shFacts(scriptFacts({ path: "/w/lib/impl.mjs" }), null, placeOf);
-    assert.equal(link.described, false);
-    // or to a file outside the scripts folder
+    // a link to a file outside the scripts folder
     const moved = shFacts(scriptFacts({ path: "/w/tmp/evil.mjs" }), null, placeOf);
     assert.equal(moved.described, false);
     assert.match(moved.why.join(";"), /resolves to \/w\/tmp\/evil\.mjs, not scripts\/tool\.mjs in a workspace root/);
@@ -197,6 +193,14 @@ test("ruling 2: the pin is the RESOLVED file's hash, the path must resolve to th
     const card = shCardLines(shFacts(scriptFacts({ argv: ["node", "scripts/t.mjs", "a.txt"], path: "/w/scripts/tool.mjs" }), null, placeOf));
     const script = card.find((l) => l.label === "Script");
     assert.equal(script.value, `scripts/t.mjs → /w/scripts/tool.mjs (sha256 ${PIN.slice(0, 12)})`);
+});
+
+test("intended, not a gap: a symlinked entrypoint FILE is undescribed even when its target has the pinned content (a pin names a path AND a hash)", () => {
+    // scripts/tool.mjs is a link to lib/impl.mjs in the same root, whose bytes hash to the pin: still another file
+    const link = shFacts(scriptFacts({ path: "/w/lib/impl.mjs", sha256: PIN }), null, placeOf);
+    assert.equal(link.described, false);
+    assert.equal(link.effects, "unknown");
+    assert.match(link.why.join(";"), /resolves to \/w\/lib\/impl\.mjs, not scripts\/tool\.mjs in a workspace root/);
 });
 
 test("intended, not a gap: argv[1] outside every root that resolves to the entrypoint is not pre-selected, so it is undescribed", () => {
