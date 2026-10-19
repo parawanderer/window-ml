@@ -2667,6 +2667,7 @@ const pyBackend = (turns, onPy) => {
 const runPyAgent = async ({ config, code, args = {}, approve }) => {
     let pyPayload = null;
     const world = loadPageWorld({
+        dialectInside: "return ",   // no real membership predicate yet: a cell starting with `return` stands in for one inside the dialect
         config: { model: "", ocrModel: "", ...config },
         onRuntimeMessage: pyBackend([toolCall("python_exec", { code, ...args }, "c1"), reply("done")], p => (pyPayload = p)),
     });
@@ -2684,14 +2685,13 @@ test("autoApprovePython: a readonly python_exec runs with NO approval prompt (sa
     const { approvals, pyPayload, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return [5, 6]" });
     assert.equal(approvals, 0, "readonly python was auto-approved (gate never called)");
     assert.equal(step.approval, "sandbox", "step tagged auto-approved (sandbox)");
-    assert.equal(pyPayload.hardened, true, "readonly mode → the offscreen run is hardened");
+    assert.equal(pyPayload.mode, undefined, "no mode travels to the sandbox");
 });
 
-test("autoApprovePython: a full-mode python_exec still prompts (network needs approval, not hardened)", async () => {
-    const { approvals, pyPayload, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { mode: "full" } });
-    assert.equal(approvals, 1, "full mode always asks, even with the flag on");
+test("autoApprovePython: a cell outside the dialect still prompts, and a stale `mode` argument changes nothing", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "x = 1", args: { mode: "full" } });
+    assert.equal(approvals, 1, "outside the dialect always asks, even with the flag on");
     assert.equal(step.approval, "user");
-    assert.equal(pyPayload.hardened, false, "full mode → the offscreen run is NOT hardened");
 });
 
 test("autoApprovePython: code with hidden/bidi characters still prompts", async () => {
@@ -2703,7 +2703,7 @@ test("autoApprovePython: code with hidden/bidi characters still prompts", async 
 test("autoApprovePython OFF: a readonly python_exec still prompts (the flag gates it)", async () => {
     const { approvals, pyPayload } = await runPyAgent({ config: { autoApprovePython: false }, code: "return [5, 6]" });
     assert.equal(approvals, 1, "with the flag off, every python_exec is gated");
-    assert.equal(pyPayload.hardened, true, "still hardened — readonly mode is the default regardless of approval");
+    assert.equal(pyPayload.mode, undefined, "no mode travels to the sandbox, whatever the approval");
 });
 
 test("autoApprovePython: an EXTERNAL `sheet` still prompts (a privileged cross-origin fetch)", async () => {
@@ -2781,7 +2781,7 @@ test("a `tables` map of only DOM selectors / 'current' is auto-approved (no exte
 // Run an agent with a scripted sequence of python_exec calls (autoApprovePython ON), counting
 // approval prompts + capturing the per-step approval provenance. For the sheet-cache tests.
 const runPySeq = async (calls) => {
-    const world = loadPageWorld({
+    const world = loadPageWorld({ dialectInside: "return ",
         config: { model: "", ocrModel: "", autoApprovePython: true },
         onRuntimeMessage: pyBackend([...calls.map((a, i) => toolCall("python_exec", a, "c" + i)), reply("done")]),
     });

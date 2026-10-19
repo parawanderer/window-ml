@@ -3,8 +3,12 @@
 // TRUSTED python auto-approve skipping the gate (and full-mode / external-sheet still asking), a
 // non-approval tool delegating straight through, and the gate-before-execute invariant end-to-end.
 import { test } from "node:test";
+import { setPythonDialectForTest } from "../src/agent/python-dialect.ts";
 import assert from "node:assert";
 import { runBackgroundAgent } from "../src/agent/agent-host.ts";
+
+// No real membership predicate exists yet, so stand one in: a cell that starts with `return` is INSIDE the dialect, anything else outside.
+setPythonDialectForTest((code) => code.startsWith("return"));
 
 // A model that plays a scripted list of assistant turns (one per step).
 const scriptedModel = (turns) => {
@@ -103,7 +107,7 @@ test("python_exec readonly + autoApprovePython → SANDBOX auto-approve, gate sk
     assert.equal(res.summary, "ok");
 });
 
-test("python_exec FULL mode always asks the gate, even with the flag on", async () => {
+test("python_exec OUTSIDE the dialect always asks the gate, even with the flag on and a stale mode field", async () => {
     const deps = baseDeps({ callModel: scriptedModel([call("python_exec", { code: "x", mode: "full" }), answer("ok")]) });
     await runBackgroundAgent(
         { task: "t", systemPrompt: "S", autoApprovePython: true, tools: [{ name: "python_exec", requiresApproval: true }] }, deps);

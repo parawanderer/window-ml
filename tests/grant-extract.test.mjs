@@ -61,7 +61,7 @@ const PY_ARGS = {
     "a sheet with an image (page-only)": { tables: { s: SHEET }, image: "current" },
     "a sheet with a selector (page-only)": { tables: { s: SHEET, t: "#table" } },
     "a sheet with a @tool: pointer": { tables: { s: SHEET, t: "@tool:abc1234" } },
-    "full mode with a sheet": { mode: "full", code: "print(1)", tables: { s: SHEET } },
+    "python cell with a sheet": { code: "print(1)", tables: { s: SHEET } },
     "no sheet": { tables: { t: "#table" } },
 };
 
@@ -81,24 +81,21 @@ test("a page-built run's python_exec, which the page's own loop runs, still gets
 
 test("a python_exec the worker runs puts nothing at all on the tab; one on the page gets its code keyed by MODE", () => {
     for (const builtByWorker of [true, false]) {
-        const inWorker = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["full mode with a sheet"], builtByWorker, pyInWorker: true });
+        const inWorker = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["python cell with a sheet"], builtByWorker, pyInWorker: true });
         assert.deepEqual(inWorker, { serverTools: [], sheets: [], pyCode: [] });
-        const onPage = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["full mode with a sheet"], builtByWorker, pyInWorker: false });
-        assert.deepEqual(onPage.pyCode, ["full:print(1)"], "full mode: the key is mode-qualified");
-        // readonly is gated too now (a page-started readonly cell runs only under a grant), so it MINTS a key —
-        // just never one that covers `full`.
-        assert.deepEqual(tabGrantsForCall({ name: "python_exec", args: { code: "print(1)" }, builtByWorker, pyInWorker: false }).pyCode, ["readonly:print(1)"], "readonly mode: its own key");
+        const onPage = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["python cell with a sheet"], builtByWorker, pyInWorker: false });
+        assert.deepEqual(onPage.pyCode, ["full:print(1)"], "every cell is outside the dialect until membership ships: the key is the outside (`full:`) one");
     }
 });
 
 test("a `full` grant covers the same code in readonly, and a `readonly` one never covers `full`", () => {
-    const full = new Set([pyCodeGrant("full", "print(1)")]);
-    assert.equal(pyCodeCovers(full, "full", "print(1)"), true);
-    assert.equal(pyCodeCovers(full, "readonly", "print(1)"), true, "full covers readonly");
-    assert.equal(pyCodeCovers(full, "full", "print(2)"), false, "only the exact code");
-    const ro = new Set([pyCodeGrant("readonly", "print(1)")]);
-    assert.equal(pyCodeCovers(ro, "readonly", "print(1)"), true);
-    assert.equal(pyCodeCovers(ro, "full", "print(1)"), false, "readonly never covers full");
+    const full = new Set([pyCodeGrant(true, "print(1)")]);
+    assert.equal(pyCodeCovers(full, true, "print(1)"), true);
+    assert.equal(pyCodeCovers(full, false, "print(1)"), true, "full covers readonly");
+    assert.equal(pyCodeCovers(full, true, "print(2)"), false, "only the exact code");
+    const ro = new Set([pyCodeGrant(false, "print(1)")]);
+    assert.equal(pyCodeCovers(ro, false, "print(1)"), true);
+    assert.equal(pyCodeCovers(ro, true, "print(1)"), false, "readonly never covers full");
 });
 
 // UPGRADE: old state meets the new code. Before mode qualification the tab held the BARE code, and only for a
@@ -107,9 +104,9 @@ test("a `full` grant covers the same code in readonly, and a `readonly` one neve
 // the dangerous direction, and not as `readonly` either — the cell asks again and the person re-approves.
 test("upgrade: a grant written under the OLD unqualified key is not read as a full grant", () => {
     const old = new Set(["print(1)"]);   // what the pre-qualification code wrote for mode:'full'
-    assert.equal(pyCodeCovers(old, "full", "print(1)"), false, "an old bare key must not grant full");
-    assert.equal(pyCodeCovers(old, "readonly", "print(1)"), false, "an old bare key grants nothing: the cell asks again");
-    assert.equal(old.has(pyCodeGrant("full", "print(1)")), false, "and it does not alias onto the new key");
+    assert.equal(pyCodeCovers(old, true, "print(1)"), false, "an old bare key must not grant full");
+    assert.equal(pyCodeCovers(old, false, "print(1)"), false, "an old bare key grants nothing: the cell asks again");
+    assert.equal(old.has(pyCodeGrant(true, "print(1)")), false, "and it does not alias onto the new key");
 });
 
 test("an exec gets the URLs its code spells out and no others; a server tool its exact call; any other tool nothing", () => {
@@ -118,5 +115,13 @@ test("an exec gets the URLs its code spells out and no others; a server tool its
     const remote = tabGrantsForCall({ name: "search", args: { q: "x" }, builtByWorker: true, pyInWorker: false, remoteKey: "bundle\u0000search\u0000{}" });
     assert.deepEqual(remote, { serverTools: ["bundle\u0000search\u0000{}"], sheets: [], pyCode: [] });
     for (const name of ["click", "type", "look", "fetch_url", "answer"])
-        assert.deepEqual(tabGrantsForCall({ name, args: { tables: { s: SHEET }, js: 'ml.fetch("https://a.example/x")', mode: "full", code: "x" }, builtByWorker: false, pyInWorker: false }), { serverTools: [], sheets: [], pyCode: [] }, name);
+        assert.deepEqual(tabGrantsForCall({ name, args: { tables: { s: SHEET }, js: 'ml.fetch("https://a.example/x")', code: "x" }, builtByWorker: false, pyInWorker: false }), { serverTools: [], sheets: [], pyCode: [] }, name);
+});
+
+// UPGRADE (lane 7, `mode` removed): what the old code wrote for each mode, read by the new code. Every cell is outside
+// the dialect until membership ships, so only a `full:` key still covers it, and a `readonly:` one asks again.
+test("upgrade: a stored `full:` grant still covers its code; a stored `readonly:` one no longer does", () => {
+    const stored = new Set(["full:print(1)", "readonly:print(2)"]);
+    assert.equal(pyCodeCovers(stored, true, "print(1)"), true, "an old full grant keeps covering the same code");
+    assert.equal(pyCodeCovers(stored, true, "print(2)"), false, "an old readonly grant must not cover an outside cell: it asks again");
 });

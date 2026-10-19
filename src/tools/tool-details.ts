@@ -8,7 +8,7 @@
 
 import type { MlTool } from "../contract/contract-agent";
 
-/** `python_exec`'s `tables`, `cast` and `mode` texts in full: its MECHANICS, served by {@link TOOL_DETAILS}. The
+/** `python_exec`'s `tables` and `cast` texts in full: its MECHANICS, served by {@link TOOL_DETAILS}. The
  *  schema carries {@link PYTHON}, the triggers (docs/spec/PROMPT_BUDGET.md, round 3: measured on five models). */
 export const PYTHON_FULL = {
     tables: "A SINGLE source string (a CSS selector for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url " +
@@ -16,15 +16,14 @@ export const PYTHON_FULL = {
         "`df`. OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
         "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
         "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +
-        "the extension (credentialed) — you do NOT need mode:'full' for it; keep mode:'readonly' (an external Sheet " +
+        "the extension (credentialed) (an external Sheet " +
         "just asks once to approve, then loads as a normal df). " +
         "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
     cast: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Compute it in your INPUT IMAGE's pixel space — casting AUTO-projects it to on-screen VIEWPORT coordinates (dpr + crop offset), so the returned @pt/@box is the correct click point, NOT displaced. Omit for a raw text result.",
     verify: "Set it when the result is an IMAGE (a chart, a picture) you want to check before citing: the image is attached for you to see, or described if you cannot see images. Default false: it costs a picture or a model call.",
-    mode: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs — including Google Sheets (the extension fetches those for you, so 'full' is NOT needed). Only pick 'full' to fetch some OTHER arbitrary URL yourself.",
 };
 
-/** The same three as the schema carries them: the triggers. */
+/** The same two as the schema carries them: the triggers. */
 export const PYTHON: typeof PYTHON_FULL = {
     tables: "Table(s) to load, ALREADY parsed (never re-read them): one source → `df`, or { name: source } → each under " +
         "its name, a Python variable name (e.g. { sales: … }). A source: a page <table> selector, a Google Sheets URL, " +
@@ -32,8 +31,6 @@ export const PYTHON: typeof PYTHON_FULL = {
     cast: "'pt' or 'box': the return is a clickable point ([x,y]) or box ([x1,y1,x2,y2]) in the input image's pixels, " +
         "placed on the page for you.",
     verify: "Look at an image result (a chart) before citing it. Default false.",
-    mode: "'readonly' (default): no network, may run without asking, Google Sheets included. 'full': network, always " +
-        "asks; only to fetch some other URL yourself.",
 };
 
 /** `exec`'s short form: what to reach for and when; the mechanics are {@link TOOL_DETAILS}.exec. */

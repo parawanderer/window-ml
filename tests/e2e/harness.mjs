@@ -480,3 +480,24 @@ export async function narrateDone(/** @type {any} */ page, /** @type {string} */
                                   /** @type {{ sub?: string }} */ { sub = "Nothing else will move. Click around \u2014 close the window or Ctrl+C to exit." } = {}) {
     await narrate(page, text, { sub, done: true });
 }
+
+/**
+ * Answer every pending approval gate for `tool` with yes, until stopped. Python no longer auto-approves while no cell is
+ * known to be inside the dialect (agent/python-dialect.ts), so a spec that only needs the run to GO asks for this.
+ * @param {any} ext the launched extension
+ * @param {string} [tool] the tool whose gates to approve
+ * @returns {() => void} stops the loop
+ */
+export function approveGates(ext, tool = "python_exec") {
+    let on = true;
+    (async () => {
+        while (on) {
+            try {
+                const keys = await ext.sw.evaluate((/** @type {string} */ t) => ((/** @type {any} */ (globalThis)).__mlApprovals?.list?.() || []).filter((/** @type {any} */ g) => String(g.tool) === t).map((/** @type {any} */ g) => g.key), tool);
+                for (const k of keys) await ext.sw.evaluate((/** @type {string} */ key) => (/** @type {any} */ (globalThis)).__mlApprovals.resolve(key, true), k);
+            } catch { /* the worker is restarting or the browser closed */ }
+            await new Promise((r) => setTimeout(r, 250));
+        }
+    })();
+    return () => { on = false; };
+}

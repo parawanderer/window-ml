@@ -7,6 +7,7 @@ import type { AgentStep } from "../store";
 import { rev } from "../store";
 import { truncate } from "../format";
 import { IconWarn } from "../icons";
+import { pythonDialectVerdict } from "../../agent/python-dialect";
 import { Code, SheetChip, highlightApprove, highlightPos, clearHighlight, inlineJson, stepKey } from "../ui-kit";
 import { RenderPanel } from "../transcript/render-panel";
 import { IntentSentence, intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "../transcript/summaries";
@@ -31,6 +32,7 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
     const summary = key ? codeSummaries.get(key) : undefined;
     const pos = highlightPos.value;
     const sheets = externalSheetGrant(st.arguments);
+    const dialectNote = st.tool === "python_exec" ? pythonDialectVerdict(String(st.arguments?.code ?? "")) : null;
     const isType = !!intent && intent.verb.toLowerCase() === "type";
     return (
         <div class="action" data-rev={rv}>
@@ -41,11 +43,8 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                     {summary ? <div class="action-summary ml-reveal">{summary}</div> : null}
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
-                    {/* Every full-mode cell runs on ONE shared worker, so two full-mode runs alive at once can read each
-                        other's variables (LANE_1_RESULT_C.md, the known residual). Said here so approving it is consent. */}
-                    {st.tool === "python_exec" && st.arguments?.mode === "full"
-                        ? <div class="action-raise"><IconWarn /><span>Shares one Python process with every other full-mode run in this browser: while both run, each can read the other's variables.</span></div>
-                        : null}
+                    {/* The dialect's verdict on a Python cell: why the person is being asked (python-dialect.ts). */}
+                    {dialectNote ? <div class="action-summary dim">{dialectNote}.</div> : null}
                   </div>
                 : intent
                     ? <div class="action-card">

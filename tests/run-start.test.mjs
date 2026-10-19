@@ -1180,13 +1180,13 @@ test("python_exec of a worker-built run loading an external sheet runs in the wo
     assert.ok(!stolen?.data, `the page read the sheet with the person's cookies: ${JSON.stringify(stolen).slice(0, 160)}`);
 });
 
-test("full-mode python_exec run in the worker: the page cannot run that approved code itself while it runs", T, async () => {
+test("python_exec outside the dialect run in the worker: the page cannot run that approved code itself while it runs", T, async () => {
     const code = "import js; return 1";
     const { runs, stolen } = await pythonRun({ code, mode: "full" },
         (bg) => bg.send({ type: "PYTHON_EXEC", payload: { code, hardened: false } }, PAGE7));
     assert.equal(runs.length, 1, "positive control: the approved call ran");
-    assert.equal(runs[0].hardened, false, "in full mode");
-    assert.match(stolen?.error || "", /Refused/, `the page ran full-mode Python on the run's grant: ${JSON.stringify(stolen).slice(0, 160)}`);
+    assert.equal(runs[0].hardened, true, "there is no unhardened worker any more: every cell runs hardened");
+    assert.match(stolen?.error || "", /Refused/, `the page ran outside-the-dialect Python on the run's grant: ${JSON.stringify(stolen).slice(0, 160)}`);
 });
 
 test("a python_exec over a page table runs in the worker too: the page is asked for the table only (site access part 5)", T, async () => {
@@ -1360,7 +1360,7 @@ async function pageOnlyGrantRun(args, attack, cfg, { pyReply } = {}) {
     let turns = 0, bg, stolen, asked = 0, reads = 0, finished = false, toolResults = [];
     const runs = [];
     const calls = Array.isArray(args) ? args : [args];
-    bg = loadBackground({
+    bg = loadBackground({ dialectInside: "return ",
         config: cfg ?? config, openTabs: [SITE], siteGate: true,
         onFetch: (call) => {
             if (call.url.startsWith("https://docs.google.com/")) { reads++; return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" }; }
