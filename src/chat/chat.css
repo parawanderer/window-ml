@@ -318,6 +318,22 @@ html, body, #root { height: 100%; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
 .chat.calm .md li { margin: .2em 0; }
 
+/* A TABLE in a reply is read, not filled in, so calm drops the spreadsheet grid the panel uses: a tinted header, thin
+   lines between rows, no vertical rules, no outer box, no stripes. It is sized to its CONTENT and not stretched, because
+   a two-column table pulled across the whole reading column leaves its values far from their labels. The wrap is
+   capped at the column's width and scrolls sideways inside itself, so a wide table never widens the page. */
+.chat.calm .md .md-table-wrap { max-width: 100%; margin: .4em 0 1.05em; }
+.chat.calm .md .md-table { width: auto; font-size: 1em; line-height: 1.5; }
+.chat.calm .md .md-table th, .chat.calm .md .md-table td {
+    border: none; border-bottom: 1px solid var(--border); padding: .5em .9em; vertical-align: top;
+    /* The reading column breaks a word anywhere to keep a long URL in; in a cell that would shred a narrow column into
+       single letters, so a cell breaks at spaces only and the wrap scrolls instead. */
+    overflow-wrap: normal; word-break: normal;
+}
+.chat.calm .md .md-table th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+.chat.calm .md .md-table tbody tr:nth-child(even) { background: none; }
+.chat.calm .md .md-table tbody tr:last-child td { border-bottom: none; }
+
 /* YOUR OWN TURN is the one thing that gets a shape, because it is the only thing on the page that is not the
    answer: a bubble says "you said this" without a label doing it. The reply keeps no container at all — the page
    IS the reply, which is what every product that people read for pleasure does and no panel does. */

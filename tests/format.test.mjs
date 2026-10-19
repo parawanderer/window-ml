@@ -128,3 +128,30 @@ test("inline $…$ typesets by the delimiter rule (spaced expressions included);
     // Currency stays literal purely via the space-adjacency guard (closing $ is preceded by a space / no close).
     assert.ok(!markdown("It costs $5 or $10.", { math: true }).includes("katex"), "currency is not math");
 });
+
+// --- numeric table columns: right-aligned via `.md-num` ---
+test("a column whose body cells are all numbers gets md-num on header and cells", () => {
+    const html = markdown("| item | qty |\n|---|---|\n| a | 5 |\n| b | 12 |");
+    assert.match(html, /<th>item<\/th><th class="md-num">qty<\/th>/);
+    assert.match(html, /<td>a<\/td><td class="md-num">5<\/td>/);
+    assert.equal((html.match(/md-num/g) || []).length, 3);
+});
+
+test("numbers with sign, thousands, decimal, currency, percent and a short unit count; an empty cell does not disqualify", () => {
+    for (const v of ["5", "-3.2", "+4", "1,200", "12%", "$5", "€1,200.50", "300 ms", "2GB", ".5"]) {
+        assert.match(markdown(`| h |\n|---|\n| 1 |\n| ${v} |`), /<td class="md-num">/, v);
+    }
+    assert.match(markdown("| h | x |\n|---|---|\n| 1 | a |\n|  | b |"), /<td class="md-num">1<\/td>/);
+});
+
+test("one text cell, an all-empty column, or a lone header number keeps the column plain", () => {
+    for (const v of ["n/a", "abc1", "2024-01-05", "12 apples", "v2", "-", "1 2"]) {
+        assert.doesNotMatch(markdown(`| h |\n|---|\n| 1 |\n| ${v} |`), /md-num/, v);
+    }
+    assert.doesNotMatch(markdown("| h | x |\n|---|---|\n| |  a |\n| | b |"), /<td class="md-num"><\/td>/);
+    assert.doesNotMatch(markdown("| 2024 | x |\n|---|---|\n| a | b |"), /md-num/);
+});
+
+test("an explicit alignment row still wins over the numeric class's right alignment", () => {
+    assert.match(markdown("| h |\n|:--|\n| 1 |"), /<td class="md-num" style="text-align:left">1<\/td>/);
+});
