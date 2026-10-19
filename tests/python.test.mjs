@@ -682,6 +682,43 @@ test("run dict: the injected inputs are coerced to str/None, and the loaders are
     assert.equal(ns.has("_ml_orig_read_csv"), false);
 });
 
+// --- the _ml_in coercion runs on every run-dict cell, not only the first ---
+
+test("run dict: a second cell with a null injection gets None, never a JsProxy", { skip }, async () => {
+    const ns = freshNs();
+    assert.equal((await runCell("return type(INJECTED_IMAGE_B64).__name__", ns, { image: TINY_PNG })).value, "str");
+    assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64 is None, type(INJECTED_IMAGE_B64).__name__, INJECTED_TABLES_JSON is None, type(INJECTED_TABLES_JSON).__name__]", ns),
+        { value: [true, "NoneType", true, "NoneType"] }, "cell 2: both coerce to Python None");
+    assert.deepEqual(await runCell("return [type(INJECTED_IMAGE_B64).__name__ not in ('JsProxy','JsNull','JsUndefined'), type(INJECTED_TABLES_JSON).__name__ not in ('JsProxy','JsNull','JsUndefined')]", ns),
+        { value: [true, true] }, "never a JsProxy of the host's null/undefined");
+    assert.equal((await runCell("return type(INJECTED_IMAGE_B64).__name__", ns, { image: TINY_PNG })).value, "str", "cell 3: re-coerces when one is passed again");
+});
+
+test("run dict: no other host-injected name reaches the dict uncoerced", { skip }, async () => {
+    const ns = freshNs();
+    await runCell("return 1", ns, { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] });
+    assert.deepEqual(await runCell("return ['_ml_harness' not in globals(), '_ml_send' not in globals(), '_ml_tbuf_0' not in globals()]", ns),
+        { value: [true, true, true] }, "the harness, the wire transport and the table buffers are all dropped");
+    assert.deepEqual(await runCell("return [type(INJECTED_IMAGE_B64).__name__, type(INJECTED_TABLES_JSON).__name__]", ns),
+        { value: ["NoneType", "NoneType"] }, "a cell that passes neither sees Python None, never a JsProxy");
+    assert.deepEqual(await runCell("return [type(INJECTED_IMAGE_B64).__name__, type(INJECTED_TABLES_JSON).__name__]", ns,
+        { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] }),
+        { value: ["str", "str"] }, "the only two injected names are the coerced ones, and a passing cell gets str");
+});
+
+test("run dict: persist true (bench), \"run\" and false cannot be confused", { skip }, async () => {
+    const { wrapUserCode } = await import("../src/python/python-runtime.ts");
+    const bench = wrapUserCode("return 1", true, true);
+    const run = wrapUserCode("return 1", false, "run");
+    const old = wrapUserCode("return 1", true, false);
+    assert.ok(!bench.includes("def _ml_in") && !bench.includes("_ml_image_open"), "the bench gets neither the coercion nor the loaders (it injects no names)");
+    assert.ok(run.includes("def _ml_in") && !run.includes("_ml_image_open"), "\"run\" coerces and does not run the loaders (PRELUDE_DATA_KEPT has none)");
+    assert.ok(old.includes("def _ml_in") && old.includes("_ml_image_open") && old.includes("for _k in list(globals().keys())"), "the old path coerces, runs the loaders, and RESETs");
+    const reset = "img = None\nimg_np = None\nH = W = 0";
+    assert.ok(!run.includes(reset), "\"run\" keeps a later cell's img when it passes none");
+    assert.ok(old.includes(reset), "the old path resets img on every call (which is why it does not stale-chain)");
+});
+
 test("completion: the prelude's names complete with NOTHING kept — no import, no namespace", { skip: skipJedi }, async () => {
     // Before a bench's first run, after a reset, after a restart: no namespace exists, but the prelude still
     // binds these for the run. Static analysis of the script alone offered none of them.
