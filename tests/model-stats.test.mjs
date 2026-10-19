@@ -773,3 +773,32 @@ test("laneEvents: a generation tagged with a shown session lands in its band eve
     assert.equal(other.kind, "gen");
     assert.equal(other.ref, undefined);
 });
+
+// --- ml.sh calls on a tool step: the footprint the host measured, and the kill past its bound ---------------------
+
+const GiB = 1024 ** 3, MiB = 1024 ** 2;
+const { shCallText } = await import("../src/resource/resource-timeline.ts");
+const shStep = (shCalls) => M.eventsFrom([{
+    kind: "agent", hash: "sh1", model: "m",
+    steps: [{ seq: 1, ts: 20_000, tool: "exec", toolMs: 3000, usage: usage(10, 5, { genMs: 1000 }), ...(shCalls ? { shCalls } : {}) }],
+}]).find((e) => e.kind === "tool");
+
+test("ml.sh: a call with a peak is said as the peak against its bound, on the step's one event", () => {
+    const tool = shStep([{ program: "rg", durationMs: 420, peakFootprint: 312 * MiB, memoryBound: 4 * GiB }]);
+    assert.equal(tool.phases.length, 2, "still the model then the tool: a call is no phase of its own");
+    assert.equal(tool.shCalls.length, 1);
+    assert.equal(shCallText(tool.shCalls[0]), "peak 312.0 MiB of 4.00 GiB bound");
+});
+
+test("ml.sh: a call the host killed past its bound says so, whatever peak it reached", () => {
+    const tool = shStep([{ program: "jq", durationMs: 900, peakFootprint: 5 * GiB, memoryBound: 4 * GiB, killed: "oom" }]);
+    assert.equal(shCallText(tool.shCalls[0]), "killed: past its 4.00 GiB memory bound");
+});
+
+test("ml.sh: a call from a host that reported nothing draws no figure, never 0 B", () => {
+    const tool = shStep([{ program: "ls", durationMs: 12 }]);
+    assert.equal(shCallText(tool.shCalls[0]), null);
+    assert.equal(shCallText({ program: "ls", durationMs: 12, peakFootprint: 0 }), "peak 0 B", "a reported zero is still a reading");
+    assert.equal(shStep(undefined).shCalls, undefined, "a step with no ml.sh call carries no key");
+    assert.equal(shStep([]).shCalls, undefined);
+});

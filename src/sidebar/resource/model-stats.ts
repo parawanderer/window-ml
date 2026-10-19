@@ -54,6 +54,8 @@ export interface UsageSource {
         /** What a REMOTE executor said IT spent. `toolMs` is our wall clock around the whole dispatch, so it
          *  also contains the network; this is what lets the two be drawn apart. */
         remoteMs?: { durationMs: number; queuedMs?: number; bootMs?: number } | null;
+        /** The `ml.sh` calls the step made (ShCallSpan): drawn in the step's tooltip, not as phases. */
+        shCalls?: import("../../contract").ShCallSpan[];
         /** How long the approval gate was open — the human's time, measured separately for exactly that
          *  reason: it is the step's wall clock but not the machine's work. */
         approveMs?: number;
@@ -338,6 +340,7 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                     ref: { hash: s.hash, seq: st.seq },
                     ...(turnU ? { cost: costOf(turnU) } : {}),
                     ...(turnU?.requestId ? { requestId: turnU.requestId } : {}),
+                    ...(st.shCalls?.length ? { shCalls: st.shCalls } : {}),
                 });
                 // Delegated sub-calls (a vision reader today, a background embedding when that lands) are
                 // spawned BY this step and are drawn as their own spans under it — a different model doing
