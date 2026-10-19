@@ -598,10 +598,12 @@ test("K3b: the changes text fits a length and says what it left out; a cut text 
             assert.ok(t.length <= max, `${t.length} > ${max}`);
             if (t === whole) continue;
             const named = list.filter((c) => t.includes(`${c.name} ${c.change}`)).length;
-            const said = /, and (\d+)\+? more \(the list was cut\)$/.exec(t);
+            const said = /, and (\d+)(\+?) more \(the list was cut\)$/.exec(t);
+            const alone = /^changed during this call: (\d+)(\+?) protected names, unlisted$/.exec(t);
+            assert.ok(said || alone, `"${t}" says what it left out`);
             if (said) assert.equal(named + Number(said[1]), list.length, `"${t}" counts the rest`);
-            else assert.match(t, /^changed during this call: \d+\+? protected names, unlisted$/, `"${t}" is the count alone`);
-            if (more && said) assert.match(t, /\+ more/, "the host's own cut stays visible: N+");
+            else assert.equal(Number(alone[1]), list.length, `"${t}" is the count alone`);
+            assert.equal((said ?? alone)[2], more ? "+" : "", `"${t}": the host's own cut is N+, and only it`);
         }
     }
     assert.equal(protectedChangesText(hooks.slice(0, 2), false, 200), "changed during this call in /Users/me/src/proj: .git/hooks/hook-0 created, .git/hooks/hook-1 created", "it fits: unchanged");
