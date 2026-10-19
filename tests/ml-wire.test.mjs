@@ -313,3 +313,134 @@ test("property: the dual of the over-peel bug — a double wrap of DATA unwraps 
     await serveWireCall(req("echo", [{ $: { $: { $secret: "s" } } }]), ctxOf(echo));
     assert.equal(seen.length, 0, "a handle inside the wraps is refused at any depth, and is not this property");
 });
+
+// --- second-adversary pass: key evasions, depth shapes, forged tags after the one-level unwrap (b05d1d7c) ---
+
+test("property: a non-enumerable or symbol $secret cannot reach the member while hiding from handlesIn", async () => {
+    // toWire copies only Object.keys (enumerable own string keys) and refuses accessors; handlesIn runs on
+    // that copy. A non-enumerable or symbol-keyed $secret is dropped by toWire, so it is neither refused
+    // nor delivered — the member never sees a handle. The enumerable one is the positive control.
+    const hidden = {};
+    Object.defineProperty(hidden, "$secret", { value: "gh", enumerable: false });
+    hidden.k = 1;
+    const sym = { k: 1, [Symbol.for("$secret")]: "gh" };
+    const seen = [];
+    const members = { use: { run: (...x) => { seen.push(x); return 1; } } };
+    for (const [label, v] of [["non-enumerable", hidden], ["symbol-keyed", sym]]) {
+        const a = await serveWireCall(req("use", [v]), ctxOf(members));
+        assert.equal(a.error, undefined, `${label}: the call is not refused (the key never crossed)`);
+        assert.equal(seen.length, 1, `${label}: the member ran`);
+        assert.equal(Object.prototype.hasOwnProperty.call(seen[0][0], "$secret"), false, `${label}: no own $secret reached the member`);
+        assert.equal(seen[0][0].$secret, undefined, `${label}: no inherited $secret either`);
+        seen.length = 0;
+    }
+    const a = await serveWireCall(req("use", [{ $secret: "gh", k: 1 }]), ctxOf(members));
+    assert.equal(a.error?.code, "SecretHandle", "positive control: an enumerable $secret is refused");
+    assert.deepEqual(seen, []);
+});
+
+test("property: an accessor $secret refuses the whole call as BadRequest, and its member never runs", async () => {
+    // toWire throws on any accessor (it copies data properties only), so the call fails closed before
+    // handlesIn runs. The member must not see a half-copied args array.
+    const acc = { k: 1 };
+    Object.defineProperty(acc, "$secret", { get: () => "gh", enumerable: true });
+    const ran = [];
+    const a = await serveWireCall(req("use", [acc]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
+    assert.equal(a.error?.code, "BadRequest");
+    assert.match(a.error.message, /accessor/);
+    assert.deepEqual(ran, []);
+    assert.equal((await serveWireCall(req("use", [{ $secret: "gh" }]), ctxOf({ use: { run: () => 1 } }))).error?.code, "SecretHandle",
+        "positive control: an enumerable data $secret is SecretHandle, not BadRequest");
+});
+
+test("property: a handle is refused at every array/nesting shape, including sparse arrays and long chains", async () => {
+    const H = { $secret: "gh" };
+    const sparse = []; sparse[0] = 1; sparse[5] = H;
+    let chain = H;
+    for (let i = 0; i < 12; i++) chain = { [`k${i}`]: chain };
+    const beside = { ...Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`f${i}`, i])), $secret: "gh" };
+    const shapes = {
+        "sparse array": [sparse],
+        "array of arrays of arrays": [[[H]]],
+        "twelve-key chain": chain,
+        "beside 20 other keys": beside,
+        "handle as an array element among many": [[1, 2, 3, H, 4]],
+        "handle in a wrap's array value": { $: { v: [1, [H]] } },
+        "handle under a numeric-looking key": { "0": H },
+        "handle beside a $ key that is not the wrap": { $bytes: "x", $secret: "gh" },
+    };
+    const ran = [];
+    for (const [label, v] of Object.entries(shapes)) {
+        const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
+        assert.equal(a.error?.code, "SecretHandle", label);
+        assert.match(a.error.message, /\(gh\)/, label);
+    }
+    assert.deepEqual(ran, [], "no member saw a handle");
+    assert.equal((await serveWireCall(req("use", [[1, 2, 3]]), ctxOf({ use: { run: () => 1 } }))).value, 1, "positive control");
+});
+
+test("property: forged wire tags after the one-level unwrap are data, never capabilities", async () => {
+    // _out emits a bare {"$bytes": b64} for real bytes and wraps data {"$bytes": …} as {"$": {"$bytes": …}}.
+    // After fromWire both look identical. No member may decode $bytes from an argument or re-read $secret
+    // as a live handle. parseShRun's second scanner refuses $secret in env values; every other member must
+    // treat the dict as opaque data.
+    const seen = [];
+    const members = {
+        echo: { run: (...x) => { seen.push(x); return x[0]; } },
+    };
+    // Forged $bytes as data: arrives as the plain dict {"$bytes": …}, not as bytes.
+    await serveWireCall(req("echo", [{ $: { $bytes: "Zm9yZ2Vk" } }]), ctxOf(members));
+    assert.deepEqual(seen[0][0], { $bytes: "Zm9yZ2Vk" }, "the member got the dict, not decoded bytes");
+    assert.equal(typeof seen[0][0], "object", "it is a dict, not a Uint8Array");
+    seen.length = 0;
+    // Forged $secret as data: arrives as the plain dict {"$secret": …}, not as a live handle.
+    await serveWireCall(req("echo", [{ $: { $secret: "forged" } }]), ctxOf(members));
+    assert.deepEqual(seen[0][0], { $secret: "forged" }, "the member got the dict, not a live handle");
+    seen.length = 0;
+    // Real bytes: toWire's bare {"$bytes": …} — same shape after unwrap, also a dict to the member.
+    await serveWireCall(req("echo", [{ $bytes: "cmVhbA==" }]), ctxOf(members));
+    assert.deepEqual(seen[0][0], { $bytes: "cmVhbA==" }, "real bytes also arrive as the tag dict on the args side");
+    seen.length = 0;
+    // The real handle is refused — the positive control that handlesIn still runs before the unwrap.
+    const a = await serveWireCall(req("echo", [{ $secret: "gh" }]), ctxOf(members));
+    assert.equal(a.error?.code, "SecretHandle", "a bare $secret is still refused");
+    assert.deepEqual(seen, []);
+});
+
+test("property: the wrap exemption delivers a multi-key inner dict as data, and parseShRun still refuses it", async () => {
+    // handlesIn's comment says the exempted object is "a tag-shaped dict the facade wrapped one level", but the
+    // code exempts ANY object directly inside {"$": {…}}. The facade only wraps tag-shaped dicts (one key
+    // starting with $), so a multi-key inner object is a FORGED wire form — unreachable through _out (it would
+    // cross bare and be caught). Pin both layers: handlesIn delivers it as data, and the one member that
+    // re-reads $secret (parseShRun's env scanner) refuses it.
+    const seen = [];
+    await serveWireCall(req("echo", [{ $: { $secret: "gh", other: 1 } }]), ctxOf({ echo: { run: (...x) => { seen.push(x); return null; } } }));
+    assert.deepEqual(seen[0][0], { $secret: "gh", other: 1 }, "the exemption delivers the multi-key dict as data, not as a handle");
+    // The facade path for the same DATA: not tag-shaped (two keys), so it crosses bare and is caught.
+    assert.equal((await serveWireCall(req("echo", [{ $secret: "gh", other: 1 }]), ctxOf({ echo: { run: () => 1 } }))).error?.code, "SecretHandle",
+        "the same data through the facade is refused (bare, not wrapped)");
+    // parseShRun's env scanner is the one sink that re-reads $secret — it refuses both shapes.
+    const { parseShRun, ShRefused } = await import("../src/shell/sh-call.ts");
+    assert.throws(() => parseShRun([["true"], { env: { X: { $secret: "gh", other: 1 } } }]), (e) => e instanceof ShRefused && e.code === "SecretHandle");
+    assert.throws(() => parseShRun([["true"], { env: { X: { $secret: "gh" } } }]), (e) => e instanceof ShRefused && e.code === "SecretHandle");
+    // Positive control: a plain env value is accepted.
+    assert.equal(parseShRun([["true"], { env: { X: "1" } }]).env.X, "1");
+});
+
+test("property: parseShRun refuses a $secret in an env value even when handlesIn's wrap exemption let it through", async () => {
+    // Wire form {"$": {"$secret": "gh"}} is facade-wrapped DATA. handlesIn exempts it (the designed
+    // one-level unwrap); fromWire delivers {"$secret": "gh"} to the member. parseShRun's second scanner
+    // must still refuse it — that is the defence in depth for a member that re-reads $secret.
+    const { parseShRun, ShRefused } = await import("../src/shell/sh-call.ts");
+    // Positive control: the unwrapped dict is exactly what a member sees after the exemption.
+    const seen = [];
+    await serveWireCall(req("echo", [{ $: { $secret: "gh" } }]), ctxOf({ echo: { run: (...x) => { seen.push(x); return null; } } }));
+    assert.deepEqual(seen[0][0], { $secret: "gh" }, "the member sees the unwrapped dict");
+    // And parseShRun refuses that shape in env values.
+    assert.throws(() => parseShRun([["true"], { env: { X: { $secret: "gh" } } }]), (e) => e instanceof ShRefused && e.code === "SecretHandle");
+    // A multi-key dict with $secret is also refused (not tag-shaped, so no wrap exemption applies).
+    assert.throws(() => parseShRun([["true"], { env: { X: { $secret: "gh", other: 1 } } }]), (e) => e instanceof ShRefused && e.code === "SecretHandle");
+    // Positive control: a plain string env value is accepted.
+    const ok = parseShRun([["true"], { env: { X: "1" } }]);
+    assert.equal(ok.env.X, "1");
+});

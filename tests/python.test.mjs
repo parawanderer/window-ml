@@ -877,3 +877,57 @@ test("a frame inside its preview stores nothing, and one Arrow cannot hold still
     assert.equal(mixed.table.rowCount, 400);
     assert.equal(mixed.ipc, undefined, "mixed object cells do not convert to Arrow, so nothing is stored");
 });
+
+// --- second-adversary pass: the _ml_in coercion on the "run" path, every cell and every injected name ---
+
+test("run dict: a cell that poisons INJECTED_* to a JsProxy is re-coerced by the NEXT cell", { skip }, async () => {
+    // A hostile cell can set INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON to anything, including a JsProxy.
+    // The coercion runs at the top of every wrapUserCode (persist "run" and false), so the next cell's
+    // prelude reads str/None — never a JsProxy the cell left behind.
+    const ns = freshNs();
+    await runCell("return 1", ns);
+    await runCell("INJECTED_IMAGE_B64 = (lambda: None).__class__.__mro__\nINJECTED_TABLES_JSON = INJECTED_IMAGE_B64\nreturn 1", ns);
+    const r = await runCell("return [type(INJECTED_IMAGE_B64).__name__, type(INJECTED_TABLES_JSON).__name__]", ns);
+    assert.deepEqual(r.value, ["NoneType", "NoneType"], "the next cell's coercion drops whatever the previous cell left");
+    assert.ok(!r.value.some((t) => /JsProxy|JsNull|JsUndefined/.test(t)), "never a JsProxy");
+});
+
+test("run dict: PRELUDE_DATA_KEPT reads the COERCED INJECTED_TABLES_JSON, not a raw JsProxy", { skip }, async () => {
+    // The coercion block runs before the prelude. PRELUDE_DATA_KEPT (persist "run") reads
+    // globals().get("INJECTED_TABLES_JSON") — it must see the coerced str/None. A JsProxy there would
+    // reach _ml_loads and fail or worse. Pin: a null injection yields None and the prelude's _tsj path
+    // is skipped; a string injection loads tables.
+    const ns = freshNs();
+    await runCell("return 1", ns);
+    const none = await runCell("return [_tsj_loads_ran if '_tsj_loads_ran' in globals() else None, INJECTED_TABLES_JSON is None]", ns);
+    assert.equal(none.value[1], true, "a null injection is Python None after coercion");
+    const withTables = await runCell("return int(t['a'].sum())", ns, { tables: [rows("t", ["a"], [[1], [2]])] });
+    assert.equal(withTables.value, 3, "positive control: a string injection loads tables");
+});
+
+test("run dict: the coercion covers every injected name injectInputs sets, and nothing else leaks as a JsProxy", { skip }, async () => {
+    // injectInputs sets INJECTED_IMAGE_B64, INJECTED_TABLES_JSON (and _ml_harness, which the wrapper
+    // pops). The coercion block names exactly the two INJECTED_* names. After a cell that passes both,
+    // the namespace must hold no JsProxy of a host-injected name.
+    const ns = freshNs();
+    await runCell("return 1", ns, { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] });
+    const r = await runCell("return [n for n in globals() if n.startswith('INJECTED_') or n.startswith('_ml_')]", ns);
+    const names = r.value;
+    assert.ok(names.includes("INJECTED_IMAGE_B64") && names.includes("INJECTED_TABLES_JSON"), "the two coerced names remain");
+    assert.ok(!names.includes("_ml_harness") && !names.includes("_ml_send") && !names.includes("_ml_tbuf_0"), "the harness, transport and buffers are dropped");
+    const types = await runCell(`return [type(globals()[n]).__name__ for n in ${JSON.stringify(["INJECTED_IMAGE_B64", "INJECTED_TABLES_JSON"])}]`, ns);
+    assert.ok(types.value.every((t) => !/JsProxy|JsNull|JsUndefined/.test(t)), `both are str/None, not JsProxy: ${types.value}`);
+});
+
+test("run dict: bench (persist true) injects no INJECTED_* names and compiles no coercion", { skip }, async () => {
+    // The bench's wipe keeps INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON if present (PY_BENCH_BASE_NAMES),
+    // but injectInputs is never called for bench, so they are never set. Pin: a bench namespace has no
+    // INJECTED_* names, and the bench wrapper has no _ml_in.
+    const { wrapUserCode } = await import("../src/python/python-runtime.ts");
+    const bench = wrapUserCode("return 1", true, true);
+    assert.ok(!bench.includes("def _ml_in"), "the bench compiles no coercion (it injects no names)");
+    const ns = freshNs();
+    const inj = await benchRun("return [n for n in globals() if n.startswith('INJECTED_')]", ns);
+    assert.deepEqual(inj, { value: [] }, "a bench namespace holds no INJECTED_* names");
+    assert.deepEqual(await benchRun("return 1", ns), { value: 1 }, "positive control: the bench still runs");
+});
