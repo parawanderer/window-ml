@@ -914,6 +914,23 @@ button.chat-page-go:hover { color: var(--fg); }
    the same rule runs over every item of a transcript somebody merely opened. */
 .chat.calm .aturn.fresh { animation: chat-turn-in .18s cubic-bezier(.4, 0, .2, 1); }
 @keyframes chat-turn-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+/* YOUR OWN MESSAGE RISES FROM THE COMPOSER, as in a texting app: it grows from the bottom right and the transcript
+   above is pushed up with it. The push is the wrapper's HEIGHT growing from nothing (`.msg-arrive`, user-text.tsx),
+   so the pane's pin to the bottom carries everything up a few pixels a frame. A transform alone cut the transcript up
+   by the bubble's height in one frame, and a negative margin did too: the scroller counts a box that overflows it.
+   While it grows (`.growing`, removed when the animation ends) the wrapper is its own formatting context so the
+   bubble's margins are inside the growing height, and the margins either side that would otherwise collapse into
+   them are dropped: the previous turn's above (the bubble's own top margin goes), the next one's below (a reply
+   landing mid-animation). The gaps are then the same during and after, and nothing snaps when it ends. */
+/* Reduced motion never ends the animation, so `.growing` never comes off: none of it may apply there. */
+@media (prefers-reduced-motion: no-preference) {
+    .chat.calm .msg-arrive.growing { display: flow-root; overflow: clip; animation: chat-msg-room .3s cubic-bezier(.2, .8, .2, 1); }
+    @keyframes chat-msg-room { from { height: 0; } }
+    .chat.calm .msg-arrive.growing > .msg.user { margin-top: 0; }
+    .chat.calm .msg-arrive.growing + *, .chat.calm .msg-arrive.growing + .msg.asst { margin-top: 0; }
+    .chat.calm .msg-arrive.growing > .msg.user { transform-origin: 100% 100%; animation: chat-msg-pop .3s cubic-bezier(.2, .8, .2, 1); }
+    @keyframes chat-msg-pop { from { opacity: 0; transform: scale(.9); } }
+}
 /* A TOOL CALL ARRIVES ON ITS OWN CLOCK. A turn's drift carries a batch that landed together, but a call added to
    a turn already on screen — the common agent shape: one model answer decides on three tools and the steps land
    one event at a time — used to REPLACE a row in one frame. It slides in from the left and fades instead, on the
