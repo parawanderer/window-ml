@@ -7,7 +7,8 @@
  * A fake host. Pass `onNative: host.onNative` to loadBackground.
  * @param opts `sandbox`: whether a sandbox is available (default true); `protocol` (default 1); `facts(args)`: the
  *   spawn answer for a call (default: the argv resolved under /usr/bin, everything in the root); `done(id, spawnArgs)`: the
- *   done event (default exit 0 with "out\n"); `refuse`: { call: code } answers that call with an error
+ *   done event (default exit 0 with "out\n"); `refuse`: { call: code } answers that call with an error; `startError(id,
+ *   n)`: an error code for the n-th `start` (0-based), as `PinChanged` when a hashed script changed since its spawn
  */
 export function fakeNativeHost(opts = {}) {
     const calls = [];
@@ -34,13 +35,15 @@ export function fakeNativeHost(opts = {}) {
                         argv: args.argv, program: { path: args.argv[0].startsWith("/") ? args.argv[0] : `/usr/bin/${args.argv[0]}`, inRoot: false, fingerprint: "1:2:3:4" },
                         cwd: { path: args.cwd, inRoot: true }, env: { set: Object.keys(args.env ?? {}), secrets: [], free: true },
                         repo: null, repoConfigRunsCode: null,
-                        paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true, ...(p.walk ? { containsSecret: false } : {}) })),
+                        paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true, ...(p.walk ? { containsSecret: false } : {}), ...(p.hash ? { sha256: opts.sha256?.(n) ?? "0".repeat(64) } : {}) })),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
                     };
                     msg.id = id;
                     return reply({ seq, value: { id, expiresInMs: 1800000, ...f } });
                 }
                 if (call === "start") {
+                    const code = opts.startError?.(args.id, calls.filter((c) => c.call === "start").length - 1);
+                    if (code) return reply({ seq, error: { code, message: `${call} refused` } });
                     reply({ seq, value: { id: args.id, pid: 4242 } });
                     const spawned = calls.find((c) => c.call === "spawn" && c.id === args.id);
                     const d = opts.done?.(args.id, spawned?.args) ?? { out: "out\n", err: "", code: 0 };

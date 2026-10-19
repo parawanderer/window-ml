@@ -39,7 +39,7 @@ export interface HostConfigured { roots: { given: string; path: string }[]; sand
 
 /** One argv slot the host resolves as a path: the whole argument, or the part after `split` (`--output=f`); `walk` adds
  *  `containsSecret` from a bounded walk beneath it. */
-export interface HostPathArg { arg: number; split?: string; walk?: boolean }
+export interface HostPathArg { arg: number; split?: string; walk?: boolean; /** Hash the resolved file (host 0.4.0): an interpreted script's entrypoint. */ hash?: boolean }
 
 /** `spawn`'s arguments: everything the host needs to resolve the call's facts. It starts nothing. */
 export interface HostSpawn {
@@ -68,6 +68,9 @@ export interface HostPathFact {
     secret: boolean;
     exists: boolean;
     containsSecret?: boolean | null;
+    /** For a `hash` argument (host 0.4.0): the sha256 of the resolved file after symlinks, null for anything but a
+     *  regular file of at most 16 MiB. `start` refuses with `PinChanged` once it changes. */
+    sha256?: string | null;
 }
 
 /** The enforcer whose bound applies to a call (docs/spec/EFFECTS.md): the OS sandbox, nothing, or a container. */

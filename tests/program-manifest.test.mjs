@@ -175,6 +175,32 @@ test("the validator refuses a misspelt key, a runner that runs nothing, a bad ef
     assert.match(bad({ extra: 1 }).join(), /unknown key extra/);
 });
 
+test("a script's manifest has an entrypoint and NO version; a binary's has a version and no entrypoint; each violation is refused", () => {
+    const cmd = { effects: ["read"], paths: "operands", flags: { "-n": {} } };
+    const script = { program: "node", entrypoint: { path: "scripts/tool.mjs", sha256: "a".repeat(64) }, command: cmd };
+    assert.deepEqual(validateManifest(script), []);
+    const v = { range: "*", args: [], pattern: "" };
+    assert.match(validateManifest({ ...script, version: v }).join(), /\$\.version: a script is pinned by its entrypoint's sha256, so it has no version/);
+    assert.match(validateManifest({ program: "node", command: cmd }).join(), /\$\.version: \{range, args, pattern\}/, "neither is refused too");
+    const ep = (e) => validateManifest({ ...script, entrypoint: e }).join();
+    for (const path of ["/abs/tool.mjs", "../tool.mjs", "scripts/../tool.mjs", "./tool.mjs", "-tool.mjs", "scripts//tool.mjs", ""]) assert.match(ep({ path, sha256: "a".repeat(64) }), /entrypoint\.path/, path);
+    assert.match(ep({ path: "t.mjs", sha256: "A".repeat(64) }), /entrypoint\.sha256/);
+    assert.match(ep({ path: "t.mjs", sha256: "a".repeat(64), extra: 1 }), /\$\.entrypoint: \{path, sha256\}/);
+});
+
+test("a script's options parse from argv[2], and a flag at argv[1] is not the script", () => {
+    const m = { program: "node", entrypoint: { path: "scripts/tool.mjs", sha256: "a".repeat(64) }, command: { effects: ["read"], paths: "operands", flags: { "-n": {} } } };
+    const d = describeCall(["node", "scripts/tool.mjs", "-n", "a.txt"], m);
+    assert.equal(d.described, true);
+    assert.deepEqual(d.pathArgs.map((p) => p.arg), [3], "argv[1] is the script, not an operand");
+    assert.deepEqual(d.why, []);
+    for (const argv of [["node", "-u", "scripts/tool.mjs"], ["node", "--", "scripts/tool.mjs"], ["node"]]) {
+        const u = describeCall(argv, m);
+        assert.equal(u.effects, "unknown", argv.join(" "));
+        assert.match(u.why.join(), /described only as node scripts\/tool\.mjs, with no interpreter flag before it/);
+    }
+});
+
 // --- hardening and recursive readers (rulings of 2026-10-15) ---
 
 test("a hardened argv describes exactly as the original, for every fixture call", () => {
