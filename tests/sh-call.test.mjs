@@ -177,6 +177,64 @@ test("K3c: find -delete is a names write, so deleting under a root itself or a t
     assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);
 });
 
+// --- place resolution: the markers follow the host's RESOLVED path, never the lexical `given` ---
+
+test("a symlink's place is what it RESOLVED to: markers off `path`, never `given`, whatever the script typed", async () => {
+    // The host resolves symlinks (realpath) and reports `path`; sh-call.ts builds topLevel/isRoot TEXTUALLY over that
+    // path and its roots (placeAmongRoots), never over `given`. So a symlink that resolves OUT of the roots is not
+    // top-level in-root (an in-place write to it asks, because inRoot is the host's realpath answer), and one that
+    // resolves TO a root is a root (a names-write under it asks). The host's own symlink defect is #12's; this pins
+    // the extension's half: the markers follow `path`.
+    const { free, boundFor } = await import("../src/effects.ts");
+    const B = boundFor("host-sandbox");
+    const at = (paths, argv, cwd = { path: "/w", inRoot: true }) =>
+        shFacts(facts({ argv, cwd, paths }), null, { roots: ["/w"] });
+    // a: .envrc is a symlink to /tmp/x. The host resolved it out of the roots: inRoot false, path /tmp/x.
+    // An in-place write to an "existing top-level file" must NOT be free — the write lands at /tmp/x.
+    const out = at([{ arg: 2, given: ".envrc", path: "/tmp/x", inRoot: false, secret: false, exists: true }],
+        ["git", "diff", "--output=.envrc"]);
+    assert.equal(out.paths[0].path, "/tmp/x", "the fact carries the resolved target, not the typed name");
+    assert.deepEqual([out.paths[0].topLevel, out.paths[0].isRoot], [false, false], "place markers off the resolved path: /tmp/x's parent is not a root");
+    assert.equal(free(out.effects, B), false, "a write to a symlink whose target is outside the roots is covered by nothing");
+    // b: src/link is a symlink to /w (the root). A names-write under it removes the root's top-level names.
+    const via = at([{ arg: 1, given: "src/link", path: "/w", inRoot: true, secret: false, exists: true }],
+        ["find", "src/link", "-delete"]);
+    assert.deepEqual([via.paths[0].topLevel, via.paths[0].isRoot], [false, true], "markers off path: the symlink resolved to the root itself");
+    assert.equal(free(via.effects, B), false, "a names-write under a symlink that resolves to a root asks");
+    // c: src/link resolves to a secret-flagged path. The host's secret answer is the one that counts.
+    const sec = at([{ arg: 1, given: "src/link", path: "/w/.env", inRoot: true, secret: true, exists: true }],
+        ["cat", "src/link"]);
+    assert.equal(sec.effects[0].res.secret, true, "a symlink to a secret path is a secret read");
+    assert.equal(free(sec.effects, B), false);
+    // Positive control: the same typed name resolving inside the roots at the top level is the ruled top-level claim.
+    const real = at([{ arg: 2, given: ".envrc", path: "/w/.envrc", inRoot: true, secret: false, exists: false }],
+        ["git", "diff", "--output=.envrc"]);
+    assert.deepEqual([real.paths[0].topLevel, real.paths[0].isRoot], [true, false]);
+    assert.equal(free(real.effects, B), false, "the same claim as a real top-level entry asks");
+});
+
+test("a `..` operand from a nested cwd resolves to its target: find .. -delete under a root asks, one level down it does not", async () => {
+    // cwd-relative operands, the `..` half. #788 pinned `find . -delete` with cwd = root and a bare `-delete` with no
+    // operand. This pins `..` from a nested cwd: the operand `..` resolves to the parent, and the markers are read off
+    // that resolved path — so `cd src && find .. -delete` is a names-write on the root itself and asks.
+    const { free, boundFor } = await import("../src/effects.ts");
+    const B = boundFor("host-sandbox");
+    const del = (argv, paths, cwd) => shFacts(facts({ argv, cwd: { path: cwd, inRoot: true }, paths }), null, { roots: ["/w"] });
+    const dir = (arg, given, path) => ({ arg, given, path, inRoot: true, secret: false, exists: true });
+    // cd src && find .. -maxdepth 1 -delete: .. resolves to /w, the root. Its entries are the top level.
+    const up = del(["find", "..", "-maxdepth", "1", "-delete"], [dir(1, "..", "/w")], "/w/src");
+    assert.deepEqual([up.paths[0].topLevel, up.paths[0].isRoot], [false, true], "markers off the resolved ..: the root itself");
+    assert.equal(free(up.effects, B), false, "find .. -delete from a nested cwd removes the root's top-level names");
+    // cd src && find . -delete: . resolves to /w/src, a top-level entry. Removing it removes a top-level name.
+    const dot = del(["find", ".", "-delete"], [dir(1, ".", "/w/src")], "/w/src");
+    assert.deepEqual([dot.paths[0].topLevel, dot.paths[0].isRoot], [true, false]);
+    assert.equal(free(dot.effects, B), false, "find . -delete from a nested cwd removes a top-level entry");
+    // Positive control: cd src && find . -name '*.o' -delete under a deeper directory is free (nested removal).
+    const deep = del(["find", ".", "-delete"], [dir(1, ".", "/w/src/gen")], "/w/src/gen");
+    assert.deepEqual([deep.paths[0].topLevel, deep.paths[0].isRoot], [false, false]);
+    assert.equal(free(deep.effects, B), true, "a removal two levels down is free");
+});
+
 // --- interpreted scripts: (program, entrypoint) pinned by sha256 (PROGRAM_MANIFEST.md, rulings of 2026-10-19) ---
 
 const PIN = "a".repeat(64);
