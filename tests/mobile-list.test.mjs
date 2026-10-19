@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { ago, approvalsPending, byPinned, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
+const { ago, approvalsPending, byPinned, needsYou, pinnedOf, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
 
 const EVERY = [{ scope: "control" }];
 const rt = (id, extra = {}) => ({ id, name: id, kind: "browser", online: true, contractVersion: 1, grants: EVERY, capabilities: {}, ...extra });
@@ -87,4 +87,21 @@ test("pinned models: this device's shortlist first, then the rest, each alphabet
     assert.deepEqual(ids(byPinned(all, (x) => x.id, new Set(["gone:70b"]))), ["gemma3:27b", "llama3:8b", "qwen3:32b"]);
     // The input is not mutated: the sheet sorts a list it does not own.
     assert.deepEqual(ids(all), ["qwen3:32b", "gemma3:27b", "llama3:8b"]);
+});
+
+test("pinned sessions: one group in this phone's order, the unplaced after by recency, and out of their runtime's section", () => {
+    const now = Date.now();
+    const a = ses("laptop", "a", { pinned: true, lastTs: now - 3000 });
+    const b = ses("laptop", "b", { pinned: true, lastTs: now - 1000 });
+    const c = ses("box", "c", { pinned: true, lastTs: now - 2000 });
+    const d = ses("laptop", "d", { lastTs: now });
+    const all = [a, b, c, d];
+    // Never placed on this phone: newest first, like the rest of the list.
+    assert.deepEqual(pinnedOf(all, []).map((s) => s.id.hash), ["b", "c", "a"]);
+    // Placed ones keep their place; one made elsewhere goes after them.
+    assert.deepEqual(pinnedOf(all, ["laptop:a", "box:c"]).map((s) => s.id.hash), ["a", "c", "b"]);
+    // One waiting on you is up in "Needs you" instead.
+    assert.deepEqual(pinnedOf(all, ["laptop:a", "box:c"], new Set(["box:c"])).map((s) => s.id.hash), ["a", "b"]);
+    // …and none of them is drawn again under its runtime.
+    assert.deepEqual(sections([rt("laptop"), rt("box")], all).map((x) => [x.runtime.id, x.data.map((s) => s.id.hash)]), [["box", []], ["laptop", ["d"]]]);
 });

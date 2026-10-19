@@ -10,6 +10,7 @@ import * as Haptics from "expo-haptics";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import type { SessionChrome } from "../../src/native/bridge";
 import { useEmbed } from "./embed";
+import { pinPlaced } from "./pinned-order";
 import { SIZE, usePalette } from "./theme";
 import { Sheet, SheetFilter, SheetRow } from "./ui";
 import { IconCamera, IconChevronRight, IconCompose, IconCopy, IconExport, IconPin, IconPlay, IconStop, IconTrash } from "./icons";
@@ -41,7 +42,11 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
             if (!c) return;
             close();
             void Haptics.selectionAsync();
-            await e.pin(c.key, !c.pinned);   // a refusal arrives as a notice from the page, in its words
+            const on = !c.pinned;
+            // A pin made HERE goes on the end of this phone's Pinned group, as on the page; one from elsewhere waits
+            // after the placed ones until it is dragged. Placed first, so the row lands there when the runtime agrees.
+            pinPlaced(c.key, on);
+            await e.pin(c.key, on);   // a refusal arrives as a notice from the page, in its words
         };
         const rename = async () => {
             if (!c || naming == null || !naming.trim()) return;

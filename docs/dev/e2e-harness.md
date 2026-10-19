@@ -469,7 +469,7 @@ thing. The parts:
   connection's history for an idle test) (skill: `hub-pairing`). The phone app on an emulator or a plugged-in phone,
   OPTIONAL tooling: `scripts/android.mjs` and `scripts/ios.mjs`, same commands (boot, install, launch, screenshot,
   Maestro flows in `tests/mobile/`; the app is `mobile/`, and CI publishes its APK as the `android-latest`
-  release) (skill: `phone`);
+  release; Android adds `drag` and `order` for the long-press drag Maestro has no step for) (skill: `phone`);
   phone-layout Playwright tests are tagged `@mobile` (`npm run test:mobile`). A nearly full disk:
   `scripts/check-disk.mjs` (the pre-commit hook warns under 20 GB free, with what to clear; never deletes) (skill:
   `disk-space`). One look at a page (a URL or a built file, phone or desktop, touch, dark, WebKit; an expression
