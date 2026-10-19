@@ -402,7 +402,13 @@ What follows from it:
   envelope's two keys are both required, a runner starts programs no manifest describes, and `find . -exec rm` claims
   no write of its own, so `exec: "any"` with a derived `write: "none"` would fail the approved call as `ok: false`. The
   rule generalises: the worker sends an envelope only when BOTH keys derive from the approved claims; when either does
-  not, it sends none and the floor applies, never a guess. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
+  not, it sends none and the floor applies, never a guess. "The approved claims" are the JUDGE's facts (ruled 2026-10-19, the red
+  team's K3 audit, window-ml #827): the worker's own version probe is judged with no effects and so derives
+  `{ write: "none", exec: "program-only" }` for every program, `git --version` included; an option a manifest does not
+  list never widens a call the judge approved as doing nothing. In the host, every layer that acts on the protected
+  names (the bubblewrap re-bind, the Landlock enumeration, the tripwire's snapshot) reads the ONE list of them, never
+  a copy, and a test enumerates that list against each layer (ruled the same day, after the audit found the re-bind
+  short of four names while `done` reported `write: "roots"`). An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
   then protects nothing; the tripwire above is what covers the gap's threat. `done` reports the envelope the host
   APPLIED, and for an absent one that is the floor, which is neither `none` nor `roots`: the reported `write` takes a
