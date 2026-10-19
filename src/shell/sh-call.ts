@@ -9,7 +9,7 @@
 import type { CallDescription, ProgramManifest } from "./program-manifest";
 import { describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
-import type { HostDone, HostFacts, HostPathArg, HostPlacement, HostSpawn, HostStream } from "./host-protocol";
+import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
 import cat from "./manifests/cat.json";
 import find from "./manifests/find.json";
@@ -287,16 +287,66 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     };
 }
 
+/**
+ * The narrowest sandbox envelope the approved claims permit, or absent when they permit none (today's floor).
+ * Pure over the facts the person or a policy approved: the script's word is never an input (SHELL.md, "The narrow
+ * write envelope"). A claim that needs a right the envelope would withhold sends no envelope, rather than running
+ * under one that would fail the call as `ok: false`. A call whose claims carry `exec(process)` (or that is a runner,
+ * which starts programs no manifest describes) gets none at all: `find -exec rm` claims no write of its own, and an
+ * envelope over only the described writes would fail rm as `ok: false`. Every envelope this returns is therefore
+ * `exec: "program-only"`; `"any"` is unreachable, because the floor is no envelope at all.
+ * @param f the call's facts
+ * @returns the envelope to send on `start`, or undefined for today's floor
+ */
+export function envelopeFor(f: ShFacts): HostEnvelope | undefined {
+    if (f.effects === "unknown" || f.runner) return undefined;
+    if (f.effects.some((e) => e.op === "exec" && e.res.kind === "process")) return undefined;
+    // The write set is every write or alloc effect (alloc on fs counts: a package install writes where it allocates).
+    // A net or heap write is in it too and has no path to vouch for, so it withholds the envelope.
+    const writes = f.effects.filter((e) => e.op === "write" || e.op === "alloc");
+    let write: "roots" | "none";
+    if (writes.length === 0) write = "none";
+    else {
+        const ok = writes.every((e) => e.res.kind === "fs" && e.res.inRoot === true && e.res.secret !== true
+            && e.res.isRoot !== true && !claimsTopLevelName(e));
+        if (!ok) return undefined;
+        write = "roots";
+    }
+    return { write, exec: "program-only" };
+}
+
 /** One line of the approval card: a label, its value, and whether it is something to look at twice. */
 export interface ShCardLine { label: string; value: string; warn?: boolean }
+
+/** The floor's report name: what an absent envelope on `start` means, and what `done` calls it. */
+const FLOOR: HostDoneEnvelope = { write: "today", exec: "any" };
+
+/**
+ * The "Sandbox applied" line: what the host reported, never what the worker asked for. An older host reports
+ * nothing (`null`), which is unknown, never narrow; a report that is not what was asked for says so.
+ * @param applied what `done.envelope` carried, or null when it carried nothing
+ * @param asked what was sent on `start`, or undefined when nothing was (today's floor)
+ */
+function sandboxAppliedLine(applied: HostDoneEnvelope | null, asked: HostEnvelope | undefined): ShCardLine {
+    if (applied === null) return { label: "Sandbox applied", value: "unknown (the host did not report it)" };
+    const value = `write ${applied.write}, exec ${applied.exec}`;
+    const want = asked ?? FLOOR;
+    const mismatch = applied.write !== want.write || applied.exec !== want.exec;
+    return mismatch
+        ? { label: "Sandbox applied", value: `${value} (not the write ${want.write}, exec ${want.exec} that was asked for)`, warn: true }
+        : { label: "Sandbox applied", value };
+}
 
 /**
  * The approval card's lines for one call: what will run, where, with what, as the host resolved it. Never the script
  * that computed the call (SHELL.md, "Approval": what was approved is exactly what runs). Human-facing text.
  * @param f the call's facts
+ * @param applied what the host reported it applied, or null when an older host reported nothing; omit on the approval
+ *   card, which is shown before anything has been applied
+ * @param asked what was sent on `start`, or undefined when nothing was (today's floor)
  * @returns the lines, in reading order
  */
-export function shCardLines(f: ShFacts): ShCardLine[] {
+export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked?: HostEnvelope): ShCardLine[] {
     const lines: ShCardLine[] = [
         { label: "Runs", value: f.argv.map(quoteArg).join(" ") },
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
@@ -305,6 +355,7 @@ export function shCardLines(f: ShFacts): ShCardLine[] {
             ? { label: "Sandbox", value: "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
     ];
+    if (applied !== undefined) lines.push(sandboxAppliedLine(applied, asked));
     if (f.env.set.length) lines.push({ label: "Sets", value: f.env.set.join(", "), ...(f.env.free ? {} : { warn: true }) });
     for (const p of f.paths) {
         const notes = [!p.inRoot && "outside the roots", p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
@@ -367,6 +418,10 @@ export interface ShResult {
     /** The highest physical footprint the host measured, in bytes (absent from a host older than 0.3.0). */
     peakFootprint?: number;
     memoryBound?: number;
+    /** What was asked of the host on `start`, after the host-version gate; absent = nothing was sent (today's floor). */
+    asked?: HostEnvelope;
+    /** What the host reported it applied. `null` = an older host reported nothing: unknown, never narrow. */
+    envelope: HostDoneEnvelope | null;
 }
 
 /**
@@ -403,13 +458,16 @@ export function shOut(s: HostStream, token: string | null, head: Uint8Array): Sh
  * @param facts the call's facts (its placement)
  * @param description the manifest's description, or null
  * @param out the two streams, already shaped
+ * @param asked the envelope sent on `start`, or undefined when none was (today's floor)
  */
-export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }): ShResult {
+export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
     const okCodes = description?.okCodes ?? [0];
     const ok = !done.error && !done.killed && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
     return {
         code: done.code, signal: done.signal, ok, timedOut: done.timedOut, cancelled: done.cancelled, durationMs: done.durationMs,
         ran: facts.placement, stdout: out.stdout, stderr: out.stderr,
+        envelope: done.envelope ?? null,
+        ...(asked !== undefined ? { asked } : {}),
         ...(done.error ? { error: `${done.error.code}: ${done.error.message}` } : {}),
         ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
         ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),

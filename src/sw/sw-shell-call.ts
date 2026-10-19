@@ -13,8 +13,8 @@
 import type { EffectsData } from "../effects";
 import type { ShCallSpan } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
-import { bytesOf, HostError, READ_CHUNK, type HostClient, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { manifestFor, parseShRun, planSpawn, shFacts, shOut, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
+import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
+import { envelopeFor, manifestFor, parseShRun, planSpawn, shFacts, shOut, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
@@ -130,6 +130,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             let f: ShFacts;
             let verdict: { by: string; waitedMs?: number };
             let done;
+            let asked: HostEnvelope | undefined;
             for (let attempt = 0; ; attempt++) {
                 const id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
@@ -145,8 +146,12 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                 // Listening BEFORE the start: a cancel that lands while the host is starting it still reaches it (finding C).
                 const onAbort = () => { void h.client.cancel(id).catch(() => { /* not started yet, or already done */ }); };
                 ctx.signal.addEventListener("abort", onAbort);
+                // The narrowest envelope the approved claims permit, and only to a host that understands it (K3's
+                // `hello.sandbox.landlockAbi`). The script's word is never an input: `envelopeFor` reads only the
+                // facts the person or the policy approved. Absent = today's floor, never a silent widening.
+                asked = hostTakesEnvelope(h.hello) ? envelopeFor(f) : undefined;
                 try {
-                    try { await h.client.start(id); }
+                    try { await h.client.start(id, asked); }
                     catch (e) {
                         if (!(e instanceof HostError && e.code === "PinChanged")) throw e;
                         // The script changed after its facts were read: it is another program than the one judged. Its fresh
@@ -168,7 +173,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             }
             const stdout = await keep(ctx, h, done.stdout, f);
             const stderr = await keep(ctx, h, done.stderr, f);
-            const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
+            const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }, asked), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
             recordRunLog(ctx.runId, { ...(result.ok ? {} : { level: "warn" as const }), subsystem: "shell", kind: "run", reason: verdict.by === "person" ? "person" : verdict.by === "builtin" ? "builtin" : "policy",
                 ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
                     ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
