@@ -110,10 +110,27 @@ file (which checkout and branch it owns, what is done with PR numbers, the todo 
 the files to re-read), and after compaction its first action is to read that file. The human still compacts by hand,
 only because the harness has no operation for it.
 
-Formally a checkpoint is a pointer value the agent AUTHORS, whose identity survives compaction, and which compaction
-pins: the compacted history is the system prompt, the work order, the checkpoint, and whatever pointers the checkpoint
-names, and nothing else. It is the dual of `collapse`: one names what to drop, the other what to keep, and together
-they make compaction something the model asks for rather than something done to it.
+Formally a checkpoint is a STORED pointer value the agent AUTHORS, whose identity survives compaction, and which
+compaction pins: the compacted history is the system prompt, the work order, the checkpoint, and whatever pointers the
+checkpoint names, and nothing else. It is the dual of `collapse`: one names what to drop, the other what to keep, and
+together they make compaction something the model asks for rather than something done to it.
+
+**Which store, and why that is not the primitive.** Three lifetimes are independent here and must not be confused:
+the context dies at compaction; the REPL heap (the per-run Python `dict`, JS `state`) dies with its worker (an
+eviction, a kill: root C's `nsLoss` notice); session state (the archive, the stored half of the value store) outlives
+both. A checkpoint lives in the third, never in the value store's worker-memory half (`tokensByRun`, which
+[`../dev/state.md`](../dev/state.md) lists as dying with the worker): the one thing it must survive is the thing that
+kills the heap. But the store is not what was missing on 2026-10-19. Every session had durable storage (a filesystem,
+a git remote); the lost document was written, and the unpushed commits existed. What was missing was a BINDING of
+that storage to two lifecycle events, which nothing guaranteed: a write before the reset, and a read after it. So the
+primitive is the durable store, which exists, plus a distinguished slot in it with two obligations the HARNESS
+owns: compaction pins the slot's value into the successor's prompt, and a resumed session reads it before anything
+else. A store without the binding is a scratchpad the model may consult, which is what a `tmp/` directory already is.
+
+The checkpoint also carries the heap's scope manifest (names and types, never values,
+[`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md)), so that after an `nsLoss` the successor knows what it
+held and what to rebuild. A checkpoint is to the context what the scope manifest is to the heap: the visible index of
+state that lives elsewhere.
 
 - **One operation.** `checkpoint(value)`: the harness compacts at the next turn boundary, keeping the value and the
   pointers it names. The compaction is an event in the session with the checkpoint's pointer as its payload, which is
