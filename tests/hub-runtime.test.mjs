@@ -410,6 +410,18 @@ test("a runtime paired WITHOUT may_pair refuses a renewal before signing, in wor
         assert.match(r.error.message, /from a browser paired with that permission, or pair the device again/, "names what works: only a runtime that may pair answers device.renew");
         assert.doesNotMatch(r.error.message, /root device/, "nothing on the root device renews another device");
         assert.doesNotMatch(r.error.message, /intermediate/, "not the verifier's sentence");
+        // Nothing was signed: the allowlist still carries the tablet's original window (a signature updates it).
+        const before = CertificateBody.decode(w.tablet.chain[0].body).notAfterMs;
+        assert.equal(w.devices.list().find((d) => d.label === "tablet")?.notAfterMs, before, "no renewed window recorded");
+
+        // NOT DUE: the answer that signs nothing comes first, as from any runtime, so an early ask is still `ok`.
+        const far = await device(w.root, Role.ROLE_CLIENT, [SCOPE.view], "fresh tablet", { notAfterMs: Date.now() + 60 * 86_400_000 });
+        const fresh = await w.connect(far);
+        try {
+            const e = await w.ask(fresh, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(far.principal) });
+            assert.equal(e.ok, true, JSON.stringify(e));
+            assert.equal(e.data.notAfterMs, CertificateBody.decode(far.chain[0].body).notAfterMs, "its own window, unchanged");
+        } finally { fresh.close(); }
     } finally { tablet?.close(); await w.close(); }
 });
 
