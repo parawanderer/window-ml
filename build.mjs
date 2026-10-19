@@ -155,10 +155,11 @@ function copyPyodide() {
     if (!existsSync("node_modules/pyodide")) { console.warn("⚠ pyodide not installed — python_exec disabled (npm i)."); return; }
     mkdirSync(`${BUILD_DIR}/pyodide`, { recursive: true });
     // The restricted-mode core (npm run fetch-pyodide) wins when it is there; the stock npm core is the fallback.
-    // A core left by an older pin must not ship under a bumped one: fetch-pyodide records "<name> <sha256>" in .pin.
-    if (existsSync("pyodide-core/.pin")) {
+    // A core left by an older pin must not ship under a bumped one: fetch-pyodide records "<name> <sha256>" in .pin,
+    // and a core with no .pin is unverified, so it counts as a mismatch while a sha is pinned.
+    if (existsSync("pyodide-core/pyodide.mjs")) {
         const pinned = JSON.parse(readFileSync("tools/pyodide-dist.json", "utf8")).artefact.sha256;
-        const have = readFileSync("pyodide-core/.pin", "utf8").trim().split(" ")[1];
+        const have = existsSync("pyodide-core/.pin") ? readFileSync("pyodide-core/.pin", "utf8").trim().split(" ")[1] : "(no .pin)";
         if (pinned && have !== pinned) throw new Error(`pyodide-core/ holds sha256 ${have} but tools/pyodide-dist.json pins ${pinned}: run \`npm run fetch-pyodide\``);
     }
     const coreDir = PYODIDE_CORE.every(f => existsSync(`pyodide-core/${f}`)) ? "pyodide-core" : "node_modules/pyodide";
