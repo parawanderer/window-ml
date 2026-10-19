@@ -477,6 +477,41 @@ test("every start on a K3 host carries the envelope its claims derive — the ve
     }
 });
 
+// The coordinator's ruling on "the approved claims": A — the judge's facts. So a probe of a program whose
+// `--version` the manifest does NOT list is still narrow; the unlisted option never widens what the judge
+// approved as doing nothing. git is that case (jq lists `--version`; git does not), and its own call of
+// `--version` is unknown, so the two starts in one run must differ: the probe narrow, the call at the floor.
+
+test("the version probe is judged with effects: [], so git's probe is narrow even though its --version is unlisted", {
+    ...T,
+    todo: "versionOf starts its probe with `h.client.start(probe.id)` and no envelope (sw-shell-call.ts), while that probe is judged with effects: [] — which derive { write: \"none\", exec: \"program-only\" }. An unlisted --version in the manifest never widens a call the judge approved as doing nothing (ruling A). Fails: the probe start (argv [\"/usr/bin/git\",\"--version\"]): actual undefined, expected { write: \"none\", exec: \"program-only\" }. The call's own start at the floor is the positive control that the two starts are told apart.",
+}, async () => {
+    // git --version is unlisted in the manifest, so the CALL is unknown and correctly keeps the floor.
+    // The PROBE is still judged with effects: [] and must derive both keys. Same gap as the jq leg above.
+    const host = fakeNativeHost({
+        landlockAbi: null,
+        done: (_id, spawn) => spawn?.argv?.[1] === "--version"
+            ? { out: "git version 2.44.0\n", err: "", code: 0 }
+            : { out: "", err: "", code: 0 },
+    });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["git", "--version"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.equal(valueOf(results[0]).ok, true, "the call ran (the honest path works): " + JSON.stringify(valueOf(results[0])).slice(0, 300));
+    const starts = host.calls.filter((c) => c.call === "start");
+    assert.equal(starts.length, 2, `the version probe and the call both start (calls: ${host.names().join(",")})`);
+    const argvOf = (s) => host.calls.find((c) => c.call === "spawn" && c.id === s.args.id)?.args.argv;
+    const probe = starts.find((s) => argvOf(s)?.[0] === "/usr/bin/git");
+    const call = starts.find((s) => argvOf(s)?.[0] === "git");
+    assert.ok(probe && call, `the probe (resolved path) and the call (as given) are both here: ${starts.map((s) => JSON.stringify(argvOf(s))).join(" / ")}`);
+    // Positive control, before the gap: the call is undescribed, so the floor is what it gets — the probe's
+    // envelope is not the call's copied over.
+    assert.equal(call.args.envelope, undefined,
+        `the call (argv ${JSON.stringify(argvOf(call))}): unknown claims keep the floor, and the probe is not that`);
+    // Ruling A: the judge's facts, not the manifest listing. effects: [] derive both keys.
+    assert.deepEqual(probe.args.envelope, { write: "none", exec: "program-only" },
+        `the probe (argv ${JSON.stringify(argvOf(probe))}): an unlisted --version never widens what the judge approved as nothing`);
+});
+
 // --- a done that does not match what was sent is a fact on the run log, never accepted silently (K3 audit) ---
 // `done.envelope` is what the host APPLIED (SHELL.md). `shResult` keeps it beside `asked`, and
 // `sandboxAppliedLine` knows how to say they differ — but nothing on the live path compares them for a
