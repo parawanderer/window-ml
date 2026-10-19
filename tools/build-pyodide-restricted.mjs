@@ -9,7 +9,7 @@
 // Traps found building it (do not rediscover): (1) emsdk builds ccache's bundled zstd, whose CMakeLists a CMake 4
 // refuses, so make runs with CMAKE_POLICY_VERSION_MINIMUM=3.5; (2) Makefile.envs assigns PYTHON_ARCHIVE_SHA256 with `=`
 // where the other pins use `?=`, so the pin check accepts both; (3) tools/dependency-check.sh never fails on BSD sed/patch,
-// hence the GNU shim.
+// hence the GNU shim; (4) emsdk's emcc wrapper execs `ccache` from PATH, so its ccache/bin dir is put there.
 // Builds `all-but-packages` only: the wheels are unchanged (the fork touches no object header), so
 // pyodide-lock.json is copied from the stock npm package.
 import { execFileSync, spawn } from "node:child_process";
@@ -100,7 +100,8 @@ mark("patches installed");
 
 // --- build (the hours) ---
 const log = createWriteStream(join(WORK, "build.log"));
-const env = { ...process.env, PATH: `${shim}:${process.env.PATH}`, SED: sed, PYODIDE_JOBS: JOBS,
+const ccacheBin = join(pyo, "emsdk/emsdk/ccache/git-emscripten_64bit/bin"); // emsdk's emcc wrapper execs `ccache` from PATH (trap 4)
+const env = { ...process.env, PATH: `${shim}:${ccacheBin}:${process.env.PATH}`, SED: sed, PYODIDE_JOBS: JOBS,
     CMAKE_POLICY_VERSION_MINIMUM: "3.5" }; // emsdk builds ccache's bundled zstd, whose CMakeLists a CMake 4 refuses
 await new Promise((ok, bad) => {
     const p = spawn("make", ["-C", pyo, "all-but-packages"], { env });

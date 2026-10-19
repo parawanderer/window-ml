@@ -10,11 +10,18 @@
     "branch": "ml/restricted-mode",
     "commit": "8f6a50ab566ba6e79086d636e132e8b8bcebda9b"
   },
-  "patches": { "startNumber": 10, "exclude": ["Tools/restricted"], "count": 11 },
+  "patches": {
+    "startNumber": 10,
+    "exclude": [
+      "Tools/restricted"
+    ],
+    "count": 11
+  },
   "artefact": {
-    "host": "github release on the fork (parawanderer/cpython)",
+    "host": "github release on the fork (parawanderer/cpython), Shane's decision 2026-10-19",
+    "tag": "pyodide-314.0.3-ml-8f6a50ab",
     "name": "pyodide-restricted-314.0.3-8f6a50ab",
-    "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-restricted-8f6a50ab/pyodide-restricted-314.0.3-8f6a50ab.tar.gz",
+    "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-ml-8f6a50ab/pyodide-restricted-314.0.3-8f6a50ab.tar.gz",
     "sha256": null
   }
 }
