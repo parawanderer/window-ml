@@ -13,6 +13,8 @@ import { useCopy } from "../copy-hash";
 import type { ElementContext } from "../../contract";
 import type { PromptContext } from "../../contract/contract-run";
 import { truncate } from "../format";
+import { useJustArrived } from "./history-paint";
+import type { ComponentChildren } from "preact";
 
 /** How tall a message may be before it folds, in lines of its own text. Past this it shows `FOLD_LINES` and fades. */
 const FOLD_LINES = 8;
@@ -20,6 +22,19 @@ const FOLD_LINES = 8;
 const FOLD_SLACK_LINES = 3;
 
 /** A user message's text, folded past `FOLD_LINES` lines with a button to open it; short messages are drawn as they are. */
+/** YOUR MESSAGE ARRIVING: what you sent, wrapped so the reading view can grow it up from the composer (chat.css,
+ *  `.msg-arrive`) instead of cutting the transcript up by its height in one frame. Only a message that landed while
+ *  you watched (`useJustArrived`); history is drawn bare. */
+export function ArrivingMsg({ ts, children }: { ts: number | undefined; children: ComponentChildren }) {
+    const fresh = useJustArrived(ts);
+    // `growing` comes off when the wrapper's own animation ends: the layout it needs while growing (chat.css says
+    // why) must not outlive it, and CSS cannot scope a rule to a running animation.
+    const [growing, setGrowing] = useState(fresh);
+    if (!fresh) return <>{children}</>;
+    const done = (e: AnimationEvent): void => { if (e.target === e.currentTarget) setGrowing(false); };
+    return <div class={`msg-arrive${growing ? " growing" : ""}`} onAnimationEnd={done}>{children}</div>;
+}
+
 export function UserText({ text }: { text: string }) {
     const el = useRef<HTMLDivElement>(null);
     const [long, setLong] = useState(false);
