@@ -93,7 +93,15 @@ enforce it. Landlock also closes a WRITE gap bubblewrap has (measured in the hos
 passing): bwrap binds only paths that EXIST when the call starts, so a protected path that is absent then
 (`.vscode/settings.json`) is writable on Linux while Seatbelt's regex denies it. K's Linux write rules are Landlock rules
 over the roots minus the protected NAMES, which hold whether or not the file exists; the gap is pinned by its own test in
-the host repo, which must flip when K lands.
+the host repo. **Amended 2026-10-19 (coordinator ruling on window-ml-host #12, the case found by lane 4's review):** the
+Landlock rules apply to a call whose envelope says `write: "roots"`, and ONLY to it. Landlock allows by path and cannot
+except a name, so under those rules the kernel refuses a top-level `mkdir`/`rmdir` and a new directory under `.git`
+(`cargo build`, `npm install`, `git rebase`, `git worktree add`); that is a documented property of the narrow envelope,
+stated in the host repository's sandbox doc (SANDBOX.md in window-ml-host), and the worker does not send `write: "roots"` for a call whose claims need a new
+top-level directory. An ABSENT envelope keeps today's floor, bubblewrap with the gap (the 2026-10-19 10:10Z ruling:
+absent is today's behaviour, so that the monotonicity invariant holds), so the gap's test does not flip at K3: it stays
+as the pin of the absent case and gains a sibling that passes under `write: "roots"`. Closing the gap for an absent
+envelope at the price of top-level `mkdir` is a change to the default and is Shane's decision, open.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
