@@ -2381,6 +2381,8 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .md-table th, .md-table td { border: 1px solid var(--border); padding: 3px 7px; text-align: left; }
 .md-table th { background: var(--panel); font-weight: 600; }
 .md-table tbody tr:nth-child(even) { background: var(--panel); }
+/* A column whose body cells are all numbers (decided in `markdown()`): right-aligned with equal-width digits so they line up. */
+.md-table .md-num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Assistant-reply code blocks get breathing room; the bare `.code` exec
    previews (not inside `.md`) stay tight. */
 .md pre.code { padding: 0.75em; }
@@ -3071,6 +3073,11 @@ html[data-focus] .action-verb { font-weight: 500; }
 .answer-rendered .tok-block.railed { border-left: none; padding-left: 10px; }
 .answer-rendered .tok-body { display: block; }
 /* A FOLDED embed: one row naming it (its caption, or its tool and step), on the citation's own rail, that opens it again. */
+/* A `@tool:` citation in an answer that is STILL STREAMING (streaming-md.tsx): the value opens only once the answer
+   settles, so until then an embed holds its place as its label, faint, and a link is its label in the link colour.
+   Inline, because a short value settles inline in the sentence. Quiet on purpose: it is a promise, not the thing. */
+.tok-streaming { color: var(--fg-faint); font-style: italic; }
+.tok-streaming-link { color: var(--accent); }
 .answer-rendered .tok-block.tok-folded { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 14px; color: var(--fg-dim);
     border-left: none; }
 /* …whose rail is the open embed's own (`.fold-rail-cite`, so it brightens under the pointer the same way), drawn on a

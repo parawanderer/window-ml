@@ -27,9 +27,14 @@ import { IconWarn } from "../sidebar/icons";
 /** What a new session can be. */
 export type StartKind = "chat" | "agent";
 
-/** The runtimes this device may start `kind` on: it can, and this client is allowed to ask. */
+/**
+ * The runtimes this device may start `kind` on: it can, and this client is allowed to ask. THIS CLIENT'S OWN RUNTIME
+ * COMES FIRST, so a session started from a page in a browser that is itself a runtime runs there unless another is
+ * picked: the first in the host's list was whichever machine happened to be listed first. The rest keep the host's order.
+ */
 export function startableOn(store: ChatStore, kind: StartKind): RuntimeInfo[] {
-    return store.runtimes.value.filter((rt) => mayStart(rt, kind));
+    const can = store.runtimes.value.filter((rt) => mayStart(rt, kind));
+    return [...can.filter((rt) => store.isLocal(rt.id)), ...can.filter((rt) => !store.isLocal(rt.id))];
 }
 
 /** The compose button, in the list's header and on the rail: it opens the start page (start-page.tsx), on Agent

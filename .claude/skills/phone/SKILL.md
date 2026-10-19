@@ -17,6 +17,8 @@ node scripts/android.mjs install         # build-web → sync-embed → expo pre
 node scripts/android.mjs launch          # cold start (force-stop first)
 node scripts/android.mjs shot [file]     # PNG, default test-results/android.png; Read it to see the screen
 node scripts/android.mjs flows [file…]   # Maestro: every tests/mobile/*.yaml, or the ones named (--report f: JUnit)
+node scripts/android.mjs drag "<from>" "<to>" [--record f.mp4]   # long-press the row showing <from>, drag it onto <to>
+node scripts/android.mjs order "<a>" "<b>" …   # exit 1 unless these texts read top to bottom in this order
 node scripts/android.mjs stop
 ```
 
@@ -135,3 +137,21 @@ Prefer the `@mobile` Playwright layer: it is fast and in CI. The emulator is for
   beside one.
 
 Setup for a human is in CONTRIBUTING.md, "4b. Optional: the mobile clients".
+
+## A drag Maestro cannot do
+
+Maestro has no long-press-then-drag step, so reordering a list (the Pinned group) is `drag`, after a flow has set
+the screen up, and `order` checks the result by on-screen position:
+
+```bash
+node scripts/android.mjs flows tests/mobile/demo-pin-order.yaml   # pins three demo sessions
+node scripts/android.mjs order "KV cache size at 32k" "Fares, cited" "Which tabs share a site"
+node scripts/android.mjs drag "Which tabs share a site" "KV cache size at 32k" --record test-results/drag.mp4
+node scripts/android.mjs order "Which tabs share a site" "KV cache size at 32k" "Fares, cited"
+```
+
+`drag` sends `adb shell input motionevent` steps. `input draganddrop` moved a React Native row about a third as far as
+the finger went, so do not switch back to it. `--record` keeps a screen recording to check the motion frame by frame
+(`ffmpeg … tile=8x5` makes one contact sheet). The demo world's pins live in its in-memory fake host: Back on the
+list screen leaves the app and a relaunch starts with nothing pinned, so run `drag` straight after the flow.
+

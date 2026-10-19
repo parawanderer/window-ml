@@ -418,6 +418,24 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
 // The device is what decides which models there are, so it is picked FIRST and the model list follows it. It was a
 // bare `<select>` in a row of pills until the phone's own start screen had had a proper device pill for months, which
 // is the drift AGENTS.md's one-design-language rule exists to catch.
+// --- the start page: which device a new session starts on ---
+
+test("the start page opens on THIS browser's own runtime when it is one, though another is listed first", async () => {
+    // The demo lists the laptop first; this page is in the desk PC, which is itself a runtime.
+    const page = await browser.newPage({ viewport: DESKTOP });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.addInitScript(() => { globalThis.__chatFakeLocal = "desk-pc"; });
+    await page.goto(server.url);
+    await expect(page.locator(".chat-start-box")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Device:/ })).toHaveAccessibleName("Device: Desk PC");
+    // The laptop is still there to pick.
+    await page.getByRole("button", { name: /^Device:/ }).click();
+    await expect(page.getByRole("option", { name: /Work laptop/ }).or(page.getByRole("menuitemradio", { name: /Work laptop/ })).first()).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("the start page picks a device before a model, and starts the run on the one picked", async () => {
     const { page, errors } = await open(DESKTOP);
     // Nothing open IS the start page on a desktop; no compose button to press first.
@@ -1190,7 +1208,8 @@ test("desktop: the copy button on your own prompt stays lit while you reach for 
     const copy = acts.locator('button[aria-label="Copy this message"]');
     await expect(acts).toHaveCSS("opacity", "0");
     await msg.hover();
-    await expect(acts).toHaveCSS("opacity", "1");
+    // Over the bubble they show at the row's resting brightness; the row itself under the pointer lights them fully.
+    await expect(acts).toHaveCSS("opacity", "0.75");
     // Now leave the message for the buttons, which is where it broke.
     await copy.hover();
     await expect(acts).toHaveCSS("opacity", "1");
@@ -1210,6 +1229,110 @@ test("desktop: a run whose tab is still open gets its composer, not a resume", a
     await expect(page.locator(".chat-resume")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
+});
+
+// --- pinned sessions: the Pinned section's order, and a row's menu ---
+
+test("desktop: pinned rows are put in order by dragging them or with Alt+arrows, and keep it across a reload", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const pinnedKeys = () => page.locator(".chat-pinned .chat-row").evaluateAll((els) => els.map((e) => e.dataset.session));
+    for (const key of [CHAT, CAPPED, POINTERS]) {
+        await page.locator(`.chat-row-wrap:has(.chat-row[data-session="${key}"]) .chat-row-more`).first().click();
+        await page.getByRole("menuitem", { name: "Pin to the top" }).click();
+    }
+    // A new pin goes on the end, and the section stays in the order pins were made, not in recency.
+    await expect.poll(pinnedKeys).toEqual([CHAT, CAPPED, POINTERS]);
+
+    // A mouse drag of the last row to the top: it moves, the others make room, and the release opens nothing.
+    const row = (key) => page.locator(`.chat-pinned .chat-row[data-session="${key}"]`);
+    await page.waitForFunction(() => !document.querySelector(".chat-pinned").getAnimations({ subtree: true }).some((a) => a.playState === "running" && a.effect?.getTiming().iterations !== Infinity));
+    const from = await row(POINTERS).boundingBox(), to = await row(CHAT).boundingBox();
+    const before = page.url();
+    await page.mouse.move(from.x + 40, from.y + from.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(from.x + 40, from.y + from.height / 2 + (to.y - 4 - from.y) * i / 8);
+    await expect(page.locator(".chat-pinned .chat-row-wrap.dragging")).toHaveCount(1);
+    await page.mouse.up();
+    await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+    await expect(page.locator(".chat-pinned .chat-row-wrap[style*=translate]")).toHaveCount(0);
+    expect(page.url()).toBe(before);
+
+    // A plain click still opens the chat.
+    await row(CHAT).click();
+    await expect(page).toHaveURL(new RegExp(encodeURIComponent(CHAT)));
+
+    // The keyboard: Alt+ArrowDown moves the focused row and keeps the focus on it.
+    await row(POINTERS).focus();
+    await page.keyboard.press("Alt+ArrowDown");
+    await expect.poll(pinnedKeys).toEqual([CHAT, POINTERS, CAPPED]);
+    await expect(row(POINTERS)).toBeFocused();
+    await page.keyboard.press("Alt+ArrowUp");
+    await page.keyboard.press("Alt+ArrowUp");   // already first: nothing moves
+    await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+
+    // A device pref: a reload keeps it.
+    await page.reload();
+    await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("phone (touch): a long press lifts a pinned row for a drag, and a quick swipe over the rows still scrolls @mobile", async () => {
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+    await ctx.addInitScript((pins) => { try { localStorage.setItem("wml-chat:view.pinned", JSON.stringify(pins)); } catch { /* no storage */ } }, [CHAT, CAPPED, POINTERS]);
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+        await page.goto(server.url);
+        const pinnedKeys = () => page.locator(".chat-pinned .chat-row").evaluateAll((els) => els.map((e) => e.dataset.session));
+        await expect.poll(pinnedKeys).toEqual([CHAT, CAPPED, POINTERS]);
+        await page.waitForFunction(() => !document.querySelector(".chat-pinned").getAnimations({ subtree: true }).some((a) => a.playState === "running" && a.effect?.getTiming().iterations !== Infinity));
+        // Real touch input, through the browser's own gesture pipeline: a tap() would never hold, and a pointer
+        // event dispatched by hand would never scroll.
+        const cdp = await ctx.newCDPSession(page);
+        const touch = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
+        const box = async (key) => page.locator(`.chat-pinned .chat-row[data-session="${key}"]`).boundingBox();
+        // Every row the gesture ever lifted, so a lift that came and went between two polls is still seen.
+        await page.evaluate(() => {
+            window.__lifted = 0;
+            new MutationObserver(() => { if (document.querySelector(".chat-pinned .chat-row-wrap.dragging")) window.__lifted++; })
+                .observe(document.querySelector(".chat-pinned"), { subtree: true, attributes: true, attributeFilter: ["class"] });
+        });
+
+        // A QUICK SWIPE is a scroll, never a lift: the finger is moving before the long press could land.
+        const scroller = page.locator(".chat-list-scroll");
+        const top0 = await scroller.evaluate((e) => e.scrollTop);
+        const from = await box(CAPPED);
+        await touch("touchStart", from.x + 60, from.y + from.height / 2);
+        for (let i = 1; i <= 8; i++) await touch("touchMove", from.x + 60, from.y + from.height / 2 - i * 25);
+        await touch("touchEnd");
+        await page.waitForTimeout(300);
+        expect(await page.evaluate(() => window.__lifted)).toBe(0);
+        expect(await pinnedKeys()).toEqual([CHAT, CAPPED, POINTERS]);
+        const scrolls = await scroller.evaluate((e) => e.scrollHeight > e.clientHeight);
+        if (scrolls) expect(await scroller.evaluate((e) => e.scrollTop)).toBeGreaterThan(top0);
+        await scroller.evaluate((e) => { e.scrollTop = 0; });
+
+        // A LONG PRESS lifts the row, and the drag that follows moves it, not the list.
+        const last = await box(POINTERS), first = await box(CHAT);
+        await touch("touchStart", last.x + 60, last.y + last.height / 2);
+        await page.waitForTimeout(500);
+        await expect(page.locator(".chat-pinned .chat-row-wrap.dragging")).toHaveCount(1);
+        // Counted from the lift on, as scroll EVENTS: a fling left over from the swipe above may still be landing
+        // before this, and a scrollTop compared across it was flaky by a pixel.
+        await scroller.evaluate((e) => { window.__scrolled = 0; e.addEventListener("scroll", () => window.__scrolled++); });
+        const steps = 8, dist = first.y - 4 - last.y;
+        for (let i = 1; i <= steps; i++) await touch("touchMove", last.x + 60, last.y + last.height / 2 + dist * i / steps);
+        expect(await page.evaluate(() => window.__scrolled)).toBe(0);
+        await touch("touchEnd");
+        await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+        // The release opened nothing.
+        await expect(page.locator(".chat-pinned .chat-row.active")).toHaveCount(0);
+        expect(errors).toEqual([]);
+    } finally {
+        await ctx.close();
+    }
 });
 
 test("desktop: a row's menu pins a session to the top, and deletes one only after asking", async () => {
@@ -3055,6 +3178,39 @@ test("while the model streams, the reading view drops the status line and the pu
     await calmRow(page).click();
     await page.keyboard.press("Escape");
     await expect(page.locator(".pending-note"), "the panel-style view keeps its running bar").toBeVisible();
+    expect(errors, "no page errors").toEqual([]);
+});
+
+test("an answer streaming in holds each citation's place by its label, and settling into the real one does not grow it in again", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
+    await page.evaluate((k) => {
+        const hash = k.split(":").pop();
+        globalThis.__chatFake.emit(k, {
+            kind: "agent-step", id: `${hash}-1r`, ts: Date.now(), save: false, session: { hash, turn: 1 },
+            step: 1, seq: 1, tool: "python_exec", token: "d1e2f30", arguments: {}, result: "42", toolMs: 1200,
+        });
+    }, WATCHED);
+    const text = "The count is in. ![the count](@tool:d1e2f30) That is all of them.";
+    await page.evaluate(([k, content]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9, content, tokens: 20,
+    }), [WATCHED, text]);
+    const live = page.locator(".msg.asst.streaming");
+    await expect(live.locator(".tok-streaming"), "the embed holds its place by its label").toHaveText("the count");
+    await expect(live, "and never as the literal Markdown").not.toContainText("@tool:");
+
+    await page.evaluate(([k, summary]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-result", id: `${k.split(":").pop()}-ans`, ts: Date.now(), save: true,
+        session: { hash: k.split(":").pop(), turn: 9 }, steps: 9, hitCap: false, summary,
+    }), [WATCHED, text]);
+    await expect(live).toHaveCount(0);
+    const settled = page.locator(".msg.asst").last();
+    await expect(settled.locator(".tok-val"), "the real value takes its place (a short one, inline)").toHaveText("42");
+    await expect(settled.locator(".tok-streaming")).toHaveCount(0);
+    // The live bubble and the settled answer are different elements: without the hand-over the answer the reader
+    // just watched vanished and grew back in from nothing.
+    const growing = await settled.evaluate((el) => el.getAnimations().filter((a) => a.effect?.target === el).length);
+    expect(growing, "the settled answer is not animated in as a new arrival").toBe(0);
     expect(errors, "no page errors").toEqual([]);
 });
 

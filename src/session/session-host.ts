@@ -883,4 +883,10 @@ export interface SessionHost {
     events(session: SessionId, listener: (message: SessionStreamMessage) => void, opts?: { since?: StreamPosition }): Unsubscribe;
     /** Send a command. Never rejects: every failure, abort included, resolves as `{ ok: false }`. */
     send<C extends Command>(command: C, opts?: { signal?: AbortSignal }): Promise<CommandResult<C["type"]>>;
+    /**
+     * Is this runtime the one this client runs IN: the browser whose own page this is? The HOST's knowledge, never
+     * the runtime's report, so it is not a field of `RuntimeInfo`: a runtime reached through a hub that said it was
+     * local would be claiming the client's default for itself. Absent, or false: not this client.
+     */
+    isLocal?(runtime: RuntimeId): boolean;
 }

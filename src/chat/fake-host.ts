@@ -30,7 +30,7 @@ const SIDE_REPLIES = { title: "A scripted title", summary: "Did the scripted thi
 
 /** What a streamed demo reply says (`streamMs`): prose, a list, inline code and a fence, so a streaming renderer meets
  *  the Markdown it has to close while it is still open. */
-const STREAMED_REPLY = "A **debounce** waits until calls stop arriving for a moment, then runs once. It is what you want behind a search box: one request when the typing pauses, not one per key.\n\nThree things to get right:\n\n- The timer is **reset** on every call, so only the last one in a burst runs.\n- The last call's arguments are the ones used, which is usually what you meant.\n- A `cancel()` lets a component drop a pending call when it goes away.\n\nA minimal version looks like this:\n\n```js\nfunction debounce(fn, ms) {\n    let t;\n    return (...args) => {\n        clearTimeout(t);\n        t = setTimeout(() => fn(...args), ms);\n    };\n}\n```\n\nPair it with `AbortController` when the call is a fetch, so a slow answer cannot land after a newer one.";
+const STREAMED_REPLY = "A **debounce** waits until calls stop arriving for a moment, then runs once. It is what you want behind a search box: one request when the typing pauses, not one per key.\n\nThree things to get right:\n\n- The timer is **reset** on every call, so only the last one in a burst runs.\n- The last call's arguments are the ones used, which is usually what you meant.\n- A `cancel()` lets a component drop a pending call when it goes away.\n\nA minimal version looks like this:\n\n```js\nfunction debounce(fn, ms) {\n    let t;\n    return (...args) => {\n        clearTimeout(t);\n        t = setTimeout(() => fn(...args), ms);\n    };\n}\n```\n\nPair it with `AbortController` when the call is a fetch, so a slow answer cannot land after a newer one.\n\n| Wait | Requests for \"hello\" |\n|---|---|\n| none | 5 |\n| 300 ms | 1 |\n\nWith calls arriving at rate $\\lambda$ and a wait of $w$, a burst ends when no call comes for $w$, which happens with probability\n\n$$P = e^{-\\lambda w}.$$\n\nSo a longer wait saves more requests, and costs that much delay on the last one.";
 
 let epochSeq = 0;
 const newEpoch = () => `e${++epochSeq}`;
@@ -94,11 +94,14 @@ export class FakeHost implements SessionHost {
     private indexL = new Set<{ fn: (u: SessionIndexUpdate) => void; runtime?: RuntimeId }>();
     private subs = new Set<Sub>();
 
-    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number; streamMs?: number }) {
+    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number; streamMs?: number;
+        /** runtimes to report as this client's own (`isLocal`), as a page that hosts a runtime would */
+        local?: RuntimeId[] }) {
         this.self = opts.self ?? { id: "fake-device", kind: "device", name: "This device" };
         this._runtimes = opts.runtimes;
         this.latencyMs = opts.latencyMs ?? 0;
         this.streamMs = opts.streamMs ?? 0;
+        this.local = new Set(opts.local ?? []);
         for (const s of opts.sessions ?? []) this.addSession(s.summary, s.events);
         for (const a of opts.archived ?? []) this.archive.set(sessionKey(a.summary.id), { summary: a.summary, events: a.events ?? [] });
     }
@@ -249,6 +252,13 @@ export class FakeHost implements SessionHost {
         this.statusL.add(listener);
         this.later(() => { if (this.statusL.has(listener)) listener(this._status); });
         return () => { this.statusL.delete(listener); };
+    }
+
+    /** Runtimes this fake client counts as its own (`local`); writable, so a spec can make one local before it looks. */
+    local: Set<RuntimeId>;
+
+    isLocal(runtime: RuntimeId): boolean {
+        return this.local.has(runtime);
     }
 
     runtimes(listener: (runtimes: RuntimeInfo[]) => void): Unsubscribe {

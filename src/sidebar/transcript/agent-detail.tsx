@@ -43,6 +43,7 @@ import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
+import { noteLiveAnswer } from "./streaming-md";
 import { CodeExplain, IntentSentence, codeOf, intentFor } from "./summaries";
 import { groupTurns } from "../debug-reducer";
 import { EarlierInThread, tail } from "./transcript-window";
@@ -1062,6 +1063,7 @@ export function AgentRunView({ s }: { s: Session }) {
 // events land (the reducer nulls liveStream on agent-step/agent-result).
 export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; s: Session }) {
     if (!ls.reasoning && !ls.content) return null;
+    if (ls.content) noteLiveAnswer(s.hash);
     return (
         <>
             {ls.reasoning

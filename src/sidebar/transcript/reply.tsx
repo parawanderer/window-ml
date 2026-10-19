@@ -7,7 +7,7 @@ import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useJustArrived } from "./history-paint";
-import { StreamingMd } from "./streaming-md";
+import { StreamingMd, continuesLiveAnswer } from "./streaming-md";
 import type { ExtendProfile } from "../../contract/contract-chat";
 import { view } from "../store";
 import type { Session, Turn, Status, AgentStep } from "../store";
@@ -74,12 +74,15 @@ export function OptionsBlock({ s }: { s: Session }) {
  *     its height and bottom margin grow from nothing as it fades in;
  *   - a placeholder is REPLACED by the whole reply at once (a reply that did not stream): the body grows from the
  *     placeholder's height to the reply's as the text fades in.
- *  A reply that STREAMED gets neither: it has already been arriving in front of you. Growing to `height: auto` is what
+ *  A reply that STREAMED gets neither: it has already been arriving in front of you. That includes an agent's
+ *  finished answer, which mounts as a new element where its live bubble was (`continuesLiveAnswer`). Growing to `height: auto` is what
  *  lets a stream that starts mid-animation be followed rather than clipped; it needs the surface's
  *  `interpolate-size`. The surface opts in with `--asst-arrive-ms` on `.asst-body`; one that sets none (the panel)
  *  draws it in one frame, as it always has. */
-function useReplyArrival(msg: { current: HTMLDivElement | null }, body: { current: HTMLDivElement | null }, status: Status, streaming: boolean, ts: number): void {
-    const fresh = useJustArrived(ts);
+function useReplyArrival(msg: { current: HTMLDivElement | null }, body: { current: HTMLDivElement | null }, status: Status, streaming: boolean, ts: number, runHash?: string): void {
+    // An agent's finished answer replacing the live one the reader just watched is not an arrival.
+    const [continues] = useState(() => continuesLiveAnswer(runHash));
+    const fresh = useJustArrived(ts) && !continues;
     const was = useRef<{ pending: boolean; streamed: boolean; h: number } | null>(null);
     useLayoutEffect(() => {
         const m = msg.current, b = body.current;
@@ -121,7 +124,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     // sets nothing gets the instant swap it always had, with no timer and no extra frame.
     const bodyRef = useRef<HTMLDivElement>(null);
     const msgRef = useRef<HTMLDivElement>(null);
-    useReplyArrival(msgRef, bodyRef, status, !!streaming, ts);
+    useReplyArrival(msgRef, bodyRef, status, !!streaming, ts, tokenRun?.hash);
     // A reply that STREAMED keeps its streaming renderer once it settles, so the words still fading finish rather than
     // snapping in; it then draws exactly what the plain renderer would.
     const streamed = useRef(false);
@@ -269,7 +272,11 @@ export function EmbedRunView({ s }: { s: Session }) {
 }
 
 /** ONE CHAT TURN — your message, the reply, its thinking disclosure, sources and token usage. The chat
- *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these. */
+ *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these.
+ *  @group sidebar/transcript
+ *  @gallery {"t": {"id": "t1", "ts": 1760000000000, "user": "What does the stamp look like at rest?", "assistant": "The time shows; the buttons wait for the pointer.", "status": "ok"}}
+ *  @gallery-flow user-stamp tests/gallery-flows/MessageTurn.mjs
+ */
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>

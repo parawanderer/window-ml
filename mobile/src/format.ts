@@ -2,6 +2,7 @@
 // words are the chat page's (src/chat/chat-app.tsx `STATUS_LABEL`, `DOT`), so the phone and the page never disagree.
 
 import type { RuntimeInfo, SessionStatus, SessionSummary } from "../../src/session/session-host";
+import { pinnedInOrder } from "../../src/chat/pin-order";
 
 /** What each status says in a list, where the dot alone would not tell a waiting run from a working one. */
 export const STATUS_LABEL: Partial<Record<SessionStatus, string>> = {
@@ -63,6 +64,19 @@ export function needsYou(sessions: SessionSummary[]): SessionSummary[] {
     return sessions.filter((s) => s.pendingApprovals > 0).sort((a, b) => b.lastTs - a.lastTs);
 }
 
+/** A session's key, `runtime:hash`. */
+export const keyOf = (s: SessionSummary): string => `${s.id.runtime}:${s.id.hash}`;
+
+/**
+ * The Pinned group: every session its runtime holds a pin on, in this phone's order (`order`, pinned-order.ts), and
+ * any this phone never placed after those by recency. One waiting on you is up in "Needs you" instead (`except`), so
+ * no row is drawn twice. The page's rule (`pinnedInOrder`, src/chat/pin-order.ts), shared rather than copied.
+ */
+export function pinnedOf(sessions: SessionSummary[], order: Iterable<string>, except: ReadonlySet<string> = new Set()): SessionSummary[] {
+    const pins = sessions.filter((s) => s.pinned && !except.has(keyOf(s))).sort((a, b) => b.lastTs - a.lastTs);
+    return pinnedInOrder(pins, keyOf, order);
+}
+
 /** Group the index by runtime (drivable, then watched, then offline), each newest first and cut to the recent month. */
 export function sections(runtimes: RuntimeInfo[], sessions: SessionSummary[], now = Date.now()): Section[] {
     const by = new Map<string, SessionSummary[]>();
@@ -70,7 +84,8 @@ export function sections(runtimes: RuntimeInfo[], sessions: SessionSummary[], no
     return [...runtimes]
         .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
         .map((runtime) => {
-            const all = (by.get(runtime.id) ?? []).sort((a, b) => b.lastTs - a.lastTs);
+            // A pinned session is drawn in Pinned (`pinnedOf`), not here as well.
+            const all = (by.get(runtime.id) ?? []).filter((s) => !s.pinned).sort((a, b) => b.lastTs - a.lastTs);
             const recent = all.filter((s) => s.status === "running" || s.status === "waiting" || now - s.lastTs < RECENT_MS);
             return { runtime, data: recent, older: all.length - recent.length };
         });

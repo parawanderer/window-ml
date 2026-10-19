@@ -21,6 +21,11 @@ The spec is [`docs/spec/CHAT_PAGE.md`](../spec/CHAT_PAGE.md) and the contract it
 | `web.tsx`, `chat.html` | The web entry, built to `dist-web/` by `scripts/build-web.mjs`. |
 | `local-host.ts` | This browser as a `SessionHost`: the client of the background's `ml-sessions` port, reconnecting when the worker is evicted. |
 
+A new session starts on THIS client's own runtime when it has one (`startableOn`, new-session.tsx), and only then on the
+first in the host's list. Which runtime is "this client" is the host's answer (`SessionHost.isLocal`; `LocalHost` says
+yes for its worker, `CompositeHost` asks the host that owns the runtime), never a field a runtime reports about itself:
+a runtime reached through a hub that claimed to be local would be claiming the client's default.
+
 Background side, outside `src/chat/` because the extension bundles it:
 
 | File | What it is |
@@ -946,6 +951,8 @@ one, because a control that moves when nothing is open is a control you hunt for
 - `CompositeHost.events` attaches to the host that owns a runtime when it subscribes, and does not move if a
   higher-priority host reports that runtime later.
 - The panel's tooltips (`cursorTipOn`) are pointer-only, so on a touch screen their prose is unreachable.
+- The standalone web client has no way yet to know that the browser it runs in is also one of its hub runtimes, so
+  `isLocal` is answered only by `LocalHost` (the extension's own page, which lists that one runtime).
 
 ## The phone's cache of seen sessions
 

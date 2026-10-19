@@ -549,3 +549,61 @@ test("dereference: the step renders the value alone, and the model still gets th
     assert.match(done.result, /\[this view is @tool:/);
     assert.equal(results.find((r) => r.name === "dereference").result, done.result);
 });
+
+// --- an image a python_exec DREW: an image pointer, and `look` says it was never the page ---
+// A matplotlib figure lands on the step's `python-out` render as `image`. Typed by its text, the pointer listed as "text
+// 12 chars" and nothing said there was a picture to look at; looked at, it was called a stale screenshot of the page.
+
+const FIGURE = "data:image/png;base64,iVBORw0KGgo=";
+const drewFigure = (name) => name === "python_exec"
+    ? { result: "<Figure>", renderOut: { type: "python-out", stdout: "<Figure>", image: FIGURE } }
+    : { result: "" };
+
+test("python figure: a python_exec that drew an image mints an IMAGE pointer", async () => {
+    const { results } = await drive(
+        [call("python_exec", { code: "plt.plot([1,2])", token: true }), call("dereference", { token: "@tool:python_exec" })],
+        drewFigure);
+    assert.match(derefResult({ results }), /^@tool:[0-9a-f]{7} \(python_exec\) — an image/, "typed an image, not text");
+});
+
+test("python figure: look at its pointer gets the figure, labelled as DRAWN rather than captured", async () => {
+    const { got } = await drive(
+        [call("python_exec", { code: "plt.plot([1,2])", token: true }), call("look", { selector: "@tool:python_exec", question: "is the line rising?" })],
+        drewFigure);
+    const l = got.find((g) => g.name === "look");
+    assert.equal(l.args._image, FIGURE);
+    assert.equal(l.args._imageDrawn, true);
+    assert.match(l.args._imageLabel, /@tool:[0-9a-f]{7} \(drawn by python_exec at step 1\)/);
+});
+
+test("python figure: a screenshot pointer is still a CAPTURE (the control)", async () => {
+    const shot = "data:image/png;base64,AAAA";
+    const { got } = await drive(
+        [call("look", { token: true }), call("look", { selector: "@tool:look" })],
+        () => ({ result: "a page", image: shot, renderOut: { type: "image", src: shot } }));
+    const second = got.filter((g) => g.name === "look")[1];
+    assert.equal(second.args._imageDrawn, undefined);
+    assert.match(second.args._imageLabel, /\(captured at step 1\)/);
+});
+
+test("python figure: both looks tell the model what the pixels are; native look shows them without touching the page", async () => {
+    const { buildLookTool } = await import("../src/tools/builtin-tools.ts");
+    const { buildNativeLookTool } = await import("../src/ml/ml-vision.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const asked = [];
+    const host = new Proxy({ chat: async (q, o) => { asked.push({ q, images: o.images }); return "a rising line"; } },
+        { get: (t, k) => k in t ? t[k] : (() => { throw new Error(`the page was used: ${String(k)}`); }) });
+    const args = { selector: "@tool:abc1234", _image: FIGURE, _imageLabel: "@tool:abc1234 (drawn by python_exec at step 1)", _imageDrawn: true };
+
+    const delegated = await buildLookTool({ defineTool }, { model: "reader-vl", host }).run(args);
+    assert.equal(delegated.content, "a rising line");
+    assert.deepEqual(asked[0].images, [FIGURE]);
+    assert.match(asked[0].q, /an image drawn by code earlier in this run \(@tool:abc1234 \(drawn by python_exec at step 1\)\), not a screenshot of the page/);
+    assert.doesNotMatch(asked[0].q, /screenshot captured EARLIER/);
+
+    const native = await buildNativeLookTool({ defineTool }, { host }).run(args);
+    assert.equal(native.image, FIGURE, "the driver is shown the figure itself");
+    assert.match(native.content, /drawn by code .* not a screenshot of the page\. Shown to you in the next message\./);
+    const capture = await buildNativeLookTool({ defineTool }, { host }).run({ ...args, _imageDrawn: undefined, _imageLabel: "@tool:abc1234 (captured at step 1)" });
+    assert.match(capture.content, /screenshot captured EARLIER in this run .*, not the page as it is now/);
+});
