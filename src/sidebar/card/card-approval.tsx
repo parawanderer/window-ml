@@ -44,7 +44,7 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {/* The dialect's verdict on a Python cell: why the person is being asked (python-dialect.ts). */}
                     {st.tool === "python_exec" && pythonDialectVerdict(String(st.arguments?.code ?? ""))
-                        ? <div class="action-raise"><IconWarn /><span>{pythonDialectVerdict(String(st.arguments?.code ?? ""))}.</span></div>
+                        ? <div class="action-summary dim">{pythonDialectVerdict(String(st.arguments?.code ?? ""))}.</div>
                         : null}
                   </div>
                 : intent
