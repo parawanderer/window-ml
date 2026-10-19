@@ -409,8 +409,13 @@ What follows from it:
   reached by a call that names its target; a policy may allow it.
 - **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
   proposal): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
-  at `done` and at an orphan's deadline, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
-  host, unknown, never "nothing"). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
+  at `done`, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
+  host, unknown, never "nothing"). An ORPHAN outlives `done`: its ledger entry keeps the start snapshot, and `status`
+  reports `protectedChanged` for each live orphan, computed when `status` is read, so a session that asks sees what
+  changed so far. What an orphan changes between the last `status` and its deadline kill is NOT reported (ruled
+  2026-10-19, lane 4's K3b question: at the kill nobody is listening, and a record written for the next session is a
+  new `status` surface with its own consume-once semantics; left as a named open item, not built in K3b, see
+  the plan). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
   and never attributes: two calls in one root see each other's change, so the card and the run log say "changed
   during this call". The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
   design, and the person decides what to do with the report.
