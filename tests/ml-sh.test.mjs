@@ -91,11 +91,22 @@ test("a write inside the roots is free under the sandbox, and asks on the plain 
     for (const sandbox of [true, false]) {
         const host = fakeNativeHost({ sandbox });
         const ask = answering(true);
-        const { results } = await runOn("userScripts", [runs(["find", "src", "-delete"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+        // Below the top level: `find src -delete` would remove the top-level `src`, a name claim that asks (K3c, #783).
+        const { results } = await runOn("userScripts", [runs(["find", "src/gen", "-delete"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
         assert.equal(ask.asked.length, sandbox ? 0 : 1, `sandbox ${sandbox}`);
         if (!sandbox) assert.equal(ask.asked[0].facts.placement, "host-plain");
         assert.equal(valueOf(results[0]).approvedBy, sandbox ? "builtin" : "person");
     }
+});
+
+test("K3c: removing a top-level name of a root asks even under the sandbox, and the card names it", T, async () => {
+    const host = fakeNativeHost({ sandbox: true });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["find", "src", "-delete"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.equal(ask.asked.length, 1, "a names write on a top-level entry is outside the sandbox's bound");
+    assert.equal(ask.asked[0].facts.placement, "host-sandbox");
+    assert.ok(ask.asked[0].facts.paths.some((p) => p.topLevel === true), "the facts say which path is top-level");
+    assert.equal(valueOf(results[0]).approvedBy, "person");
 });
 
 test("reads inside the roots are free even on the plain host (EFFECTS.md: effects within bound ∪ ReadsInRoots)", T, async () => {
