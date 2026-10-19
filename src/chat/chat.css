@@ -318,6 +318,22 @@ html, body, #root { height: 100%; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
 .chat.calm .md li { margin: .2em 0; }
 
+/* A TABLE in a reply is read, not filled in, so calm drops the spreadsheet grid the panel uses: a tinted header, thin
+   lines between rows, no vertical rules, no outer box, no stripes. It is sized to its CONTENT and not stretched, because
+   a two-column table pulled across the whole reading column leaves its values far from their labels. The wrap is
+   capped at the column's width and scrolls sideways inside itself, so a wide table never widens the page. */
+.chat.calm .md .md-table-wrap { max-width: 100%; margin: .4em 0 1.05em; }
+.chat.calm .md .md-table { width: auto; font-size: 1em; line-height: 1.5; }
+.chat.calm .md .md-table th, .chat.calm .md .md-table td {
+    border: none; border-bottom: 1px solid var(--border); padding: .5em .9em; vertical-align: top;
+    /* The reading column breaks a word anywhere to keep a long URL in; in a cell that would shred a narrow column into
+       single letters, so a cell breaks at spaces only and the wrap scrolls instead. */
+    overflow-wrap: normal; word-break: normal;
+}
+.chat.calm .md .md-table th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+.chat.calm .md .md-table tbody tr:nth-child(even) { background: none; }
+.chat.calm .md .md-table tbody tr:last-child td { border-bottom: none; }
+
 /* YOUR OWN TURN is the one thing that gets a shape, because it is the only thing on the page that is not the
    answer: a bubble says "you said this" without a label doing it. The reply keeps no container at all — the page
    IS the reply, which is what every product that people read for pleasure does and no panel does. */
@@ -512,18 +528,23 @@ html, body, #root { height: 100%; }
    would hide the timestamps, the copy button, the token counters and the hash with no gesture that brings any of
    them back. A phone gets them dimmed; a mouse gets them on demand. */
 @media (hover: hover) and (pointer: fine) {
-    .chat.calm .msg.user .mrow,
     .chat.calm .msg.asst > .mrow,
     .chat.calm .composer-foot { opacity: 0; transition: opacity .15s ease; }
+    /* Your own bubble keeps its TIME at the row's quiet resting opacity and hides only the copy and edit buttons: a
+       prompt without a clock beside replies that show theirs read as inconsistent. The buttons go by opacity, never
+       `display`, because taking them out of the layout would slide the time sideways each time they came back. They
+       stay in the tab order, and `:focus-within` below lights them for a keyboard. */
+    .chat.calm .msg.user .mrow .umsg-acts { opacity: 0; transition: opacity .15s ease; }
     /* A block (a run's options, its raw request) is a thing you OPEN, so it stays findable at calm's faint .6 and only
        brightens under the pointer: at 0 it was a control nobody could see until they happened to cross it. */
     .chat.calm .block { transition: opacity .15s ease; }
-    .chat.calm .msg.user:hover .mrow, .chat.calm .msg.user:focus-within .mrow { opacity: .75; }
+    .chat.calm .msg.user:hover .mrow .umsg-acts, .chat.calm .msg.user:focus-within .mrow .umsg-acts { opacity: .75; }
     /* The row hangs BELOW the bubble, outside it, so reaching the copy/edit buttons takes the pointer out of
        `.msg.user` and faded them to nothing on the way — they stayed clickable, invisibly, which reads as the
        buttons running away. Hovering the row is its own reason to keep it up, and fully lit: it is being used now,
        not merely looked at. */
     .chat.calm .msg.user .mrow:hover { opacity: 1; }
+    .chat.calm .msg.user .mrow:hover .umsg-acts { opacity: 1; }
     .chat.calm .msg.asst:hover > .mrow, .chat.calm .msg.asst:focus-within > .mrow { opacity: 1; }
     /* …but never while the row is saying something that is not provenance. */
     .chat.calm .msg.asst.streaming > .mrow,
@@ -537,7 +558,7 @@ html, body, #root { height: 100%; }
     .chat.calm .chat-row-wrap .chat-row { padding-right: 36px; }
     .chat.calm .block:hover, .chat.calm .block:focus-within { opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
-        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow,
+        .chat.calm .msg.user .mrow .umsg-acts, .chat.calm .msg.asst > .mrow,
         .chat.calm .composer-foot, .chat.calm .block { transition: none; }
     }
 }
