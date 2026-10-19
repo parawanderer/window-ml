@@ -180,8 +180,9 @@ What a run needs, in order:
    checkout exists on this machine (`~/git/` has `cpython-restricted` and `cpython-nospec`, no pyodide).
 2. **The wasm build's own test entry.** `python -m test test_restricted` inside the Pyodide runtime (node driver or
    the in-browser runner). The suite's `unittest.main()` form also works. The 10 non-ABI classes (BuildTest,
-   CompileTest, ExtentTest, GateTest, BudgetTest, OwnershipTest, MemoryTest, LiftedDunderTest, UndoTest) need
-   nothing beyond the patched interpreter.
+   CompileTest, ExtentTest, GateTest, BudgetTest, OwnershipTest, MemoryTest, LiftedDunderTest, UndoTest, PrintTest)
+   need nothing beyond the patched interpreter. The file has 11 `TestCase` classes; the eleventh is StockWheelsTest
+   (item 3).
 3. **`StockWheelsTest`, if the ABI rule is to be checked on wasm.** It needs `numpy` and `pandas` importable in the
    Pyodide runtime — that is, the Pyodide-patched wheels from the lockfile, not PyPI macOS wheels. The desktop run
    used `numpy==2.5.4` / `pandas==3.0.6` cp314 macosx arm64 ([`LANE_3_RESULT_H.md`](LANE_3_RESULT_H.md)); the wasm
