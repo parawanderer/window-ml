@@ -269,18 +269,20 @@ test("an effect set is frozen all the way down", () => {
 
 // --- SHELL.md's name-immutable top level (2026-10-19): name operations at the top level are inside no bound ---
 
-test("a write that creates a top-level name in a root is not free — the name-immutable rule reaches the free tier", { todo: "OPEN (K3c, ruled 2026-10-19): the effect algebra has no top-level marker and no name-operation term — covers() matches any in-root fs effect, and ShPathFact carries only inRoot/secret. K3c adds ShPathFact.topLevel (worker computes it from realpath and its roots) and the write-names(fs) effect (create/remove/rename an entry). A claimed write to an ABSENT top-level entry, or write-names at the top level, is covered by no bound and asks; an in-place write to an EXISTING top-level file stays free. HostSpawn also carries no write envelope (the narrow write: \"roots\" is never sent) and HostDone no protectedChanged (the tripwire never reports). Lane 4 un-todos this when K3c lands." }, () => {
+test("a write that creates a top-level name in a root is not free — the name-immutable rule reaches the free tier", { todo: "OPEN (K3c, ruled 2026-10-19): the effect algebra has no top-level marker — covers() matches any in-root fs effect, and ShPathFact carries inRoot/secret/exists but no topLevel. K3c adds ShPathFact.topLevel (worker computes it from realpath and its roots) and the write-names(fs) effect (create/remove/rename an entry). A claimed write to an absent top-level entry is topLevel: true with exists: false under a plain write, and is covered by no bound; an in-place write to an existing top-level file (topLevel: true, exists: true) stays free. HostSpawn also carries no write envelope (the narrow write: \"roots\" is never sent) and HostDone no protectedChanged (the tripwire never reports). Lane 4 un-todos this when K3c lands." }, () => {
     // Ruling 2026-10-19 (repl-specs, #783): the top-level names of a root are outside the sandbox's B. A claimed
     // write to an absent top-level entry, or a new write-names(fs) effect (create/remove/rename an entry: mkdir,
     // rm, mv, sed -i, write-file-atomic) at the top level, is covered by no bound and asks; an in-place write to an
     // existing top-level file stays free. Universal over the top level, no list of names. `.envrc`, `.mcp.json`,
     // `.vscode/` are the threat; Landlock cannot hold "roots minus protected names" for a name that does not exist.
+    // Creation is expressed by exists: false under a plain write; write-names is for the programs that write the
+    // entry itself. Do not fold one into the other.
     const b = boundFor("host-sandbox");
     // A claimed write to an ABSENT top-level entry (creating .envrc) is inside no enforcer's bound.
-    assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true, absent: true } }], b), false,
+    assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true, exists: false } }], b), false,
         "a write that creates a top-level name is inside no enforcer's bound");
     // Positive control: an in-place write to an EXISTING top-level file stays free (the ruling's refinement).
-    assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true } }], b), true,
+    assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true, exists: true } }], b), true,
         "an in-place write to an existing top-level file is still free");
     // Positive control: a nested write inside the roots is free under the OS sandbox.
     assert.equal(free([{ op: "write", res: { ...fs("/r/src/a.ts", true, false), topLevel: false } }], b), true,
@@ -290,19 +292,20 @@ test("a write that creates a top-level name in a root is not free — the name-i
         "an unmarked in-root write is still free (the marker is the claim)");
 });
 
-test("a removal or a rename of a top-level name is not free, whichever direction the claim runs", { todo: "OPEN (K3c, ruled 2026-10-19): ProgramEffect is read|write|runs-code|unknown|{network} — no term expresses \"creates/renames a top-level name\", so a manifest cannot make the claim and the worker cannot withhold write: \"roots\" for a rename-based editor (sed -i, perl -i, write-file-atomic). K3c adds a write-names(fs) ProgramEffect term (and the matching Op) that fromProgramEffect projects onto the path facts; a name claim at the top level is then inside no bound and asks, while the write op is what an in-place edit uses and stays free at the top level. Lane 4 un-todos this when K3c lands." }, () => {
+test("a removal or a rename of a top-level name is not free, whichever direction the claim runs", { todo: "OPEN (K3c, ruled 2026-10-19): ProgramEffect is read|write|runs-code|unknown|{network} — no term expresses \"creates/renames a top-level name\", so a manifest cannot make the claim and the worker cannot withhold write: \"roots\" for a rename-based editor (sed -i, perl -i, write-file-atomic). K3c adds a write-names(fs) ProgramEffect term (and the matching Op) that fromProgramEffect projects onto the path facts; a name claim at the top level is then inside no bound and asks, while the write op is what an in-place edit uses and stays free at the top level. write-names is for the programs that write the entry itself (mkdir, rm, mv, sed -i, write-file-atomic); creation by a plain write is exists: false under write, not a folded write-names. Lane 4 un-todos this when K3c lands." }, () => {
     // The rule names three verbs: created, removed or renamed. A `git clean` that removes `.envrc`, and an
     // atomic-rename editor (SHELL.md's third bullet) that swaps a temp over `.envrc`, both claim a top-level name
     // and are expressed as write-names(fs), not write. The projection must carry the claim through to free().
     const b = boundFor("host-sandbox");
-    const topLevelPath = { ...fs("/r/.envrc", true, false), topLevel: true };
-    for (const label of ["remove", "rename-in", "rename-out", "create"]) {
+    for (const [label, exists] of [["mkdir", false], ["rm", true], ["mv-in", true], ["mv-out", true], ["sed -i", true]]) {
+        const topLevelPath = { ...fs("/r/.envrc", true, false), topLevel: true, exists };
         const projected = fromProgramEffect("write-names", { paths: [topLevelPath] });
         assert.deepEqual(projected, [{ op: "write-names", res: topLevelPath }], label);
         assert.equal(free(projected, b), false, `${label}: a name claim is inside no bound`);
     }
-    // Positive control: the same path as an in-place write stays free (the ruling's refinement).
-    assert.equal(free(fromProgramEffect("write", { paths: [topLevelPath] }), b), true,
+    // Positive control: the same path as an in-place write of an existing top-level file stays free (the
+    // ruling's refinement) — write-names is what changes the answer, not the path's position.
+    assert.equal(free(fromProgramEffect("write", { paths: [{ ...fs("/r/.envrc", true, false), topLevel: true, exists: true }] }), b), true,
         "an in-place write to an existing top-level file is still free");
     // Positive control: a nested write is free in every one of those verbs' place.
     assert.equal(free([{ op: "write", res: { ...fs("/r/src/a.ts", true, false), topLevel: false } }], b), true,
