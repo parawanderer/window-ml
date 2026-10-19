@@ -2,7 +2,7 @@
 // run the dialect under wasm. Everything it pins (Pyodide tag, fork commit, emscripten, ABI) is read from
 // tools/pyodide-dist.json, the one place the version lives; `npm run fetch-pyodide` reads the same file.
 //
-//   node tools/build-pyodide-restricted.mjs [--work tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10]
+//   node tools/build-pyodide-restricted.mjs [--work tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10] [--pin <file>]
 //
 // Takes hours (emsdk install + CPython + link). Run it in the background. Output: <work>/out/ (the five
 // PYODIDE_CORE files), <work>/pyodide-restricted-<pyodide>-<sha8>.tar.gz, <work>/BUILD_REPORT.md, <work>/build.log.
@@ -20,11 +20,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PIN_FILE = join(ROOT, "tools/pyodide-dist.json");
 const CORE = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json"];
 
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
+const PIN_FILE = resolve(opt("--pin", join(ROOT, "tools/pyodide-dist.json"))); // a scratch pin tries a fork branch before it is merged
 const WORK = resolve(opt("--work", join(ROOT, "tmp/pyodide-build")));
 const CPYTHON_LOCAL = resolve(opt("--cpython", join(homedir(), "git/cpython-restricted")));
 const JOBS = opt("--jobs", "10");
@@ -67,13 +67,13 @@ mark("preflight ok");
 
 // --- the patch series, from the pinned fork commit ---
 let src = CPYTHON_LOCAL;
-if (!existsSync(join(src, ".git")) || run("git", ["-C", src, "rev-parse", "HEAD"]) !== pin.cpython.commit) {
+const hasCommit = d => { try { run("git", ["-C", d, "cat-file", "-e", `${pin.cpython.commit}^{commit}`]); return true; } catch { return false; } };
+if (!existsSync(join(src, ".git")) || !hasCommit(src)) { // format-patch needs the commit object, not a checkout of it
     src = join(WORK, "cpython-fork");
     if (!existsSync(join(src, ".git"))) run("git", ["clone", "--no-checkout", pin.cpython.repo, src]);
     run("git", ["-C", src, "fetch", "origin", pin.cpython.branch, "--tags"]);
-    run("git", ["-C", src, "checkout", "--detach", pin.cpython.commit]);
+    if (!hasCommit(src)) throw new Error(`the fork has no commit ${pin.cpython.commit}`);
 }
-if (run("git", ["-C", src, "rev-parse", "HEAD"]) !== pin.cpython.commit) throw new Error("fork checkout is not at the pinned commit");
 const patchDir = join(WORK, "patches-out");
 rmSync(patchDir, { recursive: true, force: true });
 mkdirSync(patchDir);
