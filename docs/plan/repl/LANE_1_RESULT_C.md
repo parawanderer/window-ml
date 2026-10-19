@@ -133,6 +133,19 @@ with every other full-mode run in this browser" (`card-approval.tsx`), so approv
   measured. `python-worker.ts` itself is not loaded there, and `_user` awaiting `ml.*` is covered only by the e2e.
 - **No eviction by size** (the spec asked for one that also tells). The dict is bounded by the worker's memory only.
 - **The offscreen document closing** loses every dict with no record and no notice on the next cell.
+- **The loaders (`Image.open(selector)`, `pd.read_csv('current')`) do not redirect in a run's dict.** The run prelude
+  skips `PRELUDE_LOADERS` on purpose: the patch lives on the shared module object (`PIL.Image`, `pandas`), and its
+  wrapper reads the DEFINING dict's `globals()`, so a second dict re-patches and chains to the first one's wrapper.
+  Mimo measured it on #757: run B with no image of its own got run A's `img`. The old per-call path does not chain,
+  because it rebinds `img = None` and the rest on every call. Two shapes would bring the redirect back soundly, a
+  follow-up and not this PR:
+  - **A run-local proxy rebound in the dict** (`Image = _RunImageProxy(real, lookup)`). It works only for the dict's
+    own `Image` name: `from PIL import Image` or `import PIL.Image as I` in a cell rebinds the real module and loses the
+    redirect (no leak), and `Image.open = …` in a cell can still write the shared slot.
+  - **One shared patch whose lookup is a per-call context the worker sets** (the running run's dict, or a
+    harness-owned `current_ns`), never the defining dict's `globals()`. `globals()` cannot be made caller-aware, and a
+    frame walk (`sys._getframe`) is brittle. This is the shape that brings the redirect to worker runs with no
+    shared-slot write.
 
 ## Assumptions where a spec was silent
 
