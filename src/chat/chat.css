@@ -512,18 +512,23 @@ html, body, #root { height: 100%; }
    would hide the timestamps, the copy button, the token counters and the hash with no gesture that brings any of
    them back. A phone gets them dimmed; a mouse gets them on demand. */
 @media (hover: hover) and (pointer: fine) {
-    .chat.calm .msg.user .mrow,
     .chat.calm .msg.asst > .mrow,
     .chat.calm .composer-foot { opacity: 0; transition: opacity .15s ease; }
+    /* Your own bubble keeps its TIME at the row's quiet resting opacity and hides only the copy and edit buttons: a
+       prompt without a clock beside replies that show theirs read as inconsistent. The buttons go by opacity, never
+       `display`, because taking them out of the layout would slide the time sideways each time they came back. They
+       stay in the tab order, and `:focus-within` below lights them for a keyboard. */
+    .chat.calm .msg.user .mrow .umsg-acts { opacity: 0; transition: opacity .15s ease; }
     /* A block (a run's options, its raw request) is a thing you OPEN, so it stays findable at calm's faint .6 and only
        brightens under the pointer: at 0 it was a control nobody could see until they happened to cross it. */
     .chat.calm .block { transition: opacity .15s ease; }
-    .chat.calm .msg.user:hover .mrow, .chat.calm .msg.user:focus-within .mrow { opacity: .75; }
+    .chat.calm .msg.user:hover .mrow .umsg-acts, .chat.calm .msg.user:focus-within .mrow .umsg-acts { opacity: .75; }
     /* The row hangs BELOW the bubble, outside it, so reaching the copy/edit buttons takes the pointer out of
        `.msg.user` and faded them to nothing on the way — they stayed clickable, invisibly, which reads as the
        buttons running away. Hovering the row is its own reason to keep it up, and fully lit: it is being used now,
        not merely looked at. */
     .chat.calm .msg.user .mrow:hover { opacity: 1; }
+    .chat.calm .msg.user .mrow:hover .umsg-acts { opacity: 1; }
     .chat.calm .msg.asst:hover > .mrow, .chat.calm .msg.asst:focus-within > .mrow { opacity: 1; }
     /* …but never while the row is saying something that is not provenance. */
     .chat.calm .msg.asst.streaming > .mrow,
@@ -537,7 +542,7 @@ html, body, #root { height: 100%; }
     .chat.calm .chat-row-wrap .chat-row { padding-right: 36px; }
     .chat.calm .block:hover, .chat.calm .block:focus-within { opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
-        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow,
+        .chat.calm .msg.user .mrow .umsg-acts, .chat.calm .msg.asst > .mrow,
         .chat.calm .composer-foot, .chat.calm .block { transition: none; }
     }
 }
