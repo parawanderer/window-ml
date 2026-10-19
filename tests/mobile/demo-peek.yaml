@@ -12,8 +12,16 @@ appId: dev.wander.windowml
 - extendedWaitUntil:
     visible: "Model: qwen3:32b"
     timeout: 30000
+# Back closes the sheet, not the session under it.
 - tapOn: "Session menu"
-- tapOn: "Look at the page.*"
+- assertVisible: "Look at the page.+"
+- pressKey: Back
+- assertNotVisible: "Look at the page.+"
+- assertVisible: "Model: qwen3:32b"
+# The sheet's row, never the page's own "Look at the page" behind it (left out of the accessibility tree while a sheet
+# is open, but still in the hierarchy Maestro reads).
+- tapOn: "Session menu"
+- tapOn: "Look at the page.+"
 - extendedWaitUntil:
     visible: "Image, full size"
     timeout: 15000
