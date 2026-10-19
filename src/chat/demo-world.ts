@@ -22,7 +22,7 @@ export const DEMO = {
 } as const;
 
 /** Build the demo host. `now` pins the clock, so a screenshot does not change between runs. */
-export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): FakeHost {
+export function demoHost(now = Date.now(), opts: { latencyMs?: number; streamMs?: number } = {}): FakeHost {
     const min = 60_000;
     const runtimes: RuntimeInfo[] = [
         {
@@ -277,6 +277,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         runtimes,
         archived,
         latencyMs: opts.latencyMs,
+        streamMs: opts.streamMs,
         sessions: [
             ...history,
             { summary: summary(DEMO.waiting, { kind: "agent", status: "waiting", pendingApprovals: 1, createdTs: now - 6 * min, lastTs: now - 4 * min, task: "Find the cheapest flight on this page and summarise its fare rules", title: "Cheapest AMS → LIS fare", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", tabId: 41 } }), events: waiting },

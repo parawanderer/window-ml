@@ -18,7 +18,9 @@ import { fakePairing } from "../pairing/fake-pairing";
 
 // `__chatFakeLatencyMs`, set by a spec's init script before load, slows every answer: how a spec sees what the page
 // draws while it waits (a first list, a placeholder), which an instant demo host never shows.
-const host = demoHost(Date.now(), { latencyMs: Number((globalThis as { __chatFakeLatencyMs?: unknown }).__chatFakeLatencyMs) || 0 });
+// `?stream=<ms>` streams a chat reply a word or two every <ms> instead of answering at once: for watching a reply arrive.
+const streamMs = Number(new URLSearchParams(globalThis.location?.search ?? "").get("stream")) || 0;
+const host = demoHost(Date.now(), { latencyMs: Number((globalThis as { __chatFakeLatencyMs?: unknown }).__chatFakeLatencyMs) || 0, streamMs });
 // Scripting handle for the specs and for poking at the page by hand: emit events, restart a runtime, change grants.
 (globalThis as { __chatFake?: unknown }).__chatFake = host;
 // `?long=<n>` adds a chat of n turns and an agent run of n steps (long-session.ts): the transcript at a size the demo
