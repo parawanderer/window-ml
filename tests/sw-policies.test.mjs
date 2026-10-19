@@ -212,6 +212,15 @@ test("policies are kept in local storage, never sync", () => {
     assert.ok(!globalThis.chrome.storage.sync, "the store never reached for sync");
 });
 
+test("a stored policy over writes sees a names write: has(\"write\") and c.effects.writes both carry it (#786)", () => {
+    // Universals over writes must not fail open for rm/mv/sed -i: the names write is a write, not an operation of its own.
+    P.addRunPolicy("h-names", { consumer: "sh", effect: "deny", source: '(c) => c.effects.has("write")', label: "no writes", origin: "person" });
+    P.addRunPolicy("h-names2", { consumer: "sh", effect: "allow", source: '(c) => c.effects.writes.every((r) => r.path.startsWith("/r/src/"))', label: "src only", origin: "person" });
+    const rmTop = { argv: ["find", ".envrc", "-delete"], effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, exists: true, topLevel: true, isRoot: false, names: true } }] };
+    assert.equal(P.judgeCall("h-names", "sh", rmTop, "host-sandbox").decision, "deny", "a has(\"write\") deny fires for a names write");
+    assert.notEqual(P.judgeCall("h-names2", "sh", rmTop, "host-sandbox").decision, "allow", "a writes-under-src allow does not cover a top-level names write");
+});
+
 // --- SHELL.md's name-immutable top level at the judge (2026-10-19): a name claim at the top level is not the builtin's allow ---
 
 test("judgeCall: a shell call that claims a top-level name in a root is not the builtin's allow", () => {

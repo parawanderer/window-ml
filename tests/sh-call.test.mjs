@@ -148,6 +148,8 @@ test("K3c: a call naming a top-level entry of a root asks under the OS sandbox; 
     const envrc = at("/w/.envrc", false, ["git", "diff", "--output=.envrc"]);
     assert.equal(envrc.described, true, envrc.why.join("; "));
     assert.equal(envrc.paths[0].topLevel, true, "the fact says the path's parent is a root");
+    assert.equal(envrc.paths[0].isRoot, false);
+    assert.deepEqual([envrc.cwd.topLevel, envrc.cwd.isRoot], [false, true], "a policy reading c.cwd sees the cwd is a root itself");
     assert.equal(free(envrc.effects, B), false, "creating .envrc at the top of a root is not free");
     const lines = shCardLines(envrc);
     const does = lines.find((l) => l.label === "Does");
@@ -167,6 +169,9 @@ test("K3c: find -delete is a names write, so deleting under a root itself or a t
     const del = (argv, paths, cwd = "/w") => shFacts(facts({ argv, cwd: { path: cwd, inRoot: true }, paths }), null, { roots: ["/w"] });
     const dir = (arg, given, path) => ({ arg, given, path, inRoot: true, secret: false, exists: true });
     assert.equal(free(del(["find", "-delete"], []).effects, B), false, "no operand: the cwd, here the root itself, whose entries are the top level");
+    const dot = del(["find", ".", "-delete"], [dir(1, ".", "/w")]);
+    assert.equal(free(dot.effects, B), false, "find . -delete: the operand . resolves to the root itself, whose entries are the top level");
+    assert.deepEqual([dot.paths[0].isRoot, dot.cwd.isRoot], [true, true], "isRoot is read off the resolved path, for an operand and for the cwd");
     assert.equal(free(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")]).effects, B), false, "find src -delete removes the top-level src");
     assert.equal(free(del(["find", "src/gen", "-delete"], [dir(1, "src/gen", "/w/src/gen")]).effects, B), true, "two levels down is free");
     assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);

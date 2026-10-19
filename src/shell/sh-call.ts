@@ -195,7 +195,7 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
  *  tell. */
-export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; containsSecret?: boolean | null; sha256?: string | null }
+export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null; sha256?: string | null }
 
 /** Where a resolved path sits among the roots: a root itself, or a top-level entry of one (its parent is a root).
  *  Both are textual over the host's realpaths, which the roots are too. Unset when the roots are not known. */
@@ -206,12 +206,6 @@ function placeAmongRoots(path: string, roots: readonly string[] | undefined): { 
     return { topLevel: parent !== null && rs.includes(parent), isRoot: rs.includes(p) };
 }
 
-/** The `topLevel` fact of a path argument, when the roots are known. */
-const topLevelOf = (path: string, roots: readonly string[] | undefined): { topLevel?: boolean } => {
-    const t = placeAmongRoots(path, roots).topLevel;
-    return t === undefined ? {} : { topLevel: t };
-};
-
 /**
  * One call as a policy's `c` and the card see it: everything resolved by the host or read from the manifest, nothing
  * the script asserted (docs/spec/SHELL.md, "What it is given"). Plain data: it is copied into the approval's
@@ -221,7 +215,8 @@ export interface ShFacts {
     argv: string[];
     /** `version`: what the program reported (the worker's version probe), null when it was not read. */
     program: { path: string; inRoot: boolean; version: string | null };
-    cwd: { path: string; inRoot: boolean; containsSecret?: boolean | null };
+    /** `topLevel`/`isRoot` as on a path, present only when the roots were given. */
+    cwd: { path: string; inRoot: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null };
     env: { set: string[]; free: boolean };
     secrets: string[];
     paths: ShPathFact[];
@@ -281,10 +276,10 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     return {
         argv: [...facts.argv],
         program: { path: facts.program.path, inRoot: facts.program.inRoot, version },
-        cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
+        cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...topLevelOf(p.path, place?.roots), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeAmongRoots(p.path, place?.roots), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,
