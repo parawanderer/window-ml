@@ -147,6 +147,28 @@ test("network effects keep their direction, and an unnamed host is any host", ()
     assert.deepEqual(keys(describeCall(["git", "push"], git, { ...V, resolve: resolveIn(true) }).effects).filter((k) => k.includes("net")), ["read:net:*", "write:net:*"]);
 });
 
+// --- SHELL.md's name-immutable top level reaches find -delete (2026-10-19): a removal of a top-level name is not free ---
+
+test("find -delete removes names: a removal at a root's top level is inside no bound", { todo: "OPEN (K3c, ruled 2026-10-19): find.json claims -delete as plain `write` on the OPERAND (find.json:128-132), so describeCall projects write(fs(/r)) — an in-root write, covered by write(fs(roots)), free under host-sandbox. The names it unlinks never appear as path facts, so K3c's ShPathFact.topLevel/exists markers see the operand and not the removed entry: find /r -delete and find /r/src -delete run UNASKED and unlink .envrc / src at a root's top level. The fix needs -delete to claim write-names (the ruled word) and a name claim whose names sit at a root's top level — including when the operand IS the root or a top-level entry — to be inside no bound. What holds instead: a nested removal is free, a read-only find is free, and a write outside the roots or to a secret path asks. Lane 4 un-todos when the claim and the marker reach it." }, () => {
+    const sb = boundFor("host-sandbox");
+    const find = manifests.find;
+    // The host resolved the operand inside a root; `given` is what the script typed.
+    const at = (inRoot, secret = false) => ({ arg, given }) => ({ kind: "fs", path: given, inRoot, secret });
+    const d = (argv) => describeCall(argv, find, { version: "*", resolve: at(true) });
+    // Vector: find /r -delete removes .envrc, .mcp.json, .vscode/ — every top-level name of the root.
+    assert.equal(free(d(["find", "/r", "-delete"]).effects, sb), false,
+        "find -delete on a root removes its top-level names");
+    // The same claim when the operand is itself a top-level entry: find /r/src -delete unlinks src.
+    assert.equal(free(d(["find", "/r/src", "-delete"]).effects, sb), false,
+        "find -delete that unlinks a top-level entry is inside no bound");
+    // Positive control: a nested removal is free (the rule is universal over the top level, not over every path).
+    assert.equal(free(d(["find", "/r/src/a.ts", "-delete"]).effects, sb), true,
+        "a nested removal is free");
+    // Positive control: a read-only find is free.
+    assert.equal(free(d(["find", "/r", "-name", "*.ts"]).effects, sb), true,
+        "a read-only find is free");
+});
+
 // --- versions ---
 
 test("version ranges: comparators all hold, missing parts are zero", () => {
