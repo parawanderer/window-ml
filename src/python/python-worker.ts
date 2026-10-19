@@ -270,7 +270,12 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         if (r && r.destroy) r.destroy();
         return timed({ ok: true, value: sanitize(value), stdout, ...over, ...(ipc ? { ipc } : {}), ...keptResult });
     } catch (e: any) {
-        return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
+        // The wrapper did not run (a syntax error) or threw past its own capture. A kept namespace still exists, and may
+        // hold the names earlier cells defined, so the scope manifest rides this result too: the offscreen document
+        // records the run's dict from it (a loss after this is told).
+        let keptCatch = {};
+        if (kept) { try { keptCatch = { bench: { id: kept.id, vars: benchVars(py, ns) } }; } catch { /* the namespace is unreadable */ } }
+        return timed({ ok: false, stdout: "", error: String((e && e.message) || e), ...keptCatch });
     } finally {
         if (!kept) injectInputs(ns, null, null, harness);
         if (wire) { try { ns.delete("_ml_send"); } catch { /* the wrapper dropped it */ } }

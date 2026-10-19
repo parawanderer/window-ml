@@ -85,6 +85,23 @@ PR #757, branch `repl-lane1/ml-wiring`.
   it through `__globals__`, so releasing the proxy alone left it reachable until a collection
   (`tests/python-run-namespace-py.test.mjs`, the positive control, failed without it).
 
+- **A run's dict is recorded when its cell is POSTED** (redteam-e3's re-review of `1bcdd5a2`). The worker creates the
+  dict before the cell runs, and a cell that failed before returning a scope manifest (a syntax error is enough) left a
+  dict on `full` that the offscreen document never learned of, so neither delete nor loss reached it. `runPrincipals`
+  is now filled at the post, and the worker's error return carries the manifest as well.
+
+## Noted by the red-team pass, not changed
+
+- **`PY_DELETE_RUN` trusts `msg.principal`** with no sender check, so anything that can `chrome.runtime.sendMessage`
+  inside the extension can drop any run's dict on a named worker. It is not page-reachable (not in `HANDLE_MAP`), so
+  this is defense in depth only. Closing it: ignore `msg.principal` and derive the set from `runPrincipals` plus
+  `run:<id>`.
+- **A second handle scanner:** `parseShRun` (`src/shell/sh-call.ts`) re-checks `$secret` after `fromWire`, so legitimate
+  env data `{"$secret": "s"}` is refused as `SecretHandle` rather than `BadRequest`. It fails closed.
+- **Latent:** after the one-level unwrap, data `{"$": {"$bytes": "aGk="}}` and a real `{"$bytes": "aGk="}` are the same
+  object at the member. No live sink today (`bytesOf` decodes only host-read responses); a future member that calls
+  `bytesOf` on its args would confuse the two.
+
 ## Known residual: two full-mode runs alive at the same time
 
 Not closed by the fix above, which removes a run's dict when the run ENDS. The `full` worker belongs to the offscreen

@@ -106,3 +106,20 @@ return len([d for d in gc.get_objects() if isinstance(d, dict) and d.get('marker
 `);
     assert.deepEqual(r, { ok: true, value: 0 });
 });
+
+// --- a cell that FAILS still leaves a dict, and the delete must still empty it ---
+// The worker creates the run's dict before the cell runs, so a first cell with a syntax error leaves one holding the
+// cell's own source (`_ml_src`). redteam's #757 re-review: such a dict was never recorded, so never deleted.
+
+test("a run whose only cell is a syntax error leaves no reachable dict once the run is deleted", { skip }, async () => {
+    const failed = await cell("run-syntax-a", "token_a = 'syntax-marker'\ndef (:");
+    assert.equal(failed.ok, false, "the cell failed");
+    const find = `
+import gc
+_m = 'syntax-' + 'marker'   # built here, so this probe's own source does not match
+return len([d for d in gc.get_objects() if isinstance(d, dict) and _m in str(d.get('_ml_src', ''))])
+`;
+    assert.deepEqual(await cell("run-syntax-b", find), { ok: true, value: 1 }, "positive control: the failed cell's dict exists");
+    deleteRunNamespace("run-syntax-a");
+    assert.deepEqual(await cell("run-syntax-b", find), { ok: true, value: 0 });
+});

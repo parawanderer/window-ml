@@ -96,7 +96,7 @@ const runNsVars = new Map<string, { id: string; vars: { name: string; type: stri
 const seenRuns = new Set<string>();   // state: plumbing — runs that have held a kept namespace
 // Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
 // ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
-// held. Recorded when a cell returns a scope manifest, the same moment `seenRuns` is.
+// held. Recorded when a cell of the run is posted to a worker (and again from its scope manifest).
 const runPrincipals = new Map<string, Set<string>>();   // state: plumbing — run id → principals holding its dict
 // A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run.
 const nsLoss = new Map<string, { at: number; reason: string }>();   // state: plumbing — one loss note per wiped run
@@ -280,6 +280,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
         pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire });   // streamId → the background can key live stdout chunks
+        // The worker creates the run's dict BEFORE the cell runs, so the principal is recorded at the post, not only from
+        // a returned manifest: a cell that throws or is killed still leaves a dict the delete must reach.
+        if (wire?.run) (runPrincipals.get(wire.run) ?? runPrincipals.set(wire.run, new Set()).get(wire.run)!).add(principal);
         // THE `ml` WIRE: the handle stays HERE. The worker is told only that this run has a wire and which
         // run's namespace it is — never `client` (LANE_1_PR2_DESIGN.md, "Who stamps the handle").
         if (wire) wireByClient.set(wire.client, { post: (m) => { try { w.postMessage(m); } catch { /* worker gone */ } }, runMsgId: id });

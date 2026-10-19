@@ -119,6 +119,19 @@ test("the service worker's PY_DELETE_RUN (principal run:<id>) reaches EVERY work
     assert.deepEqual(await done, { ok: true });
 });
 
+test("a full-mode cell that FAILED without a scope manifest still has its dict deleted on the full worker", async () => {
+    // The worker creates the run's dict before the cell runs; a cell whose result carries no manifest (it threw past
+    // the wrapper, or an older worker) must not leave that dict where the delete cannot reach it (redteam, #757).
+    const full = await runCell({ hardened: false, principal: "full", wire: { client: "mlw-t1", run: "threw-a" } }, { ok: false, error: "SyntaxError" });
+    const mark = full.w.posts.length;
+    const done = send({ type: "PY_DELETE_RUN", run: "threw-a", principal: "run:threw-a" });
+    await tick();
+    const toFull = full.w.posts.slice(mark).filter((p) => p.deleteRun);
+    assert.deepEqual(toFull.map((p) => p.deleteRun), ["threw-a"], "the full worker was told");
+    full.w.reply({ id: toFull[0].id, ok: true, stdout: "" });
+    assert.deepEqual(await done, { ok: true });
+});
+
 // --- a killed worker tells the run's next cell ---
 
 test("a kill of the shared full worker tells EVERY run that kept a dict there, and no other", async () => {
