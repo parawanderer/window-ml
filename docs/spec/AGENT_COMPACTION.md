@@ -96,6 +96,44 @@ The same addressability gives more than one operation. Listed so they are not re
 - **Subagents**: a subagent's result handed back as a pointer to its output, not its transcript
   ([`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)).
 
+## The checkpoint: the complement of `collapse`
+
+Added 2026-10-19, from a day of running six sessions on the REPL plan by hand. `collapse` says what the model no
+longer needs. Nothing above says what the continuation DOES need, and that turned out to be the primitive the day was
+missing.
+
+What happened: every long-lived session (three lanes, a red team, two hand-off sessions) was compacted by the human
+when its context filled, and after compaction re-derived its state from the summary. One lost a finished document that
+way (written, reported done, never committed; the recreated session had no record of it). Another held fourteen
+commits nobody had pushed. The fix that worked was a rule: before a session stops for compaction it writes a plain
+file (which checkout and branch it owns, what is done with PR numbers, the todo list in order, the exact next step,
+the files to re-read), and after compaction its first action is to read that file. The human still compacts by hand,
+only because the harness has no operation for it.
+
+Formally a checkpoint is a pointer value the agent AUTHORS, whose identity survives compaction, and which compaction
+pins: the compacted history is the system prompt, the work order, the checkpoint, and whatever pointers the checkpoint
+names, and nothing else. It is the dual of `collapse`: one names what to drop, the other what to keep, and together
+they make compaction something the model asks for rather than something done to it.
+
+- **One operation.** `checkpoint(value)`: the harness compacts at the next turn boundary, keeping the value and the
+  pointers it names. The compaction is an event in the session with the checkpoint's pointer as its payload, which is
+  what [`COMPACTION.md`](COMPACTION.md) already wants (a compaction visible as an event in the lane). The human is
+  out of the loop, and the attention inbox shows that it happened.
+- **One object for peers and children.** A child's checkpoint on exit IS its result pointer, the half
+  [`SESSION_CONTRACT.md`](SESSION_CONTRACT.md) §Agent to agent already has. A long-lived peer's checkpoint is the same
+  object, read by its own successor instead of by a parent. Two readers, one primitive.
+- **Versioned, never edited.** A new checkpoint `amends` the previous, matching the mail rule (a message is immutable;
+  a revision is a new message). The previous ones stay in the log.
+- **Who may read it** is the state registry's `audience` axis, not a new permission scheme: `self`, and the `lineage`
+  chain, so a coordinator reads a lane's state by walking down instead of being told. Nobody else. On 2026-10-19 the
+  only MUTABLE document any session kept was its own checkpoint, with exactly one writer; everything shared was
+  append-only. A shared mutable status board, the thing one reaches for first, is where two sessions overwrite each
+  other, and the mail spec's "last updated vs last read by me" argument already refuses it.
+
+What this is not: `COMPACTION.md`'s harness summary (chosen by age and size, no model input), and not `collapse`
+(stale outputs, which the model drops one by one). A checkpoint can name collapsed pointers; it is the index the
+summary never had.
+
 ## Benchmarking it
 
 Worth doing properly before building much, because the claims are easy to make and nobody seems to have measured them.
