@@ -228,6 +228,31 @@ export function removalWarning(d: { label?: string; mayRevoke?: boolean }): stri
     return `“${d.label || "That device"}” stops reaching everything on this account at once. Adding it back takes a new code, confirmed on the root device.`;
 }
 
+/**
+ * The grant the PHONE starts a found offer from. A runtime offer is narrowed: `mayPair` is OFF whatever the library's
+ * default says, because a runtime that may pair can add devices to the account on its own, and the wire has one role
+ * for a browser and for a desktop host (docs/spec/RUNTIME_HUB.md, the lane 8 ruling). A person pairing a browser
+ * runtime turns it on, knowingly. Every other role keeps the library's default.
+ */
+export function phoneGrant(found: Pick<FoundOffer, "role" | "grant">): Grant {
+    return found.role === "runtime" ? { ...found.grant, mayPair: false } : { ...found.grant };
+}
+
+/**
+ * What a RUNTIME receives, as the lines the card shows, derived from the grant that will be sent and never typed
+ * beside it. `mayRevoke` is told, not offered: exactly one device signs removals and placing it is not a switch.
+ */
+export function receivesLines(found: Pick<FoundOffer, "signer">, grant: Pick<Grant, "scopes" | "mayPair" | "mayRevoke">): string[] {
+    const lines: string[] = [];
+    lines.push(grant.scopes.length ? `It can pass on: ${grant.scopes.map((s) => SCOPES.find((x) => x.id === s)?.label ?? s).join(", ")}.` : "It receives no scopes to pass on.");
+    lines.push(grant.mayPair
+        ? "It can add devices to this account by itself, without asking here."
+        : "It cannot add devices. A browser runtime without this cannot re-sign other devices' certificates when they renew.");
+    if (grant.mayRevoke) lines.push(found.signer ? "It also signs revocations for this account." : "It will be the device that signs removals for this account. Exactly one does, and without it a removal reaches nothing.");
+    else if (found.signer) lines.push(`“${found.signer}” signs removals for this account, and only one device can, so this one will not.`);
+    return lines;
+}
+
 /** What a role is called on screen. */
 export function roleName(role: PairRole | string): string {
     return role === "runtime" ? "a browser runtime" : role === "client" ? "a device" : role === "box-connector" ? "a box" : "a device";
