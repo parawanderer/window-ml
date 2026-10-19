@@ -57,6 +57,8 @@ try {
                 epoch: performance.timeOrigin + performance.now(),
                 scrollTop: sc ? Math.round(sc.scrollTop * 10) / 10 : -1,
                 scrollHeight: sc ? sc.scrollHeight : -1,
+                // The visible height: a scrollTop jump with no matching growth is the view changing size, or the pin catching up.
+                clientHeight: sc ? sc.clientHeight : -1,
                 msgs: document.querySelectorAll(".msg").length,
                 anims: document.getAnimations().map((a) => ({ name: a.animationName || a.transitionProperty || a.id || "?", target: String(a.effect?.target?.className?.baseVal ?? a.effect?.target?.className ?? a.effect?.target?.tagName ?? "") })),
             };
