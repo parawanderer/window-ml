@@ -1,0 +1,29 @@
+# demo-pin-order.yaml — the React Native app's DEMO build (`install --demo`): sessions pinned from a row's sheet
+# gather in a Pinned group above the runtimes, in the order they were pinned, and a long press on a pinned row that
+# does not move still opens its sheet (the same press lifts the row for a drag). The drag itself is driven with
+# `adb shell input draganddrop`, which Maestro has no step for. Needs the demo world's sessions: name it when you run
+# `flows`.
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- longPressOn: "KV cache size at 32k"
+- tapOn: "Pin"
+- extendedWaitUntil:
+    visible: "Pinned"
+    timeout: 10000
+- longPressOn: "Fares, cited"
+- tapOn: "Pin"
+- longPressOn: "Which tabs share a site"
+- tapOn: "Pin"
+- assertVisible: "Pinned"
+# A pinned row's long press, held still, is still the sheet.
+- longPressOn: "Fares, cited"
+- extendedWaitUntil:
+    visible: "Copy session id"
+    timeout: 10000
+- assertVisible: "Unpin"
+- tapOn: "Copy session id"

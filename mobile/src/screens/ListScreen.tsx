@@ -11,11 +11,13 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Bot, Plus } from "lucide-react-native";
 import { IconCompose, IconGear, IconInbox, IconSearch } from "../icons";
 import * as Haptics from "expo-haptics";
-import type { SessionSummary } from "../../../src/session/session-host";
+import type { RuntimeInfo, SessionSummary } from "../../../src/session/session-host";
 import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
 import { useUpdateRow } from "../app-update";
-import { ago, approvalsPending, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
+import { ago, approvalsPending, keyOf, needsYou, pinnedOf, sections, STATUS_LABEL, STATUS_TONE } from "../format";
+import { PinnedRows } from "../pinned-rows";
+import { setPinnedOrder, usePinnedOrder } from "../pinned-order";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
@@ -39,17 +41,33 @@ export function ListScreen() {
     const layer = useSessionLayer();
     const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
     const [refreshing, setRefreshing] = useState(false);
+    // While a pinned row is up under the thumb, the list holds still: the thumb is moving the row.
+    const [lifted, setLifted] = useState(false);
+    const pinOrder = usePinnedOrder();
     // What waits on you is pinned above the runtimes, and LEAVES its own section while it is up there: the same row
-    // twice within a screen reads as a bug, and the pinned row names the machine it is on.
-    const data = useMemo(() => {
+    // twice within a screen reads as a bug, and the pinned row names the machine it is on. Then what the runtimes
+    // hold a pin on, in this phone's order (the page's Pinned group), each out of its runtime's section.
+    const { data, pins } = useMemo(() => {
         const mine = needsYou(e.sessions);
-        const pinned = new Set(mine.map((x) => `${x.id.runtime}:${x.id.hash}`));
+        const upTop = new Set(mine.map(keyOf));
+        const known = new Set(e.runtimes.map((r) => r.id));
+        const pins = pinnedOf(e.sessions.filter((x) => known.has(x.id.runtime)), pinOrder, upTop);
         const byRuntime = sections(e.runtimes, e.sessions).map((x) => ({
-            id: x.runtime.id, runtime: x.runtime, older: x.older,
-            data: folded.has(x.runtime.id) ? [] : x.data.filter((y) => !pinned.has(`${y.id.runtime}:${y.id.hash}`)),
+            id: x.runtime.id, runtime: x.runtime as RuntimeInfo | null, older: x.older,
+            data: folded.has(x.runtime.id) ? [] : x.data.filter((y) => !upTop.has(keyOf(y))),
         }));
-        return mine.length ? [{ id: "needs-you", runtime: null, older: 0, data: mine }, ...byRuntime] : byRuntime;
-    }, [e.runtimes, e.sessions, folded]);
+        return {
+            pins,
+            data: [
+                ...(mine.length ? [{ id: "needs-you", runtime: null, older: 0, data: mine }] : []),
+                // ONE cell for the whole group, so a lifted row can be drawn over its neighbours (pinned-rows.tsx).
+                ...(pins.length ? [{ id: "pinned", runtime: null, older: 0, data: [pins[0]] }] : []),
+                ...byRuntime,
+            ],
+        };
+    }, [e.runtimes, e.sessions, folded, pinOrder]);
+    // A key this phone stored that a session it can see is no longer pinned under: forgotten on the next reorder.
+    const unpinned = () => new Set(e.sessions.filter((x) => !x.pinned).map(keyOf));
     const names = useMemo(() => new Map(e.runtimes.map((r) => [r.id, r.name])), [e.runtimes]);
     const refresh = useCallback(() => { setRefreshing(true); e.resume(); setTimeout(() => setRefreshing(false), 700); }, [e]);
     // A long press shows the session's actions without opening it, as the page words them for that session.
@@ -87,6 +105,7 @@ export function ListScreen() {
             </View>
             <SectionList
                 sections={data}
+                scrollEnabled={!lifted}
                 keyExtractor={(x, i) => `${x.id.runtime}:${x.id.hash}:${i}`}
                 stickySectionHeadersEnabled={false}
                 contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
@@ -99,7 +118,11 @@ export function ListScreen() {
                         </View>
                     </View>
                 }
-                renderSectionHeader={({ section }) => section.runtime === null ? (
+                renderSectionHeader={({ section }) => section.id === "pinned" ? (
+                    <View style={[s.section, s.needsHead]}>
+                        <Text style={[s.sectionName, { color: p.fgDim }]}>Pinned</Text>
+                    </View>
+                ) : section.runtime === null ? (
                     <View style={[s.section, s.needsHead]}>
                         <Text style={[s.sectionName, { color: p.notice }]}>Needs you</Text>
                     </View>
@@ -131,7 +154,16 @@ export function ListScreen() {
                         <Text style={[s.older, { color: p.fgDim }]}>{section.older} older on this runtime</Text>
                     </Pressable>
                 ) : null}
-                renderItem={({ item, section }) => (
+                renderItem={({ item, section }) => section.id === "pinned" ? (
+                    <PinnedRows rows={pins} onLift={setLifted} lift={p.panel}
+                        onOrder={(keys) => setPinnedOrder(keys, unpinned())}
+                        onActions={(key) => void actOn(key, false)}
+                        row={(x, moveBy) => (
+                            <Row s={x} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
+                                onPress={() => layer.open(keyOf(x), false)}
+                                onLongPress={() => void actOn(keyOf(x), false)} />
+                        )} />
+                ) : (
                     // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
                     // since up here it is out of its machine's section.
                     <Row s={item} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
@@ -147,14 +179,17 @@ export function ListScreen() {
 
 /** One session in the list: its title, where it stands, and when it last moved. `runtimeName` for a row out of its
  *  runtime's section (the pinned "needs you" group). */
-function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void }) {
+function Row({ s: x, runtimeName, onPress, onLongPress, moveBy }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void;
+    /** a pinned row: move it one place up or down, which a screen reader offers since it cannot drag */
+    moveBy?: (d: -1 | 1) => void }) {
     const p = usePalette();
     const title = x.title || x.task || "(untitled)";
     const label = STATUS_LABEL[x.status];
     const tone = STATUS_TONE[x.status];
     return (
         <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint="Long press for this session's actions" onPress={onPress} onLongPress={onLongPress}
-            accessibilityActions={[{ name: "longpress", label: "Session actions" }]} onAccessibilityAction={(ev) => { if (ev.nativeEvent.actionName === "longpress") onLongPress(); }}
+            accessibilityActions={[{ name: "longpress", label: "Session actions" }, ...(moveBy ? [{ name: "up", label: "Move up" }, { name: "down", label: "Move down" }] : [])]}
+            onAccessibilityAction={(ev) => { const a = ev.nativeEvent.actionName; if (a === "longpress") onLongPress(); else if (a === "up") moveBy?.(-1); else if (a === "down") moveBy?.(1); }}
             style={({ pressed }) => [s.row, pressed && { backgroundColor: p.panel }]}>
             <View style={[s.rowDot, { backgroundColor: tone === "busy" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : "transparent" }]} />
             <View style={s.rowBody}>
