@@ -57,7 +57,7 @@ import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
-import { eventSession, pageMayWrite, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
+import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
@@ -302,8 +302,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // attack 16).
     if (message.type === "ML_DEBUG_EVENT") {
         if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) {
-            relayDebugEvent(sender.tab.id, message.event);
-            ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+            const ev = withoutPageWhy(message.event);
+            relayDebugEvent(sender.tab.id, ev);
+            ingestSessionEvent(ev, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
         }
         return;
     }
@@ -311,7 +312,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // otherwise never leave the page, and off mode with `listPageSessions`). Bound to the sending tab: the index
     // refuses a page writing into a session another tab owns.
     if (message.type === "ML_SESSION_EVENT") {
-        if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+        if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) ingestSessionEvent(withoutPageWhy(message.event), { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
         return;
     }
     // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access

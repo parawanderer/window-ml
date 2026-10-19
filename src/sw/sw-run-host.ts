@@ -828,7 +828,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         if (resumeMessages?.length) await forModelHistory(messages);
                         // A session that comes back after an archive is told once, before its first step, that its run policies went. A SYSTEM
                         // message, never a user one: the note is the worker's, and must not read as the person's words.
-                        const gone = resumeMessages?.length ? takeArchiveNotice(runId) : undefined;
+                        // Only a resume the person started (`builtBy` is the worker's to set): a page naming a hash must not be told, or consume, another origin's note.
+                        const gone = resumeMessages?.length && p.builtBy === "worker" ? takeArchiveNotice(runId) : undefined;
                         if (gone) { (messages as { role: string; content: string }[]).push({ role: "system", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).

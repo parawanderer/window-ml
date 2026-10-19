@@ -186,8 +186,7 @@ to the decision, and a call's payload cannot name a policy to claim it.
   pushes it as a SYSTEM message (the worker's note, marked as the extension's, never the person's words) before a resumed run's first model call (`sw-run-host.ts`), logs `policy`/`archive-told`,
   and marks the stored record `told`, so a later resume does not repeat it. The resume note's `dropped` and
   `ml.current.policiesRemoved` are unchanged.
-- Trap: the sentence quotes the policy's label, which a person or an approved proposal wrote (length-capped, no line
-  breaks for a proposal). It is the model's own channel either way; do not widen it to anything a page sent.
+- Held by the red-team pass (`tests/lapsed-ask-redteam.test.mjs`): what is SAID of a label goes through `speakable` (one line, no double quote or control character, capped), whatever wrote it (a card's `ml.fetch` URL, a proposal, the person); a proposal's label may hold no control or line-separator character; a page's debug or session event loses `askWhy` and `asks[].why` (`withoutPageWhy`); the archive note goes only to a resume the worker built (`p.builtBy`), since the hash a page names is not the sender.
 
 ## A proposal from the model (`propose_policy`)
 

@@ -261,7 +261,7 @@ export function takeArchiveNotice(runId: string): string | undefined {
     if (!l || l.told) return undefined;
     l.told = true;
     saveRuns();
-    return `window.ml note (from the extension, not from the person): this session was archived on ${new Date(l.at).toISOString()} and its run policies were removed then (${l.labels.join("; ")}). Calls those policies allowed without asking will ask the person again.`;
+    return `window.ml note (from the extension, not from the person): this session was archived on ${new Date(l.at).toISOString()} and its run policies were removed then (${l.labels.map(speakable).join("; ")}). Calls those policies allowed without asking will ask the person again.`;
 }
 
 /** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */
@@ -350,6 +350,13 @@ function lapsedCover(runId: string | undefined, consumer: PolicyConsumer, facts:
     return undefined;
 }
 
+/** A policy's label made safe to quote inside the worker's own sentence: no double quote, no control or line-separator
+ *  character (a label can come from a URL the model wrote or from a proposal), one line, at most `POLICY_LABEL_MAX`. */
+export function speakable(label: string): string {
+    const one = label.replace(/["\p{Cc}\p{Zl}\p{Zp}]+/gu, (m) => (m.includes('"') ? "'" : " ")).replace(/\s+/g, " ").trim();
+    return one.length > POLICY_LABEL_MAX ? `${one.slice(0, POLICY_LABEL_MAX - 1)}…` : one;
+}
+
 const CAUSE_TEXT: Record<LapseCause, string> = {
     archived: "was removed when this session was archived",
     removed: "was removed by the person",
@@ -359,12 +366,12 @@ const CAUSE_TEXT: Record<LapseCause, string> = {
 
 /** The one sentence the model reads when a call asks because a policy that used to cover it is gone. */
 export function lapsedSentence(l: LapsedAsk): string {
-    return `This call needed approval because the policy "${l.label}", which allowed calls like it, ${CAUSE_TEXT[l.cause]} (${new Date(l.at).toISOString()}); the call itself did not change.`;
+    return `This call needed approval because the policy "${speakable(l.label)}", which allowed calls like it, ${CAUSE_TEXT[l.cause]} (${new Date(l.at).toISOString()}); the call itself did not change.`;
 }
 
 /** The same, short, for the approval card's line. */
 export function lapsedLine(l: LapsedAsk): string {
-    return `Asking because the policy "${l.label}" ${CAUSE_TEXT[l.cause]}.`;
+    return `Asking because the policy "${speakable(l.label)}" ${CAUSE_TEXT[l.cause]}.`;
 }
 
 /** The facts a `fetch_url` call gives a policy: what it fetches, how, and its effects. */
@@ -381,7 +388,7 @@ export function fetchUrlPolicySource(url: string): string {
 
 /** "Approve + remember these URLs": one run policy per URL the person saw, never the page's word for it. */
 export function rememberFetchUrls(runId: string, urls: readonly string[]): StoredPolicy[] {
-    return urls.map((url) => addRunPolicy(runId, { consumer: "fetch", effect: "allow", source: fetchUrlPolicySource(url), label: `fetch ${url}`, origin: "card" }));
+    return urls.map((url) => addRunPolicy(runId, { consumer: "fetch", effect: "allow", source: fetchUrlPolicySource(url), label: speakable(`fetch ${url}`), origin: "card" }));
 }
 
 /** The snapshot with the policies that apply to the run added, on a copy, when there are any, and what an archive took
