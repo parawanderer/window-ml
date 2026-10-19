@@ -33,7 +33,7 @@ type RunMsg = { id: number; code: string; image: string | null; hardened: boolea
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -262,9 +262,10 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // transferred to the offscreen document, which stores it. Never from the bench, whose results nothing points at.
         const ipc = bench ? undefined : takeIpc(ns);
         const jsonResult = ns.get("_json_result");
-        // Auto-render hint from the return TYPE ('latex' for a sympy expr; 'img' folded into a data: value).
+        // Auto-render hint from the return TYPE ('latex' for a sympy expr; 'img' folded into a data: value; 'figure' for
+        // matplotlib figures the cell left open, drawn as that value).
         const renderHint = ns.get("_json_render");
-        const render = renderHint === "latex" || renderHint === "img" ? renderHint : undefined;
+        const render = renderHint === "latex" || renderHint === "img" || renderHint === "figure" ? renderHint : undefined;
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
             return timed({ ok: true, value, stdout, ...over, ...(table ? { table } : {}), ...(ipc ? { ipc } : {}), ...(render ? { render } : {}), ...keptResult });

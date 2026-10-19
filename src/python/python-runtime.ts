@@ -504,6 +504,65 @@ try:
         _json_render = 'latex'
 except Exception:
     _json_render = None
+# FIGURES (matplotlib). A returned Figure, or an Axes (its figure), draws like a returned PIL Image. A cell that returns
+# NOTHING and did not fail, but leaves figures open, draws them as a notebook would: one image, several stacked top to
+# bottom (the first _ml_FIGS_MAX), hinted 'figure' so the tool can say where the image came from. Then every figure is
+# closed, whatever happened, so none is drawn again by the next cell of a run. Only once pyplot was imported: a script
+# that never plots pays nothing here.
+_ml_FIGS_MAX = 6
+try:
+    _ml_plt = __import__('sys').modules.get('matplotlib.pyplot')
+    if _ml_plt is not None:
+        try:
+            _ml_figs = []
+            _ml_is_mpl = lambda _v: (getattr(type(_v), '__module__', '') or '').startswith('matplotlib.')
+            _ml_fmod, _ml_amod = __import__('sys').modules.get('matplotlib.figure'), __import__('sys').modules.get('matplotlib.axes')
+            if _ml_fmod is not None and isinstance(result, _ml_fmod.Figure):
+                _ml_figs, _ml_how = [result], 'img'
+            elif _ml_amod is not None and isinstance(result, _ml_amod.Axes):
+                _ml_figs, _ml_how = [result.get_figure(root=True)], 'img'
+            # A trailing plt.plot(...) or plt.title(...) RETURNS its artists: the notebook habit is to show the
+            # figure, not the repr of a Line2D list, so a value made only of artists counts as returning nothing.
+            elif _err is None and (result is None or _ml_is_mpl(result) or (isinstance(result, (list, tuple)) and result and all(_ml_is_mpl(_v) for _v in result))):
+                _ml_figs, _ml_how = [_ml_plt.figure(_n) for _n in _ml_plt.get_fignums()[:_ml_FIGS_MAX]], 'figure'
+            if _ml_figs:
+                _ml_pngs = []
+                for _ml_f in _ml_figs:
+                    # At most ~4 megapixels a figure: a figsize of (500, 500) would otherwise render 2.5 gigapixels into the
+                    # panel and the exports. The dpi drops instead, so the figure keeps its proportions. Measured on the
+                    # TIGHT box the image is cut to, not the figsize: an artist far outside the figure (a text at figure
+                    # coordinates (20, 20), a label in data coordinates off the axis) grows that box, and the image with it.
+                    # The padding is fixed, so an rcParams savefig.pad_inches cannot grow it either. The box is measured
+                    # at the figsize's capped dpi: measuring needs a renderer the size of the figure at ITS dpi, which for
+                    # a huge figsize is the gigapixel allocation this cap exists to avoid.
+                    _ml_wi, _ml_hi = _ml_f.get_size_inches()
+                    _ml_dpi = min(100, (4e6 / max(_ml_wi * _ml_hi, 1e-6)) ** 0.5)
+                    _ml_dpi0 = _ml_f.dpi
+                    try:
+                        _ml_f.set_dpi(_ml_dpi)
+                        _ml_bb = _ml_f.get_tightbbox()
+                        _ml_dpi = min(_ml_dpi, (4e6 / max((_ml_bb.width + 0.2) * (_ml_bb.height + 0.2), 1e-6)) ** 0.5)
+                    except Exception:
+                        pass
+                    finally:
+                        _ml_f.set_dpi(_ml_dpi0)
+                    _pbuf = _ml_bytesio(); _ml_f.savefig(_pbuf, format='png', dpi=_ml_dpi, bbox_inches='tight', pad_inches=0.1); _ml_pngs.append(_pbuf.getvalue())
+                if len(_ml_pngs) > 1:
+                    from PIL import Image as _ml_PI
+                    _ml_ims = [_ml_PI.open(_ml_bytesio(_b)).convert('RGB') for _b in _ml_pngs]
+                    _ml_sheet = _ml_PI.new('RGB', (max(_i.width for _i in _ml_ims), sum(_i.height for _i in _ml_ims)), 'white')
+                    _ml_y = 0
+                    for _i in _ml_ims:
+                        _ml_sheet.paste(_i, (0, _ml_y)); _ml_y += _i.height
+                    _pbuf = _ml_bytesio(); _ml_sheet.save(_pbuf, format='PNG'); _ml_pngs = [_pbuf.getvalue()]
+                _json_result = _ml_dumps('data:image/png;base64,' + _ml_b64e(_ml_pngs[0]).decode()); _json_render = _ml_how
+        finally:
+            _ml_plt.close('all')
+except BaseException:
+    # A figure that cannot be drawn leaves the plain result as it was. BaseException, because what runs here is the
+    # cell's own objects (a Figure's methods, a patched plt.close) outside the cell's try: a raise that escaped would
+    # end the wrapper before the cancel below, and a task the cell scheduled would run during the next cell.
+    pass
 # If the result is a DataFrame/Series, ALSO serialize it structurally ({columns, rows}) so the UI can
 # render a real table (PyDfTable) instead of a text repr. Capped rows; a Series becomes a 1-col frame.
 _json_table = None

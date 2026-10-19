@@ -16,6 +16,7 @@ import { storeText } from "./sw-values";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
+import { workerVisionChat } from "./worker-vision";
 import { fetchSheetCsv } from "./sw-fetch";
 import { tableFromDelimited } from "../table/table-data";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "../ml/fetch-result";
@@ -230,7 +231,10 @@ function runMl(ctx: RunCtx): MlApi {
             if (!ctx.media) return Promise.reject(new Error("no page to mint the token in."));
             return ctx.media.mint(q, documentId);
         }) satisfies MintToken,
-        chat: (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null } = {}): Promise<string> => meteredChat(ctx, {
+        // With `images` (python_exec's verify, asking a vision reader about a chart) it is the vision chat look uses.
+        chat: (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null; images?: string[]; maxTokens?: number | null } = {}): Promise<string> => opts.images?.length
+            ? workerVisionChat(ctx.runId, prompt, { images: opts.images, model: opts.model ?? null, maxTokens: opts.maxTokens ?? null, numCtx: opts.numCtx ?? null })
+            : meteredChat(ctx, {
             messages: [{ role: "user", content: prompt }], model: opts.model ?? null, extend: opts.extend ?? null,
             numCtx: opts.numCtx ?? null, think: false, hint: { use: "agent", session: hintSession(ctx.runId) },
         }),

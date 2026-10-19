@@ -6,7 +6,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 
-const { pyodideDir, lockdownUrl, runtimeUrl, packages } = workerData;
+const { pyodideDir, lockdownUrl, runtimeUrl, packages, prepare } = workerData;
 const { loadPyodide } = await import(pathToFileURL(path.join(pyodideDir, "pyodide.mjs")).href);
 const py = await loadPyodide({ indexURL: pyodideDir });
 // Swallow the runtime's own prints from the start: a worker thread has no fd 1 for Pyodide's default
@@ -15,6 +15,9 @@ py.setStdout({ batched: () => {} });
 py.setStderr({ batched: () => {} });
 // The prelude imports numpy/PIL/pandas (and pandas pulls pyarrow): the packages the cell's wrapper needs.
 if (Array.isArray(packages) && packages.length) await py.loadPackage(packages);
+// The start-up packages' `prepare` (python-env.ts PY_STARTUP_PREPARE), when given: run unhardened, before the lockdown,
+// in the worker's own order.
+if (prepare) py.runPython(prepare);
 const { lockdownReadonly } = await import(lockdownUrl);
 const held = await lockdownReadonly(py, {});
 const harness = held.harness;
@@ -29,6 +32,7 @@ parentPort.on("message", async (msg) => {
             stdout: String(py.globals.get("_stdout") ?? ""),
             error: py.globals.get("_err") ? String(py.globals.get("_err")) : null,
             value: null,
+            render: py.globals.get("_json_render") ?? null,
         };
         try { out.value = JSON.parse(py.globals.get("_json_result")); } catch { /* leave null */ }
         parentPort.postMessage({ id, out });

@@ -70,7 +70,7 @@ export const pythonExec = async function(this: MlApi, code: string, { image = nu
         { code, image: img, hardened: mode !== "full", stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i].alias ?? (typeof specs[i].src === "string" ? specs[i].src as string : null) })) },
         undefined, null,
         // LIVE stdout (opt-in): each PYTHON_STREAM chunk for this run → onStdout (the tool's ctx.stream).
-        onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; table?: { columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number }; valueKey?: string; render?: "latex" | "img"; bootMs?: number; runMs?: number };
+        onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; table?: { columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number }; valueKey?: string; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number };
     const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | boolean | null)[][] } } = {};
     if (img) extra.inputImage = img;
     if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport

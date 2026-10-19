@@ -281,6 +281,49 @@ _m = sys.modules.get("_rt_p2")
     assert.deepEqual(after.value, { woke: [] }, `nothing the cell scheduled may run after its result returned, got ${JSON.stringify(after.value)}`);
 });
 
+// --- P2, other routes. what the cancel at the end of the wrapper does not reach ------------------------
+// Found by the matplotlib red-team pass (2026-10-19). The cancel walks asyncio's TASKS at the end of the wrapper, so it
+// misses a plain callback the loop holds (`call_soon`/`call_later` make a Handle, never a Task), and it never runs when
+// the epilogue (the result's serialization, run outside the cell's own try) is ended by a BaseException.
+
+/** Plant a recorder module `tag`, run `schedule` in a hardened cell, then report what the recorder holds a moment later. */
+async function scheduledThenAsk(tag, body) {
+    // A wrapper the epilogue ended throws out of runPythonAsync; what the test asks is what ran AFTER, so it is caught.
+    await cell(`
+import asyncio, types, sys
+_m = types.ModuleType("${tag}")
+_m.woke = []
+sys.modules["${tag}"] = _m
+${body}
+`, { later: 0.15 }).catch(async () => { await py.runPythonAsync("import asyncio\nawait asyncio.sleep(0.15)"); });
+    return (await cell(`import sys\n_m = sys.modules.get("${tag}")\n{"woke": list(_m.woke) if _m else "NO MARKER"}`)).value;
+}
+
+test("P2-handle: a callback a hardened cell hands the loop with call_later does not run once its result is returned", { skip, todo: "the cancel walks asyncio.all_tasks(); a Handle from call_soon/call_later is not a task (python-runtime.ts, the cancel at the end of wrapUserScript)" }, async () => {
+    // Positive control: the same recorder, written by a Task, is cancelled, so the probe can tell a run from no run.
+    const control = await scheduledThenAsk("_rt_p2h_ok", `async def _t():
+    await asyncio.sleep(0.01)
+    _m.woke.append("ran")
+asyncio.ensure_future(_t())
+"x"`);
+    assert.deepEqual(control, { woke: [] }, `control: a scheduled Task is cancelled, got ${JSON.stringify(control)}`);
+    const r = await scheduledThenAsk("_rt_p2h", `asyncio.get_event_loop().call_later(0.01, lambda: _m.woke.append("ran"))
+"x"`);
+    assert.deepEqual(r, { woke: [] }, `a call_later callback must not run after the result returned, got ${JSON.stringify(r)}`);
+});
+
+test("P2-escape: a result whose serialization raises a BaseException still has the cell's tasks cancelled", { skip, todo: "the epilogue's json.dumps default calls str() on the cell's object under `except Exception`; a BaseException ends the wrapper before the cancel (python-runtime.ts, `_json_result = _ml_dumps(...)`)" }, async () => {
+    const r = await scheduledThenAsk("_rt_p2e", `async def _t():
+    await asyncio.sleep(0.01)
+    _m.woke.append("ran")
+asyncio.ensure_future(_t())
+class _B(BaseException): pass
+class _O:
+    def __str__(self): raise _B()
+_O()`);
+    assert.deepEqual(r, { woke: [] }, `a raise from the result's serialization must not skip the cancel, got ${JSON.stringify(r)}`);
+});
+
 // --- P3. a JsProxy in the namespace ----------------------------------------------------------------
 // On main: a streaming run binds `_ml_stdout_cb` (a JS function) into the namespace, and its
 // `.constructor.constructor` is `Function`. The injected JS-null inputs land as `JsNull` too.
