@@ -142,7 +142,16 @@ export interface HostDone {
     memoryBound?: number;
     /** The scope the host APPLIED (host K3). Absent from an older host: unknown, never "narrow". */
     envelope?: HostDoneEnvelope;
+    /** What changed among the roots' protected names DURING the call (host K3b), `[]` when nothing; absent from an
+     *  older host, or from a `done` that would have passed the native limit: unknown, never "nothing". */
+    protectedChanged?: HostProtectedChange[];
+    /** The host cut `protectedChanged` at its bound (256 changes or 512 KiB); absent = the list is complete. */
+    protectedChangedTruncated?: true;
 }
+
+/** One protected name that changed during a call: the root as the host resolved it, the name under it (`.envrc`,
+ *  `.git/hooks/pre-commit`), and how. Sorted by root and name on the wire. */
+export interface HostProtectedChange { root: string; name: string; change: "created" | "modified" | "removed" }
 
 /** `read`'s answer: a range of held output, as base64 bytes. */
 export interface HostRead { ptr: string; offset: number; length: number; size: number; eof: boolean; data: { $bytes: string } }

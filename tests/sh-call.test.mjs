@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor } from "../src/shell/sh-call.ts";
+import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -534,6 +534,58 @@ test("K3: the card's Sandbox applied line is the host's report, and a mismatch w
     const m = mismatch.find((l) => l.label === "Sandbox applied");
     assert.equal(m.warn, true, "asked for roots, got the floor: look twice");
     assert.match(m.value, /not the write roots, exec program-only that was asked for/);
+});
+
+// --- the protected-name tripwire (K3b): what changed during the call, reported, never "nothing" when unknown ---
+
+test("K3b: done.protectedChanged reaches the result as the host's list; absent or malformed is null, never []", () => {
+    const out = { stdout: shOut({ ptr: "o", size: 0, sha256: "", truncated: false }, null, new Uint8Array()), stderr: shOut({ ptr: "e", size: 0, sha256: "", truncated: false }, null, new Uint8Array()) };
+    const done = (over) => ({ event: "done", id: "c1", code: 0, signal: null, ok: true, timedOut: false, cancelled: false, durationMs: 3, stdout: {}, stderr: {}, ...over });
+    const at = (over) => shResult(done(over), { placement: "host-sandbox" }, null, out);
+    const hook = { root: "/w", name: ".git/hooks/pre-commit", change: "created" };
+    assert.strictEqual(at({}).protectedChanged, null, "an older host, or a done cut to fit: unknown");
+    assert.deepEqual(at({ protectedChanged: [] }).protectedChanged, [], "nothing changed");
+    assert.deepEqual(at({ protectedChanged: [hook] }).protectedChanged, [hook]);
+    assert.equal(at({ protectedChanged: [hook] }).protectedChangedTruncated, undefined, "absent: complete");
+    assert.equal(at({ protectedChanged: [hook], protectedChangedTruncated: true }).protectedChangedTruncated, true);
+    assert.equal(at({ protectedChangedTruncated: true }).protectedChangedTruncated, undefined, "no list: nothing to call cut");
+    for (const bad of [{ ...hook, change: "renamed" }, { root: "/w", change: "created" }, null, "x"]) {
+        assert.strictEqual(at({ protectedChanged: [hook, bad] }).protectedChanged, null, `one bad entry (${JSON.stringify(bad)}) makes it unknown, never a shorter list`);
+    }
+    assert.strictEqual(at({ protectedChanged: { 0: hook } }).protectedChanged, null, "not an array");
+    assert.deepEqual(Object.keys(at({ protectedChanged: [{ ...hook, extra: 1 }] }).protectedChanged[0]), ["root", "name", "change"], "only the three fields cross");
+});
+
+test("K3b: the outcome a step's ask keeps is cut at SH_CHANGES_SHOWN and then says it was cut", () => {
+    const many = Array.from({ length: SH_CHANGES_SHOWN + 3 }, (_, i) => ({ root: "/w", name: `.git/hooks/h${i}`, change: "created" }));
+    const r = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, protectedChanged: many, code: 0 };
+    const o = shOutcome(r);
+    assert.equal(o.protectedChanged.length, SH_CHANGES_SHOWN);
+    assert.equal(o.protectedChangedTruncated, true);
+    assert.deepEqual(Object.keys(o).sort(), ["envelope", "protectedChanged", "protectedChangedTruncated", "ran"], "nothing else of the result rides the step");
+    const few = shOutcome({ ...r, protectedChanged: many.slice(0, 2), asked: { write: "roots", exec: "program-only" } });
+    assert.equal(few.protectedChangedTruncated, undefined);
+    assert.deepEqual(few.asked, { write: "roots", exec: "program-only" });
+    assert.equal(shOutcome({ ...r, protectedChanged: [], protectedChangedTruncated: true }).protectedChangedTruncated, true, "the host's cut is kept");
+    assert.strictEqual(shOutcome({ ...r, protectedChanged: null }).protectedChanged, null);
+});
+
+test("K3b: the card after the run says what changed DURING the call, warns on a change, and never reads unknown as none", () => {
+    const base = { ran: "host-sandbox", envelope: { write: "roots", exec: "program-only" }, asked: { write: "roots", exec: "program-only" } };
+    const prot = (o) => shOutcomeLines(o).find((l) => l.label === "Protected names");
+    assert.deepEqual(prot({ ...base, protectedChanged: null }), { label: "Protected names", value: "unknown (the host did not report them)" });
+    assert.deepEqual(prot({ ...base, protectedChanged: [] }), { label: "Protected names", value: "none changed during this call" });
+    const one = prot({ ...base, protectedChanged: [{ root: "/w", name: ".envrc", change: "created" }, { root: "/w", name: ".git/config", change: "modified" }] });
+    assert.equal(one.warn, true);
+    assert.equal(one.value, "changed during this call in /w: .envrc created, .git/config modified", "one root named once");
+    const two = prot({ ...base, protectedChanged: [{ root: "/a", name: ".envrc", change: "removed" }, { root: "/b", name: ".mcp.json", change: "created" }], protectedChangedTruncated: true });
+    assert.equal(two.value, "changed during this call: /a/.envrc removed, /b/.mcp.json created, and more (the list was cut)");
+    assert.deepEqual(shOutcomeLines({ ...base, protectedChanged: [] }).map((l) => l.label), ["Sandbox applied", "Protected names"]);
+    assert.deepEqual(shOutcomeLines({ ...base, ran: "host-plain", protectedChanged: [] }).map((l) => l.label), ["Protected names"], "an unsandboxed call's card already says it ran as the person");
+    const miss = shOutcomeLines({ ...base, envelope: { write: "today", exec: "any" }, protectedChanged: [] })[0];
+    assert.equal(miss.warn, true, "the applied/asked mismatch is the same line the approval card's helper draws");
+    assert.equal(envelopeMismatch(null, base.asked), false, "unknown is not a mismatch: it has its own words");
+    assert.equal(envelopeMismatch({ write: "today", exec: "any" }, undefined), false, "nothing asked, the floor applied");
 });
 
 test("ok is the manifest's answer codes, and a kill, a timeout, a cancel or a sandbox failure is never ok", () => {

@@ -9,7 +9,7 @@
 import type { CallDescription, ProgramManifest } from "./program-manifest";
 import { describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
-import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostSpawn, HostStream } from "./host-protocol";
+import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
 import cat from "./manifests/cat.json";
 import find from "./manifests/find.json";
@@ -329,12 +329,74 @@ const FLOOR: HostDoneEnvelope = { write: "today", exec: "any" };
  */
 function sandboxAppliedLine(applied: HostDoneEnvelope | null, asked: HostEnvelope | undefined): ShCardLine {
     if (applied === null) return { label: "Sandbox applied", value: "unknown (the host did not report it)" };
-    const value = `write ${applied.write}, exec ${applied.exec}`;
-    const want = asked ?? FLOOR;
-    const mismatch = applied.write !== want.write || applied.exec !== want.exec;
-    return mismatch
-        ? { label: "Sandbox applied", value: `${value} (not the write ${want.write}, exec ${want.exec} that was asked for)`, warn: true }
+    const value = envelopeText(applied);
+    return envelopeMismatch(applied, asked)
+        ? { label: "Sandbox applied", value: `${value} (not the ${envelopeText(asked ?? FLOOR)} that was asked for)`, warn: true }
         : { label: "Sandbox applied", value };
+}
+
+/** An envelope in words, as the card and the run log print it. */
+export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, exec ${e.exec}`;
+
+/**
+ * Whether the host applied something other than what was asked for, an absent ask being the floor. An unreported
+ * envelope (`null`) is not a mismatch: it is unknown, and says so in its own words.
+ * @param applied what `done.envelope` carried, or null
+ * @param asked what was sent on `start`, or undefined for the floor
+ */
+export function envelopeMismatch(applied: HostDoneEnvelope | null, asked: HostEnvelope | undefined): boolean {
+    if (applied === null) return false;
+    const want = asked ?? FLOOR;
+    return applied.write !== want.write || applied.exec !== want.exec;
+}
+
+/**
+ * The protected names that changed during a call, in words: each `name change`, with the root once when they share
+ * one and on each when they do not. During, never "by": two calls in one root both see either's change (SHELL.md).
+ * @param changes the host's list, non-empty
+ * @param more whether more changed than the list names
+ */
+export function protectedChangesText(changes: readonly HostProtectedChange[], more: boolean): string {
+    const roots = new Set(changes.map((c) => c.root));
+    const one = roots.size === 1;
+    const items = changes.map((c) => `${one ? c.name : `${c.root}/${c.name}`} ${c.change}`).join(", ");
+    return `changed during this call${one ? ` in ${changes[0]!.root}` : ""}: ${items}${more ? ", and more (the list was cut)" : ""}`;
+}
+
+/** How many protected changes a step's ask keeps for its card. The script's result carries the host's whole list. */
+export const SH_CHANGES_SHOWN = 16;
+
+/** What a finished call reports beside its exit, kept on the person's ask so the card can say it once the call ran.
+ *  `protectedChanged` is cut at {@link SH_CHANGES_SHOWN}, with `protectedChangedTruncated` set when it was. */
+export type ShOutcome = Pick<ShResult, "ran" | "envelope" | "asked" | "protectedChanged" | "protectedChangedTruncated">;
+
+/**
+ * A result's outcome, small enough to ride the step's event.
+ * @param r the call's result
+ */
+export function shOutcome(r: ShResult): ShOutcome {
+    const list = r.protectedChanged;
+    const cut = list !== null && list.length > SH_CHANGES_SHOWN;
+    return {
+        ran: r.ran, envelope: r.envelope, ...(r.asked !== undefined ? { asked: r.asked } : {}),
+        protectedChanged: cut ? list.slice(0, SH_CHANGES_SHOWN) : list,
+        ...(cut || r.protectedChangedTruncated ? { protectedChangedTruncated: true as const } : {}),
+    };
+}
+
+/**
+ * The card's lines for a call that has run: the sandbox the host applied (a sandboxed call only: an unsandboxed one's
+ * card already says it ran as the person), and what changed among the protected names during it. Human-facing text.
+ * @param o the call's outcome
+ * @returns the lines, in reading order
+ */
+export function shOutcomeLines(o: ShOutcome): ShCardLine[] {
+    const lines: ShCardLine[] = o.ran === "host-sandbox" ? [sandboxAppliedLine(o.envelope, o.asked)] : [];
+    const ch = o.protectedChanged;
+    lines.push(ch === null ? { label: "Protected names", value: "unknown (the host did not report them)" }
+        : !ch.length ? { label: "Protected names", value: "none changed during this call" }
+        : { label: "Protected names", value: protectedChangesText(ch, !!o.protectedChangedTruncated), warn: true });
+    return lines;
 }
 
 /**
@@ -422,6 +484,25 @@ export interface ShResult {
     asked?: HostEnvelope;
     /** What the host reported it applied. `null` = an older host reported nothing: unknown, never narrow. */
     envelope: HostDoneEnvelope | null;
+    /** What changed among the roots' protected names DURING the call, `[]` when nothing. `null` = the host reported
+     *  nothing (an older host, or a `done` cut to fit): unknown, never "nothing". */
+    protectedChanged: HostProtectedChange[] | null;
+    /** The host cut `protectedChanged` at its bound; absent = the list is complete. */
+    protectedChangedTruncated?: true;
+}
+
+const CHANGE_KINDS: ReadonlySet<unknown> = new Set(["created", "modified", "removed"]);
+
+/**
+ * `done.protectedChanged` as the result carries it. A list with any entry of another shape is unknown (`null`),
+ * never a shorter list that would read as complete.
+ * @param v what `done` carried
+ */
+function protectedChangedOf(v: unknown): HostProtectedChange[] | null {
+    if (!Array.isArray(v)) return null;
+    const ok = (c: unknown): c is HostProtectedChange => typeof c === "object" && c !== null
+        && typeof (c as HostProtectedChange).root === "string" && typeof (c as HostProtectedChange).name === "string" && CHANGE_KINDS.has((c as HostProtectedChange).change);
+    return v.every(ok) ? v.map((c) => ({ root: c.root, name: c.name, change: c.change })) : null;
 }
 
 /**
@@ -463,11 +544,13 @@ export function shOut(s: HostStream, token: string | null, head: Uint8Array): Sh
 export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
     const okCodes = description?.okCodes ?? [0];
     const ok = !done.error && !done.killed && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
+    const changed = protectedChangedOf(done.protectedChanged);
     return {
         code: done.code, signal: done.signal, ok, timedOut: done.timedOut, cancelled: done.cancelled, durationMs: done.durationMs,
         ran: facts.placement, stdout: out.stdout, stderr: out.stderr,
         envelope: done.envelope ?? null,
         ...(asked !== undefined ? { asked } : {}),
+        protectedChanged: changed, ...(changed !== null && done.protectedChangedTruncated === true ? { protectedChangedTruncated: true as const } : {}),
         ...(done.error ? { error: `${done.error.code}: ${done.error.message}` } : {}),
         ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
         ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),

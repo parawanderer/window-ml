@@ -317,6 +317,64 @@ test("K3: a K3 host is sent the envelope on start, and done reports what applied
     }
 });
 
+// --- the protected-name tripwire (K3b): the script, the run log and the person's card are told one fact ---
+
+test("K3b: done.protectedChanged reaches the script verbatim, and the run log names it at warn", T, async () => {
+    const changes = [{ root: "/w/proj", name: ".git/hooks", change: "modified" }, { root: "/w/proj", name: ".git/hooks/pre-commit", change: "created" }];
+    const host = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "none", exec: "program-only" }, protectedChanged: changes }) });
+    const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const r = valueOf(results[0]);
+    assert.deepEqual(r.protectedChanged, changes, "the model that made the change is told what the person is told");
+    assert.equal(r.protectedChangedTruncated, undefined);
+    const log = (await bg.context.__mlRunLog.all()).filter((x) => x.run === hash && x.subsystem === "shell");
+    const run = log.find((x) => x.kind === "run");
+    assert.equal(run.detail.protectedChanged, 2);
+    assert.equal(run.detail.asked, "write none, exec program-only");
+    assert.equal(run.detail.applied, "write none, exec program-only");
+    assert.equal(run.detail.envelopeMismatch, undefined);
+    const warn = log.find((x) => x.kind === "protected-changed");
+    assert.ok(warn, "its own record");
+    assert.equal(warn.level, "warn");
+    assert.equal(warn.detail.count, 2);
+    assert.match(warn.detail.changes, /^changed during this call in \/w\/proj: \.git\/hooks modified, \.git\/hooks\/pre-commit created$/);
+});
+
+test("K3b: an older host's done carries no list: the script reads null, the log says unknown, and nothing warns", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0 }) });
+    const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const r = valueOf(results[0]);
+    assert.strictEqual(r.protectedChanged, null, "unknown, never []");
+    assert.strictEqual(r.envelope, null);
+    const log = (await bg.context.__mlRunLog.all()).filter((x) => x.run === hash && x.subsystem === "shell");
+    const run = log.find((x) => x.kind === "run");
+    assert.deepEqual([run.detail.protectedChanged, run.detail.asked, run.detail.applied], ["unknown", "floor", "unknown"]);
+    assert.equal(log.some((x) => x.kind === "protected-changed"), false);
+});
+
+test("K3b: a host that applied less than was asked is a mismatch in the run log", T, async () => {
+    const host = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "today", exec: "any" }, protectedChanged: [] }) });
+    const { bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const run = (await bg.context.__mlRunLog.all()).find((x) => x.run === hash && x.subsystem === "shell" && x.kind === "run");
+    assert.equal(run.detail.envelopeMismatch, true);
+    assert.equal(run.detail.applied, "write today, exec any");
+    assert.equal(run.detail.protectedChanged, 0, "[] is a known nothing");
+});
+
+test("K3b: a call the person allowed carries its outcome on the ask, so the card under the step says what changed", T, async () => {
+    const changes = [{ root: "/w/proj", name: ".envrc", change: "created" }];
+    const host = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "today", exec: "any" }, protectedChanged: changes, protectedChangedTruncated: true }) });
+    const ask = answering(true);
+    const seen = [];
+    const { results } = await runOn("userScripts", [runs(["python3", "x.py"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON,
+        onStep: async (bg, ev) => { await ask.onStep(bg, ev); for (const a of ev.asks ?? []) seen.push(a); } });
+    assert.equal(valueOf(results[0]).approvedBy, "person");
+    const after = seen.filter((a) => a.state === "allowed" && a.outcome);
+    assert.ok(after.length, "a later event of the step carries the outcome");
+    const o = JSON.parse(JSON.stringify(after.at(-1).outcome));   // the worker's realm: compare plain copies
+    assert.deepEqual(o, { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, protectedChanged: changes, protectedChangedTruncated: true });
+    assert.equal(seen.some((a) => a.state === "pending" && a.outcome), false, "never before it ran");
+});
+
 // --- what the script is and is not given ---
 
 test("a script that does not name ml.sh gets none, even in an isolated world reached by another key", T, async () => {

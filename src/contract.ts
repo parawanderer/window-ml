@@ -79,7 +79,9 @@ export interface MlSh {
      *  inside the workspace folders, no network) or `host-plain`. A call past its memory bound is killed: `killed`
      *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes. `envelope` is the sandbox scope the host APPLIED
      *  (`write` is `"today"` for the floor), or `null` when an older host reported nothing (unknown, never narrow);
-     *  `asked` is what was sent on start, absent when nothing was.
+     *  `asked` is what was sent on start, absent when nothing was. `protectedChanged` lists the protected names
+     *  (`.envrc`, `.git/hooks/*`, …) that changed DURING the call, by it or by anything else, `[]` when none, or `null`
+     *  when the host reported nothing (unknown, never "none"); `protectedChangedTruncated` means the list was cut.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` */
@@ -92,6 +94,8 @@ export interface MlSh {
         killed?: "oom"; peakFootprint?: number; memoryBound?: number;
         envelope: { write: "today" | "roots" | "none"; exec: "any" | "program-only" } | null;
         asked?: { write: "roots" | "none"; exec: "any" | "program-only" };
+        protectedChanged: { root: string; name: string; change: "created" | "modified" | "removed" }[] | null;
+        protectedChangedTruncated?: true;
     }>;
     /** Read a range of an output past its head (`complete` false), by its `token`, while the run lasts. Text comes back
      *  as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
