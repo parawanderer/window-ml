@@ -353,6 +353,8 @@ PR is what runs CI (e2e, the unit suite, real CPython), which a green local `npm
   `@docs` `@agent-skills` `@ci` `@lab` (anything under `src/lab/`: reviewed for the maths, not as product). What each means is its description (`gh label list`). A reviewer must not miss the
   two `-compat` ones: the change needs a matching one in window-ml-hub, or in the forked Ollama/OpenWebUI. A missing
   topic gets a new `@` label with a description, not a stretched old one.
+- **A PR that changes what the phone app does gets `run:android-flows`** (a trigger, not a topic): it runs the Maestro
+  demo flows on an emulator (`.github/workflows/android-flows.yml`, ~20 min), which no other check does. Skill: `phone`.
 - **A PR that conflicts with its base has NO checks at all.** If `gh run list` shows nothing for a pushed commit,
   suspect this first.
 - **A CANCELLED check prints as `fail`.** Resolve the JOB conclusions before blaming a change; poll a run by ID.
