@@ -87,11 +87,29 @@ forgets `use` and `alloc` the day they are added, a universal cannot.
 | a worker-side survey | `∅` for the same reason, with the dialect as the proof |
 | the Python dialect (CPython's restricted mode), anywhere | `{ read/write/alloc on heap(owned) }` by the runtime's own gates, plus `read(entropy)` if allowed |
 | a container | `read/write(fs(mounts))` less the secret-flagged paths, `exec(process)` inside it, `net(allowlist)` |
-| host mode under the OS sandbox | `read/write(fs(roots))` less the secret-flagged paths, `exec(process)`, `net(allowlist)` |
+| host mode under the OS sandbox | `read/write(fs(roots))` less the secret-flagged paths and less the TOP-LEVEL NAMES of each root (below), `exec(process)`, `net(allowlist)` |
 | plain host mode | `∅` |
 
 Every process placement's `B` also carries `alloc(process) ≤ <bound>`, the footprint maximum of the row above
 (2026-10-15); the plain host included, since the bound is the host's own and needs no sandbox.
+
+**The top-level names of a root are outside `B` (ruled 2026-10-19, the case found by the red team's shell-policy audit:
+`git diff --output=.envrc` was free).** `B` is what the enforcer HOLDS, and the OS sandbox holds the top level of a root
+as name-immutable only under the narrow envelope ([`SHELL.md`](SHELL.md)); under the floor, Linux cannot refuse an absent
+name at all. So the decide layer never counts a claim on a top-level NAME as covered: a claimed `write(fs(p))` where `p`
+is a top-level entry of a root that does not exist, or a claimed `write-names(fs(p))` (a create, remove or rename of a
+top-level entry, existing or not; [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)) is covered by no bound, and the call
+asks; a policy may allow it, scoped as any other. An in-place write to an EXISTING top-level file stays inside `B`,
+because the floor holds it (a protected name is denied by the floor; a plain one is the person's file). The rule is a
+universal over the top level, not a list of protected names, so an unlisted name (`.envrc`, `.mcp.json`) is never the
+exception. A claim with no path (`cargo build` creating `target/` under a bare `write(fs(roots))`) is unaffected; the
+cost falls only on calls that NAME a top-level path, once, until a policy remembers them. The resolved fact that carries
+this is `ShPathFact.topLevel` (whether `path`'s parent is a configured root), computed by the worker from the host's
+`realpath` and its own roots. **`write-names` is a manifest WORD, not an operation** (ruled 2026-10-19 on lane 4's
+objection building K3c): it projects onto `write` with `names: true` on the `fs` resource, keyed apart from the
+in-place write so the two never de-duplicate. A separate operation would make a person's policy fail open: `has("write")`
+would never fire for `rm`, `mv` or `sed -i`, and a universal over `writes` would be vacuously true for `rm .envrc`.
+The operations table stays as it is; `covers` reads `names` the way it reads `secret`.
 
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because

@@ -3104,6 +3104,16 @@ html[data-focus] .action-verb { font-weight: 500; }
 /* NOT A TAP TARGET on a phone: each place that draws one has a full-width header or row that does the same, and an
    11px strip beside the content is a mis-tap there. The line stays; only the click goes. */
 @media (pointer: coarse) { .fold-rail { pointer-events: none; } }
+/* An open embed's FOLD on a touch screen (answer-render.tsx TokBlock): a chevron at the start of its caption's line,
+   where the folded row's own chevron sits, since the rail beside it does not take a tap there. Absent for a mouse. */
+.tok-fold-btn { display: none; }
+@media (pointer: coarse) {
+    .tok-fold-btn { display: inline-flex; float: left; align-items: center; justify-content: center; width: 32px; height: 32px;
+        margin: -6px 0 0 -6px; padding: 0; border: none; background: none; color: var(--fg-faint); }
+    .tok-fold-btn .tri { display: inline-flex; transform: rotate(90deg); }
+    .tok-fold-btn .tri svg { width: 12px; height: 12px; }
+    .tok-block.railed::after { content: ""; display: block; clear: both; }
+}
 .astep-body.railed { position: relative; }
 /* Every inline citation — a plain value OR a typeset `| latex` formula — gets the green underline + a slightly
    lighter tinted box, so an inline math cite reads as a highlighted tool output, not model prose. The box is on

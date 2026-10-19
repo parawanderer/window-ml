@@ -548,3 +548,12 @@ the Groq **free tier is 8000 TPM**, so a multi-turn agent (the ~3.2k-token syste
 each turn) trips it — hence the rate-limit backoff (`docs/dev/architecture.md`). GPU-less CI runners can't run a real model
 usefully (tiny CPU models botch tool-calling), so a free hosted API is the only real-model option in
 CI; do real iteration on a local GPU box instead.
+
+## The frame recorder (`scripts/frames.mjs`)
+
+Records what the chat page DRAWS, for animation work verified by an agent that cannot watch video. It launches the built extension against `fake-llm.mjs`, starts a chat through the start box (on a phone it first clicks "New session", since the list comes first), plays N turns, then records one `--scenario`: `reload`, `send` or `stream` (the fake's `streamDelayMs` is 70 for that one).
+
+- **Two clocks, one origin.** A page init script runs a `requestAnimationFrame` loop that pushes one row per frame (`scrollTop`/`scrollHeight` of `.chat-transcript`, the `.msg` count, `document.getAnimations()` as `{name, target class}`, and each `--watch` selector's rect/opacity/transform). The CDP screencast (`Page.startScreencast`, PNG) stamps frames in host epoch time. Both are converted to ms from just before the trigger, so a screenshot lines up with a row. The init script survives a reload, so the reload's own first frames are recorded; `scrollTop -1` means the scroller did not exist yet.
+- **The screencast only emits when the page repaints**, so an idle stretch has no shots and the contact sheet's labels are uneven. The rAF rows are the complete record; the sheet is for looking.
+- **The contact sheet is a second, plain Chromium page** of labelled `<img>`s, screenshotted, so no image library is needed. The pure parts (which frames, the grid, the change summary) are `scripts/frames-lib.mjs`, tested by `tests/frames-lib.test.mjs`.
+- A reload of a long session should show ONE jump of `msgs` to its full count and one `scrollTop` jump to the bottom: a staircase of counts is the session being drawn in pieces.
