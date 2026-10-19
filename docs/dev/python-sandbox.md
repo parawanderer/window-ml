@@ -297,10 +297,9 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   sends `PY_DELETE_RUN { run, principal: "run:<id>" }`; the offscreen document forwards it to that principal's worker as
   `deleteRun`, which destroys the dict, and clears its own `runPrincipals`, `runNsVars` and `nsLoss` entries.
 - **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
-  the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next
-  cell opens its stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries
-  `nsReset`. A run that never returned a scope manifest is not told anything. The offscreen document closing loses the
-  dict without a record: the note comes only from a kill the document saw.
+  the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next cell opens its
+  stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries `nsReset`. The
+  offscreen document closing loses the dict without a record: the note comes only from a kill the document saw.
 - **The state registry:** `python.run-namespace` (`defineState`, offscreen, audience `model`); its `read` is the last
   cell's scope manifest (`bench.vars`: names and type names).
 - **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
