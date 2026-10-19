@@ -382,6 +382,20 @@ What follows from it:
   `ml.sh` never runs in the page's main world. Red-team tests enumerate both, as for `ml.current.env`.
 - **The host trusts only the extension**: native messaging's `allowed_origins`, and on the hub a sealed command from a
   principal holding `desktop` ([`RUNTIME_HUB.md`](RUNTIME_HUB.md)).
+- **The narrow write envelope makes a root's top level name-immutable** (ruled 2026-10-19, the case found by lane 4
+  reviewing window-ml-host #12). Landlock grants by inode, so "the roots minus the protected names" is not a bound the
+  kernel can hold for a name that does not exist yet (`.envrc`, `.mcp.json`, `.vscode/`). So under `write: "roots"` the
+  rule is a universal, not a list: at the top level of every root nothing is created, removed or renamed; the root
+  inode carries write and truncate only. An existing, non-protected top-level file stays editable; an existing
+  protected name is read-only as today; below a non-protected top-level directory nothing changes. The worker sends
+  `write: "roots"` only when the call's claims permit it (`cargo build`, `npm install` and `git worktree add` create
+  top-level names and do not get it). An ABSENT envelope keeps today's floor, bubblewrap with its documented gap.
+- **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
+  proposal): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
+  at `done` and at an orphan's deadline, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
+  host, unknown, never "nothing"). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
+  and never attributes: two calls in one root see each other's change, so the card and the run log say "changed
+  during this call". Whether the host reverts what it finds is the owner's decision, open.
 - **No secret crosses into a process by the script's hand**: the backend URL and API key never reach the host; the
   host's environment is scrubbed to a whitelist, and a container sees only its mounts. A credential a process NEEDS
   (`git push`, `gh`, a cloud CLI) arrives as a handle ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), "Processes as a
