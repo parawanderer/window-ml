@@ -73,6 +73,16 @@ narrow and why approving is its own scope.
 
 Scopes are granted per pairing and checked on every command.
 
+**A runtime offer's grant, as the phone shows it** (ruled 2026-10-19, lane 8's design note, window-ml #814):
+the wire has one runtime role for a browser runtime and a desktop host, and the person pairing from the phone is told
+what the grant carries before confirming. `mayPair` (the runtime may add devices without asking the root) defaults OFF
+for every runtime offer on the phone and is a visible switch whose line says what a browser runtime loses without it
+(it cannot re-sign its certificates); narrow beats wide, and a host never needs it. `mayRevoke` keeps its rule, the first
+runtime paired signs removals, and is shown as a sentence, never a switch. A role or an offer flag that tells a host
+from a browser runtime would only buy a better default for the browser case; it is not requested of the hub and is
+recorded as unassigned in the plan. What a browser runtime paired without `mayPair` fails at, and whether that failure is
+told to the person, is lane 8's measurement before its PR.
+
 | Scope | Lets the holder | Typically held by |
 | --- | --- | --- |
 | `view` | receive a runtime's session events, and the telemetry of the boxes it uses | a phone, the chat page, an orchestrator for its subagents |
