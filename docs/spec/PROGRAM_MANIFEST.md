@@ -11,7 +11,7 @@ Per program, subcommand and flag:
 
 | Field | What | Why |
 | --- | --- | --- |
-| `effects` | in the shared algebra ([`EFFECTS.md`](EFFECTS.md)): `read(fs)`, `write(fs)`, `exec(process)`, `read(net(host))` or `write(net(host))`; `unknown` for a flag it does not know | the free tier and every policy read it |
+| `effects` | in the shared algebra ([`EFFECTS.md`](EFFECTS.md)): `read(fs)`, `write(fs)`, `write-names(fs)` (the program creates, removes or renames an ENTRY at the path rather than writing bytes into it in place: `mkdir`, `rm`, `mv`, and every editor that writes a temp file and renames it over the target, `sed -i`, `perl -i`, npm's `write-file-atomic`; added 2026-10-19 so that the atomic-rename rule in [`SHELL.md`](SHELL.md) is claimable), `exec(process)`, `read(net(host))` or `write(net(host))`; `unknown` for a flag it does not know | the free tier and every policy read it |
 | `paths` | which arguments are paths, so the host can `realpath` them and judge `inRoot` and `secret` | an argument the manifest does not mark is not a path the host can vouch for, and the call asks |
 | `operands` | where the program's operands start, and whether it honours `--` or `--end-of-options` | a value from a variable that starts with `-` is an option to the program; the host puts the terminator there |
 | `runner` | the flags that start other programs (`find -exec`, `xargs`, `git -c core.pager`, `npm run`, `env`) | never free on the program's own word |
