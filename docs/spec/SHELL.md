@@ -74,7 +74,11 @@ after the 2026-10-19 Q2 ruling that `done`, `exit` and the span are PUBLISHED se
   key, not fanned out to every `view` device of the account the way a browser runtime's `SessionPublisher` does. A
   browser runtime's sessions are the person's; a host's calls are a caller's, and its held output and owner table are
   already private to that caller (the per-caller ledger). A second device watching a desktop's calls is a widening and
-  the owner's decision; it is one change to add and would not be one to take back.
+  the owner's decision; it is one change to add and would not be one to take back. **Decided 2026-10-19 (Shane): no,
+  for now.** `view` follows runtimes, never hosts: a device that views the runtime already sees each call as a step of
+  the runtime's session, with its span and the output the model saw, and a direct subscription to the host would be a
+  second path to the same call with its own held-output question. When a desktop host is itself a runtime (the hub
+  desktop runtime), the runtime rule applies to it on its own, with no new grant. Revisable.
 - **The frame is the host's native `done` record, versioned.** No session-stream envelope (`epoch`, `cursor`): those
   serve `reset` and `backfill`, and the host backfills nothing, since held output is read by request, one nonce each.
   Every published frame carries `v`, the host's protocol version, because session events are versioned and a reducer
