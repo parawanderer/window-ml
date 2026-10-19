@@ -399,7 +399,11 @@ What follows from it:
   `write: "roots"` either (lane 4, 2026-10-19); under the narrow envelope it would fail as `ok: false` and look like
   the program's own error. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
-  then protects nothing; the tripwire above is what covers the gap's threat.
+  then protects nothing; the tripwire above is what covers the gap's threat. The decide layer mirrors the rule (ruled
+  2026-10-19, after the red team's shell-policy audit found `git diff --output=.envrc` free): a claim on a top-level
+  NAME, an absent file or a `write-names` effect at the top level of a root, is outside the sandbox's `B` and asks
+  ([`EFFECTS.md`](EFFECTS.md), "The top-level names of a root are outside `B`"), so the floor's Linux gap is never
+  reached by a call that names its target; a policy may allow it.
 - **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
   proposal): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
   at `done` and at an orphan's deadline, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
