@@ -105,7 +105,11 @@ universal over the top level, not a list of protected names, so an unlisted name
 exception. A claim with no path (`cargo build` creating `target/` under a bare `write(fs(roots))`) is unaffected; the
 cost falls only on calls that NAME a top-level path, once, until a policy remembers them. The resolved fact that carries
 this is `ShPathFact.topLevel` (whether `path`'s parent is a configured root), computed by the worker from the host's
-`realpath` and its own roots.
+`realpath` and its own roots. **`write-names` is a manifest WORD, not an operation** (ruled 2026-10-19 on lane 4's
+objection building K3c): it projects onto `write` with `names: true` on the `fs` resource, keyed apart from the
+in-place write so the two never de-duplicate. A separate operation would make a person's policy fail open: `has("write")`
+would never fire for `rm`, `mv` or `sed -i`, and a universal over `writes` would be vacuously true for `rm .envrc`.
+The operations table stays as it is; `covers` reads `names` the way it reads `secret`.
 
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because
