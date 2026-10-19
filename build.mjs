@@ -146,7 +146,7 @@ function copyKatexFonts() {
     for (const f of readdirSync(dir)) if (f.endsWith(".woff2")) cpSync(`${dir}/${f}`, `${BUILD_DIR}/fonts/${f}`);
 }
 
-// Offline python_exec runtime → dist/pyodide/: the Pyodide CORE (from the `pyodide` npm
+// Offline python_exec runtime → dist/pyodide/: the Pyodide CORE (from `pyodide-core/`, else the `pyodide` npm
 // devDep) + the numpy/Pillow wheels (from `npm run fetch-pyodide`, which the npm package
 // doesn't ship). All optional — a missing piece just means the python_exec tool won't
 // load; nothing else breaks. Copied once (not per watch-rebuild — it's ~17 MB static).
@@ -154,7 +154,10 @@ const PYODIDE_CORE = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "pyt
 function copyPyodide() {
     if (!existsSync("node_modules/pyodide")) { console.warn("⚠ pyodide not installed — python_exec disabled (npm i)."); return; }
     mkdirSync(`${BUILD_DIR}/pyodide`, { recursive: true });
-    for (const f of PYODIDE_CORE) cpSync(`node_modules/pyodide/${f}`, `${BUILD_DIR}/pyodide/${f}`);
+    // The restricted-mode core (npm run fetch-pyodide) wins when it is there; the stock npm core is the fallback.
+    const coreDir = PYODIDE_CORE.every(f => existsSync(`pyodide-core/${f}`)) ? "pyodide-core" : "node_modules/pyodide";
+    if (coreDir === "node_modules/pyodide") console.warn("⚠ pyodide-core/ missing — python_exec runs STOCK Pyodide, without the restricted-mode fork.");
+    for (const f of PYODIDE_CORE) cpSync(`${coreDir}/${f}`, `${BUILD_DIR}/pyodide/${f}`);
     if (existsSync("pyodide-wheels")) {
         for (const w of readdirSync("pyodide-wheels")) cpSync(`pyodide-wheels/${w}`, `${BUILD_DIR}/pyodide/${w}`);
     } else {
