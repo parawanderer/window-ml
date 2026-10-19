@@ -273,6 +273,19 @@ test("a nested ask exports as a note naming what it would run and how it ended, 
     assert.match(md, /"sandboxed": true/, "the facts it was judged on are in the export");
 });
 
+test("an allowed shell ask that ran exports the card's outcome lines: the sandbox applied and what changed during it", () => {
+    const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
+        protectedChanged: [{ root: "/w", name: ".git/hooks/pre-commit", change: "created" }] };
+    const a = { id: "a1", kind: "sh", facts: { argv: ["npm", "install"] }, state: "allowed", raisedAt: 1000, answeredAt: 2000, outcome };
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "user", asks: [a] }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /Sandbox applied: write today, exec any \(not the write roots, exec program-only that was asked for\)/);
+    assert.match(md, /Protected names: changed during this call in \/w: \.git\/hooks\/pre-commit created/);
+    const denied = serializeSession({ ...s, steps: [{ ...s.steps[0], asks: [{ ...a, state: "denied" }] }] }).md;
+    assert.doesNotMatch(denied, /Protected names/, "a call that never ran reports nothing");
+});
+
 test("a cited table, a returned frame and a loaded frame held as a prefix say the source's row count in both sinks", async () => {
     const { toolToken } = await import("../src/util.ts");
     const hash = "prefix01";

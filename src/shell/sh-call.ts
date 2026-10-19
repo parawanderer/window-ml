@@ -20,6 +20,7 @@ import ls from "./manifests/ls.json";
 import rg from "./manifests/rg.json";
 import tail from "./manifests/tail.json";
 import wc from "./manifests/wc.json";
+import type { StepAsk } from "../contract";
 
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
@@ -353,14 +354,25 @@ export function envelopeMismatch(applied: HostDoneEnvelope | null, asked: HostEn
 /**
  * The protected names that changed during a call, in words: each `name change`, with the root once when they share
  * one and on each when they do not. During, never "by": two calls in one root both see either's change (SHELL.md).
+ * Past `maxLen` it names as many as fit and says how many it left out, so a cut text never reads as the whole list.
  * @param changes the host's list, non-empty
- * @param more whether more changed than the list names
+ * @param more whether more changed than the list names (the host cut it)
+ * @param maxLen the most characters the text may take (the run log's detail cap); unbounded by default. At least 60, or
+ *   even the count alone is cut
  */
-export function protectedChangesText(changes: readonly HostProtectedChange[], more: boolean): string {
-    const roots = new Set(changes.map((c) => c.root));
-    const one = roots.size === 1;
-    const items = changes.map((c) => `${one ? c.name : `${c.root}/${c.name}`} ${c.change}`).join(", ");
-    return `changed during this call${one ? ` in ${changes[0]!.root}` : ""}: ${items}${more ? ", and more (the list was cut)" : ""}`;
+export function protectedChangesText(changes: readonly HostProtectedChange[], more: boolean, maxLen = Infinity): string {
+    const one = new Set(changes.map((c) => c.root)).size === 1;
+    const head = `changed during this call${one ? ` in ${changes[0]!.root}` : ""}: `;
+    const items = changes.map((c) => `${one ? c.name : `${c.root}/${c.name}`} ${c.change}`);
+    const whole = head + items.join(", ") + (more ? ", and more (the list was cut)" : "");
+    if (whole.length <= maxLen) return whole;
+    // The longest prefix of the items that fits with its own count of the rest after it.
+    for (let k = items.length - 1; k >= 1; k--) {
+        const cut = `${head}${items.slice(0, k).join(", ")}, and ${items.length - k}${more ? "+" : ""} more (the list was cut)`;
+        if (cut.length <= maxLen) return cut;
+    }
+    // Not even one fits (a root path can be 4096 bytes): the count alone, which never reads as a list.
+    return `changed during this call: ${items.length}${more ? "+" : ""} protected names, unlisted`.slice(0, maxLen);
 }
 
 /** How many protected changes a step's ask keeps for its card. The script's result carries the host's whole list. */
@@ -568,4 +580,15 @@ export function wireCodeOf(hostCode: string): "Refused" | "BadRequest" | "TooLar
         case "TooLarge": return "TooLarge";
         default: return "Failed";
     }
+}
+
+/**
+ * The lines for what an allowed ask's call reported once it ran (a shell call's sandbox and protected names), or none
+ * when it has not reported, or reported in a shape this build does not draw.
+ * @param a the ask
+ * @returns the lines
+ */
+export function askOutcomeLines(a: StepAsk): ShCardLine[] {
+    if (a.kind !== "sh" || a.state !== "allowed" || !a.outcome) return [];
+    try { return shOutcomeLines(a.outcome as unknown as ShOutcome); } catch { return []; }
 }

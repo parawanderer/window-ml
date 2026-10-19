@@ -72,7 +72,9 @@ bullets; host K3 and K3b). The result carries `envelope` (what the host APPLIED,
 "none" (a list with one malformed entry is `null` too, never a shorter list that reads as complete), with
 `protectedChangedTruncated` when the host cut it. The run log's `shell`/`run` record says `asked` (`floor`), `applied`
 (`unknown`), `envelopeMismatch` and the `protectedChanged` count (`unknown`); a change also writes its own
-`shell`/`protected-changed` record at warn. A call the PERSON allowed gets its `ShOutcome` on the ask
+`shell`/`protected-changed` record at warn, whose `changes` text is fitted to the log's 200-character
+detail cap (`MAX_DETAIL_STRING`) and ends `and N more (the list was cut)` when it could not name them all, so the log
+alone never reads a cut list as whole. A call the PERSON allowed gets its `ShOutcome` on the ask
 (`noteAskOutcome`, the list cut at `SH_CHANGES_SHOWN`), so the line under the step shows "Sandbox applied" and
 "Protected names" once it ran. A call a policy or the default allowed has no ask, so for it the run log and the
 script's result are the only surfaces.

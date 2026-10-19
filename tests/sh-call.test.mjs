@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN } from "../src/shell/sh-call.ts";
+import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -586,6 +586,27 @@ test("K3b: the card after the run says what changed DURING the call, warns on a 
     assert.equal(miss.warn, true, "the applied/asked mismatch is the same line the approval card's helper draws");
     assert.equal(envelopeMismatch(null, base.asked), false, "unknown is not a mismatch: it has its own words");
     assert.equal(envelopeMismatch({ write: "today", exec: "any" }, undefined), false, "nothing asked, the floor applied");
+});
+
+test("K3b: the changes text fits a length and says what it left out; a cut text never reads as the whole list", () => {
+    const hooks = Array.from({ length: 12 }, (_, i) => ({ root: "/Users/me/src/proj", name: `.git/hooks/hook-${i}`, change: "created" }));
+    const long = [{ root: "/" + "d".repeat(300), name: ".envrc", change: "modified" }];
+    for (const [list, more] of [[hooks, false], [hooks, true], [hooks.slice(0, 1), false], [long, false], [[...long, ...hooks], true]]) {
+        const whole = protectedChangesText(list, more);
+        for (let max = 60; max <= 400; max++) {   // under 60 not even the count fits; the one caller passes 200
+            const t = protectedChangesText(list, more, max);
+            assert.ok(t.length <= max, `${t.length} > ${max}`);
+            if (t === whole) continue;
+            const named = list.filter((c) => t.includes(`${c.name} ${c.change}`)).length;
+            const said = /, and (\d+)(\+?) more \(the list was cut\)$/.exec(t);
+            const alone = /^changed during this call: (\d+)(\+?) protected names, unlisted$/.exec(t);
+            assert.ok(said || alone, `"${t}" says what it left out`);
+            if (said) assert.equal(named + Number(said[1]), list.length, `"${t}" counts the rest`);
+            else assert.equal(Number(alone[1]), list.length, `"${t}" is the count alone`);
+            assert.equal((said ?? alone)[2], more ? "+" : "", `"${t}": the host's own cut is N+, and only it`);
+        }
+    }
+    assert.equal(protectedChangesText(hooks.slice(0, 2), false, 200), "changed during this call in /Users/me/src/proj: .git/hooks/hook-0 created, .git/hooks/hook-1 created", "it fits: unchanged");
 });
 
 test("ok is the manifest's answer codes, and a kill, a timeout, a cancel or a sandbox failure is never ok", () => {

@@ -67,7 +67,8 @@ export const HEARTBEAT_EVERY_MS = 5_000;
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const MAX_KEY = 512;
 const MAX_DETAIL_ENTRIES = 16;
-const MAX_DETAIL_STRING = 200;
+/** The longest string a `detail` value keeps; a reporter that must not be cut mid-word fits its text to this first. */
+export const MAX_DETAIL_STRING = 200;
 
 /**
  * A reported event made safe to store, or null when it is not one. Names are lowercase slugs, numbers finite

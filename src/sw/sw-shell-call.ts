@@ -21,6 +21,7 @@ import { binaryKind } from "./body-read";
 import { judgeCall } from "./sw-policies";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
+import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
@@ -184,7 +185,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             if (result.protectedChanged?.length) {
                 // Its own record, at warn: what someone reading the log after a surprise looks for.
                 recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "protected-changed", reason: f.placement,
-                    detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated),
+                    detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated, MAX_DETAIL_STRING),
                         ...(result.protectedChangedTruncated ? { truncated: true } : {}) } });
             }
             if (verdict.askId) noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
