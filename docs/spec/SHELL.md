@@ -408,7 +408,10 @@ What follows from it:
   list never widens a call the judge approved as doing nothing. In the host, every layer that acts on the protected
   names (the bubblewrap re-bind, the Landlock enumeration, the tripwire's snapshot) reads the ONE list of them, never
   a copy, and a test enumerates that list against each layer (ruled the same day, after the audit found the re-bind
-  short of four names while `done` reported `write: "roots"`). An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
+  short of four names while `done` reported `write: "roots"`). Seatbelt reads the same list, as whole subtrees: on
+  macOS a protected directory (`.claude/`, `.vscode/`, `.git/hooks/`) is unwritable at every depth under every scope,
+  today's included, as under the Linux rule, where before it denied only the files it listed by hand (ruled
+  2026-10-19, lane 4's gap, window-ml-host #16). A narrowing, so the coordinator's to rule; widening is Shane's. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
   then protects nothing; the tripwire above is what covers the gap's threat. `done` reports the envelope the host
   APPLIED, and for an absent one that is the floor, which is neither `none` nor `roots`: the reported `write` takes a
