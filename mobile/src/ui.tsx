@@ -2,7 +2,7 @@
 // pill (`.tp-pill`), a count badge (`.chat-appr-badge`), a status dot, a toast, and the bottom sheet every picker and
 // menu opens in. Each takes the palette, so light and dark come from one place (theme.ts).
 
-import { forwardRef, useEffect, useMemo, useRef, type ComponentRef, type ReactNode } from "react";
+import { forwardRef, useEffect, useId, useMemo, useRef, useSyncExternalStore, type ComponentRef, type ReactNode } from "react";
 import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -84,11 +84,29 @@ export function Toast({ notice, bottom }: { notice: { id: number; text: string; 
     );
 }
 
+// state: ui (which sheets are on screen, so what is behind them can leave the accessibility tree)
+const openSheets = new Set<string>();
+const sheetListeners = new Set<() => void>();
+function markSheet(id: string, open: boolean): void {
+    if (open === openSheets.has(id)) return;
+    if (open) openSheets.add(id); else openSheets.delete(id);
+    for (const l of sheetListeners) l();
+}
+
+/** Whether any bottom sheet is open. What sits behind one (the stack, the session layer and its WebView) hides itself
+ *  from VoiceOver and TalkBack while it is: the sheet is modal to a finger, and a screen reader reaching past it found
+ *  the page's own controls, such as the transcript's "Look at the page" behind the ⋮ sheet's row of that name. */
+export function useSheetOpen(): boolean {
+    return useSyncExternalStore((cb) => { sheetListeners.add(cb); return () => { sheetListeners.delete(cb); }; }, () => openSheets.size > 0, () => openSheets.size > 0);
+}
+
 /** A bottom sheet: the page's picker lists, as a phone opens them. Present it with `ref.current?.present()`. */
 export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: ReactNode; note?: string; header?: ReactNode; tall?: boolean }>(function Sheet({ title, children, note, header, tall }, ref) {
     const p = usePalette();
     const insets = useSafeAreaInsets();
     const backdrop = useMemo(() => (props: BottomSheetBackdropProps) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} opacity={0.35} />, []);
+    const id = useId();
+    useEffect(() => () => markSheet(id, false), [id]);
     return (
         // `accessible={false}`: the library makes the sheet ONE accessibility element ("Bottom Sheet") by default,
         // which hides every row inside it from VoiceOver, TalkBack and anything that drives the app by name.
@@ -96,6 +114,7 @@ export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: Re
         // on screen while the keyboard is up and the list does not resize under the thumb on every keystroke.
         <BottomSheetModal ref={ref} accessible={false} enableDynamicSizing={!tall} maxDynamicContentSize={560}
             snapPoints={tall ? ["88%"] : undefined} topInset={insets.top + 8} keyboardBehavior="interactive" keyboardBlurBehavior="restore" backdropComponent={backdrop}
+            onChange={(i) => markSheet(id, i >= 0)} onDismiss={() => markSheet(id, false)}
             backgroundStyle={{ backgroundColor: p.bg }} handleIndicatorStyle={{ backgroundColor: p.panel2, width: 40 }}>
             {/* The title and anything sticky (a filter) sit ABOVE the scroller, so a long list scrolls under them
                 rather than carrying them away. */}
