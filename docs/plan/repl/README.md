@@ -17,7 +17,7 @@ specs (all in `docs/spec/`, merged in #666, #668, #669):
 | `EFFECTS.md` | one effect algebra: sets of (operation, resource) pairs; every vocabulary projects onto it; the free tier is one subset test |
 | `POLICIES.md` | a policy is a function over a call's resolved facts, evaluated in a POLICY REALM of the read-only dialect; scopes; one page; widening is never a card button |
 | `ML_WIRE.md` | one `ml` call as a message every executor speaks; copies and handles, never proxies; per-call asking by suspension |
-| `PYTHON_DIALECT.md` | a read-only Python as a RESTRICTED MODE PATCHED INTO CPYTHON (not a sandbox, not an evaluator above the runtime); `mode` replaced by membership; one persistent namespace per run |
+| `PYTHON_DIALECT.md` | a read-only Python as a RESTRICTED MODE PATCHED INTO CPYTHON (not a sandbox, not an evaluator above the runtime); `mode` replaced by membership; one persistent namespace per run. Measured cost (lane 3, `LANE_3_RESULT_H.md`): building with specialization off is 0 to 10% slower on the corpus, central estimate 6%, inside a ±40% noise floor; a restricted run adds 25 to 35% on cells of real size on top of that, and the reference tracer 3 to 4% on all Python in the process |
 | `READONLY_LIBRARY_MANIFEST.md` | how a library's functions are described (effects, callbacks, aliasing, cost tiers); its main consumer is the Python dialect |
 | `PROGRAM_MANIFEST.md` | how a PROGRAM is described for the shell (effects, path args, operand start, runner, echoes); no cost tiers |
 | `SHELL.md` | processes as `ml.sh`, values stay home, two modes (container, host), the OS sandbox on by default, the host in Rust |
@@ -104,44 +104,40 @@ now stored whole. A `value` answer for a capture that was NOT stored (a page-hos
 read cap, an `exec` or `python_exec` output) still carries `truncated: true` and the full size, and every client
 surfaces it.
 
-## Status (2026-10-16)
+## Status (2026-10-19)
 
-- **Lane 1**: root A merged (#678, result #689, design note #691); root J merged (#705, result #726) with the main-world
-  fallback kept on Shane's decision; PR 2a (the Python `ml` facade in `python-runtime.ts` against a transport callback)
-  merged (#728). Unblocked by the Pyodide lockdown (#735): remaining are PR 2b (wiring `_ml_make` over the worker's
-  closure-held `post` through `offscreen.ts` and `sw-python.ts`) and root C (persistent per-run `dict`, housekeeping
-  loss notice, [`LANE_1_RESULT_C.md`](LANE_1_RESULT_C.md); tests and text landed 2026-10-19).
-- **Lane 2**: **DONE** — D (#672), E (#686), 3a (#699), the `sh` consumer and archive removal (#706), the policy vectors
-  (#709), 3b (#716: the `POLICIES` message, the policy page in DevTools Settings, re-judging a showing card), 3c (#723:
-  `propose_policy`, derived breadth probe, policy syntax/eval hardening), and results `LANE_2_RESULT_E.md` +
-  `LANE_2_RESULT_3.md` (#731) all merged; lane clone removed.
-- **Lane 3**: B+G (#677), shared dialect vectors (#721) merged; root H in `parawanderer/cpython` branch
-  `ml/restricted-mode`: slices 1 (`CO_RESTRICTED`, entry, extent predicate, specialization off), 2 (the gate, with
-  lifting OPT-IN per manifest leaf), 4 (step budget at the eval breaker + AST static loop rejection), and 5 (ownership
-  and per-entry allocation byte cap via `PyMem_SetAllocator`) pushed (`ec7ebb4`), passing 84 of 87 shared vectors.
-  Remaining: slice 6 (the write-barrier undo log for the 3 failure/rollback vectors + `test_asyncio` slice-2 leak fix),
-  `LANE_3_RESULT_H.md`, and the post-H Pyodide WASM build.
-- **Lane 4**: I (host v0.1.0, v0.2.0), F (#683), results (#687, #694), the `sh` core (#704), nested asks (#710), PR 4a
-  (#724: native port to the process host, Settings, shell capabilities), and PR 4b (#733: `ml.sh` on `window.ml` and in
-  `exec`, required `effects` on `fetch` and `sh` descriptors) merged. Remaining: PR 4c (`ml.sh` on `ml-wire.ts` so
-  Python and remote clients reach it) and root L (#734: process-group ownership table and physical-footprint `alloc`
-  bound in `window-ml-host`).
-- **Red team** (outside the lanes): **DONE** — interim mitigations (#708), full Pyodide boot lockdown (#735: `ses`
-  `lockdown()` + global allow-list in `src/python/lockdown.ts`, closure-captured `postMessage`, per-principal worker
-  routing across `run`/`bench`/`call`, real `sys.stdout` capture, `asyncio` cancel-on-settle, enumeration gate), and
-  red-team audit of `ml.sh` + `propose_policy` (#739) all merged; superseded #698 closed.
-- **Specs amended by rulings** (all merged): effects (#671), wire (#693, #701), policies (#679, #700, #707, #719),
-  shell and manifests (#681, #682, #685, #688, #695, #697, #702), the Python dialect (#673, #674, #711, #718, #720), the
-  lockdown plan (#690, #700, #725), the README's rows (#712, #732), the coordinator's handover (#715), lane 1's PR 2/C
-  design (#729), root L (#734).
-- **Unassigned roots**: K (registering a program; depends on I and F), the host's hub transport (behind a Cargo feature),
-  the typed-node policy tree (the derived breadth).
-- **Added root L** (Shane and the coordinator, 2026-10-15 evening, after the crash; spec in #734): process ownership and
-  the memory bound at the host, `SHELL.md` "Every process has an owner" and `EFFECTS.md`'s `alloc` bound: the owner table
-  as the one table, a process group per spawn, kill-on-owner-loss as the default with a visible orphan list as the policy
-  alternative, a footprint watchdog (macOS) or a cgroup maximum (Linux), the footprint as a fact and a span on the
-  resource panel. Lane 4's, after `ml.sh` (4b/4c) and before the hub transport. Acceptance: a spawned sleeper dies with
-  its port; a child that allocates past the bound is killed and the run log says so; neither test reads `ps`.
+The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
+`repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
+listed as remaining is DONE unless named below.
+
+- **Lane 1: CLOSED 2026-10-19.** PR 2b + root C merged (#757: `ml` over the wire from a cell, one namespace per run,
+  the per-browser residual pinned by a test and named on the full-mode card); `LANE_1_RESULT_C.md` merged; clone removed.
+  Left unassigned by it: the redteam's non-blocking second pass on the codec fix (b05d1d7c), renaming the two "property
+  FAILS TODAY" tests, a bound of `handlesIn`'s own should it ever be exported, and the two loader shapes
+  (`LANE_1_RESULT_C.md`, follow-up).
+- **Lane 2: DONE** (unchanged since 2026-10-16).
+- **Lane 3: list CLEAR.** Root H's result (#749), the corpus cost (#755, #766), the Pyodide build plumbing (#754), the
+  fork rebased onto v3.14.2 (#760), the owned-set filter measured and parked plus the lifted-generator removal fix
+  (#765), the manifests' second pass (#751). Option A (specialized forms) ruled deferred. Waits only on the
+  address-reuse audit of the fork (flaky-CI janitor, branch `audit/address-reuse`), which lane 3 reviews and merges.
+- **Lane 4: hub transport DONE.** PR 4c (#748), root L both sides (#753, host v0.3.0, result #758), the span on the
+  event lane (#761), K1 (#763, host v0.4.0), then H1-H3 in `window-ml-host` behind `--features hub` (host #9, #10, #11;
+  v0.5.0), rulings in session-mail 2026-10-19 and `SHELL.md` (#768); result `LANE_4_RESULT_HUB.md` (#769). Next: review
+  of the K3 host PR.
+- **K3** (the host's sandbox `Plan` compiler and the Landlock envelope; `PROGRAM_MANIFEST.md`, `EFFECTS.md`, #743, #744)
+  is assigned to the Mimo generalist session (clone `window-ml-host-k3`, branch `k3/plan-envelope`), mid-implementation,
+  lane 4 reviewing.
+- **Red team**: the PR 4c pass posted with no finding; the `handlesIn` property pass is a non-blocking second-adversary
+  pass after the owner lifted a stop that turned out to be a provider refusal, not the classifier (the redteam skill now
+  says so, #767); then back to the shell-policy audit.
+- **Specs amended by rulings since 2026-10-16** (all merged): root K's interpreted entrypoints and the 3-way Python
+  model (#743), the OS sandbox `Plan` as a compiler over `EffectsData` (#744), the checkpoint primitive and receiver
+  routing (#759, #762), the host's session events over the hub (#768).
+- **Open decisions for Shane**: whether a desktop host's call events may reach a second `view` device (today: the caller
+  only, `SHELL.md`); #647's go (site access, agent level).
+- **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
+  telling a run that relied on a removed policy why its next call asks, lane 1's four follow-ups above, and the phone's
+  UX for pairing a desktop runtime (chat-hub topic).
 
 ## The lanes
 
