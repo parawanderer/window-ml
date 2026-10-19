@@ -165,6 +165,12 @@ listed as remaining is DONE unless named below.
   hosts (decided 2026-10-19, `SHELL.md`, revisable). #647 (site access, agent level) merged 2026-10-15 as ac417a98 and no longer waits on anyone.
 - **Round 3 (opened 2026-10-19, [`ROUND_3.md`](ROUND_3.md))**: five lanes on this list: 5 the Pyodide build, 6 lane 1's four
   follow-ups, 7 `mode` removal, 8 the phone's pairing UX, 9 telling a run why its next call asks.
+  Lane 5's build is window-ml #835 (2026-10-19): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
+  tag `pyodide-314.0.3-ml-8f6a50ab` (Shane's decision, 2026-10-19, after the fetch-hub precedent), pinned by tag, URL and
+  sha256 in the consumer's dist manifest (#835) and checked before unpack. Measured: tarball 6.4 MB; an incremental
+  `make all-but-packages` 47 s on an M4; 85 of 87 dialect vectors pass under wasm32, the two memory vectors end in
+  `MemoryError`/`OverflowError` instead of `NotInDialect` because the per-cell byte count never fires for an
+  allocation wasm32 cannot make (pinned as `WASM32_GAPS`; the fork's, lane 3's).
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
   (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
