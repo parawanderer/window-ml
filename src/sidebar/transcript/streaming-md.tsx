@@ -13,6 +13,8 @@ import { useLayoutEffect, useRef } from "preact/hooks";
 import { markdown } from "../format";
 import { cssDurationMs } from "../use-close";
 import { closeStreaming } from "./stream-close";
+import { splitAnswer } from "../../pointers/answer-tokens";
+import { escapeHtml } from "../format";
 
 /** How long after the previous word a new one starts fading, while a burst is being spread out. */
 export const FADE_STEP_MS = 24;
@@ -64,6 +66,39 @@ export function fadeWords(root: Element, starts: number[], now: number, fadeMs: 
     }
 }
 
+/** The Markdown of a streaming reply with each finished `@tool:` citation set aside, and the HTML to put back in its
+ *  place. The citations are resolved only once the answer settles (`AnswerBody`); until then an EMBED is its label,
+ *  quiet, where the value will be, and a LINK is its label as text. Inline, both: a short value settles inline in the
+ *  sentence (`42`), and which values are short is not known until they are resolved. Without this the plain renderer drew
+ *  the literal `![label](@tool:…)` for the whole stream and then swapped it for the embed. */
+export function setAsideTokens(md: string, isAlias?: (name: string) => boolean): { md: string; restore: (html: string) => string } {
+    const kept: string[] = [];
+    const text = splitAnswer(md, isAlias).map((seg) => {
+        if (seg.kind === "prose") return seg.text;
+        const label = escapeHtml(seg.label || `@tool:${seg.id}`);
+        kept.push(`<span class="${seg.embed ? "tok-streaming" : "tok-streaming-link"}">${label}</span>`);
+        return `@@TOK${kept.length - 1}@@`;
+    }).join("");
+    const restore = (html: string): string => html.replace(/@@TOK(\d+)@@/g, (_, i: string) => kept[+i]);
+    return { md: text, restore };
+}
+
+// state: ui (when each run last drew a live answer, by run hash; a page reload loses it, and then nothing is animating)
+const liveAnswerAt = new Map<string, number>();
+/** How soon after its last live frame a run's final answer counts as the same answer settling. */
+const CONTINUES_MS = 2000;
+
+/** A run drew its answer live just now. Called while the live bubble renders (agent-detail.tsx, `LiveStream`). */
+export const noteLiveAnswer = (hash: string, now = Date.now()): void => { liveAnswerAt.set(hash, now); };
+
+/** Is the answer mounting now the one that was just streaming? An agent's live bubble and its finished answer are
+ *  different elements, so without this the answer the reader watched stream in vanished and grew back in from nothing
+ *  (reply.tsx, `useReplyArrival`). */
+export const continuesLiveAnswer = (hash: string | undefined, now = Date.now()): boolean => {
+    const at = hash ? liveAnswerAt.get(hash) : undefined;
+    return at != null && now - at < CONTINUES_MS;
+};
+
 /** A reply's Markdown, drawn as it streams in. `live` is whether text arriving now is arriving in front of the reader:
  *  false once the reply has settled, so a redraw (unfolding it, say) shows it at once. A surface opts in with
  *  `--word-fade-ms`; one that sets none draws each update in one frame, as before. */
@@ -71,7 +106,8 @@ export function StreamingMd({ content, live }: { content: string; live: boolean 
     const ref = useRef<HTMLDivElement>(null);
     // state: ui (which word of THIS bubble appeared when; dies with the bubble, and a redraw then shows it at once)
     const starts = useRef<number[]>([]);
-    const html = markdown(live ? closeStreaming(content) : content, { math: true });
+    const { md, restore } = setAsideTokens(live ? closeStreaming(content) : content);
+    const html = restore(markdown(md, { math: true }));
     useLayoutEffect(() => {
         const el = ref.current;
         if (!el) return;

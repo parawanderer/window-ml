@@ -3163,6 +3163,39 @@ test("while the model streams, the reading view drops the status line and the pu
     expect(errors, "no page errors").toEqual([]);
 });
 
+test("an answer streaming in holds each citation's place by its label, and settling into the real one does not grow it in again", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
+    await page.evaluate((k) => {
+        const hash = k.split(":").pop();
+        globalThis.__chatFake.emit(k, {
+            kind: "agent-step", id: `${hash}-1r`, ts: Date.now(), save: false, session: { hash, turn: 1 },
+            step: 1, seq: 1, tool: "python_exec", token: "d1e2f30", arguments: {}, result: "42", toolMs: 1200,
+        });
+    }, WATCHED);
+    const text = "The count is in. ![the count](@tool:d1e2f30) That is all of them.";
+    await page.evaluate(([k, content]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9, content, tokens: 20,
+    }), [WATCHED, text]);
+    const live = page.locator(".msg.asst.streaming");
+    await expect(live.locator(".tok-streaming"), "the embed holds its place by its label").toHaveText("the count");
+    await expect(live, "and never as the literal Markdown").not.toContainText("@tool:");
+
+    await page.evaluate(([k, summary]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-result", id: `${k.split(":").pop()}-ans`, ts: Date.now(), save: true,
+        session: { hash: k.split(":").pop(), turn: 9 }, steps: 9, hitCap: false, summary,
+    }), [WATCHED, text]);
+    await expect(live).toHaveCount(0);
+    const settled = page.locator(".msg.asst").last();
+    await expect(settled.locator(".tok-val"), "the real value takes its place (a short one, inline)").toHaveText("42");
+    await expect(settled.locator(".tok-streaming")).toHaveCount(0);
+    // The live bubble and the settled answer are different elements: without the hand-over the answer the reader
+    // just watched vanished and grew back in from nothing.
+    const growing = await settled.evaluate((el) => el.getAnimations().filter((a) => a.effect?.target === el).length);
+    expect(growing, "the settled answer is not animated in as a new arrival").toBe(0);
+    expect(errors, "no page errors").toEqual([]);
+});
+
 test("a streamed THOUGHT also silences the status line, which would otherwise count the same tokens twice", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
     await toolReturned(page);
