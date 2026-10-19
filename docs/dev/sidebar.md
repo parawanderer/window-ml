@@ -216,6 +216,31 @@ draws nothing.
   missing included, take none (Q15, fails closed). A site's `agent-wait` puts its prompt, labelled "The site asks: ({origin})", over
   the reply box (`SiteWaitPrompt`); an `agent-note` is one dim line in the step list.
 
+## Mermaid diagrams in model text
+
+A ```mermaid fence in anything `markdown()` renders (a reply, an answer, prose between steps, the HUD card) is drawn as
+its diagram, on the sidebar, the DevTools panel and the chat page (extension and web). The phone app and the exports
+still show the code (a follow-up). Code: `src/mermaid/`.
+
+- **Drawn in a sandbox, shown as an image.** `mermaid-frame.ts` runs Mermaid in `mermaid.html`, a manifest
+  `sandbox.pages` entry with its own CSP (`script-src 'self'`, no eval) in the extension and an iframe with
+  `sandbox="allow-scripts"` everywhere: an opaque origin with no extension APIs and no access to the page. It answers
+  with SVG text (`securityLevel: "strict"`, `htmlLabels: false`, so no `foreignObject`), which the page shows as an
+  `<img>`, where nothing in it can run. `mermaid-frame.js` is ~5 MB and loads only with the first diagram.
+- **A cache, not a component** (`mermaid-block.ts`). A reply's HTML is replaced wholesale on every streamed token, so
+  `markdown()` asks the cache as it builds: a fence drawn before comes out as its `<img>`, one never drawn comes out
+  PENDING, and `installMermaid` (one `MutationObserver` per document) draws pending ones and upgrades them in place.
+- **The states.** A fence still open is code: `closeStreaming` closes it as `mermaid_open`, which `markdown()` treats
+  as plain code, so a half-written diagram is never sent to be drawn. Once closed inside a live reply (`.md-live` on
+  `StreamingMd`) it shows a "drawing the diagram" placeholder only after `PLACEHOLDER_MS`, grows from the code's height
+  to the diagram's, and fades in. Anywhere else (history, a reload) the code stays invisible until the diagram replaces
+  it. A parse error leaves the code with a one-line note. A theme change redraws every diagram in the new theme.
+- **Toggle and copy** are buttons in the injected HTML, handled by delegation on the document, with the panel's tooltip
+  routed to them the same way.
+- **The frame must be web-accessible** (`manifest.json`): the overlay is an extension frame inside a web page, and
+  Chrome refuses a nested extension frame there otherwise. On the installable web app the service worker passes
+  `mermaid.html` to the network rather than answering it with the app page, and does not precache the 5 MB script.
+
 ## Traps
 
 - **The app talks to its host only through `parent-channel.ts`** (`toHost`, `onHostMessage`), never
@@ -226,6 +251,10 @@ draws nothing.
   DevTools panel, an extension page, keeps plain window messages. A run's events reach the shell over `chrome.runtime` (`ML_DEBUG_TO_PAGE`), never the page's window,
   and a page's events are admitted by `pageMayWrite` (`src/event-admission.ts`). A test opens the sidebar by clicking
   its tab and watches a background run with `watchRunEvents` (e2e harness), not by posting into the frame.
+- **The one other `message` listener is the diagram frame's** (`src/mermaid/mermaid-client.ts`), and it is not a
+  channel to the host: it posts only DOWN, to its own sandboxed child frame, and takes an answer only whose `source` is
+  that child's window, which a page cannot fake. A page posting a forged "finished drawing" into the overlay is
+  ignored (`tests/e2e/chat-mermaid-ext.spec.mjs`). Keep both halves of that if it changes.
 - **Our shadow roots are CLOSED.** Shell code uses its kept reference (`shellRoot`, `cardRoot`, `hlRoot`), never
   `host.shadowRoot`, which is null; a new host is attached `mode: "closed"` and added to `__wmlShellRoots`. Never post a
   root or a node in one to the page. A test reaches them with `inShell`/`waitInShell`/`clickInShell`, not a locator.

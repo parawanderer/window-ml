@@ -27,7 +27,8 @@ export const webBuildOptions = (outdir) => ({
     absWorkingDir: ROOT,
     // `chat`: the demo (the fake host's world), what the specs and the screenshots drive. `client`: the standalone
     // client over a real hub (src/chat/client.tsx), what the phone app and a desktop wrapper run.
-    entryPoints: { chat: "src/chat/web.tsx", client: "src/chat/client.tsx" },
+    // `mermaid-frame`: the sandboxed page that draws a ```mermaid fence (src/mermaid/), fetched only on a first diagram.
+    entryPoints: { chat: "src/chat/web.tsx", client: "src/chat/client.tsx", "mermaid-frame": "src/mermaid/mermaid-frame.ts" },
     outdir,
     bundle: true,
     format: "iife",
@@ -57,6 +58,7 @@ export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-
         }
         cpSync(path.join(ROOT, "src/chat/chat.html"), path.join(stage, "index.html"));
         cpSync(path.join(ROOT, "src/chat/client.html"), path.join(stage, "client.html"));
+        cpSync(path.join(ROOT, "src/mermaid/mermaid.html"), path.join(stage, "mermaid.html"));
         cpSync(path.join(ROOT, "src/chat/chat.css"), path.join(stage, "chat.css"));
         cpSync(path.join(ROOT, "src/sidebar/sidebar.css"), path.join(stage, "sidebar.css"));
         const fonts = path.join(ROOT, "node_modules/katex/dist/fonts");
@@ -127,7 +129,9 @@ async function buildNative(web, out) {
 function buildApp(web, app) {
     rmSync(app, { recursive: true, force: true });
     mkdirSync(app, { recursive: true });
-    for (const f of ["client.js", "sidebar.css", "chat.css"]) cpSync(path.join(web, f), path.join(app, f));
+    // The diagram frame (mermaid.html + its 5 MB script) is served, not precached in SHELL: an installed copy offline
+    // shows a diagram as its code with a note, rather than every install downloading the renderer up front.
+    for (const f of ["client.js", "sidebar.css", "chat.css", "mermaid.html", "mermaid-frame.js"]) cpSync(path.join(web, f), path.join(app, f));
     cpSync(path.join(web, "client.html"), path.join(app, "index.html"));
     // THE AGENT START PAGE (`AGENT_START_PAGE`, contract-config.ts). A run that asked for a new tab has to open some
     // real http(s) page — a browser extension cannot run on the browser's own new-tab page, nor on `about:blank` —

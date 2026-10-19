@@ -4318,3 +4318,38 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 .start-wait { margin: 8px 0; }
 /* A quiet line the worker writes in a run's step list (a start a page the run opened asked for). */
 .arun-note { color: var(--fg-dim); font-size: .85em; margin: 4px 0; font-style: italic; }
+
+/* --- Mermaid diagrams in model-written Markdown (src/mermaid/mermaid-client.ts) ---------------------------------
+   A ```mermaid fence drawn as its diagram, an `<img>` of the SVG a sandboxed frame made. States, by `data-mmd`:
+   pending (just closed, not yet asked), drawing (asked, in front of the reader), quiet (asked, in history: the code
+   stays invisible so nothing flashes), done, error (the code, and a note). The toolbar is the code block's: quiet
+   until the block is hovered or focused. */
+.mmd { position: relative; margin: 0.5em 0; transition: height 0.26s ease; }
+.mmd[data-mmd-arrive] { overflow: hidden; }
+.mmd-img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.mmd pre.mmd-src[data-mmd-hide] { display: none; }
+.mmd[data-mmd-source] .mmd-img { display: none; }
+.mmd[data-mmd="quiet"] pre.mmd-src { visibility: hidden; }
+.mmd[data-mmd-slow] pre.mmd-src { opacity: 0.3; transition: opacity 0.2s ease; }
+.mmd[data-mmd-slow]::after {
+    content: "drawing the diagram…"; position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--fg-dim); font-size: 12px;
+}
+.mmd[data-mmd-arrive] .mmd-img { animation: mmd-in 0.32s ease both; }
+@keyframes mmd-in { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: none; } }
+.mmd-tools {
+    position: absolute; top: 3px; right: 6px; z-index: 3; display: flex; gap: 4px;
+    opacity: 0.35; transition: opacity 0.15s ease;
+}
+.mmd:hover .mmd-tools, .mmd-tools:focus-within { opacity: 1; }
+@media (hover: none) { .mmd-tools { opacity: 1; } }
+.mmd-btn {
+    font: inherit; font-size: 11px; line-height: 1.5; padding: 0 6px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel); color: var(--fg-dim);
+}
+.mmd-btn:hover, .mmd-btn:focus-visible { color: var(--fg); }
+.mmd-note { margin-top: 4px; color: var(--fg-dim); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) {
+    .mmd { transition: none; }
+    .mmd[data-mmd-arrive] .mmd-img { animation: none; }
+}

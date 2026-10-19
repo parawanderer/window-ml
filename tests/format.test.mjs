@@ -155,3 +155,31 @@ test("one text cell, an all-empty column, or a lone header number keeps the colu
 test("an explicit alignment row still wins over the numeric class's right alignment", () => {
     assert.match(markdown("| h |\n|:--|\n| 1 |"), /<td class="md-num" style="text-align:left">1<\/td>/);
 });
+
+// --- ```mermaid fences: a diagram block, pending until drawn (src/mermaid/) ---
+
+test("a ```mermaid fence becomes a PENDING diagram block holding its source as escaped code; other fences are unchanged", async () => {
+    const html = markdown("Flow:\n\n```mermaid\ngraph TD\n  A[\"</pre><script>x()</script>\"] --> B\n```");
+    assert.match(html, /<div class="mmd" data-mmd="pending"><pre class="code mmd-src"><code class="hljs">graph TD\n {2}A\[&quot;&lt;\/pre&gt;&lt;script&gt;x\(\)&lt;\/script&gt;&quot;\] --&gt; B<\/code><\/pre><\/div>/);
+    assert.doesNotMatch(html, /<script/, "the source is text, whatever it says");
+    assert.match(markdown("```js\nlet x = 1;\n```"), /<pre class="code"><code class="hljs">/, "control: a js fence is the plain code block");
+    assert.doesNotMatch(markdown("```mermaid_open\ngraph TD\n```"), /class="mmd"/, "a fence still streaming is code (stream-close.ts)");
+});
+
+test("a fence drawn before comes out FINISHED, as an <img> of its SVG with the toolbar; a failed one as code and a note", async () => {
+    const { done, keyOf } = await import("../src/mermaid/mermaid-block.ts");
+    const src = "graph TD\n  A --> B";
+    done.set(keyOf(src, true), { svg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'></svg>", w: 40, h: 20 });
+    const html = markdown("```mermaid\n" + src + "\n```");
+    assert.match(html, /<div class="mmd" data-mmd="done"><div class="mmd-tools">/);
+    assert.match(html, /<img class="mmd-img" alt="Diagram" width="40" height="20" src="data:image\/svg\+xml;charset=utf-8,%3Csvg/);
+    assert.match(html, /<pre class="code mmd-src" data-mmd-hide>/, "the source stays in the page for the toggle and copy");
+    assert.match(html, /aria-label="Show the diagram's source"/);
+    const bad = "graph TD\n  A -->";
+    done.set(keyOf(bad, true), { error: "Parse error on line 2 <b>" });
+    const err = markdown("```mermaid\n" + bad + "\n```");
+    assert.match(err, /data-mmd="error"/);
+    assert.match(err, /<div class="mmd-note">Couldn't draw this diagram: Parse error on line 2 &lt;b&gt;<\/div>/, "the note is escaped");
+    assert.doesNotMatch(err, /<img/);
+    done.clear();
+});

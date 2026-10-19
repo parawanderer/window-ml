@@ -46,3 +46,13 @@ test("table rows wait for the header's separator line, then draw", () => check([
 test("display math waits for its closing delimiter; a lone $ is left to draw as text", () => check([
     ["ok\n\n$$\\frac{1}", "ok\n\n"], ["ok \\[x^2", "ok "], ["price $5 and", "price $5 and"], ["$$x$$ done", "$$x$$ done"],
 ]));
+
+// --- a ```mermaid fence still open is code, not a diagram ---
+
+test("an open ```mermaid fence is closed as plain code (mermaid_open), so a half-written diagram is never drawn", () => check([
+    ["See:\n```mermaid\ngraph TD\n  A -->", "See:\n```mermaid_open\ngraph TD\n  A -->\n```"],
+    // Closed by the model: left alone, a diagram from here on.
+    ["```mermaid\ngraph TD\n  A --> B\n```", "```mermaid\ngraph TD\n  A --> B\n```"],
+    // Any other open fence keeps its language.
+    ["```js\nlet x", "```js\nlet x\n```"],
+]));

@@ -43,6 +43,9 @@ const ENTRIES = {
     // ~395 KB minified against sidebar-app's ~694 KB, and sidebar-app loads in an iframe on every page
     // the overlay mounts on, for a tab most sessions never open. See sidebar/cm-editor.ts.
     "cm-editor": "src/sidebar/cm-editor.ts",
+    // Mermaid (~5 MB minified, every diagram type), run ONLY inside the sandboxed mermaid.html that draws a ```mermaid
+    // fence of model text (src/mermaid/). Its own file, loaded by that frame on the first diagram, never by a page.
+    "mermaid-frame": "src/mermaid/mermaid-frame.ts",
     // Optional DevTools panel: a second surface for the same app. `devtools` registers
     // the panel; `panel` hosts the app iframe and relays the debug stream from the
     // background (see sidebar/panel.ts).
@@ -69,6 +72,7 @@ const ASSETS = [
     ["src/offscreen.html", "offscreen.html"],
     ["src/chat/chat.html", "chat.html"],
     ["src/chat/chat.css", "chat.css"],
+    ["src/mermaid/mermaid.html", "mermaid.html"],
     ["src/dev-hub-pair.html", "dev-hub-pair.html"],
 ];
 
@@ -108,8 +112,8 @@ if (!EXEC_WORLDS.includes(DEFINES.__EXEC_DEFAULT_WORLD__))
 // code nobody reads and triples in size unminified.
 // The chat page is the same kind of thing as the sidebar app — a compiled Preact bundle that renders the shared
 // session views — so it is minified beside it rather than left readable with the worker's own code.
-const { "sidebar-app": sidebarApp, "cm-editor": cmEditor, chat: chatPage, ...coreEntries } = ENTRIES;
-const uiEntries = { "sidebar-app": sidebarApp, "cm-editor": cmEditor, chat: chatPage };
+const { "sidebar-app": sidebarApp, "cm-editor": cmEditor, chat: chatPage, "mermaid-frame": mermaidFrame, ...coreEntries } = ENTRIES;
+const uiEntries = { "sidebar-app": sidebarApp, "cm-editor": cmEditor, chat: chatPage, "mermaid-frame": mermaidFrame };
 const base = {
     outdir: BUILD_DIR,
     bundle: true,

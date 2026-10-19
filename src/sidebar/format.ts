@@ -13,6 +13,7 @@ import xml from "highlight.js/lib/languages/xml";
 import cssLang from "highlight.js/lib/languages/css";
 import mdLang from "highlight.js/lib/languages/markdown";
 import { js_beautify } from "js-beautify/js/lib/beautify.js";
+import { mermaidBlock } from "../mermaid/mermaid-block";
 import katex from "katex";
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { Session, Status } from "./store";
@@ -141,7 +142,9 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
     // Pull fenced code from the RAW source first (highlighted, not double-escaped),
     // stashed behind an ASCII placeholder restored at the end.
     const stashed = src.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang: string, code: string) => {
-        codeBlocks.push(`<pre class="code"><code class="hljs">${highlight(code.replace(/\n$/, ""), lang || undefined)}</code></pre>`);
+        // A ```mermaid fence is a diagram: drawn already (the cache) or pending, for mermaid-client.ts to draw in place.
+        codeBlocks.push(lang === "mermaid" ? mermaidBlock(code.replace(/\n$/, ""))
+            : `<pre class="code"><code class="hljs">${highlight(code.replace(/\n$/, ""), lang || undefined)}</code></pre>`);
         return `\n@@CODE${codeBlocks.length - 1}@@\n`;
     });
     // Stash rendered math behind placeholders BEFORE escaping — KaTeX output is trusted HTML that must

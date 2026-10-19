@@ -1,0 +1,6 @@
+<!doctype html>
+<!-- mermaid.html — the SANDBOXED page that draws Mermaid diagrams (src/mermaid/mermaid-frame.ts). It is never shown: a
+     page that renders model-written Markdown loads it in a hidden iframe and asks it for SVG by postMessage. Sandboxed
+     (the manifest's `sandbox.pages`, and `sandbox="allow-scripts"` on the iframe), so the diagram library and the
+     model's diagram source never run in a realm that holds the extension's APIs or the page's DOM. -->
+<html><head><meta charset="utf-8"></head><body><script src="mermaid-frame.js"></script></body></html>

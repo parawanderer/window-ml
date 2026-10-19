@@ -6,6 +6,7 @@ import { render } from "preact";
 import { installServices } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
+import { installMermaid } from "../mermaid/mermaid-client";
 import { ChatStore } from "./chat-store";
 import { demoHost } from "./demo-world";
 import { longAgent, longChat } from "./long-session";
@@ -35,6 +36,7 @@ if (longN > 0) for (const s of [longChat(longN), longAgent(longN)]) host.addSess
 const store = new ChatStore(host);
 installServices(hostServices(store, webPlatform));
 initThemeStyle();
+installMermaid(document);   // ```mermaid fences in model text become diagrams (mermaid-client.ts)
 applyCodePrefs();
 installViewPrefs(webPlatform.prefs);
 installPageTheme();
