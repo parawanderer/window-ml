@@ -67,6 +67,26 @@ build feature that pulls the hub's client crates in. The hub, for its part, know
 relaying sealed commands to a runtime that declared the capability. In code: the host is its own repository, built the
 way `wmlbox` is built, not living beside it. The plan for building it: [`docs/plan/repl/`](../plan/repl/README.md).
 
+**The host's session events over the hub** (ruled 2026-10-19, cases found by lane 4 building window-ml-host #11,
+after the 2026-10-19 Q2 ruling that `done`, `exit` and the span are PUBLISHED session events, never a long-poll):
+
+- **A caller's events go to that caller alone.** The stream key is wrapped to the calling principal's own agreement
+  key, not fanned out to every `view` device of the account the way a browser runtime's `SessionPublisher` does. A
+  browser runtime's sessions are the person's; a host's calls are a caller's, and its held output and owner table are
+  already private to that caller (the per-caller ledger). A second device watching a desktop's calls is a widening and
+  the owner's decision; it is one change to add and would not be one to take back.
+- **The frame is the host's native `done` record, versioned.** No session-stream envelope (`epoch`, `cursor`): those
+  serve `reset` and `backfill`, and the host backfills nothing, since held output is read by request, one nonce each.
+  Every published frame carries `v`, the host's protocol version, because session events are versioned and a reducer
+  switches on the kinds it knows ([`RUNTIME_HUB.md`](RUNTIME_HUB.md)). The extension-side reader wraps the record into
+  its envelope when it is built.
+- **The stream counter never repeats across restarts.** It starts at the wall clock in microseconds AND above a
+  high-water mark the host persists in its state directory (0600) beside its keys, so a clock stepped backwards between
+  two runs (NTP, a restored VM) cannot reuse a counter under a new key. A reader holding the old key sees `skipped`
+  jump, which is the designed signal.
+- **A caller gone from presence past a grace of 30 s** (chosen, not derived) loses only its own calls, through its own
+  owner table; another caller's processes are untouched.
+
 ### Two modes: a container, or the real filesystem
 
 **Both are supported (Shane, 2026-10-13).** A container is the safe default for work that can be isolated. Working on
