@@ -63,3 +63,12 @@ test("the easing starts fast and lands exactly", () => {
     assert.equal(easeOut(2), 1);
     assert.ok(easeOut(16 / GLIDE_MS) > 16 / GLIDE_MS, "ahead of linear after the first frame");
 });
+
+test("a glide gives way to anything else that scrolls the pane, rather than dragging it back down", () => {
+    const w = world({ content: 2000 });
+    w.el.grow(26); w.pin.follow(); w.frame();
+    w.el.scrollTop = 100;   // a citation jumps up the transcript
+    for (let i = 0; i < 12; i++) w.frame();
+    assert.equal(w.el.scrollTop, 100);
+    assert.equal(w.pending(), false);
+});

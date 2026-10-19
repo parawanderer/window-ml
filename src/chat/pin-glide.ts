@@ -25,11 +25,15 @@ export function pinGlide(el: HTMLElement, opts: { reduced?: () => boolean; raf?:
     const now = opts.now ?? (() => performance.now());
     const reduced = opts.reduced ?? (() => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
     // state: plumbing (the glide in flight for this scroller; dies with the pane)
-    let frame = 0, from = 0, start = 0;
+    let frame = 0, from = 0, start = 0, wrote = 0;
     const end = (): number => el.scrollHeight - el.clientHeight;
     const step = (): void => {
+        // SOMETHING ELSE SCROLLED since the last frame (a citation jumping up the transcript, a reveal): the glide
+        // gives way rather than dragging the view back down, which it would otherwise do on every remaining frame.
+        if (Math.abs(el.scrollTop - wrote) > 1) { frame = 0; return; }
         const x = (now() - start) / GLIDE_MS;
         el.scrollTop = from + (end() - from) * easeOut(x);
+        wrote = el.scrollTop;
         frame = x < 1 ? raf(step) : 0;
     };
     return {
@@ -39,7 +43,7 @@ export function pinGlide(el: HTMLElement, opts: { reduced?: () => boolean; raf?:
             if (reduced() || !glides(delta, el.clientHeight)) { if (frame) caf(frame); frame = 0; el.scrollTop = el.scrollHeight; return; }
             // Retarget from where it is now, on a fresh clock: the target is always read live, so content that grows
             // again mid-glide is followed without a second loop.
-            from = el.scrollTop;
+            from = wrote = el.scrollTop;
             start = now();
             if (!frame) frame = raf(step);
         },
