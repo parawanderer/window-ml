@@ -19,6 +19,7 @@ import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
 import { dismiss, dismissed } from "./view-mode";
+import { canSignRenewal, renewalSigners } from "./renew";
 
 /** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
 const NONE: ReadonlyMap<string, readonly string[]> = new Map();
@@ -52,7 +53,8 @@ export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore, ex
         // Absent means an older build that did not report it; treat that as renewable rather than telling someone to
         // re-pair a device that may be perfectly renewable.
         renewable: me.renewable !== false,
-        issuerOnline: store.runtimes.value.some((rt) => rt.online),
+        issuerOnline: store.runtimes.value.some(canSignRenewal),
+        signers: renewalSigners(store.runtimes.value),
         // Whether THIS surface can carry the press out, which is a different question from whether the account would
         // allow it — and the one that decides whether a button appears at all.
         canRenew: !!extras?.renewSelf,

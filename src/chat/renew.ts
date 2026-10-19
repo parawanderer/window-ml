@@ -9,11 +9,31 @@
 import { type PairingApi } from "../pairing/api";
 import { certChanged } from "../pairing/pairing-state";
 import type { RuntimeInfo, SessionHost } from "../session/session-host";
+import { noSignerOnline } from "./attention";
 
 /** What came of it, in the words a surface can show without rewording a failure it does not understand. */
 export type RenewOutcome =
     | { ok: true; notAfterMs: number; installed: boolean }
     | { ok: false; problem: string };
+
+/** A runtime that can SIGN a renewal now: online, and not known to have been paired without permission to pair devices.
+ *  Absent `mayPair` counts as able (the local host, an older client's list), as every online runtime did before. */
+export const canSignRenewal = (rt: RuntimeInfo): boolean => rt.online && rt.mayPair !== false;
+
+/** What the inbox needs to say who can renew this device: the names of the runtimes that may sign one (online or
+ *  not), and of the ones online right now that may not. */
+export function renewalSigners(runtimes: readonly RuntimeInfo[]): { signers: string[]; cannot: string[] } {
+    return {
+        signers: runtimes.filter((rt) => rt.mayPair === true).map((rt) => rt.name),
+        cannot: runtimes.filter((rt) => rt.online && rt.mayPair === false).map((rt) => rt.name),
+    };
+}
+
+/** A runtime's refusal because it was paired without permission to pair devices: #817's own (`unsupported`, "…paired
+ *  without permission to pair devices…"), or, from a runtime before it, the chain checker's "an intermediate may not
+ *  pair" after it had signed. Neither is shown as it is: the older one means nothing to a person, and #817's (as first
+ *  merged, "renew it from the root device", which nothing does; reworded at 12639d95) does not say WHICH browser can. */
+const NO_PAIR = /an intermediate may not pair|without permission to pair devices/i;
 
 /**
  * Renew this device's certificate through any runtime that will. Tries each online one in turn, because the reasons a
@@ -25,12 +45,19 @@ export type RenewOutcome =
  */
 export async function renewSelf(host: SessionHost, pairing: PairingApi, runtimes: readonly RuntimeInfo[], principal: string): Promise<RenewOutcome> {
     if (!pairing.install) return { ok: false, problem: "This device cannot keep a certificate, so it cannot renew one." };
-    const online = runtimes.filter((rt) => rt.online);
-    if (!online.length) return { ok: false, problem: "None of your browsers is connected right now. Open one and try again." };
+    const online = runtimes.filter(canSignRenewal);
+    if (!online.length) {
+        const { signers, cannot } = renewalSigners(runtimes);
+        if (cannot.length) return { ok: false, problem: noSignerOnline(signers, cannot) };
+        return { ok: false, problem: "None of your browsers is connected right now. Open one and try again." };
+    }
     let first = "";
     for (const rt of online) {
         const r = await host.send({ type: "device.renew", runtime: rt.id, principal });
-        if (!r.ok) { first ||= r.error.message; continue; }
+        if (!r.ok) {
+            first ||= NO_PAIR.test(r.error.message) ? noSignerOnline(renewalSigners(runtimes).signers.filter((n) => n !== rt.name), [rt.name]) : r.error.message;
+            continue;
+        }
         if (!r.data.chain?.length) return { ok: true, notAfterMs: r.data.notAfterMs, installed: false };
         try {
             await pairing.install(r.data.chain);

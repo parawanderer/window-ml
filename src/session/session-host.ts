@@ -240,6 +240,12 @@ export interface RuntimeInfo {
      * no presence to read, so absent means "not seen from here" and a client must not conclude an account has none.
      */
     mayRevoke?: true;
+    /**
+     * May this runtime pair devices, and so SIGN ANOTHER DEVICE'S RENEWAL (`device.renew`)? Read off its verified
+     * presence leaf, like `mayRevoke`. Absent is "not known" (the local host, or a runtime not yet seen), and a client
+     * treats that as able, as it did before this was read: only a `false` from the root's own signature rules one out.
+     */
+    mayPair?: boolean;
 }
 
 /* ------------------------------ the session index ------------------------------ */

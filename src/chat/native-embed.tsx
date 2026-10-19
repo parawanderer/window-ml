@@ -23,7 +23,7 @@ import { agentTarget, attentionForApp, runtimeStorage, sessionChrome, startableF
 import type { PairingApi } from "../pairing/api";
 import type { CertState } from "./attention";
 import { certReminders } from "./reminders";
-import { renewSelf } from "./renew";
+import { renewSelf, canSignRenewal, renewalSigners } from "./renew";
 import { accountRevoker, certChanged } from "../pairing/pairing-state";
 import { startAutoRenew } from "./auto-renew";
 import { installServices, services } from "../sidebar/services";
@@ -236,7 +236,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         post({ type: "reminders", plan: certReminders(ownCert, Date.now()) });
     }).catch(() => {});
     /** `issuerOnline` is the one part that is live: a browser going to sleep turns a one-press renewal into "open one". */
-    const live = (c: CertState | null) => c && { ...c, issuerOnline: store.runtimes.value.some((rt) => rt.online) };
+    const live = (c: CertState | null) => c && { ...c, issuerOnline: store.runtimes.value.some(canSignRenewal), signers: renewalSigners(store.runtimes.value) };
     readCert();
     setInterval(readCert, 60 * 60_000);
     // A renewal replaces the certificate, so the app is told again at once rather than on the hourly read above.
@@ -254,7 +254,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                     ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false }
                     : null;
             },
-            runtimeOnline: () => store.runtimes.value.some((rt) => rt.online),
+            runtimeOnline: () => store.runtimes.value.some(canSignRenewal),
             renew: async () => {
                 const mine = await pairingApi.load();
                 if (!mine?.principal) return "This device is in no account.";
