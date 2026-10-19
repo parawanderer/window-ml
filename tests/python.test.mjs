@@ -591,6 +591,30 @@ test("completion: a kind Jedi could not resolve is reported as UNKNOWN, never as
     assert.equal(byName(await complete("import numpy as np\nnp.lina")).linalg, "module", "a real submodule keeps its kind");
 });
 
+// ── SETUP / SCRIPT SPLIT (the 15s is the cell's) ────────────────────────────────────────────────────────
+//
+// The worker runs `wrapUserSetup` then `wrapUserScript`, and fires `started` — which arms the script's 15s —
+// only between them. So the prelude's imports, the injected inputs and the wire facade are NOT charged to the
+// cell. These pins hold the split's shape; the e2e ("a run queued behind another…") is the timing proof.
+test("the setup/script split composes to the one-string wrapper, and setup never runs the cell", { skip }, async () => {
+    const { wrapUserCode, wrapUserSetup, wrapUserScript } = await import("../src/python/python-runtime.ts");
+    const code = "split_marker = 1\nreturn split_marker";
+    assert.equal(wrapUserCode(code), wrapUserSetup() + wrapUserScript(code), "wrapUserCode is the two halves joined");
+    assert.ok(!wrapUserSetup().includes("split_marker"), "setup does not contain the cell's source");
+    assert.ok(wrapUserScript(code).includes("split_marker"), "the script half does");
+    // SETUP alone: prelude names land, the cell does not run (no result, no capture).
+    const ns = freshNs();
+    await py.runPythonAsync(wrapUserSetup(false, "run"), { globals: ns });
+    assert.equal(ns.get("_json_result"), undefined, "setup alone serialises no result");
+    assert.equal(ns.get("split_marker"), undefined, "setup alone does not run the cell");
+    assert.ok(ns.get("pd") != null, "the prelude's pandas is already bound");
+    // SCRIPT after SETUP: the cell runs against that prelude, the same way the joined wrapper would.
+    await py.runPythonAsync(wrapUserScript(code, "run"), { globals: ns });
+    assert.equal(ns.get("split_marker"), 1, "the cell ran");
+    assert.equal(ns.get("_err"), undefined, "and did not fail");
+    assert.equal(JSON.parse(String(ns.get("_json_result"))), 1, "and its return was captured");
+});
+
 // ── THE BENCH'S KEPT STATE (`wrapUserCode(..., persist = true)`) ─────────────────────────────────────────
 // Driven the way the worker drives it: the shipped wrapper, run with a SEPARATE dict as its globals.
 async function benchRun(code, ns, { hardened = true } = {}) {

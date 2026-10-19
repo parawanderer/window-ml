@@ -273,8 +273,12 @@ for _k in list(globals().keys()):
  *   script's own top-level names are declared `global` in the wrapper, so they land in the namespace it runs in and
  *   are still there next run. Without that the wrapper's function scope would swallow them: `x = 1` is a LOCAL of
  *   `_user` and disappears when the run ends.
+ *
+ * Split as SETUP (harness, reset, prelude, net policy, `ml` facade) + SCRIPT (the cell itself) so the worker can
+ * fire `started` — and arm the script's 15s — when the user's code is about to run, not while the prelude imports
+ * pandas (`wrapUserCode` is the two joined, unchanged, for the real-CPython tests that run one string).
  */
-export const wrapUserCode = (code: string, hardened = true, persist: boolean | "run" = false): string => /* python */ `
+export const wrapUserSetup = (hardened = true, persist: boolean | "run" = false): string => /* python */ `
 # THE HARNESS'S OWN REFS (lockdown.ts captured them at boot, before any cell ran). A cell that patches
 # \`ast.parse\` or \`json.loads\` changes what the RUN's own later cells see, never what the harness parses,
 # encodes or injects. Looked up in the NAMESPACE — \`injectInputs\` re-binds the module before every cell —
@@ -361,6 +365,17 @@ if _ml_send_fn is not None:
     globals().pop("_ml_send", None)
 else:
     globals().pop("_ml_make", None)
+`;
+
+/**
+ * The user's cell and the wrapper that captures its stdout, its `return`/trailing expression and its traceback.
+ * Runs AFTER `wrapUserSetup` in the same namespace (the `_ml_*` refs and the prelude names it needs are already
+ * bound). This is the only part the script's 15s and `runMs` are meant to cover.
+ *
+ * @param code the user's source
+ * @param persist a KEEP-STATE mode (see `wrapUserSetup`)
+ */
+export const wrapUserScript = (code: string, persist: boolean | "run" = false): string => /* python */ `
 result = None
 _ml_src = ${JSON.stringify(code)}
 _ml_persist = ${persist ? "True" : "False"}
@@ -551,6 +566,13 @@ try:
 except Exception:
     pass
 `;
+
+/**
+ * The full script for one run: `wrapUserSetup` then `wrapUserScript`, joined. The worker runs the two
+ * separately so `started` can fire between them; the real-CPython tests run this one string.
+ */
+export const wrapUserCode = (code: string, hardened = true, persist: boolean | "run" = false): string =>
+    wrapUserSetup(hardened, persist) + wrapUserScript(code, persist);
 
 // --- Sandbox hardening (the `readonly` mode) --------------------------------------
 // python_exec is auto-approvable ONLY because a hardened run genuinely cannot reach the
