@@ -45,6 +45,7 @@ import { clientUi, lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
 import { useMovedSince, SessionList } from "./session-list";
 import { useNarrow } from "./narrow";
+import { pinGlide } from "./pin-glide";
 
 /** How long after a gesture a scroll still counts as the reader's own. Covers a phone's momentum coasting. */
 const USER_SCROLL_MS = 1200;
@@ -277,6 +278,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const scroller = useRef<HTMLDivElement>(null);
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
+    const glide = useRef<ReturnType<typeof pinGlide> | null>(null);
     useFadeEdges(scroller);
     // THE SESSION IS DRAWN ONCE, when its history is in (`store.loaded`), not event by event as it arrives. A reload
     // used to paint the first events, then the rest in further passes, with the scroll position jumping from the top
@@ -307,9 +309,13 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     useEffect(() => {
         const el = scroller.current, inner = content.current;
         if (!el || !inner || typeof ResizeObserver === "undefined") return;
-        const ro = new ResizeObserver(() => { if (stuck.current) el.scrollTop = el.scrollHeight; });
+        // A small growth (a streamed line, a message arriving) is followed by a short glide, a large one by a jump
+        // (pin-glide.ts says why). The reader scrolling away stops a glide where it is.
+        const pin = pinGlide(el);
+        glide.current = pin;
+        const ro = new ResizeObserver(() => { if (stuck.current) pin.follow(); });
         ro.observe(inner);
-        return () => ro.disconnect();
+        return () => { ro.disconnect(); pin.stop(); glide.current = null; };
     }, [sessionKey]);
     // ONLY A PERSON'S OWN GESTURE STOPS THE TRANSCRIPT FOLLOWING THE NEWEST TURN. Reading `scroll` alone could not
     // tell the two apart, and they look identical: content arriving under the reader moves the bottom away exactly as
@@ -324,12 +330,12 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         const el = scroller.current;
         if (!el) return;
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stuck.current = true;
-        else if (Date.now() - byUser.current < USER_SCROLL_MS) stuck.current = false;
+        else if (Date.now() - byUser.current < USER_SCROLL_MS) { stuck.current = false; glide.current?.stop(); }
     };
     // A citation sending the reader UP the transcript stops it following the bottom, or the step it opens grows
     // the content, the observer above pins back down, and the jump is overwritten before it lands.
     useEffect(() => {
-        const off = () => { stuck.current = false; };
+        const off = () => { stuck.current = false; glide.current?.stop(); };
         document.addEventListener(STEP_JUMP_EVENT, off);
         return () => document.removeEventListener(STEP_JUMP_EVENT, off);
     }, []);
