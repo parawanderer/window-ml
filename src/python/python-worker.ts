@@ -7,7 +7,7 @@
 //
 // This worker is chrome-free: it resolves the vendored Pyodide URLs relative to its OWN
 // location (self.location) rather than chrome.runtime.getURL, and the sandbox logic
-// (wrapUserCode, injectInputs) is the same shared, real-CPython-tested module the
+// (wrapUserSetup, wrapUserScript, injectInputs) is the same shared, real-CPython-tested module the
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
 //
 // A READONLY worker boots LOCKED DOWN (`lockdownReadonly`: ses `lockdown()` + the allow-list strip +
@@ -15,7 +15,7 @@
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
+import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
 import { lockdownReadonly } from "./lockdown";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
@@ -189,12 +189,11 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     const boot = wasLive ? null : Date.now() - w0;
     const prewarm = prewarmUnused ? (wasLive ? "warm" : "starting") : undefined;
     prewarmUnused = false;
-    // The runtime is up: from here on the time is the SCRIPT's. Said out loud so the offscreen watchdog can time
-    // the script rather than the cold start and the queue in front of it (see runInWorker in offscreen.ts).
-    onStarted?.();
-    // The script's own clock starts AFTER the runtime is up, so the two numbers add to the wall time
-    // rather than overlapping — which is what lets the panel show them as one bar split in two.
-    const t0 = Date.now();
+    // `started` / `t0` fire when the USER'S CELL is about to run — after the namespace, the injected inputs,
+    // the wire transport and the prelude (which imports pandas). The 15s is that cell's, not the cold start,
+    // the queue ahead of it, or the imports in front of it (see runInWorker in offscreen.ts and the
+    // "queued behind another" e2e). A setup that hangs is still the START bound's to clear.
+    let t0 = Date.now();
     const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}), ...(prewarm ? { prewarm } : {}) });
     // Where this run executes: a kept namespace (the bench's per-mode one, or ROOT C's per-run dict), or
     // the main one a one-off `python_exec` resets. A run's dict is the ROOT C namespace (PYTHON_DIALECT.md):
@@ -231,14 +230,21 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // of one is a JS `Function` constructor to a hostile cell. Cleared in finally.
     if (onStdout) py.setStdout({ batched: onStdout });
     try {
-        // RESET (per-run isolation) + PRELUDE (preloaded vars) + the user's code, wrapped to capture
-        // stdout / a `return`-or-bare-`result=` value / a traceback → `python-runtime.ts` (shared so
-        // the exact script is exercised against real CPython in tests). Reads back _stdout/_err/_json_result.
+        // SETUP first: harness refs, RESET (per-run isolation) + PRELUDE (preloaded vars) + net policy + the
+        // `ml` facade → `python-runtime.ts`. Not the user's cell, so it is not what the 15s covers.
         // The readonly worker's `hardened` flag is the wrapper's netPolicy belt — the lockdown already
         // stripped the JS realm. The full worker passes false and keeps the bridges.
         // `persist` is true for ANY kept namespace (bench or ROOT C's per-run dict): no RESET, and the
         // wrapper's async `await _user()` drives `await ml.*` cells.
-        await py.runPythonAsync(wrapUserCode(code, hardened, bench ? true : keptRun ? "run" : false), { globals: ns });
+        const keep = bench ? true : keptRun ? "run" : false;
+        await py.runPythonAsync(wrapUserSetup(hardened, keep), { globals: ns });
+        // THE USER'S CELL IS ABOUT TO RUN. Said out loud so the offscreen watchdog swaps the generous START
+        // bound for the script's own 15s at the only moment that 15s is meant to measure.
+        onStarted?.();
+        t0 = Date.now();
+        // The cell itself, wrapped to capture stdout / a `return`-or-bare-`result=` value / a traceback.
+        // Reads back _stdout/_err/_json_result.
+        await py.runPythonAsync(wrapUserScript(code, keep), { globals: ns });
         const stdout = String(ns.get("_stdout") ?? "");
         // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
         const dropped = Number(ns.get("_ml_stdout_dropped") ?? 0) || 0;
