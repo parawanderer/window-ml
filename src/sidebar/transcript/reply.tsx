@@ -2,10 +2,11 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
-import { SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, SentImages, UserActions, UserText } from "./user-text";
 import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
-import { useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useJustArrived } from "./history-paint";
 import type { ExtendProfile } from "../../contract/contract-chat";
 import { view } from "../store";
 import type { Session, Turn, Status, AgentStep } from "../store";
@@ -66,6 +67,38 @@ export function OptionsBlock({ s }: { s: Session }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
+/** A REPLY ARRIVING WHILE YOU WATCH grows into place instead of appearing at full height, which pushed the transcript
+ *  up by its whole height in one frame. Two arrivals, each played once:
+ *   - the bubble MOUNTS in front of you (the "…thinking" placeholder beside your message, or an answer landing whole):
+ *     its height and bottom margin grow from nothing as it fades in;
+ *   - a placeholder is REPLACED by the whole reply at once (a reply that did not stream): the body grows from the
+ *     placeholder's height to the reply's as the text fades in.
+ *  A reply that STREAMED gets neither: it has already been arriving in front of you. Growing to `height: auto` is what
+ *  lets a stream that starts mid-animation be followed rather than clipped; it needs the surface's
+ *  `interpolate-size`. The surface opts in with `--asst-arrive-ms` on `.asst-body`; one that sets none (the panel)
+ *  draws it in one frame, as it always has. */
+function useReplyArrival(msg: { current: HTMLDivElement | null }, body: { current: HTMLDivElement | null }, status: Status, streaming: boolean, ts: number): void {
+    const fresh = useJustArrived(ts);
+    const was = useRef<{ pending: boolean; streamed: boolean; h: number } | null>(null);
+    useLayoutEffect(() => {
+        const m = msg.current, b = body.current;
+        if (!m || !b) return;
+        const prev = was.current;
+        const ms = cssDurationMs(b, "--asst-arrive-ms");
+        if (ms && typeof m.animate === "function") {
+            const timing = { duration: ms, easing: "cubic-bezier(.2, .8, .2, 1)" };
+            if (!prev && fresh) {
+                const mb = getComputedStyle(m).marginBottom;
+                m.animate([{ height: "0px", marginBottom: "0px", opacity: 0, overflow: "clip" }, { height: "auto", marginBottom: mb, opacity: 1, overflow: "clip" }], timing);
+            } else if (prev?.pending && status !== "pending" && !prev.streamed && !streaming) {
+                b.animate([{ height: `${prev.h}px`, opacity: 0, overflow: "clip" }, { height: "auto", opacity: 1, overflow: "clip" }], timing);
+            }
+        }
+        // The placeholder's height is all a later swap needs, so layout is read only while there is one.
+        was.current = { pending: status === "pending", streamed: (prev?.streamed ?? false) || streaming, h: status === "pending" ? b.offsetHeight : 0 };
+    });
+}
+
 export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, retry, streaming, tokenRun, tokenScope, anchorHash, latest }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
@@ -86,6 +119,8 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     // How long each half lasts is the SURFACE's business and it says so in CSS (`--asst-close-ms`); a surface that
     // sets nothing gets the instant swap it always had, with no timer and no extra frame.
     const bodyRef = useRef<HTMLDivElement>(null);
+    const msgRef = useRef<HTMLDivElement>(null);
+    useReplyArrival(msgRef, bodyRef, status, !!streaming, ts);
     const [closing, setClosing] = useState(false);
     const [opening, setOpening] = useState(false);
     const swapMs = (): number => cssDurationMs(bodyRef.current, "--asst-close-ms");
@@ -109,7 +144,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     // this message, but it carries no step seq — nothing else in the transcript identifies it, so clicking
     // that bar navigated to the run and then had nothing to scroll to or highlight.
     return (
-        <div class={`msg asst ${status}${capped ? " capped" : ""}${streaming ? " streaming" : ""}`}
+        <div class={`msg asst ${status}${capped ? " capped" : ""}${streaming ? " streaming" : ""}`} ref={msgRef}
             {...((tokenRun?.hash || anchorHash) ? { "data-answer-hash": tokenRun?.hash || anchorHash } : {})}>
             <div class="mrow">
                 {/* Chevron (collapse affordance) · status dot · an optional label for an exceptional state
@@ -235,11 +270,13 @@ export function EmbedRunView({ s }: { s: Session }) {
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>
-            <div class={`msg user${t.user ? "" : " no-text"}`}>
-                <div class="mrow"><span class="who">user</span><span class="sp" />{t.user ? <UserActions text={t.user} /> : null}<Stamp ts={t.ts} /></div>
-                {t.user ? <UserText text={t.user} /> : null}
-            </div>
-            <SentImages images={t.images} />
+            <ArrivingMsg ts={t.ts}>
+                <div class={`msg user${t.user ? "" : " no-text"}`}>
+                    <div class="mrow"><span class="who">user</span><span class="sp" />{t.user ? <UserActions text={t.user} /> : null}<Stamp ts={t.ts} /></div>
+                    {t.user ? <UserText text={t.user} /> : null}
+                </div>
+                <SentImages images={t.images} />
+            </ArrivingMsg>
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing
                 to reach — the anchor was only set for agent answers, which is where `tokenRun` comes from. */}

@@ -10,7 +10,8 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, g
 // Through require, NOT `import("preact")`: tsx compiles the component to CJS, and an ESM import here would be a second
 // preact whose hooks have no current component (as tests/output-cell.test.mjs says).
 const { h, render } = createRequire(import.meta.url)("preact");
-const { UserText, SentImages } = await import("../src/sidebar/transcript/user-text.tsx");
+const { UserText, SentImages, ArrivingMsg } = await import("../src/sidebar/transcript/user-text.tsx");
+const { HistoryPaint } = await import("../src/sidebar/transcript/history-paint.ts");
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
 /** Draw it with the text's height FAKED, since jsdom lays nothing out: `lines` lines of 20px. */
@@ -57,4 +58,37 @@ test("the images sent with a message are tiles, one per image, and none when the
     assert.equal(root.querySelectorAll(".sent-tiles img").length, 2);
     render(h(SentImages, { images: [] }), root);
     assert.equal(root.querySelector(".sent-tiles"), null);
+});
+
+// --- a message arriving: the wrapper the reading view grows it up in (chat.css, `.msg-arrive`) ---
+
+/** Draw a message stamped `ts` through ArrivingMsg, optionally as part of a transcript's first paint. */
+async function arriving(ts, history = false) {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    render(h(HistoryPaint.Provider, { value: history }, h(ArrivingMsg, { ts }, h("div", { class: "msg user" }, "hi"))), root);
+    await flush();
+    return root;
+}
+
+test("a message that just arrived is wrapped to grow, and the growing layout comes off when its animation ends", async () => {
+    const r = await arriving(Date.now());
+    const w = r.querySelector(".msg-arrive");
+    assert.ok(w?.classList.contains("growing"));
+    // Preact listens for `animationend` where the element knows it (every browser) and the prop's own case where it
+    // does not (jsdom): send the one it chose.
+    const end = "onanimationend" in w ? "animationend" : "AnimationEnd";
+    w.querySelector(".msg").dispatchEvent(new dom.window.Event(end, { bubbles: true }));
+    await flush();
+    assert.ok(w.classList.contains("growing"), "the bubble's own animation ending is not the wrapper's");
+    w.dispatchEvent(new dom.window.Event(end, { bubbles: true }));
+    await flush();
+    assert.equal(w.classList.contains("growing"), false);
+});
+
+test("history is drawn bare: an old message, and a new one mounted in a transcript's first paint", async () => {
+    for (const r of [await arriving(Date.now() - 60_000), await arriving(Date.now(), true), await arriving(undefined)]) {
+        assert.equal(r.querySelector(".msg-arrive"), null);
+        assert.ok(r.querySelector(".msg.user"));
+    }
 });

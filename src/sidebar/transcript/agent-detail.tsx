@@ -3,7 +3,7 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
-import { SentContext, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
 import { useState, useEffect, useRef, useContext } from "preact/hooks";
@@ -786,7 +786,7 @@ export const UserBubble = ({ text, ts, images, steer, display, site }: { text: s
     const [raw, setRaw] = useState(false);
     const shown = display && !raw ? display.typed : text;
     return (
-        <>
+        <ArrivingMsg ts={ts}>
             <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}`}>
                 {/* A message a SITE sent carries its name, never "you" (docs/spec/SITE_ACCESS_SLICE3.md, Q2a). */}
                 <div class="mrow"><span class="who">{site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
@@ -794,7 +794,7 @@ export const UserBubble = ({ text, ts, images, steer, display, site }: { text: s
             </div>
             <SentImages images={images} />
             {display && !raw ? <SentContext context={display.context} /> : null}
-        </>
+        </ArrivingMsg>
     );
 };
 
