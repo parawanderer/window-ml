@@ -127,6 +127,17 @@ only slower.
 | workspace | the person, for one set of roots | with the workspace |
 | run | the person: at the start, or from an approval card ("calls like this, for this run") | with the session, keyed by its hash: it **survives a resume**, and a fork the WORKER builds inherits it (decided 2026-10-13, narrowed 2026-10-15: today's fork is page-side and arrives as a plain start the worker cannot tell from a new run, and a page naming a parent to inherit its grants would be an escalation route, so a page-built fork inherits NOTHING); listed with each session until removed, and removed when the session is archived (a standing grant should not outlive the person's attention; a rule wanted across an archive belongs at workspace or global scope); an unarchived or resumed session is TOLD, person and model, that its run policies were removed at archive time |
 
+**Why a call asks** (ruled 2026-10-19, lane 9, window-ml #818). When a call asks because the policy that would have
+allowed it is gone, the ask carries the cause: `archived` (removed at archive, the row above), `removed` (by the person)
+or `narrowed` (the policy no longer covers the call). `expired` is reserved and has no producer, since no policy has a
+lifetime. The cause is text on the ask, never an input to the decision: a reason never re-allows, and nothing in a
+call's payload may name a policy to claim it (the sender rule; a red-team test pins it). The person sees it on the
+approval card and the model in the tool result; the run log and the export carry what the model saw. A credentialed
+fetch asks regardless of policy and carries no cause. A session resumed or unarchived after its run policies were
+removed is told once, before the first model call, by a note the WORKER writes, rendered as the worker's in the
+transcript and the export and never as the person's words; the first ask afterwards says so again with its cause.
+
+
 The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
 a page never can. A policy reached over the hub is set by a principal holding `approve`.
 
