@@ -339,6 +339,20 @@ test("K3b: done.protectedChanged reaches the script verbatim, and the run log na
     assert.match(warn.detail.changes, /^changed during this call in \/w\/proj: \.git\/hooks modified, \.git\/hooks\/pre-commit created$/);
 });
 
+test("K3b: a list past the log's 200-character detail says what it left out, and the result keeps the whole list", T, async () => {
+    const changes = Array.from({ length: 30 }, (_, i) => ({ root: "/w/proj", name: `.git/hooks/hook-${String(i).padStart(2, "0")}`, change: "created" }));
+    const host = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "none", exec: "program-only" }, protectedChanged: changes }) });
+    const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    assert.equal(valueOf(results[0]).protectedChanged.length, 30);
+    const warn = (await bg.context.__mlRunLog.all()).find((x) => x.run === hash && x.subsystem === "shell" && x.kind === "protected-changed");
+    assert.ok(warn.detail.changes.length <= 200);
+    const left = /, and (\d+) more \(the list was cut\)$/.exec(warn.detail.changes);
+    assert.ok(left, `marked: ${warn.detail.changes}`);
+    const named = changes.filter((c) => warn.detail.changes.includes(c.name)).length;
+    assert.equal(named + Number(left[1]), 30, "the named ones plus the rest are the whole list");
+    assert.equal(warn.detail.count, 30);
+});
+
 test("K3b: an older host's done carries no list: the script reads null, the log says unknown, and nothing warns", T, async () => {
     const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0 }) });
     const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });

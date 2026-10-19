@@ -12,7 +12,7 @@ import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
-import { shCardLines, shOutcomeLines, type ShCardLine, type ShFacts, type ShOutcome } from "../../shell/sh-call";
+import { askOutcomeLines, shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
 
 /** What each kind of ask is, said as the card's question. A kind this build does not know is asked about plainly. */
 const ASK_TITLE: Readonly<Record<string, string>> = {
@@ -36,17 +36,6 @@ export function askLines(a: StepAsk): ShCardLine[] {
         try { return shCardLines(a.facts as unknown as ShFacts); } catch { /* facts of another shape: drawn as they are */ }
     }
     return Object.entries(a.facts ?? {}).map(([label, v]) => ({ label, value: typeof v === "string" ? v : JSON.stringify(v) }));
-}
-
-/**
- * The lines for what an allowed ask's call reported once it ran (a shell call's sandbox and protected names), or none
- * when it has not reported, or reported in a shape this build does not draw.
- * @param a the ask
- * @returns the lines
- */
-export function askOutcomeLines(a: StepAsk): ShCardLine[] {
-    if (a.kind !== "sh" || a.state !== "allowed" || !a.outcome) return [];
-    try { return shOutcomeLines(a.outcome as unknown as ShOutcome); } catch { return []; }
 }
 
 /** An ask's lines as the card's definition list. */
