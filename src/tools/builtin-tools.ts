@@ -196,6 +196,12 @@ export async function legendForBox(host: Pick<VisionHost, "geo">, box: LegendBox
     try { return box ? formatLegend(await host.geo.legend({ box }), seen) : ""; } catch { return ""; }
 }
 
+/** What a `look` at an `@tool:` image pointer tells the model about the pixels: a page capture is the page as it WAS,
+ *  a drawn image (a python_exec figure) was never the page at all. */
+export const pointedImageNote = (label: string | undefined, drawn: boolean | undefined): string => drawn
+    ? `This is an image drawn by code earlier in this run (${label || "an earlier step"}), not a screenshot of the page.`
+    : `This is a screenshot captured EARLIER in this run (${label || "an earlier step"}), not the page as it is now.`;
+
 /** The delegated `look` tool: a reader model describes a screenshot (of the viewport, an element, an `@pt`/`@box`
  *  token or the stitched page) to a driver that cannot see images; it runs on the page's VisionHost unless given one. */
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null, host = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null } = {}): MlTool => {
@@ -214,7 +220,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector of an element, an `@pt:…` point token from locate, or an `@tool:<id>` pointer to a screenshot this run already captured (to ask a NEW question about the SAME pixels instead of re-shooting a page that may have changed); omit to see the page." },
+                selector: { type: "string", description: "CSS selector of an element, an `@pt:…` point token from locate, or an `@tool:<id>` pointer to an image this run already has (a screenshot, or a python_exec figure), to ask a NEW question about the SAME pixels; omit to see the page." },
                 question: { type: "string", description: "What to determine (optional)." },
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                 index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
@@ -224,14 +230,14 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
         },
         // In: the target as a hoverable ref (hover → outline it on the page). No selector (viewport/page) → raw args.
         render: (_input, args) => targetRender(args),
-        run: async ({ selector, question, scope, index, margin, views, _image, _imageLabel }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string } = {}) => {
+        run: async ({ selector, question, scope, index, margin, views, _image, _imageLabel, _imageDrawn }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string; _imageDrawn?: boolean } = {}) => {
             // An `@tool:<id>` image pointer: the LOOP resolved it and handed the captured screenshot down (it
             // owns the pointer store). Re-examining an image the run already has is not a page operation, so
             // there is nothing to screenshot — skip straight to asking the reader about those pixels.
             const host = hostOf();
             if (_image) {
                 const q = question || "Describe this image concisely — what is shown and what stands out.";
-                const note = `\n\nThis is a screenshot captured EARLIER in this run (${_imageLabel || "an earlier step"}), not the page as it is now.`;
+                const note = `\n\n${pointedImageNote(_imageLabel, _imageDrawn)}`;
                 try {
                     const desc = await host.chat(q + note, { images: [_image], model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
                     return { content: desc, image: _image, imageLabel: _imageLabel || "captured earlier" };

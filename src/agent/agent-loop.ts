@@ -688,7 +688,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const v = tokenStore.get(sel);
         if (!v) return { error: memoryFault(sel, tokenStore.nearest(sel), step) };
         if (!v.image) return { error: `@tool:${v.id} is ${describeToken(v)}, not an image — there is nothing to look at. Read it with dereference instead.` };
-        return { args: { ...args, _image: v.image, _imageLabel: `@tool:${v.id} (captured at step ${v.step})` } };
+        // Only python_exec DRAWS an image; every other image pointer is a capture of the page, which may since have changed.
+        const drawn = v.tool === "python_exec";
+        return { args: { ...args, _image: v.image, _imageLabel: `@tool:${v.id} (${drawn ? "drawn by python_exec" : "captured"} at step ${v.step})`, ...(drawn ? { _imageDrawn: true } : {}) } };
     };
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
@@ -1065,7 +1067,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 if (value) opts.claimValue?.(value);
                 const looksJson = /^\s*[[{]/.test(result);
                 const kind: TokenKind = tbl ? "table"
-                    : (r?.type === "image" || r?.type === "look") ? "image"
+                    // A python_exec that drew a figure is an IMAGE pointer too: typed text, a listing called it "text 40
+                    // chars" and nothing told the model there was a picture to `look` at.
+                    : (r?.type === "image" || r?.type === "look" || (r?.type === "python-out" && r.image)) ? "image"
                     : (r?.type === "code" || r?.type === "python-in") ? "code"
                     : looksJson ? "json" : "text";
                 // Store the FULLER capture beside the model-facing one. `result` is already clipped to the
