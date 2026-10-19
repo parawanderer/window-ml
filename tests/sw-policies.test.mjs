@@ -212,16 +212,32 @@ test("policies are kept in local storage, never sync", () => {
     assert.ok(!globalThis.chrome.storage.sync, "the store never reached for sync");
 });
 
-// --- SHELL.md's name-immutable top level at the judge (2026-10-19): a top-level write is not the builtin's allow ---
+// --- SHELL.md's name-immutable top level at the judge (2026-10-19): a name claim at the top level is not the builtin's allow ---
 
-test("judgeCall: a shell call that claims a top-level write in a root is not the builtin's allow", { todo: "OPEN (SHELL.md name-immutable top level, 2026-10-19): free() treats any in-root fs effect as covered by write(fs(roots)), so a call that creates .envrc / .mcp.json / .vscode/ at a root's top level is judged allow/builtin and runs UNASKED. With the narrow write envelope absent from HostSpawn and protectedChanged absent from HostDone, nothing refuses the write and nothing reports it. The host's narrow envelope (window-ml-host #12) would fail the write as ok:false; the extension's half of the rule is not implemented. What holds instead: a write OUTSIDE the roots or to a secret-flagged path asks, and unknown effects always ask." }, () => {
+test("judgeCall: a shell call that claims a top-level name in a root is not the builtin's allow", { todo: "OPEN (K3c, ruled 2026-10-19): free() treats any in-root fs effect as covered by write(fs(roots)), so a call that creates .envrc / .mcp.json / .vscode/ at a root's top level is judged allow/builtin and runs UNASKED. K3c adds ShPathFact.topLevel and the write-names(fs) effect: a claimed write to an absent top-level entry, or write-names at the top level, is covered by no bound and asks; an in-place write to an existing top-level file stays free. With the narrow write envelope absent from HostSpawn and protectedChanged absent from HostDone, nothing refuses the write and nothing reports it. The host's narrow envelope (window-ml-host #12) would fail the write as ok:false; the extension's half of the rule is not implemented. What holds instead: a write OUTSIDE the roots or to a secret-flagged path asks, and unknown effects always ask. Lane 4 un-todos this when K3c lands." }, () => {
+    // Vector: git diff --output=.envrc claims a write to an ABSENT top-level entry and must run ASKED.
     const topLevelWrite = {
         argv: ["git", "diff", "--output=.envrc"],
-        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true } }],
+        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true, absent: true } }],
     };
     const j = P.judgeCall("h-top", "sh", topLevelWrite, "host-sandbox");
-    assert.notEqual(j.decision, "allow", "a top-level write is never the built-in default's allow");
+    assert.notEqual(j.decision, "allow", "a write that creates a top-level name is never the built-in default's allow");
     assert.notEqual(j.by, "builtin", "…so it is never the builtin that allows it");
+    // A write-names claim at the top level (sed -i, rm, mv over .envrc) asks the same way.
+    const names = {
+        argv: ["sed", "-i", "s/.*/pwned/", ".envrc"],
+        effects: [{ op: "write-names", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true } }],
+    };
+    const jn = P.judgeCall("h-top", "sh", names, "host-sandbox");
+    assert.notEqual(jn.decision, "allow", "a name operation at the top level is never the built-in default's allow");
+    // Positive control: an in-place write to an existing top-level file stays free (the ruling's refinement).
+    const inplace = {
+        argv: ["sed", "-i", "s/.*/pwned/", ".envrc"],
+        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true } }],
+    };
+    const okInplace = P.judgeCall("h-top", "sh", inplace, "host-sandbox");
+    assert.equal(okInplace.decision, "allow", "an in-place write to an existing top-level file is still free");
+    assert.equal(okInplace.by, "builtin", "…and the builtin is what allows it");
     // Positive control: the same call writing below a top-level directory is the builtin's allow.
     const nested = { ...topLevelWrite, effects: [{ op: "write", res: { kind: "fs", path: "/r/src/a.ts", inRoot: true, secret: false, topLevel: false } }] };
     const ok = P.judgeCall("h-top", "sh", nested, "host-sandbox");
