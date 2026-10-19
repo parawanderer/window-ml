@@ -117,4 +117,10 @@ export class CompositeHost implements SessionHost {
         if (i === undefined) return { ok: false, error: { code: "not-found", message: "no connected host has that runtime" } };
         return this.hosts[i].send(command, opts);
     }
+
+    /** Local when the host that OWNS the runtime says so: a hub host listing the same id says nothing about it. */
+    isLocal(runtime: RuntimeId): boolean {
+        const i = this.owner.get(runtime);
+        return i !== undefined && !!this.hosts[i].isLocal?.(runtime);
+    }
 }

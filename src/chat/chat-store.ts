@@ -109,6 +109,8 @@ export class ChatStore {
 
     get status(): ReadonlySignal<HostStatus> { return this._status; }
     get runtimes(): ReadonlySignal<RuntimeInfo[]> { return this._runtimes; }
+    /** Is this runtime the one this client runs in (its host's answer, `SessionHost.isLocal`)? */
+    isLocal(runtime: RuntimeId): boolean { return this.host.isLocal?.(runtime) ?? false; }
     get index(): ReadonlySignal<ReadonlyMap<SessionKey, SessionSummary>> { return this._index; }
     /** sessions whose runtime no longer holds their oldest events */
     get truncated(): ReadonlySignal<ReadonlySet<SessionKey>> { return this._truncated; }

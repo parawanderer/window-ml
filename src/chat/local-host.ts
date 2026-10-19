@@ -179,6 +179,11 @@ export class LocalHost implements SessionHost {
         return () => { live = false; this.statusListeners.delete(listener); };
     }
 
+    /** The one runtime this host reaches is this browser's own worker. */
+    isLocal(runtime: RuntimeId): boolean {
+        return this.runtime?.id === runtime;
+    }
+
     runtimes(listener: (runtimes: RuntimeInfo[]) => void): Unsubscribe {
         this.runtimeListeners.add(listener);
         let live = true;
