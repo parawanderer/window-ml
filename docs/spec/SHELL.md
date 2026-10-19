@@ -399,7 +399,10 @@ What follows from it:
   `write: "roots"` either (lane 4, 2026-10-19); under the narrow envelope it would fail as `ok: false` and look like
   the program's own error. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
-  then protects nothing; the tripwire above is what covers the gap's threat. The decide layer mirrors the rule (ruled
+  then protects nothing; the tripwire above is what covers the gap's threat. `done` reports the envelope the host
+  APPLIED, and for an absent one that is the floor, which is neither `none` nor `roots`: the reported `write` takes a
+  third value, `"today"`, that names the floor; a worker never sends it, and a host refuses it as malformed
+  (window-ml-host #12, 2026-10-19). The decide layer mirrors the rule (ruled
   2026-10-19, after the red team's shell-policy audit found `git diff --output=.envrc` free): a claim on a top-level
   NAME, an absent file or a `write-names` effect at the top level of a root, is outside the sandbox's `B` and asks
   ([`EFFECTS.md`](EFFECTS.md), "The top-level names of a root are outside `B`"), so the floor's Linux gap is never
