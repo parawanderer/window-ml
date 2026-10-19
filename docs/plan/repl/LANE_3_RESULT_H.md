@@ -219,6 +219,11 @@ from `d42895d6`. Scripts: `scratchpad/corpus-perf/runner3.py` (conditions), `rou
   policy checks themselves. The runs are scratchpad `corpus-perf/rounds7.sh` and `cmp7.py`, and the first set, kept
   in `r7a-rebuild-every-run/`.
 
+**Where the cost question closes (ruled 2026-10-19).** A run costs about 25 to 35% over plain execution on cells of
+real size, and what is left of that is the attribute and call gates: the policy checks themselves, not the machinery
+around them. The tracer filter is parked, the fast-path tick is unbuilt, and option A is deferred to the wasm build,
+where it is measured against the maintenance cost of a 45-form classification.
+
 ## Specialized forms the corpus reaches, for option A (2026-10-19)
 
 Counted on stock CPython **3.14.6** (Homebrew; the fork's base is 3.14.0, and patch releases do not change the set of
