@@ -114,8 +114,8 @@ consume-once semantic that need their own design (ruled 2026-10-19).
 **K3d** (the red team's #827 audit, 2026-10-19): bwrap re-bound only part of the protected names, so the host now reads one
 list per layer (bwrap re-bind, Landlock enumeration, tripwire snapshot) from `PROTECTED_TOP` (+ `PROTECTED_GIT`), with an
 enumerating test per layer and a real-kernel read-only proof: window-ml-host #15 (merged 2026-10-19, cd56124, lane 4's; the
-generalist reviewed; the red team verifies after merge, rule 10). Lane 4's next host PR, taken 2026-10-19: macOS denies the whole
-`.claude` directory, as the Linux rule does, not only the files it lists.
+generalist reviewed; the red team verifies after merge, rule 10). Lane 4's next host PR, window-ml-host #16 (merged 2026-10-19, 816113a,
+the generalist reviewed): macOS denies the whole `.claude` directory, as the Linux rule does, not only the files it lists.
 **K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
 `git diff --output=.envrc` ran free) is window-ml #788 (merged 2026-10-19, a6826b0), lane 4's, ahead of K3b: the top-level names of a root are
 outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
@@ -168,7 +168,10 @@ listed as remaining is DONE unless named below.
   Lane 5's build is window-ml #835 (2026-10-19): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
   tag `pyodide-314.0.3-ml-8f6a50ab` (Shane's decision, 2026-10-19, after the fetch-hub precedent), pinned by tag, URL and
   sha256 in the consumer's dist manifest (#835) and checked before unpack. Measured: tarball 6.4 MB; an incremental
-  `make all-but-packages` 47 s on an M4; 85 of 87 dialect vectors pass under wasm32, the two memory vectors end in
+  `make all-but-packages` 47 s on an M4, a full build from a clean tree 448 s. The build is NOT reproducible (lane 5,
+  2026-10-19: a clean rebuild matches the release's sizes, not its bytes), so the pinned sha256 proves the artefact is the
+  one uploaded, never that it is what the fork's source builds; trust in it is trust in the uploader's machine, which is
+  the fetch-hub precedent's standing too; 85 of 87 dialect vectors pass under wasm32, the two memory vectors end in
   `MemoryError`/`OverflowError` instead of `NotInDialect` because the per-cell byte count never fires for an
   allocation wasm32 cannot make (pinned as `WASM32_GAPS`; the fork's, lane 3's).
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
