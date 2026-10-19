@@ -9,7 +9,7 @@
 // Traps found building it (do not rediscover): (1) emsdk builds ccache's bundled zstd, whose CMakeLists a CMake 4
 // refuses, so make runs with CMAKE_POLICY_VERSION_MINIMUM=3.5; (2) Makefile.envs assigns PYTHON_ARCHIVE_SHA256 with `=`
 // where the other pins use `?=`, so the pin check accepts both; (3) tools/dependency-check.sh never fails on BSD sed/patch,
-// hence the GNU shim; (4) emsdk's emcc wrapper execs `ccache` from PATH, so its ccache/bin dir is put there.
+// hence the GNU shim; (4) emsdk's emcc wrapper execs `ccache` from PATH, its ccache is unreachable once emsdk_env.sh strips its own PATH entries and segfaults on macOS arm64, so the shim dir carries a pass-through `ccache`.
 // Builds `all-but-packages` only: the wheels are unchanged (the fork touches no object header), so
 // pyodide-lock.json is copied from the stock npm package.
 import { execFileSync, spawn } from "node:child_process";
@@ -99,9 +99,12 @@ if (all.length !== 9 + series.length) throw new Error(`cpython/patches holds ${a
 mark("patches installed");
 
 // --- build (the hours) ---
+// emsdk's emcc wrapper execs `ccache` from PATH, and emsdk_env.sh (sourced by cpython/Makefile) strips every PATH entry
+// inside the emsdk tree. The ccache emsdk builds also segfaults on macOS arm64, and it is only a cache, so the shim dir
+// carries a pass-through `ccache` that runs the compiler unchanged (trap 4).
+writeFileSync(join(shim, "ccache"), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
 const log = createWriteStream(join(WORK, "build.log"));
-const ccacheBin = join(pyo, "emsdk/emsdk/ccache/git-emscripten_64bit/bin"); // emsdk's emcc wrapper execs `ccache` from PATH (trap 4)
-const env = { ...process.env, PATH: `${shim}:${ccacheBin}:${process.env.PATH}`, SED: sed, PYODIDE_JOBS: JOBS,
+const env = { ...process.env, PATH: `${shim}:${process.env.PATH}`, SED: sed, PYODIDE_JOBS: JOBS,
     CMAKE_POLICY_VERSION_MINIMUM: "3.5" }; // emsdk builds ccache's bundled zstd, whose CMakeLists a CMake 4 refuses
 await new Promise((ok, bad) => {
     const p = spawn("make", ["-C", pyo, "all-but-packages"], { env });

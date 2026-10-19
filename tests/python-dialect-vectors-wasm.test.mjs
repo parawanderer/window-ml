@@ -105,6 +105,8 @@ import importlib.util
 `);
     if (probe === "stock") { skip = "dist/pyodide is the stock Pyodide, not the restricted-mode build — `npm run fetch-pyodide` once tools/pyodide-dist.json has an artefact"; return; }
     await py.loadPackage(["numpy", "pandas"]);
+    py.FS.mkdirTree("/dialect-data");
+    py.mountNodeFS("/dialect-data", DATA_DIR); // the manifests the dialect loads, read-only in effect
     py.runPython(HARNESS);
 }, { timeout: 240000 });
 
@@ -131,6 +133,17 @@ test("the interpreter is the patched build with specialization, tier 2 and the J
 
 // --- the vectors, one test each, by genre ---
 
+/**
+ * Vectors the fork does not yet refuse under wasm32 (found by this file, 2026-10-19): the per-cell byte count does not
+ * fire for an allocation wasm32 cannot make, so the cell ends in MemoryError/OverflowError instead of NotInDialect. It
+ * still HALTS and returns nothing; the test pins that observed outcome and fails the moment the fork refuses, so the
+ * entry is deleted then. Lane 3 owns the fork.
+ */
+const WASM32_GAPS = {
+    "py: a doubling list": /^MemoryError/,
+    "py: a string repeated past memory": /^OverflowError/,
+};
+
 const EXPECTED = { abuse: 43, halting: 20, failure: 5, ownership: 19, print: 0 };
 
 for (const genre of GENRES) {
@@ -139,9 +152,15 @@ for (const genre of GENRES) {
     for (const vec of vecs) {
         test(`${genre}: ${vec.name}`, { timeout: 60000 }, (t) => {
             if (skip) return t.skip(skip);
-            const msg = { data: DATA_DIR, env: vec.env, py: vec.py, pre: vec.pre?.py ?? null, leaves_nothing: !!vec.leaves_nothing, budget: vec.budget ?? null };
+            const msg = { data: "/dialect-data", env: vec.env, py: vec.py, pre: vec.pre?.py ?? null, leaves_nothing: !!vec.leaves_nothing, budget: vec.budget ?? null };
             const out = JSON.parse(py.globals.get("wml_vector")(JSON.stringify(msg)));
             const [status, reason] = judge(vec, out);
+            const gap = WASM32_GAPS[vec.name];
+            if (gap) {
+                assert.strictEqual(status, "FAIL", "the fork refuses this now: delete its WASM32_GAPS entry");
+                assert.ok(out.returned === false && !out.not_in_dialect && gap.test(reason.replace(/^expected NotInDialect, got /, "")), `a known gap must still halt without a value: ${reason}`);
+                return;
+            }
             assert.strictEqual(status, "PASS", reason);
         });
     }

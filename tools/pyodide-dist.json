@@ -22,6 +22,6 @@
     "tag": "pyodide-314.0.3-ml-8f6a50ab",
     "name": "pyodide-restricted-314.0.3-8f6a50ab",
     "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-ml-8f6a50ab/pyodide-restricted-314.0.3-8f6a50ab.tar.gz",
-    "sha256": null
+    "sha256": "1d91bb19efaf3b6166c8a0456960177f0f32498f4abf5178a1f49403dee2db9d"
   }
 }
