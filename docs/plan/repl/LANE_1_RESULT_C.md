@@ -3,7 +3,7 @@
 Work slug `repl-lane1`, session `77599c71-822c-4a06-9f4d-6df810a154b7`, model `claude-opus-5-5`, 2026-10-19. The core
 (worker, offscreen document, service worker, state declaration) was written by `window-ml-redteam-e3`; this session
 added the tests, the text, two fixes in `ml-wire-serve.ts` found by those tests, and this note. The existing real-CPython
-suite passes on the branch (85/85), but no new test drives the worker's dict in Pyodide (see "What did not work").
+suite passes on the branch, and the run's dict is now tested in real Pyodide too (see "What did not work" for the limit).
 
 ## What landed
 
@@ -22,8 +22,9 @@ PR #757, branch `repl-lane1/ml-wiring`.
     `benchNs`). A `readonly` and a `full` cell of the same run are on different workers (`run:<id>` and `full`) and so
     in different dicts.
   - End of life: `deletePythonRun(runId)` from `settle()` and from `forgetRun` sends `PY_DELETE_RUN`; the offscreen
-    document forwards `deleteRun` to the `run:<id>` worker.
-  - Loss: a kill of a `run:` principal records `nsLoss`; the run's next cell opens its stdout with
+    document forwards `deleteRun` to every worker that holds a dict for the run (`runPrincipals`: its `run:<id>` worker
+    and the shared `full` one), and the worker empties the dict before releasing it.
+  - Loss: a kill of any worker records `nsLoss` for every run that kept a dict on it; the run's next cell opens its stdout with
     `namespace reset at <ISO time>: <reason>` (`reason` is `timeout`, `start-timeout` or `crashed`) and the result
     carries `nsReset`. Declared as state `python.run-namespace`.
 - **Two fixes in `src/sw/ml-wire-serve.ts`** (mine, found by the new codec tests; see "Decided on the way").
@@ -71,16 +72,43 @@ PR #757, branch `repl-lane1/ml-wiring`.
   on the wire form, skipping the keys of a wrapped object but not the values inside it. A real handle still refuses at any
   depth. This touches the secret check, so it is for the red-team pass to read.
 - **The reset line is stdout, not an error.** It prefixes the cell's own output, which is where the spec put it.
+- **A run's dict has its own prelude mode** (`wrapUserCode(..., "run")`), found by CI's e2e on the first push: running
+  it in the bench's mode left `img`/`img_np` and the tables undecoded and skipped the `str`/`None` coercion of the
+  injected inputs. The run mode binds `img`/`df`/`tables` only when a cell passes them and does NOT run the loaders: they
+  patch `Image.open`/`pd.read_*` once per namespace and read that namespace, so a second run's dict would chain onto the
+  first's and could be handed its `img`. Cost: `Image.open('<selector>')` is not redirected inside a worker-hosted run.
+- **A `full`-mode run's dict was readable from another run, and is now deleted** (the LANE 3 Mimo session's review on
+  #757, with the test bodies). Every full-mode cell runs on the one `full` worker, `PY_DELETE_RUN` only ever named
+  `run:<id>`, so a finished full-mode run's dict stayed alive there and a later full-mode cell read it through
+  `gc.get_objects()`. Now the offscreen document keeps `runId → principals` and deletes on each, and a kill of the `full`
+  worker tells every run that kept a dict there. Deleting has to EMPTY the dict as well: the functions a cell defined hold
+  it through `__globals__`, so releasing the proxy alone left it reachable until a collection
+  (`tests/python-run-namespace-py.test.mjs`, the positive control, failed without it).
+
+## Known residual: two full-mode runs alive at the same time
+
+Not closed by the fix above, which removes a run's dict when the run ENDS. The `full` worker belongs to the offscreen
+document, which is one per BROWSER, so every full-mode run in the browser shares its interpreter: across runs, sessions
+and sites. While two of them are alive, B's cell reads A's live dict through `gc.get_objects()`. A readonly worker
+refuses `import gc`, so readonly runs are not exposed, to each other or to a full-mode run.
+
+Two ways to close it:
+- **A full worker per run:** principal `run:<id>` for full mode too, at the price of one Pyodide boot per full-mode run.
+  The only one of the two that separates runs, sessions and sites completely.
+- **Full-mode runs serialized on the shared worker:** one at a time, its dict deleted before the next starts. This
+  closes the read of a LIVE dict, but the runs still share one process, so module state one leaves behind (a patched
+  module attribute, `sys.modules`) still reaches the next, across sites.
+
+Pinned by `RESIDUAL (exists today)` in `tests/python-run-namespace-py.test.mjs`, which asserts the read SUCCEEDS, so
+closing it flips a test. Until then, full mode always asks, and its approval card says it "shares one Python process
+with every other full-mode run in this browser" (`card-approval.tsx`), so approving it is consent to this.
 
 ## What did not work, or was left out
 
-- **No new test runs in real Pyodide.** The worker's dict (`runNamespace`, the kept-dict path in `run`, injected names
-  surviving a cell, `_user` awaiting `ml.*`) is exercised only by the existing real-CPython suite (85/85 on the branch),
-  none of which asserts that a name survives from one cell to the next.
-- **A `full` run's namespace is not deleted.** `PY_DELETE_RUN` names the `run:<id>` principal, but a `full` cell runs on
-  the single `full` worker, so its dict for the run stays until that worker dies. A kill of the `full` worker also tells
-  nobody, since `nsLoss` is recorded only for `run:` principals. Not fixed here: the fix is a broadcast of `deleteRun` to
-  every worker, and a per-run map on the `full` principal. Not covered by any test.
+- **The real-Pyodide tests cover the dict and its prelude, not the worker module.**
+  `tests/python-run-namespace-py.test.mjs` and the `run dict:` tests in `tests/python.test.mjs` rebuild what the worker
+  does with the shipped `wrapUserCode`, so a name surviving a cell, cross-run isolation and the injected inputs are
+  measured. `python-worker.ts` itself is not loaded there, and `_user` awaiting `ml.*` is covered only by the e2e.
 - **No eviction by size** (the spec asked for one that also tells). The dict is bounded by the worker's memory only.
 - **The offscreen document closing** loses every dict with no record and no notice on the next cell.
 
@@ -93,8 +121,8 @@ PR #757, branch `repl-lane1/ml-wiring`.
 
 ## What I think a spec got wrong
 
-- **`LANE_1_WIRE_PYTHON.md` says deleting a run's namespace is `deleteRun` to "the run's worker"**; with two modes there
-  is a worker per mode, so deleting needs to reach the `full` one too.
+- **`LANE_1_WIRE_PYTHON.md` says deleting a run's namespace is `deleteRun` to "the run's worker"**; with two modes a
+  run can have a dict on two workers, one of them shared, so deleting has to reach both (now done).
 - **`ML_WIRE.md` says "the receiver unwraps one level"** for both directions, but the server side as first written
   wrapped what was already wrapped. The spec is right; the sentence does not say that arguments arrive in wire form and so
   must not be wrapped again.

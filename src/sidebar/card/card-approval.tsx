@@ -41,6 +41,11 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                     {summary ? <div class="action-summary ml-reveal">{summary}</div> : null}
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
+                    {/* Every full-mode cell runs on ONE shared worker, so two full-mode runs alive at once can read each
+                        other's variables (LANE_1_RESULT_C.md, the known residual). Said here so approving it is consent. */}
+                    {st.tool === "python_exec" && st.arguments?.mode === "full"
+                        ? <div class="action-raise"><IconWarn /><span>Shares one Python process with every other full-mode run in this browser: while both run, each can read the other's variables.</span></div>
+                        : null}
                   </div>
                 : intent
                     ? <div class="action-card">

@@ -9,6 +9,17 @@ import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 
 /**
+ * Release a kept namespace (ROOT C's per-run dict) so no other cell in the interpreter can reach it. Emptied FIRST:
+ * the functions a cell defined hold the dict through their `__globals__`, so releasing the proxy alone leaves a cycle
+ * that `gc.get_objects()` from another run's cell still walks to until a collection happens.
+ * @param ns the namespace dict (a PyProxy)
+ */
+export function releaseNamespace(ns: any): void {
+    try { ns.clear(); } catch { /* already gone */ }
+    try { ns.destroy(); } catch { /* already gone */ }
+}
+
+/**
  * Hand the run's inputs to the interpreter as PYTHON values — `None` or `str`, never a JS null.
  * `ns.set` of a JS null lands as `JsNull` (a JsProxy in the namespace — the P3 vector); `undefined`
  * lands as Python `None`. Measured on Pyodide: `set(k, null)` → `JsNull`, `set(k, undefined)` → `None`,

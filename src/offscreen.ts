@@ -94,8 +94,11 @@ const runNsVars = new Map<string, { id: string; vars: { name: string; type: stri
 // Runs that have ever had a kept namespace on this document, so a kill knows a loss is worth telling (the first
 // cell of a run that never persisted is not a reset).
 const seenRuns = new Set<string>();   // state: plumbing — runs that have held a kept namespace
-// A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run:
-// a worker-hosted run's principal is `run:<id>`, so its namespace dies only with its own worker.
+// Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
+// ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
+// held. Recorded when a cell returns a scope manifest, the same moment `seenRuns` is.
+const runPrincipals = new Map<string, Set<string>>();   // state: plumbing — run id → principals holding its dict
+// A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run.
 const nsLoss = new Map<string, { at: number; reason: string }>();   // state: plumbing — one loss note per wiped run
 defineState({
     id: "python.run-namespace", scope: "run", realm: "offscreen", audience: "model", lostOn: ["offscreen-close", "browser-restart"],
@@ -135,18 +138,20 @@ function reportHousekeeping(report: { subsystem: string; kind: string; reason?: 
 // loss message reads (docs/dev/housekeeping.md): the kept bench namespace died with the worker.
 function killWorker(principal: string, reason: string): void {
     const entry = workers.get(principal);
-    // ROOT C: a worker-hosted run's namespace lives on its own principal (`run:<id>`). A kill wipes it; the
-    // next cell's result opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
-    const killedRun = principal.startsWith("run:") ? principal.slice(4) : null;
+    // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
+    // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
+    const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
     const named = reason === "timeout" || reason === "start-timeout";
     const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
         workers.delete(principal);
         respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
-        if (killedRun && (runNsVars.has(killedRun) || seenRuns.has(killedRun))) {
-            nsLoss.set(killedRun, { at: Date.now(), reason: lossReason });
-            runNsVars.delete(killedRun);
+        for (const runId of killedRuns) {
+            runPrincipals.get(runId)?.delete(principal);
+            if (!runNsVars.has(runId) && !seenRuns.has(runId)) continue;
+            nsLoss.set(runId, { at: Date.now(), reason: lossReason });
+            runNsVars.delete(runId);
         }
         // A timeout names itself; anything else is the worker's own error message, kept as detail under "crashed".
         reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: lossReason, key: principal, detail: { queuedRuns: [...pending.values()].filter((p) => p.principal === principal).length, ...(named ? {} : { message: reason }) } });
@@ -228,7 +233,11 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // with the loss line when this is the first cell after its namespace was wiped (docs/spec/PYTHON_DIALECT.md).
         if (entry?.wire?.run) {
             const runId = entry.wire.run;
-            if (result.bench) { seenRuns.add(runId); runNsVars.set(runId, { id: result.bench.id, vars: result.bench.vars }); }
+            if (result.bench) {
+                seenRuns.add(runId);
+                runNsVars.set(runId, { id: result.bench.id, vars: result.bench.vars });
+                if (entry.principal) (runPrincipals.get(runId) ?? runPrincipals.set(runId, new Set()).get(runId)!).add(entry.principal);
+            }
             const loss = nsLoss.get(runId);
             if (loss) {
                 nsLoss.delete(runId);
@@ -410,19 +419,31 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
 });
 
 // ROOT C: drop a run's kept namespace when the run closes or is archived. The service worker sends this
-// from the run-end path; it is forwarded to the run's principal worker as `deleteRun`.
+// from the run-end path; it is forwarded as `deleteRun` to EVERY worker holding a dict for the run (`runPrincipals`):
+// the run's own `run:<id>` and, for its full-mode cells, the shared `full` worker, where a dict left behind is readable
+// from another full-mode run's cell. The principal the message names is asked too.
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
-    const principal = String(msg.principal ?? `run:${msg.run}`);
-    runNsVars.delete(String(msg.run));
-    seenRuns.delete(String(msg.run));
-    nsLoss.delete(String(msg.run));
-    const entry = workers.get(principal);
-    if (!entry) { sendResponse({ ok: true }); return undefined; }
-    const id = nextId++;
-    pending.set(id, { resolve: () => sendResponse({ ok: true }), timer: 0 as unknown as ReturnType<typeof setTimeout>, principal });
-    try { entry.w.postMessage({ id, deleteRun: String(msg.run) }); }
-    catch { pending.delete(id); sendResponse({ ok: true }); }
+    const run = String(msg.run);
+    const principals = new Set(runPrincipals.get(run) ?? []);
+    principals.add(String(msg.principal ?? `run:${run}`));
+    runPrincipals.delete(run);
+    runNsVars.delete(run);
+    seenRuns.delete(run);
+    nsLoss.delete(run);
+    const asks: Promise<void>[] = [];
+    for (const principal of principals) {
+        const entry = workers.get(principal);
+        if (!entry) continue;
+        const id = nextId++;
+        asks.push(new Promise<void>((resolve) => {
+            pending.set(id, { resolve: () => resolve(), timer: 0 as unknown as ReturnType<typeof setTimeout>, principal });
+            try { entry.w.postMessage({ id, deleteRun: run }); }
+            catch { pending.delete(id); resolve(); }
+        }));
+    }
+    if (!asks.length) { sendResponse({ ok: true }); return undefined; }
+    void Promise.all(asks).then(() => sendResponse({ ok: true }));
     return true;
 });
 

@@ -302,10 +302,15 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   dict without a record: the note comes only from a kill the document saw.
 - **The state registry:** `python.run-namespace` (`defineState`, offscreen, audience `model`); its `read` is the last
   cell's scope manifest (`bench.vars`: names and type names).
-- **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only), and cleanup of a `full`
-  run's dict, which `PY_DELETE_RUN` does not reach (see `docs/plan/repl/LANE_1_RESULT_C.md`).
+- **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
+  `offscreen.ts`), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
+- **Known residual:** two full-mode runs ALIVE at once share the `full` interpreter and can read each other's dicts
+  (`gc.get_objects()`); the approval card says so. Pinned by a test that asserts it exists
+  (`docs/plan/repl/LANE_1_RESULT_C.md`, "Known residual").
+- **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only).
 
-Tests: `tests/python-run-namespace.test.mjs`. What they cannot show without real Pyodide is the dict itself.
+Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) and `tests/python-run-namespace-py.test.mjs`
+(the dicts in real Pyodide).
 
 **The bench KEEPS ITS VARIABLES between runs, like a notebook** (`wrapUserCode(..., persist)`, the worker's
 `benchNs`). A `python_exec` outside a run stays stateless; the bench and a run's cells do not (a run's:

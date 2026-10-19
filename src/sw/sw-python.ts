@@ -211,8 +211,8 @@ function pyCodeGranted(tabId: number | undefined, mode: "readonly" | "full", cod
 /**
  * ROOT C: tell the offscreen host to drop a run's kept Python namespace when the run closes or is archived
  * (docs/spec/PYTHON_DIALECT.md, "The namespace"). Fire-and-forget: a namespace left behind costs memory, not
- * correctness, and a run ending must never wait on the sandbox. The offscreen forwards it to the run's
- * principal worker as `deleteRun`.
+ * correctness, and a run ending must never wait on the sandbox. The offscreen forwards it as `deleteRun` to every
+ * worker that holds a dict for the run, the shared `full` worker included (it keeps which, `runPrincipals`).
  * @param runId the run whose namespace to drop
  */
 export function deletePythonRun(runId: string): void {

@@ -43,9 +43,11 @@ const lastPost = (w) => w.posts.at(-1);
 /** Start a PY_RUN and answer it from the fake worker with `result`; resolves with the document's answer. */
 async function runCell(msg, result) {
     const before = workers.length;
+    const posted = new Map(workers.map((w) => [w, w.posts.length]));
     const answer = send({ type: "PY_RUN", code: "pass", hardened: true, tables: null, ...msg });
     await tick();
-    const w = workers.at(-1);
+    // The worker the cell was posted to: a new one, or a reused one (the shared `full` worker).
+    const w = workers.find((x) => x.posts.length > (posted.get(x) ?? 0));
     const post = lastPost(w);
     assert.ok(post && typeof post.id === "number", "the cell reached a worker");
     w.reply({ id: post.id, ok: true, stdout: "", ...result });
@@ -89,7 +91,50 @@ test("a deleted run that runs again starts without a loss notice", async () => {
     assert.ok(!("nsReset" in again.answer), "a run closed on purpose is not a reset");
 });
 
+test("PY_DELETE_RUN for a FULL-mode run reaches the shared full worker as deleteRun", async () => {
+    const a = await runCell({ hardened: false, principal: "full", wire: { client: "mlw-f", run: "full-a" } }, bench(["x"]));
+    const done = send({ type: "PY_DELETE_RUN", run: "full-a", principal: "full" });
+    await tick();
+    const asked = lastPost(a.w);
+    assert.equal(asked.deleteRun, "full-a", "the full worker was told");
+    a.w.reply({ id: asked.id, ok: true, stdout: "" });
+    assert.deepEqual(await done, { ok: true });
+});
+
+test("the service worker's PY_DELETE_RUN (principal run:<id>) reaches EVERY worker holding the run's dict, the full one included", async () => {
+    // What deletePythonRun sends: the run's own principal only. A full-mode cell's dict is on the shared `full`
+    // worker, where another full-mode run's cell can read it (gc.get_objects()), so it must be told too.
+    const full = await runCell({ hardened: false, principal: "full", wire: { client: "mlw-g1", run: "both-a" } }, bench(["x"]));
+    const other = await runCell({ hardened: false, principal: "full", wire: { client: "mlw-g2", run: "both-b" } }, bench(["y"]));
+    assert.equal(other.w, full.w, "both full-mode runs share one worker");
+    const ro = await runCell({ principal: "run:both-a", wire: { client: "mlw-g3", run: "both-a" } }, bench(["z"]));
+    const mark = full.w.posts.length;   // the shared worker carries earlier tests' posts
+    const done = send({ type: "PY_DELETE_RUN", run: "both-a", principal: "run:both-a" });
+    await tick();
+    const toFull = full.w.posts.slice(mark).filter((p) => p.deleteRun);
+    assert.deepEqual(toFull.map((p) => p.deleteRun), ["both-a"], "the full worker drops both-a's dict, and only that one");
+    assert.equal(lastPost(ro.w).deleteRun, "both-a", "the run's own readonly worker is told too");
+    full.w.reply({ id: toFull[0].id, ok: true, stdout: "" });
+    ro.w.reply({ id: lastPost(ro.w).id, ok: true, stdout: "" });
+    assert.deepEqual(await done, { ok: true });
+});
+
 // --- a killed worker tells the run's next cell ---
+
+test("a kill of the shared full worker tells EVERY run that kept a dict there, and no other", async () => {
+    const a = await runCell({ hardened: false, principal: "full", wire: { client: "mlw-k1", run: "fk-a" } }, bench(["x"]));
+    await runCell({ hardened: false, principal: "full", wire: { client: "mlw-k2", run: "fk-b" } }, bench(["y"]));
+    await runCell({ principal: "run:fk-c", wire: { client: "mlw-k3", run: "fk-c" } }, bench(["z"]));
+    a.w.onerror({ message: "boom" });
+    assert.ok(a.w.terminated, "positive control: the full worker died");
+    for (const run of ["fk-a", "fk-b"]) {
+        const next = await runCell({ hardened: false, principal: "full", wire: { client: `mlw-k-${run}`, run } }, { stdout: "next" });
+        assert.match(next.answer.stdout, /^namespace reset at .*: crashed\nnext$/, `${run} is told its full-mode dict is gone`);
+    }
+    const c = await runCell({ principal: "run:fk-c", wire: { client: "mlw-k4", run: "fk-c" } }, { stdout: "next" });
+    assert.equal(c.answer.stdout, "next", "a run whose dict was on its own readonly worker lost nothing");
+});
+
 
 test("a worker that dies between two cells of a run puts the reset line at the head of the second cell's output", async () => {
     const first = await runCell({ principal: "run:loss-a", wire: { client: "mlw-l1", run: "loss-a" } }, { ...bench(["x"]), stdout: "one" });

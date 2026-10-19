@@ -15,7 +15,7 @@
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
+import { wrapUserCode, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
 import { lockdownReadonly } from "./lockdown";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
@@ -174,11 +174,11 @@ function runNamespace(py: any, runId: string): { ns: any; id: string } {
     }
     return entry;
 }
-/** Drop a run's kept namespace: the run closed or was archived. */
+/** Drop a run's kept namespace: the run closed or was archived (`releaseNamespace` empties it first). */
 function deleteRunNamespace(runId: string): void {
     const entry = runs.get(runId);
     if (!entry) return;
-    try { entry.ns.destroy(); } catch { /* already gone */ }
+    releaseNamespace(entry.ns);
     runs.delete(runId);
 }
 
