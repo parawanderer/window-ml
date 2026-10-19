@@ -278,6 +278,8 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const scroller = useRef<HTMLDivElement>(null);
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
+    // state: ui (a citation jump is in progress; cleared by the reader's next gesture or another session)
+    const jumped = useRef(false);
     const glide = useRef<ReturnType<typeof pinGlide> | null>(null);
     useFadeEdges(scroller);
     // THE SESSION IS DRAWN ONCE, when its history is in (`store.loaded`), not event by event as it arrives. A reload
@@ -303,6 +305,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // Follow the newest event while the reader is at the bottom; leave them alone once they scroll up.
     useEffect(() => {
         stuck.current = true;
+        jumped.current = false;
         const el = scroller.current;
         if (el) el.scrollTop = el.scrollHeight;
     }, [sessionKey]);
@@ -323,19 +326,23 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // through and settle in the middle of the transcript instead of at the end — intermittently, because it depended
     // on whether an event landed between the content growing and the pin below catching up.
     //
-    // Going back to the bottom always re-sticks, gesture or not: arriving there is unambiguous.
+    // Going back to the bottom re-sticks, gesture or not: arriving there is unambiguous. Except straight after a
+    // citation jump, until the reader's next gesture: the step it opens grows, scroll anchoring can carry the view to
+    // exactly the bottom, and re-sticking there let the next resize glide down, cancelling the smooth scroll to the
+    // step (the jump then went nowhere, in about half the runs).
     const byUser = useRef(0);
-    const markUser = () => { byUser.current = Date.now(); };
+    // A citation's own pointerdown (or Enter) lands here BEFORE its click fires the jump, which sets `jumped` again.
+    const markUser = () => { byUser.current = Date.now(); jumped.current = false; };
     const onScroll = () => {
         const el = scroller.current;
         if (!el) return;
-        if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stuck.current = true;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) { if (!jumped.current) stuck.current = true; }
         else if (Date.now() - byUser.current < USER_SCROLL_MS) { stuck.current = false; glide.current?.stop(); }
     };
     // A citation sending the reader UP the transcript stops it following the bottom, or the step it opens grows
     // the content, the observer above pins back down, and the jump is overwritten before it lands.
     useEffect(() => {
-        const off = () => { stuck.current = false; glide.current?.stop(); };
+        const off = () => { stuck.current = false; jumped.current = true; glide.current?.stop(); };
         document.addEventListener(STEP_JUMP_EVENT, off);
         return () => document.removeEventListener(STEP_JUMP_EVENT, off);
     }, []);
