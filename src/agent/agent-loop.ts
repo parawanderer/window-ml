@@ -62,7 +62,10 @@ export interface AgentLoopDeps {
     runTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number }): Promise<ToolRunResult>;
     // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
     // and `step` identify the pending step so a background gate can correlate its async decision to it.
-    approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
+    approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number; askWhy?: import("../contract").AskWhy }): Promise<ApprovalDecision>;
+    /** Why this call is going to ask: a policy that used to allow it is gone. Trusted-world text for the card and the
+     *  tool result; consulted only at the gate and never part of the decision. */
+    askWhy?(name: string, args: Record<string, unknown>): import("../contract").AskWhy | undefined;
     // Pure auto-approve decision, made in the TRUSTED world (python readonly / suspicious-char /
     // external-sheet). Returns the provenance to skip the gate, or null to require it. NEVER delegated —
     // a forged "it's auto-approved" is exactly the threat design A closes.
@@ -863,6 +866,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
+            let gateWhy: string | undefined;   // why the gate asked (a policy that covered this call is gone), told to the model with the result
             lastToolMs = undefined; lastApproveMs = undefined; lastDispatchMs = undefined;   // this step's own measurements, never the previous step's
             // A PENDING step shows a pretty In from the moment it starts, not raw JSON args. This used to be
             // gated on `stream`, on the reasoning that only a streaming run leaves the row on screen long
@@ -932,12 +936,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     const gateT0 = Date.now();
                     // A gate that THREW decided nothing: the call does not run, and the model reads why.
                     let rawDecision: ApprovalDecision | undefined, gateErr: { e: unknown } | undefined;
-                    try { rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step }); }
+                    let askWhy: import("../contract").AskWhy | undefined;
+                    try { askWhy = deps.askWhy?.(call.name, args); } catch (e) { threw(call.name, "auto-approve", e); }
+                    try { rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step, ...(askWhy ? { askWhy } : {}) }); }
                     catch (e) { threw(call.name, "approve", e); gateErr = { e }; }
                     lastApproveMs = Date.now() - gateT0;
                     if (gateErr) {
                         result = toolThrewResult(call.name, gateErr.e);
                     } else {
+                        gateWhy = askWhy?.detail;   // read by the model after the call (below)
                         // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
                         // came through the external channel (a harness, an orchestrator): that is code, in
                         // milliseconds, and there is no honest label for it, so it adds none.
@@ -979,6 +986,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             }
             fan?.done();   // the tool finished — stop any trailing live emit; the DONE below carries the full result
             result = String(result);
+            if (gateWhy && approval !== "cancelled") result += `\n${gateWhy}`;
             if (deps.forModel) {
                 try { result = String(await deps.forModel(call.name, result)); }
                 catch { result = `Error: the "${call.name}" call's result could not be checked before you read it, so it is withheld.`; }

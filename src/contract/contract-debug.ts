@@ -161,6 +161,10 @@ export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string
  *  answered in time; `ended`: the run's turn ended while it waited; `limit`: the step had already asked too often. */
 export type AskState = "pending" | "allowed" | "denied" | "cancelled" | "timeout" | "unattended" | "ended" | "limit";
 
+/** Why a call asks when a policy that used to cover it is gone: `line` for the approval card, `detail` the sentence the
+ *  model read in the tool result (so the tooltip and the export show what the model saw). */
+export interface AskWhy { line: string; detail: string }
+
 /** One nested ask as a step event carries it (docs/spec/ML_WIRE.md, "Per-call asking"). Plain data: every surface draws
  *  it, both exports record it, and its `facts` are the policy's `c` for the call. */
 export interface StepAsk {
@@ -170,6 +174,8 @@ export interface StepAsk {
     /** The policy's `c` for the call, built in the worker from what it resolved, never from what a script or page said. */
     facts: Record<string, unknown>;
     state: AskState;
+    /** Why the call asks when a policy that used to allow it is gone; text only, as on a gate's step. */
+    why?: AskWhy;
     raisedAt: number;
     answeredAt?: number;
     /** The person's note on a denial, or why the ask ended without them. */
@@ -250,6 +256,9 @@ export interface DebugAgentStep extends DebugBase {
      *  extracted background-side. Present on a pending approval step when there's ≥1 — the surface showing it then
      *  offer an "Approve + remember" control and unfurl exactly this list (what's shown IS what persists). */
     grants?: PersistGrant[];
+    /** On a pending approval step: why this call asks when a policy that used to allow it is gone (archived, removed,
+     *  edited). Text for the card; it never changed the decision. */
+    askWhy?: AskWhy;
     /** NESTED ASKS: calls made from inside this step while it ran that needed the person (an `ml.sh` from an approved
      *  exec), each answered like a gate under `${runId}:${seq}#${id}` (src/sw/sw-asks.ts). Every event of the step
      *  from the first ask on carries the whole list, its history included, so the DONE keeps what was asked. */

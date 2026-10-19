@@ -40,10 +40,23 @@ export interface StoredPolicy {
  *  `"ask"` means the saved policies are not read yet: nothing below a policy may answer for the person either. */
 export interface PolicyJudgement {
     decision: PolicyEffect | "ask" | undefined;
+    /** Set only when `decision` is `undefined`: a policy that would have allowed this call is gone, and why. TEXT for the
+     *  ask, never an input to the decision (a reason never re-allows). */
+    lapsed?: LapsedAsk;
     /** The policy that decided, or `"builtin"` for the built-in default (the effect algebra's free tier). */
     by?: StoredPolicy | "builtin";
     broken: { policy: StoredPolicy; reason: string }[];
 }
+
+/** Why an allowing policy is gone: the archive took it, the person removed it, or they edited it (`narrowed`: it no longer
+ *  allows what it did). `expired` is reserved for a policy with a lifetime; none has one yet. */
+export type LapseCause = "archived" | "removed" | "narrowed" | "expired";
+
+/** What an ask says about the policy that used to cover it. */
+export interface LapsedAsk { id: string; scope: StoredPolicy["scope"]; label: string; cause: LapseCause; at: number }
+
+/** A policy that allowed calls and is gone, kept with its source so a later ask can tell whether it would have covered it. */
+interface LapsedPolicy extends LapsedAsk { consumer: PolicyConsumer; source: string }
 
 /** The storage key of the global policies. */
 export const GLOBAL_POLICIES_KEY = "ml_policies_global";
@@ -51,6 +64,11 @@ export const GLOBAL_POLICIES_KEY = "ml_policies_global";
 export const RUN_POLICIES_KEY = "ml_policies_run";
 /** The storage key of what each ARCHIVED session lost: when its run policies were removed, and their labels. */
 export const ARCHIVED_POLICIES_KEY = "ml_policies_archived";
+/** The storage key of the allowing policies that went (removed, narrowed, archived), by session hash, `*` for global ones. */
+export const LAPSED_POLICIES_KEY = "ml_policies_lapsed";
+/** Lapsed policies kept per key; past it the oldest go. */
+const LAPSED_PER_KEY_MAX = 20;
+const GLOBAL_LAPSED = "*";
 /** Sessions whose run policies are kept; past it the oldest go. Deleted sessions take theirs with them first. */
 const RUN_POLICY_SESSIONS_MAX = 500;
 
@@ -70,13 +88,31 @@ defineState({
 });
 
 /** Run policies removed when their session was archived, by hash: said when the session comes back, never silent. */
-const archivedLoss = new Map<string, { at: number; labels: string[] }>();
+const archivedLoss = new Map<string, { at: number; labels: string[]; told?: true }>();
 defineState({
     id: "policies.archived", scope: "session", realm: "worker", audience: "model", lostOn: [],
     exposedAs: "ml.current.policiesRemoved",
     describe: "The run policies a session lost when it was archived, and when: told to the person and the model when it is resumed.",
     read: ({ runId }) => { const l = runId ? archivedLoss.get(runId) : undefined; return l ? { ...l, labels: [...l.labels] } : undefined; },
 });
+
+/** The allowing policies that went, by session hash (`*`: global): only so an ask can say why it is asking. */
+const lapsed = new Map<string, LapsedPolicy[]>();
+defineState({
+    id: "policies.lapsed", scope: "session", realm: "worker", audience: "model", lostOn: [],
+    exposedAs: "the reason in a tool result when a call asks",
+    describe: "Allowing policies that were removed, edited or archived, kept so the next call they would have covered says why it asks. Text only: it never allows anything.",
+    read: ({ runId }) => { const l = [...(lapsed.get(GLOBAL_LAPSED) ?? []), ...(runId ? lapsed.get(runId) ?? [] : [])]; return l.length ? l.map(({ source: _s, ...rest }) => rest) : undefined; },
+});
+
+/** Remember an allowing policy that went; a deny going widens nothing, so it needs no reason. */
+function noteLapsed(key: string, p: StoredPolicy, cause: LapseCause): void {
+    if (p.effect !== "allow") return;
+    const l = (lapsed.get(key) ?? []).filter((x) => !(x.source === p.source && x.consumer === p.consumer));
+    l.push({ id: p.id, scope: p.scope, label: p.label, cause, at: Date.now(), consumer: p.consumer, source: p.source });
+    lapsed.delete(key);
+    lapsed.set(key, l.slice(-LAPSED_PER_KEY_MAX));
+}
 
 /** Called after every change to any policy, so a card already showing is judged again (`rejudgePending`). */
 const changeListeners = new Set<() => void>();   // state: plumbing — the worker's own subscribers, registered at load
@@ -104,14 +140,16 @@ export const policiesLoaded = (): boolean => loaded;
 /** Storage has been read, so a judgement made now sees every saved policy. Until then a call asks (fails closed). */
 export const policiesReady: Promise<void> = (() => {
     try {
-        return chrome.storage.local.get([GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY, ARCHIVED_POLICIES_KEY]).finally(() => { loaded = true; }).then((got) => {
+        return chrome.storage.local.get([GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY, ARCHIVED_POLICIES_KEY, LAPSED_POLICIES_KEY]).finally(() => { loaded = true; }).then((got) => {
             globals.splice(0, globals.length, ...validList(got?.[GLOBAL_POLICIES_KEY], "global"));
             const runs = (got?.[RUN_POLICIES_KEY] ?? {}) as Record<string, unknown>;
             for (const [hash, list] of Object.entries(runs)) if (!byRun.has(hash)) byRun.set(hash, validList(list, "run"));
-            const lost = (got?.[ARCHIVED_POLICIES_KEY] ?? {}) as Record<string, { at?: unknown; labels?: unknown }>;
+            const lost = (got?.[ARCHIVED_POLICIES_KEY] ?? {}) as Record<string, { at?: unknown; labels?: unknown; told?: unknown }>;
             for (const [hash, l] of Object.entries(lost))
                 if (!archivedLoss.has(hash) && typeof l?.at === "number" && Array.isArray(l.labels) && l.labels.every((x) => typeof x === "string"))
-                    archivedLoss.set(hash, { at: l.at, labels: l.labels as string[] });
+                    archivedLoss.set(hash, { at: l.at, labels: l.labels as string[], ...((l as { told?: unknown }).told === true ? { told: true as const } : {}) });
+            const gone = (got?.[LAPSED_POLICIES_KEY] ?? {}) as Record<string, unknown>;
+            for (const [key, list] of Object.entries(gone)) if (!lapsed.has(key) && Array.isArray(list)) lapsed.set(key, list.filter(validLapsed).slice(-LAPSED_PER_KEY_MAX));
         }).catch(() => { /* storage unavailable: nothing saved is honoured, so every call asks */ });
     } catch { loaded = true; return Promise.resolve(); }   // no storage (a test harness): nothing saved to wait for
 })();
@@ -124,14 +162,23 @@ function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
         && (p.effect === "allow" || p.effect === "deny") && CONSUMERS.has(p.consumer) && p.scope === scope);
 }
 
+/** Whether storage held a well-formed lapsed policy. */
+function validLapsed(p: unknown): p is LapsedPolicy {
+    const q = p as LapsedPolicy | null;
+    return !!q && typeof q === "object" && typeof q.id === "string" && typeof q.label === "string" && typeof q.source === "string"
+        && typeof q.at === "number" && CONSUMERS.has(q.consumer) && (q.scope === "global" || q.scope === "run")
+        && (q.cause === "archived" || q.cause === "removed" || q.cause === "narrowed" || q.cause === "expired");
+}
+
 function saveGlobals(): void {
-    try { void chrome.storage.local.set({ [GLOBAL_POLICIES_KEY]: globals }).catch(() => {}); } catch { /* storage unavailable */ }
+    try { void chrome.storage.local.set({ [GLOBAL_POLICIES_KEY]: globals, [LAPSED_POLICIES_KEY]: Object.fromEntries(lapsed) }).catch(() => {}); } catch { /* storage unavailable */ }
     changed();
 }
 function saveRuns(): void {
     while (byRun.size > RUN_POLICY_SESSIONS_MAX) byRun.delete(byRun.keys().next().value!);
     while (archivedLoss.size > RUN_POLICY_SESSIONS_MAX) archivedLoss.delete(archivedLoss.keys().next().value!);
-    try { void chrome.storage.local.set({ [RUN_POLICIES_KEY]: Object.fromEntries(byRun), [ARCHIVED_POLICIES_KEY]: Object.fromEntries(archivedLoss) }).catch(() => {}); } catch { /* storage unavailable */ }
+    while (lapsed.size > RUN_POLICY_SESSIONS_MAX + 1) { const k = [...lapsed.keys()].find((x) => x !== GLOBAL_LAPSED); if (k === undefined) break; lapsed.delete(k); }
+    try { void chrome.storage.local.set({ [RUN_POLICIES_KEY]: Object.fromEntries(byRun), [ARCHIVED_POLICIES_KEY]: Object.fromEntries(archivedLoss), [LAPSED_POLICIES_KEY]: Object.fromEntries(lapsed) }).catch(() => {}); } catch { /* storage unavailable */ }
     changed();
 }
 
@@ -171,10 +218,11 @@ export function addGlobalPolicy(p: Pick<StoredPolicy, "consumer" | "effect" | "s
 export function removePolicy(id: string): boolean {
     brokenWhy.delete(id);
     const g = globals.findIndex((p) => p.id === id);
-    if (g >= 0) { globals.splice(g, 1); saveGlobals(); return true; }
+    if (g >= 0) { noteLapsed(GLOBAL_LAPSED, globals[g], "removed"); globals.splice(g, 1); saveGlobals(); return true; }
     for (const [hash, list] of byRun) {
         const i = list.findIndex((p) => p.id === id);
         if (i < 0) continue;
+        noteLapsed(hash, list[i], "removed");
         const rest = list.filter((_, k) => k !== i);
         if (rest.length) byRun.set(hash, rest); else byRun.delete(hash);
         saveRuns();
@@ -188,9 +236,9 @@ export function removePolicy(id: string): boolean {
  *  with the time, so its resume says so (`archivedPolicyLoss`); a deleted session's record goes with it. */
 export function forgetRunPolicies(runId: string, why: "deleted" | "archived" = "deleted"): void {
     const list = byRun.get(runId);
-    if (why === "deleted") archivedLoss.delete(runId);
+    if (why === "deleted") { archivedLoss.delete(runId); lapsed.delete(runId); }
     if (!list) { if (why === "deleted") saveRuns(); return; }
-    for (const p of list) brokenWhy.delete(p.id);
+    for (const p of list) { brokenWhy.delete(p.id); if (why === "archived") noteLapsed(runId, p, "archived"); }
     byRun.delete(runId);
     if (why === "archived" && list.length) archivedLoss.set(runId, { at: Date.now(), labels: list.map((p) => p.label) });
     saveRuns();
@@ -200,6 +248,20 @@ export function forgetRunPolicies(runId: string, why: "deleted" | "archived" = "
 export function archivedPolicyLoss(runId: string): { at: number; labels: string[] } | undefined {
     const l = archivedLoss.get(runId);
     return l ? { at: l.at, labels: [...l.labels] } : undefined;
+}
+
+/** Whether an edit changed what an allowing policy says (its source or its effect), so the old one may have covered calls the new one does not. */
+const narrowedBy = (was: StoredPolicy, now: StoredPolicy): boolean => was.effect === "allow" && (was.source !== now.source || now.effect !== "allow");
+
+/** The one-time sentence for a session that comes back after an archive took its run policies (POLICIES.md, "Scopes"):
+ *  returned the first time only, then marked told in storage, so a later resume does not repeat it. The first ask that
+ *  one of those policies would have covered says so again, with its cause (`judgeCall`'s `lapsed`). */
+export function takeArchiveNotice(runId: string): string | undefined {
+    const l = archivedLoss.get(runId);
+    if (!l || l.told) return undefined;
+    l.told = true;
+    saveRuns();
+    return `Note: this session was archived on ${new Date(l.at).toISOString()} and its run policies were removed then (${l.labels.join("; ")}). Calls those policies allowed without asking will ask the person again.`;
 }
 
 /** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */
@@ -213,11 +275,12 @@ export function editPolicy(id: string, patch: Partial<Pick<StoredPolicy, "source
     });
     brokenWhy.delete(id);
     const g = at(globals);
-    if (g >= 0) { globals[g] = apply(globals[g]); saveGlobals(); return { ...globals[g] }; }
+    if (g >= 0) { const was = globals[g]; globals[g] = apply(was); if (narrowedBy(was, globals[g])) noteLapsed(GLOBAL_LAPSED, was, "narrowed"); saveGlobals(); return { ...globals[g] }; }
     for (const [hash, list] of byRun) {
         const i = at(list);
         if (i < 0) continue;
         const next = list.map((p, k) => (k === i ? apply(p) : p));
+        if (narrowedBy(list[i], next[i])) noteLapsed(hash, list[i], "narrowed");
         byRun.set(hash, next);
         saveRuns();
         return { ...next[i] };
@@ -272,7 +335,36 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
     }
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
-    return { decision: undefined, broken };
+    const gone = lapsedCover(runId, consumer, facts);
+    return { decision: undefined, broken, ...(gone ? { lapsed: gone } : {}) };
+}
+
+/** The most recent gone policy that would have allowed this call, or undefined. Evaluated like a live one, but its answer
+ *  only becomes text on the ask: nothing here is read by the decision. */
+function lapsedCover(runId: string | undefined, consumer: PolicyConsumer, facts: Record<string, unknown>): LapsedAsk | undefined {
+    const gone = [...(lapsed.get(GLOBAL_LAPSED) ?? []), ...(runId ? lapsed.get(runId) ?? [] : [])].filter((p) => p.consumer === consumer);
+    for (const p of gone.sort((a, b) => b.at - a.at)) {
+        const r = evalPolicy(p.source, facts, "allow");
+        if (!r.broken && r.decision === "allow") return { id: p.id, scope: p.scope, label: p.label, cause: p.cause, at: p.at };
+    }
+    return undefined;
+}
+
+const CAUSE_TEXT: Record<LapseCause, string> = {
+    archived: "was removed when this session was archived",
+    removed: "was removed by the person",
+    narrowed: "was edited and no longer covers this call",
+    expired: "expired",
+};
+
+/** The one sentence the model reads when a call asks because a policy that used to cover it is gone. */
+export function lapsedSentence(l: LapsedAsk): string {
+    return `This call needed approval because the policy "${l.label}", which allowed calls like it, ${CAUSE_TEXT[l.cause]} (${new Date(l.at).toISOString()}); the call itself did not change.`;
+}
+
+/** The same, short, for the approval card's line. */
+export function lapsedLine(l: LapsedAsk): string {
+    return `Asking because the policy "${l.label}" ${CAUSE_TEXT[l.cause]}.`;
 }
 
 /** The facts a `fetch_url` call gives a policy: what it fetches, how, and its effects. */

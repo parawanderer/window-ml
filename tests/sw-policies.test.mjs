@@ -254,3 +254,76 @@ test("judgeCall: a shell call that claims a top-level name in a root is not the 
     assert.equal(ok.decision, "allow", "a write below a top-level directory is free under the OS sandbox");
     assert.equal(ok.by, "builtin", "…and the builtin is what allows it");
 });
+
+// --- why a call asks: the policy that used to cover it is gone (lane 9) ---
+
+const allowUrl = (url) => ({ consumer: "fetch", effect: "allow", source: P.fetchUrlPolicySource(url), label: `fetch ${url}`, origin: "card" });
+
+test("a call a REMOVED policy would have allowed asks with the cause removed, and the decision is the same as without it", () => {
+    const p = P.addRunPolicy("h-lap-rm", allowUrl("https://rm.example/a"));
+    assert.equal(P.judgeCall("h-lap-rm", "fetch", facts("https://rm.example/a")).decision, "allow");
+    P.removePolicy(p.id);
+    const j = P.judgeCall("h-lap-rm", "fetch", facts("https://rm.example/a"));
+    assert.equal(j.decision, undefined);
+    assert.equal(j.lapsed.cause, "removed");
+    assert.equal(j.lapsed.id, p.id);
+    assert.match(P.lapsedSentence(j.lapsed), /removed by the person/);
+    assert.equal(P.judgeCall("h-lap-rm", "fetch", facts("https://rm.example/other")).lapsed, undefined, "a call it would not have covered gets no reason");
+    assert.equal(P.judgeCall("h-lap-other", "fetch", facts("https://rm.example/a")).lapsed, undefined, "another run is not told about this one's policy");
+});
+
+test("an ARCHIVED session's call asks with the cause archived; deleting the session drops the reason", () => {
+    P.addRunPolicy("h-lap-ar", allowUrl("https://ar.example/a"));
+    P.forgetRunPolicies("h-lap-ar", "archived");
+    const j = P.judgeCall("h-lap-ar", "fetch", facts("https://ar.example/a"));
+    assert.equal(j.decision, undefined);
+    assert.equal(j.lapsed.cause, "archived");
+    P.forgetRunPolicies("h-lap-ar", "deleted");
+    assert.equal(P.judgeCall("h-lap-ar", "fetch", facts("https://ar.example/a")).lapsed, undefined);
+});
+
+test("a NARROWED policy: the call it no longer covers asks with the cause narrowed; one it still covers still runs", () => {
+    const p = P.addRunPolicy("h-lap-nar", { consumer: "fetch", effect: "allow", source: '(c) => c.host === "nar.example"', label: "nar.example", origin: "person" });
+    P.editPolicy(p.id, { source: '(c) => c.url === "https://nar.example/keep"' });
+    assert.equal(P.judgeCall("h-lap-nar", "fetch", facts("https://nar.example/keep")).decision, "allow");
+    const j = P.judgeCall("h-lap-nar", "fetch", facts("https://nar.example/other"));
+    assert.equal(j.decision, undefined);
+    assert.equal(j.lapsed.cause, "narrowed");
+    P.editPolicy(p.id, { label: "renamed" });
+    assert.equal(P.judgeCall("h-lap-nar", "fetch", facts("https://nar.example/other")).lapsed.cause, "narrowed", "a label edit is not a narrowing and does not clear it");
+});
+
+test("a removed GLOBAL allow is the reason for every run; a removed deny needs none", () => {
+    const g = P.addGlobalPolicy({ consumer: "fetch", effect: "allow", source: '(c) => c.host === "glob.example"', label: "glob" });
+    const d = P.addGlobalPolicy({ consumer: "fetch", effect: "deny", source: '(c) => c.host === "den.example"', label: "den" });
+    P.removePolicy(g.id); P.removePolicy(d.id);
+    assert.equal(P.judgeCall("h-any", "fetch", facts("https://glob.example/")).lapsed.cause, "removed");
+    assert.equal(P.judgeCall("h-any", "fetch", facts("https://den.example/")).lapsed, undefined);
+});
+
+test("a reason never re-allows: a decision other than ask carries none, and a live allow wins over a gone one", () => {
+    const old = P.addRunPolicy("h-lap-live", allowUrl("https://live.example/a"));
+    P.removePolicy(old.id);
+    P.addRunPolicy("h-lap-live", allowUrl("https://live.example/a"));
+    const j = P.judgeCall("h-lap-live", "fetch", facts("https://live.example/a"));
+    assert.equal(j.decision, "allow");
+    assert.equal(j.lapsed, undefined);
+});
+
+test("a gone policy that breaks is no reason, and the record is written to storage", () => {
+    const p = P.addRunPolicy("h-lap-brk", { consumer: "fetch", effect: "allow", source: "(c) => c.nothing === 1", label: "typo", origin: "person" });
+    P.removePolicy(p.id);
+    assert.equal(P.judgeCall("h-lap-brk", "fetch", facts("https://x.example/")).lapsed, undefined);
+    assert.ok(writes.at(-1).ml_policies_lapsed["h-lap-brk"], "kept in storage so a worker restart still knows");
+});
+
+test("a resumed session is told once that an archive took its run policies; a session that lost none is told nothing", () => {
+    P.addRunPolicy("h-told", allowUrl("https://told.example/a"));
+    P.forgetRunPolicies("h-told", "archived");
+    const first = P.takeArchiveNotice("h-told");
+    assert.match(first, /archived on .* run policies were removed .*fetch https:\/\/told\.example\/a/);
+    assert.equal(P.takeArchiveNotice("h-told"), undefined, "once");
+    assert.equal(writes.at(-1).ml_policies_archived["h-told"].told, true, "and not again after a worker restart");
+    assert.equal(P.archivedPolicyLoss("h-told").labels.length, 1, "the resume note's record is kept");
+    assert.equal(P.takeArchiveNotice("h-never"), undefined);
+});

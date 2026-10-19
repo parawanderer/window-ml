@@ -17,7 +17,7 @@ import { IconChevron, IconWarn, IconSend, IconPlay } from "../icons";
 import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey, askKey, sendApproval } from "../ui-kit";
 import { AskList } from "../transcript/ask-card";
 import { ContinueRun, ReplyBubble } from "../transcript/reply";
-import { AgentTurn, ToolStep, GrantCard, hasPersistGrants, KEEP_HINT } from "../transcript/agent-detail";
+import { AgentTurn, ToolStep, GrantCard, AskWhyLine, hasPersistGrants, KEEP_HINT } from "../transcript/agent-detail";
 import { AnswerBody, ResultBlock } from "../transcript/answer-render";
 import { useImageAttach, ThumbStrip } from "../transcript/composer";
 import {
@@ -613,6 +613,7 @@ export function CardApp() {
                 ? (() => {
                     const showGrants = hasPersistGrants(pendingStep.grants);
                     return <div class="card-foot card-foot-appr">
+                        {pendingStep.askWhy ? <AskWhyLine why={pendingStep.askWhy} /> : null}
                         {showGrants ? <GrantCard grants={pendingStep.grants!} /> : null}
                         <div class="card-foot-row">
                             <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>

@@ -684,3 +684,33 @@ test("a tool's answer that cannot be made text is an error result, not the run's
     assert.equal(res.summary, "done");
     assert.match(res.transcript[0].result, /failed inside the extension/);
 });
+
+// --- why a call asks: a policy that covered it is gone (lane 9) ---
+
+const why = { line: "Asking because the policy \"p\" was removed by the person.", detail: "This call needed approval because the policy \"p\" was removed by the person; the call itself did not change." };
+
+test("a gate that asks for a lapsed policy hands the reason to the card, and the model reads it with the result, approved or denied", async () => {
+    for (const approve of [true, false]) {
+        const { deps, calls } = makeDeps({ turns: [toolCall("danger"), reply("done")], approve: () => approve });
+        deps.askWhy = () => why;
+        const res = await runAgentLoop("x", { tools: [danger] }, deps);
+        assert.deepEqual(calls.approve[0].askWhy, why, "the card gets it");
+        assert.match(res.transcript[0].result, /was removed by the person; the call itself did not change/, "the model reads it");
+        assert.equal(calls.runTool.length, approve ? 1 : 0, "the reason decides nothing: the person's answer still does");
+    }
+});
+
+test("no reason, no note; a throwing askWhy asks without one; a cancelled gate adds none", async () => {
+    const plain = makeDeps({ turns: [toolCall("danger"), reply("done")] });
+    const r1 = await runAgentLoop("x", { tools: [danger] }, plain.deps);
+    assert.equal(r1.transcript[0].result, "ran:danger");
+    assert.equal("askWhy" in plain.calls.approve[0], false);
+    const thrower = makeDeps({ turns: [toolCall("danger"), reply("done")] });
+    thrower.deps.askWhy = () => { throw new Error("boom"); };
+    const r2 = await runAgentLoop("x", { tools: [danger] }, thrower.deps);
+    assert.equal(r2.transcript[0].result, "ran:danger", "it still asked, and ran on approval");
+    const cancelled = makeDeps({ turns: [toolCall("danger"), reply("done")], approve: () => ({ approved: false, cancelled: true }) });
+    cancelled.deps.askWhy = () => why;
+    const r3 = await runAgentLoop("x", { tools: [danger] }, cancelled.deps);
+    assert.doesNotMatch(r3.transcript[0].result, /removed by the person/);
+});

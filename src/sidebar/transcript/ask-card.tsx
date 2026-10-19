@@ -9,7 +9,7 @@ import type { AgentStep } from "../store";
 import { rev } from "../store";
 import type { StepAsk } from "../../contract";
 import { ASK_ID } from "../../approval-key";
-import { decidedSteps, sendApproval, askKey } from "../ui-kit";
+import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
 import { shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
@@ -59,6 +59,7 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                 return (
                     <div key={a.id} class="astep-approve ask">
                         <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : <>While it runs, this step asks for <b>{String(a.kind)}</b>:</>}</span>
+                        {a.why ? <div class="appr-note" {...cursorTipOn(a.why.detail)}><IconWarn /><span>{a.why.line}</span></div> : null}
                         <dl class="ask-facts">
                             {askLines(a).map((l, i) => (
                                 <div key={i} class={l.warn ? "warn" : undefined}>
