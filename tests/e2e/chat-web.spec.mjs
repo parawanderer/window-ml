@@ -3425,3 +3425,39 @@ test("normal text is light and emphasis medium, not the browser's 400 and 700", 
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- a bad ending's list dot: there until this device has shown you the session ---
+
+test("a capped session's list dot goes once it has been open here and stays gone across a reload; an unopened one, and a running one, keep theirs", async () => {
+    // The demo world stamps its sessions from `Date.now()` at load, so a reload would make every session newer than
+    // its mark, as if each had moved on. A real session's stamps are fixed; a fixed clock makes these so too.
+    const page = await browser.newPage({ viewport: DESKTOP });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.clock.setFixedTime(new Date("2026-10-19T12:00:00Z"));
+    await page.goto(server.url);
+    await page.locator(".chat").waitFor();
+    const shown = (key) => page.locator(`.chat-row[data-session="${key}"] .dot`).last().evaluate((e) => getComputedStyle(e).visibility);
+    // The UPGRADE: nothing stored, so every bad ending shows its dot, as it did before.
+    await expect.poll(() => shown(CAPPED)).toBe("visible");
+    await expect.poll(() => shown(CAPPED_HERE)).toBe("visible");
+
+    await row(page, CAPPED).click();
+    await expect.poll(() => shown(CAPPED)).toBe("hidden");
+    expect(await shown(CAPPED_HERE)).toBe("visible");
+    // A run still working is not news to be read: opening it leaves its dot.
+    await row(page, WATCHED).click();
+    await page.waitForTimeout(300);
+    expect(await shown(WATCHED)).toBe("visible");
+
+    // Back with no session open (the hash would open one, which would mark it again): the mark was stored.
+    await page.goto(server.url);
+    await page.locator(".chat").waitFor();
+    await expect(page.locator(".chat-row.active")).toHaveCount(0);
+    await expect.poll(() => shown(CAPPED_HERE)).toBe("visible");
+    expect(await shown(CAPPED)).toBe("hidden");
+    // The status words stay: only the dot that says "look" went.
+    await expect(page.locator(`.chat-row[data-session="${CAPPED}"] .chat-status`).last()).toHaveText("stopped at its step cap");
+    expect(errors).toEqual([]);
+    await page.close();
+});

@@ -486,6 +486,8 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row:hover { background: var(--panel); border-color: transparent; }
 .chat.calm .chat-row.active { background: var(--panel-2); border-color: transparent; }
 .chat.calm .chat-row .dot.ok { visibility: hidden; }
+/* A bad ending this device has already shown (read-marks.ts): its status words stay, the dot that says "look" goes. */
+.chat.calm .chat-row-wrap.read .chat-row .dot { visibility: hidden; }
 /* The agent marker in calm: the glyph and the word, in the row's quietest colour and its own case rather than
    shouted in caps. The badge shape is for the panel, where a list is dense and a run has to be told from a chat at a
    glance; a calm list has room for the word. Lowercase and the glyph are the phone's, which is where they read best. */

@@ -19,9 +19,10 @@ import { focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 import { placePins } from "./pin-order";
+import { markSeen, readMarksFrom, type ReadMarks } from "./read-marks";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -72,6 +73,14 @@ export const foldedRuntimes = signal<ReadonlySet<string>>(new Set());
  * is gone simply draws nothing, and stays stored in case the session comes back (an offline runtime reconnecting).
  */
 export const pinned = signal<ReadonlySet<string>>(new Set());
+
+/**
+ * Which sessions' bad endings this device has already shown you (read-marks.ts): a capped or failed session's list
+ * dot goes once its newest event has been on screen here, and comes back if the session moves on and ends badly again.
+ *
+ * THIS DEVICE'S, like the pins: the phone that was in a pocket has not seen what the laptop showed.
+ */
+export const readMarks = signal<ReadMarks>({});
 
 /**
  * Models kept at the top of every model list, by id.
@@ -154,6 +163,7 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
     const p = prefs.get<string[]>(PINNED_KEY);
     pinned.value = new Set(Array.isArray(p) ? p.filter((x) => typeof x === "string") : []);
+    readMarks.value = readMarksFrom(prefs.get<unknown>(READ_KEY));
     const pm = prefs.get<string[]>(PINNED_MODELS_KEY);
     pinnedModels.value = new Set(Array.isArray(pm) ? pm.filter((x) => typeof x === "string") : []);
     dockLayout.value = readDock(prefs.get<DockLayout>(DOCK_KEY));
@@ -278,6 +288,14 @@ export function orderPins(keys: readonly string[]): void {
     const out = placePins(pinned.value, keys);
     pinned.value = new Set(out);
     store?.set(PINNED_KEY, out);
+}
+
+/** Record that this device has shown session `key` up to its event at `lastTs`; a no-op (and no write) if it had. */
+export function markRead(key: string, lastTs: number): void {
+    const next = markSeen(readMarks.value, key, lastTs);
+    if (next === readMarks.value) return;
+    readMarks.value = next;
+    store?.set(READ_KEY, next);
 }
 
 /** Keep a model at the top of the lists on this device, or stop. */

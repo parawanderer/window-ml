@@ -31,7 +31,8 @@ import { setAppBadge } from "./app-badge";
 import { useNotifications } from "./notify";
 import { useFadeEdges } from "./fade-edges";
 import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
-import { ViewToggle, calm, codeSize, panelSize, listOpen, logOpen, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
+import { ViewToggle, calm, codeSize, panelSize, listOpen, logOpen, markRead, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
+import { UNTIL_READ } from "./read-marks";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
@@ -333,9 +334,23 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const byUser = useRef(0);
     // A citation's own pointerdown (or Enter) lands here BEFORE its click fires the jump, which sets `jumped` again.
     const markUser = () => { byUser.current = Date.now(); jumped.current = false; };
+    // READ, for the list's dot (read-marks.ts): this session's history is drawn, the end of it is on screen, and the
+    // tab is visible. Asked when any of those can change: the session or its newest event, a scroll, the tab showing.
+    const lastTs = summary?.lastTs ?? 0, status = summary?.status;
+    const noteRead = () => {
+        const el = scroller.current;
+        if (!ready || !el || !status || !UNTIL_READ.has(status) || document.visibilityState !== "visible") return;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) markRead(sessionKey, lastTs);
+    };
+    useEffect(() => {
+        noteRead();
+        document.addEventListener("visibilitychange", noteRead);
+        return () => document.removeEventListener("visibilitychange", noteRead);
+    }, [ready, sessionKey, lastTs, status]);
     const onScroll = () => {
         const el = scroller.current;
         if (!el) return;
+        noteRead();
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) { if (!jumped.current) stuck.current = true; }
         else if (Date.now() - byUser.current < USER_SCROLL_MS) { stuck.current = false; glide.current?.stop(); }
     };
