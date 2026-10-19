@@ -418,6 +418,24 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
 // The device is what decides which models there are, so it is picked FIRST and the model list follows it. It was a
 // bare `<select>` in a row of pills until the phone's own start screen had had a proper device pill for months, which
 // is the drift AGENTS.md's one-design-language rule exists to catch.
+// --- the start page: which device a new session starts on ---
+
+test("the start page opens on THIS browser's own runtime when it is one, though another is listed first", async () => {
+    // The demo lists the laptop first; this page is in the desk PC, which is itself a runtime.
+    const page = await browser.newPage({ viewport: DESKTOP });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.addInitScript(() => { globalThis.__chatFakeLocal = "desk-pc"; });
+    await page.goto(server.url);
+    await expect(page.locator(".chat-start-box")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Device:/ })).toHaveAccessibleName("Device: Desk PC");
+    // The laptop is still there to pick.
+    await page.getByRole("button", { name: /^Device:/ }).click();
+    await expect(page.getByRole("option", { name: /Work laptop/ }).or(page.getByRole("menuitemradio", { name: /Work laptop/ })).first()).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("the start page picks a device before a model, and starts the run on the one picked", async () => {
     const { page, errors } = await open(DESKTOP);
     // Nothing open IS the start page on a desktop; no compose button to press first.

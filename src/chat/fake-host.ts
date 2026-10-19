@@ -94,11 +94,14 @@ export class FakeHost implements SessionHost {
     private indexL = new Set<{ fn: (u: SessionIndexUpdate) => void; runtime?: RuntimeId }>();
     private subs = new Set<Sub>();
 
-    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number; streamMs?: number }) {
+    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number; streamMs?: number;
+        /** runtimes to report as this client's own (`isLocal`), as a page that hosts a runtime would */
+        local?: RuntimeId[] }) {
         this.self = opts.self ?? { id: "fake-device", kind: "device", name: "This device" };
         this._runtimes = opts.runtimes;
         this.latencyMs = opts.latencyMs ?? 0;
         this.streamMs = opts.streamMs ?? 0;
+        this.local = new Set(opts.local ?? []);
         for (const s of opts.sessions ?? []) this.addSession(s.summary, s.events);
         for (const a of opts.archived ?? []) this.archive.set(sessionKey(a.summary.id), { summary: a.summary, events: a.events ?? [] });
     }
@@ -249,6 +252,13 @@ export class FakeHost implements SessionHost {
         this.statusL.add(listener);
         this.later(() => { if (this.statusL.has(listener)) listener(this._status); });
         return () => { this.statusL.delete(listener); };
+    }
+
+    /** Runtimes this fake client counts as its own (`local`); writable, so a spec can make one local before it looks. */
+    local: Set<RuntimeId>;
+
+    isLocal(runtime: RuntimeId): boolean {
+        return this.local.has(runtime);
     }
 
     runtimes(listener: (runtimes: RuntimeInfo[]) => void): Unsubscribe {

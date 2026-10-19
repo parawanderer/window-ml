@@ -419,6 +419,36 @@ test("services: highlight goes to the open session's page, only where the runtim
     store.dispose();
 });
 
+// --- the device a new session starts on: this client's own runtime first ---
+
+test("starting a session: a runtime this client runs in comes first, whatever the host's order; otherwise the host's order", async () => {
+    const { startableOn } = await import("../src/chat/new-session.tsx");
+    const runtimes = [runtime("laptop"), runtime("watched", { grants: [{ scope: "view" }] }), runtime("box"), runtime("here")];
+    const ids = async (host) => { const store = new ChatStore(host); store.start(); await flush(8); return startableOn(store, "agent").map((r) => r.id); };
+    // THE DEFAULT, with no runtime of its own: the host's order, the watch-only one left out.
+    assert.deepEqual(await ids(new FakeHost({ runtimes })), ["laptop", "box", "here"]);
+    // Listed LAST, and still first, because it is this browser.
+    assert.deepEqual(await ids(new FakeHost({ runtimes, local: ["here"] })), ["here", "laptop", "box"]);
+    // One this client may not start on is not offered just for being local.
+    assert.deepEqual(await ids(new FakeHost({ runtimes, local: ["watched"] })), ["laptop", "box", "here"]);
+});
+
+test("starting a session: only the host that OWNS a runtime may call it local, never a second host listing the same id", () => {
+    // The direct host owns "laptop" and says it is not its own; a hub listing the same id claims it is. The hub loses.
+    const direct = new FakeHost({ runtimes: [runtime("laptop")] });
+    const hub = new FakeHost({ runtimes: [runtime("laptop"), runtime("box")], local: ["laptop"] });
+    const both = new CompositeHost([direct, hub]);
+    both.runtimes(() => {});
+    return flush(8).then(() => {
+        assert.equal(both.isLocal("laptop"), false);
+        assert.equal(both.isLocal("box"), false);
+        assert.equal(both.isLocal("nowhere"), false);
+        // The owner's own answer is passed through.
+        direct.local.add("laptop");
+        assert.equal(both.isLocal("laptop"), true);
+    });
+});
+
 // --- continuing a capped run: the client must offer what the runtime will accept ---
 
 test("Continue is offered only where the RUNTIME agrees the run stopped at its cap", async () => {

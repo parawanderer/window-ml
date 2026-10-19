@@ -21,6 +21,10 @@ import { fakePairing } from "../pairing/fake-pairing";
 // `?stream=<ms>` streams a chat reply a word or two every <ms> instead of answering at once: for watching a reply arrive.
 const streamMs = Number(new URLSearchParams(globalThis.location?.search ?? "").get("stream")) || 0;
 const host = demoHost(Date.now(), { latencyMs: Number((globalThis as { __chatFakeLatencyMs?: unknown }).__chatFakeLatencyMs) || 0, streamMs });
+// `__chatFakeLocal` (a runtime id, set by a spec's init script) makes that runtime this page's own, as in a browser
+// that is itself a runtime: the start page then defaults to it.
+const local = (globalThis as { __chatFakeLocal?: unknown }).__chatFakeLocal;
+if (typeof local === "string") host.local.add(local);
 // Scripting handle for the specs and for poking at the page by hand: emit events, restart a runtime, change grants.
 (globalThis as { __chatFake?: unknown }).__chatFake = host;
 // `?long=<n>` adds a chat of n turns and an agent run of n steps (long-session.ts): the transcript at a size the demo
