@@ -998,6 +998,10 @@ button.chat-page-go:hover { color: var(--fg); }
    and starts competing with it. */
 .chat { --code-fs: 12.5px; }
 .chat .code, .chat .md pre.code, .chat .jt-value { font-size: var(--code-fs); }
+/* A tool's raw arguments are a tree too (`RawArgs`, `.jt-args`), whose rows are 0.86em of what holds them: in calm
+   that is the 15px reading size, which drew `{"title": …}` a size above the OUT block beside it. */
+.chat .jt-args { font-size: var(--code-fs); }
+.chat .jt-args .jt-row { font-size: 1em; }
 /* The bench was built for the panel, where its editor is 0.88em of the base: give it the base that makes its code
    `--code-fs`, and its toolbar and tabs scale with it instead of with the page's reading size. */
 .chat-dock .bench, .dock-slot > .bench-top { font-size: calc(var(--code-fs) / .88); }
