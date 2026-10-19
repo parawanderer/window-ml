@@ -494,12 +494,13 @@ test("K3: every shipped manifest vector gets an envelope only when it claims no 
     }
 });
 
-test("K3: an older host (no landlockAbi key) is not sent an envelope; a K3 host is, on both platforms", () => {
+test("K3: an older host is not sent an envelope; a K3 host is, only when it can hold one", () => {
     assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true } }), false, "pre-K3: the key is absent");
     assert.equal(hostTakesEnvelope({ sandbox: { kind: "seatbelt", available: true } }), false, "pre-K3 on macOS too");
-    assert.equal(hostTakesEnvelope({ sandbox: { kind: "seatbelt", available: true, landlockAbi: null } }), true, "K3 on macOS: the key is present and null");
-    assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true, landlockAbi: 4 } }), true, "K3 on Linux: a number");
-    assert.equal(hostTakesEnvelope({ sandbox: { kind: null, available: false, reason: "no", landlockAbi: null } }), true, "present even when the sandbox is unavailable: the host still speaks the wire");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "seatbelt", available: true, landlockAbi: null } }), true, "K3 on macOS: seatbelt can hold any bound");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true, landlockAbi: 4 } }), true, "K3 on Linux with Landlock: a number");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: "bwrap", available: true, landlockAbi: null } }), false, "Linux without Landlock reports the same null as macOS, and cannot hold program-only");
+    assert.equal(hostTakesEnvelope({ sandbox: { kind: null, available: false, reason: "no", landlockAbi: null } }), false, "no sandbox kind: nothing to hold a bound");
 });
 
 test("K3: done.envelope is the only truth; an absent one is unknown, never narrow", () => {

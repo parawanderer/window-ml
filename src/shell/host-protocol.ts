@@ -35,10 +35,16 @@ export type HostEnvelope = { write: "roots" | "none"; exec: "any" | "program-onl
  *  unknown, never as narrow. */
 export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only" };
 
-/** Whether this host understands `envelope` on `start`/`pipe`: K3 put `landlockAbi` on `hello.sandbox`, present on
- *  both platforms (`null` on macOS). An older host has `sandbox` without that key and silently ignores `envelope`. */
+/** Whether this host understands AND can hold `envelope` on `start`/`pipe`. K3 put `landlockAbi` on `hello.sandbox`,
+ *  present on both platforms (`null` on macOS); an older host has `sandbox` without that key and silently ignores
+ *  `envelope`. Key presence is only the wire test: the host still has to be able to APPLY the bound. Seatbelt always
+ *  can; bwrap needs a numeric Landlock ABI, and without one it reports `landlockAbi: null` — the same null macOS
+ *  reports — and refuses anything narrower than today's floor (`can_hold` in window-ml-host `src/sandbox.rs`). Every
+ *  envelope the worker derives is `exec: "program-only"`, so that refusal would fail the call `SandboxFailed`. */
 export function hostTakesEnvelope(hello: Pick<HostHello, "sandbox">): boolean {
-    return hello.sandbox !== null && typeof hello.sandbox === "object" && Object.hasOwn(hello.sandbox, "landlockAbi");
+    const s = hello.sandbox;
+    if (s === null || typeof s !== "object" || !Object.hasOwn(s, "landlockAbi")) return false;
+    return s.kind === "seatbelt" || typeof s.landlockAbi === "number";
 }
 
 /** The session's settings, from the person's DevTools Settings: never from a page or the model. */

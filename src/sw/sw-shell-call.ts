@@ -146,10 +146,13 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                 // Listening BEFORE the start: a cancel that lands while the host is starting it still reaches it (finding C).
                 const onAbort = () => { void h.client.cancel(id).catch(() => { /* not started yet, or already done */ }); };
                 ctx.signal.addEventListener("abort", onAbort);
-                // The narrowest envelope the approved claims permit, and only to a host that understands it (K3's
-                // `hello.sandbox.landlockAbi`). The script's word is never an input: `envelopeFor` reads only the
-                // facts the person or the policy approved. Absent = today's floor, never a silent widening.
-                asked = hostTakesEnvelope(h.hello) ? envelopeFor(f) : undefined;
+                // The narrowest envelope the approved claims permit, and only to a sandboxed call on a host that both
+                // understands it (K3's `hello.sandbox.landlockAbi`) and can hold it. An unsandboxed call is refused
+                // an envelope outright (window-ml-host `src/session.rs`: "this call is not sandboxed, so it cannot
+                // hold an envelope"), and `hostTakesEnvelope` already excludes a bwrap without Landlock. The script's
+                // word is never an input: `envelopeFor` reads only the facts the person or the policy approved.
+                // Absent = today's floor, never a silent widening.
+                asked = f.placement === "host-sandbox" && hostTakesEnvelope(h.hello) ? envelopeFor(f) : undefined;
                 try {
                     try { await h.client.start(id, asked); }
                     catch (e) {

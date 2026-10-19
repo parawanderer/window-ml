@@ -278,6 +278,45 @@ test("PinChanged on a call the PERSON approved is refused, naming both hashes, n
     assert.deepEqual([log[0].detail.approved, log[0].detail.now], [A, B]);
 });
 
+// --- the sandbox envelope (K3): sent only to a sandboxed call on a host that can hold it ---
+
+test("K3: an unsandboxed call is sent no envelope — the host refuses one — and still runs", T, async () => {
+    const host = fakeNativeHost({ sandbox: false, landlockAbi: null });
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.match(r.ran, /-plain$/);
+    const start = host.calls.find((c) => c.call === "start");
+    assert.ok(start, "the call started");
+    assert.equal("envelope" in start.args, false, "no envelope key on an unsandboxed call");
+});
+
+test("K3: a bwrap host without Landlock is sent no envelope — it cannot hold program-only — and still runs", T, async () => {
+    const host = fakeNativeHost({ sandboxKind: "bwrap", landlockAbi: null });
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.match(r.ran, /-sandbox$/);
+    const start = host.calls.find((c) => c.call === "start");
+    assert.ok(start, "the call started");
+    assert.equal("envelope" in start.args, false, "no envelope key when Landlock is unavailable");
+});
+
+test("K3: a K3 host is sent the envelope on start, and done reports what applied", T, async () => {
+    for (const [sandboxKind, landlockAbi] of [["seatbelt", null], ["bwrap", 4]]) {
+        const host = fakeNativeHost({
+            sandboxKind, landlockAbi,
+            done: () => ({ out: "x\n", err: "", code: 0, envelope: { write: "none", exec: "program-only" } }),
+        });
+        const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
+        const r = valueOf(results[0]);
+        assert.equal(r.ok, true, `${sandboxKind}: ${JSON.stringify(r)}`);
+        const start = host.calls.find((c) => c.call === "start");
+        assert.deepEqual(start.args.envelope, { write: "none", exec: "program-only" }, sandboxKind);
+        assert.deepEqual(r.envelope, { write: "none", exec: "program-only" }, sandboxKind);
+    }
+});
+
 // --- what the script is and is not given ---
 
 test("a script that does not name ml.sh gets none, even in an isolated world reached by another key", T, async () => {
