@@ -14,12 +14,12 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { envelopeFor, manifestFor, parseShRun, planSpawn, shFacts, shOut, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
+import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
 import { judgeCall } from "./sw-policies";
-import { raiseAsk } from "./sw-asks";
+import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 
@@ -128,7 +128,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
             let facts = await spawn();
             let f: ShFacts;
-            let verdict: { by: string; waitedMs?: number };
+            let verdict: { by: string; waitedMs?: number; askId?: string };
             let done;
             let asked: HostEnvelope | undefined;
             for (let attempt = 0; ; attempt++) {
@@ -180,7 +180,14 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             recordRunLog(ctx.runId, { ...(result.ok ? {} : { level: "warn" as const }), subsystem: "shell", kind: "run", reason: verdict.by === "person" ? "person" : verdict.by === "builtin" ? "builtin" : "policy",
                 ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
                     ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
-                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}) } });
+                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}), ...envelopeDetail(result) } });
+            if (result.protectedChanged?.length) {
+                // Its own record, at warn: what someone reading the log after a surprise looks for.
+                recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "protected-changed", reason: f.placement,
+                    detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated),
+                        ...(result.protectedChangedTruncated ? { truncated: true } : {}) } });
+            }
+            if (verdict.askId) noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
             const k = `${ctx.runId}:${ctx.seq}`;
             spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result)]);
             if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
@@ -204,14 +211,30 @@ const denyText = (by: unknown): string => `the policy "${(by as { label?: string
  * @param ctx the step
  * @param f the call's facts
  */
-async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; waitedMs?: number } | { refused: string }> {
+async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; waitedMs?: number; askId?: string } | { refused: string }> {
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(f), f.placement);
     if (j.decision === "deny") return { refused: `ml.sh: ${denyText(j.by)}` };
     if (j.decision === "allow") return { by: j.by === "builtin" ? "builtin" : `policy "${(j.by as { label?: string } | undefined)?.label ?? "?"}"` };
     // No policy answers (or the store is not loaded yet): the person does, on a card inside the running step.
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}` };
-    return { by: "person", waitedMs: o.waitedMs };
+    return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };
+}
+
+/**
+ * The run record's words for the sandbox and the protected names: what was asked (`floor` when nothing was sent), what
+ * the host applied (`unknown` when it reported nothing), a mismatch between the two, and how many protected names
+ * changed during the call (`unknown` from a host that reported none).
+ * @param r the call's result
+ */
+function envelopeDetail(r: ShResult): Record<string, string | number | boolean> {
+    return {
+        asked: r.asked ? envelopeText(r.asked) : "floor",
+        applied: r.envelope ? envelopeText(r.envelope) : "unknown",
+        ...(envelopeMismatch(r.envelope, r.asked) ? { envelopeMismatch: true } : {}),
+        protectedChanged: r.protectedChanged ? r.protectedChanged.length : "unknown",
+        ...(r.protectedChangedTruncated ? { protectedChangedTruncated: true } : {}),
+    };
 }
 
 /**

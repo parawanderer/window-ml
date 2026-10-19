@@ -1389,14 +1389,16 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .astep-approve .appr-ask b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* A NESTED ASK's facts (ask-card.tsx): what the call will run, where and under what sandbox, as the worker resolved it.
    One row per fact, the label in a narrow column; a fact worth a second look carries the warning icon. */
-.astep-approve .ask-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; font-size: 0.82em; }
-.astep-approve .ask-facts > div { display: contents; }
-.astep-approve .ask-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
-.astep-approve .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
-.astep-approve .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-.astep-approve .ask-facts .warn dd { color: var(--notice); }
-/* An answered nested ask: one line under its step. */
+.astep-approve .ask-facts, .astep-ask-done .ask-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; font-size: 0.82em; }
+.astep-approve .ask-facts > div, .astep-ask-done .ask-facts > div { display: contents; }
+.astep-approve .ask-facts dt, .astep-ask-done .ask-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
+.astep-approve .ask-facts dt svg, .astep-ask-done .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
+.astep-approve .ask-facts dd, .astep-ask-done .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.astep-approve .ask-facts .warn dd, .astep-ask-done .ask-facts .warn dd { color: var(--notice); }
+/* An answered nested ask: one line under its step, and once an allowed call ran, what it reported (its own size: the
+   line is already small). */
 .astep-ask-done { font-size: 0.8em; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
+.astep-ask-done .ask-facts { font-size: 1em; margin: 2px 0 0 12px; }
 .astep-ask-done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
 .astep-ask-done.no { color: var(--err); }
 .appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }
