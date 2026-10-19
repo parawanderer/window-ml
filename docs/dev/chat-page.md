@@ -706,6 +706,13 @@ retention and eviction, and it reaches every device as an upsert, so a pin made 
 back rather than left claiming a pin the runtime refused. A runtime with no `session.pin` keeps the device's pin
 alone.
 
+**A bad ending's dot lasts until it has been read** (`read-marks.ts`, `readMarks`, `view.read`). A capped, failed,
+cancelled or interrupted session's list dot hides in calm view once this device has shown you its newest event:
+on the page, the open pane is at the end of the transcript in a visible tab; on the phone, the session is open over
+the list (`mobile/src/read-marks.ts`). The mark is that event's `lastTs`, so a run resumed that ends badly again
+gets its dot back. The status words stay. A running or waiting dot never hides: that is work, not news. Per device,
+like a pin; a device with no marks draws every dot, as before.
+
 **Earlier events** (`EarlierEdge`, chat-app.tsx) draw the store's `earlier` state at the top of a transcript that does
 not reach its start: an older page is fetched as the edge scrolls into view, with the reading position held from the
 bottom so the text does not jump; a failed page says the runtime's reason there with "Try again"; and TRUNCATED (the

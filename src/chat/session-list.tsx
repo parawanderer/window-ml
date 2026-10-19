@@ -22,7 +22,8 @@ import { openSession, mainView, openSearch } from "./nav";
 import { startableOn, type StartKind, StartMenu } from "./new-session";
 import { PageChip } from "./page-chip";
 import { isPinned, RowMenu } from "./row-menu";
-import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins } from "./view-mode";
+import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins, readMarks } from "./view-mode";
+import { seenEnding } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
 
@@ -113,8 +114,11 @@ function IndexRow({ store, s, rt, active, moved, showRuntime, showPin, reveal }:
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
+    // A bad ending already shown on this device keeps its words ("failed", "stopped at its step cap") and loses its
+    // dot in calm view: the dot is for what you have not seen yet (read-marks.ts).
+    const read = seenEnding(s.status, s.lastTs, readMarks.value, key);
     return (
-        <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
+        <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}${read ? " read" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
                 <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
