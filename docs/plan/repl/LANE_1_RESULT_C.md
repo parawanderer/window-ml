@@ -69,8 +69,14 @@ PR #757, branch `repl-lane1/ml-wiring`.
   peeled every `{"$": …}` layer. Result: data `{"$": 1}` arrived as `1`, and data `{"$secret": "s"}` was indistinguishable
   from a handle after the peel and was refused as `SecretHandle`. Now `toWire` takes `wrap = false` for wire-form input,
   `fromWire` unwraps exactly one level and treats the wrapped object itself as data, and `handlesIn` looks for `$secret`
-  on the wire form, skipping the keys of a wrapped object but not the values inside it. A real handle still refuses at any
+  on the wire form, skipping only the keys of the dict an OUTERMOST wrap holds (a wrap within a wrap's contents is
+  searched in full, so nested tag-shaped data that holds `$secret` fails closed). A real handle still refuses at any
   depth. This touches the secret check, so it is for the red-team pass to read.
+- **Two holes in that search, closed** (Mimo's failing-first tests on #757). A key named `__proto__` was assigned with
+  `out[k] = …`, which runs the prototype setter, so the copy lost the key and the handle under it went unseen: every
+  copy in `toWire`/`fromWire` now defines its keys as own properties. And a handle inside a wrap that was itself
+  inside a wrap's contents was skipped: only the dict an outermost wrap holds is exempt now. Tests in
+  `tests/ml-wire.test.mjs`, beside tests that the depth bound and the cycle check refuse before the search runs.
 - **The reset line is stdout, not an error.** It prefixes the cell's own output, which is where the spec put it.
 - **A run's dict has its own prelude mode** (`wrapUserCode(..., "run")`), found by CI's e2e on the first push: running
   it in the bench's mode left `img`/`img_np` and the tables undecoded and skipped the `str`/`None` coercion of the

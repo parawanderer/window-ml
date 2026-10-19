@@ -199,3 +199,117 @@ test("a real $secret handle in a call's args is refused as SecretHandle, at any 
     assert.deepEqual(ran, [], "no member saw a handle");
     assert.equal((await serveWireCall(req("use", [{ k: 1 }]), ctxOf(members))).value, 1, "positive control: plain data runs the member");
 });
+
+// --- the handle search reads a finite copy: nesting past the bound and cycles are refused first ---
+
+test("an argument nested past the depth bound is refused as BadRequest before any handle search, and its member never runs", async () => {
+    let deep = { $secret: "gh" };
+    for (let i = 0; i < 80; i++) deep = { a: deep };
+    let shallow = { $secret: "gh" };
+    for (let i = 0; i < 10; i++) shallow = { a: shallow };
+    const ran = [];
+    const members = { use: { run: (...x) => { ran.push(x); return 1; } } };
+    assert.equal((await serveWireCall(req("use", [shallow]), ctxOf(members))).error?.code, "SecretHandle", "positive control: within the bound, the handle is found");
+    const a = await serveWireCall(req("use", [deep]), ctxOf(members));
+    assert.equal(a.error?.code, "BadRequest");
+    assert.match(a.error.message, /nests too deeply/);
+    assert.deepEqual(ran, []);
+});
+
+test("a cyclic argument is refused as BadRequest, and its member never runs", async () => {
+    const cyc = { $: {} };
+    cyc.$.self = cyc;
+    const ran = [];
+    const a = await serveWireCall(req("use", [cyc]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
+    assert.equal(a.error?.code, "BadRequest");
+    assert.match(a.error.message, /cyclic/);
+    assert.deepEqual(ran, []);
+});
+
+test("a key named __proto__ crosses as an own key, in and out", async () => {
+    const v = JSON.parse('{"__proto__": {"x": 1}, "k": 1}');
+    const seen = [];
+    const a = await serveWireCall(req("echo", [v]), ctxOf({ echo: { run: (x) => { seen.push(x); return x; } } }));
+    assert.equal(Object.getPrototypeOf(seen[0]), Object.prototype, "the member's copy keeps the plain prototype");
+    assert.deepEqual(Object.keys(seen[0]), ["__proto__", "k"], "the member sees the key as data");
+    assert.deepEqual(Object.getOwnPropertyDescriptor(seen[0], "__proto__").value, { x: 1 });
+    assert.deepEqual(Object.keys(a.value), ["__proto__", "k"], "and the answer carries it back as an own key");
+});
+
+// --- a real $secret handle is refused at every wrap shape (handlesIn) ---
+
+test("property: a real $secret handle is refused at every wrap shape, and its member never runs", async () => {
+    const H = { $secret: "gh" };
+    const shapes = {
+        "top": H,
+        "list of dicts": [{ a: { b: H } }],
+        "beside a $ key": { $: 1, $secret: "gh" },
+        "array under $": { $: [H] },
+        "inside a $ wrap's value": { $: { v: H } },
+        "two wraps deep": { $: { $: H } },
+        "under constructor": { constructor: H },
+        "depth 3 under a non-$ key": { a: { b: { c: H } } },
+        "array of wraps": [{ $: { v: H } }],
+    };
+    const ran = [];
+    for (const [label, v] of Object.entries(shapes)) {
+        const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
+        assert.equal(a.error?.code, "SecretHandle", label);
+        assert.match(a.error.message, /\(gh\)/, `${label}: the handle's name is told, never a value`);
+    }
+    assert.deepEqual(ran, [], "no member saw a handle");
+    assert.equal((await serveWireCall(req("use", [{ k: 1 }]), ctxOf({ use: { run: () => 1 } }))).value, 1, "positive control");
+});
+
+test("property FAILS TODAY: an own __proto__ key hides a handle from handlesIn and pollutes the copy's prototype", async () => {
+    // toWire's `out[k] = …` invokes the __proto__ setter for k === "__proto__", so the copy loses the key, its
+    // [[Prototype]] becomes the attacker value (copied.$secret === "gh" via inheritance), handlesIn sees no own
+    // $secret, and the member runs. The member's own copy is clean (fromWire copies own keys only) — the break is
+    // the missed refusal and the attacker-controlled prototype on the wire-form args object.
+    const v = JSON.parse('{"__proto__": {"$secret": "gh"}, "k": 1}');
+    const ran = [];
+    const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
+    assert.equal(a.error?.code, "SecretHandle", "a handle under an own __proto__ key is still a handle");
+    assert.deepEqual(ran, []);
+    // And the copy must not carry attacker data on its prototype.
+    const copy = toWire([v], 0, new Set(), false);
+    assert.equal(Object.getPrototypeOf(copy[0]), Object.prototype, "toWire's copy keeps the plain prototype");
+    assert.equal(copy[0].$secret, undefined, "no inherited $secret on the copy");
+});
+
+test("property FAILS TODAY: a handle three wrap levels down escapes handlesIn", async () => {
+    // handlesIn's wrap branch looks at the values inside ONE `{ "$": {…} }` and, for a nested wrap, again one
+    // level; at three `$` levels the innermost `$secret` is never reached. A facade that wraps tag-shaped data at
+    // every level can put a real handle there.
+    const v = { $: { $: { $: { $secret: "gh" } } } };
+    const ran = [];
+    const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
+    assert.equal(a.error?.code, "SecretHandle", "a handle at any wrapping depth is still a handle");
+    assert.deepEqual(ran, []);
+});
+
+// --- after the one-level unwrap, data is data ---
+
+test("property: a handle-shaped dict that arrived as wrapped data reaches the member as a plain dict, and is not re-read as a handle", async () => {
+    const seen = [];
+    const echo = { echo: { run: (...x) => { seen.push(x); return x[0]; } } };
+    // Wire form of the cell's data { $secret: "s" }: the facade wraps tag-shaped data one level.
+    const a = await serveWireCall(req("echo", [{ $: { $secret: "s" } }]), ctxOf(echo));
+    assert.equal(a.error, undefined, "wrapped handle-shaped DATA is not refused as a handle");
+    assert.deepEqual(seen, [[{ $secret: "s" }]], "the member gets the unwrapped dict, with its own $secret key");
+    assert.equal(Object.prototype.hasOwnProperty.call(seen[0][0], "$secret"), true, "it is a plain own key, not a live handle");
+    assert.deepEqual(a.value, { $: { $secret: "s" } }, "the answer wraps it again on the way out; nothing re-tags it");
+});
+
+test("property: the dual of the over-peel bug — a double wrap of DATA unwraps exactly one level", async () => {
+    const seen = [];
+    const echo = { echo: { run: (...x) => { seen.push(x); return null; } } };
+    await serveWireCall(req("echo", [{ $: { $: 1 } }]), ctxOf(echo));
+    assert.deepEqual(seen, [[{ $: 1 }]], "one level unwrapped: the member sees a dict with a $ key, not the bare value");
+    seen.length = 0;
+    await serveWireCall(req("echo", [{ $: { $: { $k: 2 } } }]), ctxOf(echo));
+    assert.deepEqual(seen, [[{ $: { $k: 2 } }]], "a triple wrap reaches the member as a double: still one level");
+    seen.length = 0;
+    await serveWireCall(req("echo", [{ $: { $: { $secret: "s" } } }]), ctxOf(echo));
+    assert.equal(seen.length, 0, "a handle inside the wraps is refused at any depth, and is not this property");
+});
