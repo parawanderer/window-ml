@@ -234,7 +234,7 @@ export function removalWarning(d: { label?: string; mayRevoke?: boolean }): stri
  * for a browser and for a desktop host (docs/spec/RUNTIME_HUB.md, the lane 8 ruling). A person pairing a browser
  * runtime turns it on, knowingly. Every other role keeps the library's default.
  */
-export function phoneGrant(found: Pick<FoundOffer, "role" | "grant">): Grant {
+export function phoneGrant(found: { role: string; grant: Grant }): Grant {
     return found.role === "runtime" ? { ...found.grant, mayPair: false } : { ...found.grant };
 }
 
