@@ -43,7 +43,7 @@ The phone shows only what the runtime proved: a QR whose keys do not match the o
 
 ## Decisions that are not mine
 
-- **D1 (Shane): should a desktop host be offered `mayPair` at all?** Today every `ROLE_RUNTIME` gets `mayPair: true` because the browser runtime needs it to re-sign certificates. A host does not. Proposed default if the wire could tell them apart: off. The wire cannot (one role), so the choice is either the phone defaults it off for any runtime and the extension is paired from the page as now, or a `@hub-compat` request for a role or a flag in the offer. I will implement the switch and show it; the default stays as today until ruled on.
+- **D1, ruled by the coordinator (#815):** the phone defaults `mayPair` OFF for every runtime offer and shows the switch; its line says a browser runtime without it cannot re-sign certificates. No `@hub-compat` request (D3 dropped). Built in #816.
 - **D2: `mayRevoke` to a host.** A host as the sole revocation signer is a poor fit (a laptop that sleeps). Proposed: unchanged rule (first runtime signs), but the new sentence makes it visible.
 - **D3 (`@hub-compat`, not built here): a host-specific role or offer flag** for D1. Out of lane; mailed to `repl-specs` with this note.
 

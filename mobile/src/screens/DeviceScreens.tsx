@@ -164,7 +164,7 @@ export function PairScreen() {
                 ) : found ? (
                     <Card>
                         <Text style={[s.title, { color: p.fg }]}>{found.label}</Text>
-                        <Text style={[s.body, { color: p.fgDim }]}>{found.role === "runtime" ? "A runtime, a browser or a desktop host, waiting to join. The name above is its own word, not checked." : roleName(found.role)[0].toUpperCase() + roleName(found.role).slice(1) + " waiting to join."}</Text>
+                        <Text style={[s.body, { color: p.fgDim }]}>{found.role === "runtime" ? "A runtime, a browser or a desktop host, waiting to join. The name above is its own word, not checked." : roleName(found.role)[0].toUpperCase() + roleName(found.role).slice(1) + " waiting to join. The name above is its own word, not checked."}</Text>
                         {found.checked ? (
                             <Text style={[s.body, { color: p.ok }]}>Scanned: the QR code named this device's keys, and they match.</Text>
                         ) : (

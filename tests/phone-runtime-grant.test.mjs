@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { phoneGrant, receivesLines } = await import("../src/pairing/api.ts");
+const { phoneGrant, receivesLines, pairingProblem } = await import("../src/pairing/api.ts");
 
 const base = { scopes: [], mayPair: true, mayRevoke: false, validityMs: 1 };
 
@@ -37,4 +37,21 @@ test("the lines say what the grant sends, for every mayPair x mayRevoke x signer
 
 test("the off line names what a browser runtime loses", () => {
     assert.match(receivesLines({}, { scopes: [], mayPair: false, mayRevoke: false }).join(" "), /re-sign other devices' certificates/);
+});
+
+// --- what the phone says when the runtime's proof fails ---
+test("each failed-proof reason says nothing was paired, says what to do, and is its own sentence", () => {
+    const seen = new Set();
+    for (const reason of ["chain", "not-mine", "not-my-agreement-key", "wrong-role"]) {
+        const t = pairingProblem({ reason, message: "HUB TEXT" });
+        assert.match(t, /nothing was paired/);
+        assert.match(t, /start again/);
+        assert.doesNotMatch(t, /HUB TEXT/, "a hub's words never reach the screen");
+        seen.add(t);
+    }
+    assert.equal(seen.size, 4);
+});
+
+test("a name shown in the signer line is marked as the device's own word", () => {
+    assert.match(receivesLines({ signer: "Work laptop" }, { scopes: [], mayPair: false, mayRevoke: false }).join(" "), /gave itself, unchecked/);
 });

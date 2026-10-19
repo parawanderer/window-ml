@@ -25,7 +25,8 @@ appId: dev.wander.windowml
 # A runtime is not given the client's six switches or its named grants.
 - assertNotVisible: "Watch only"
 - assertVisible: "It cannot add devices.*"
-- assertVisible: "“Work laptop” signs removals for this account.*"
+- assertVisible: "“Work laptop” \\(the name that device gave itself, unchecked\\) signs removals.*"
+- assertVisible: "A runtime, a browser or a desktop host, waiting to join. The name above is its own word, not checked."
 # Turning the switch on changes the card's own line, because both are read from the one grant.
 - tapOn:
     id: "mayPair"
