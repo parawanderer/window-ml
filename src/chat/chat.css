@@ -430,6 +430,9 @@ html, body, #root { height: 100%; }
 /* Whatever follows the text (the model, else send) starts the right-hand group. */
 .chat .composer-row.stacked > .cinput + * { margin-left: auto; }
 .chat.calm .composer-row.stacked { border-radius: 20px; padding: 8px 9px 6px; }
+/* A placeholder too long for the row ends in an ellipsis on ONE line: wrapped, it made the empty box a line and a half
+   tall with its second line cut off (an empty box never stacks, so it has nowhere else to go). */
+.chat .composer-row .cinput::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
 .chat .composer-foot .chint { margin-right: 14px; }
 .chat .composer-foot .chint.gone { margin-right: 0; }

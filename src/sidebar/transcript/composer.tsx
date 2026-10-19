@@ -92,7 +92,10 @@ export function useStackOnWrap(area: { current: HTMLTextAreaElement | null }, te
         if (!stacked) {
             const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
             const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-            if (text.includes("\n") || el.scrollHeight > padY + line * 1.5) { inlineW.current = el.clientWidth - padX; setStacked(true); }
+            // Only TEXT stacks. An empty textarea's `scrollHeight` counts its wrapped PLACEHOLDER, and an empty stacked box
+            // unstacks below, so the two flipped every render (the composer jumped up and down at the widths where the
+            // placeholder wraps, as when a window is narrowed towards the phone layout).
+            if (text && (text.includes("\n") || el.scrollHeight > padY + line * 1.5)) { inlineW.current = el.clientWidth - padX; setStacked(true); }
             return;
         }
         if (!text || (!text.includes("\n") && textWidth(text, cs) <= inlineW.current - UNSTACK_SLACK_PX)) setStacked(false);

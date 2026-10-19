@@ -3405,6 +3405,58 @@ test("a paragraph gets the box's full width, the controls drop under it, and a s
     await page.close();
 });
 
+// The PLACEHOLDER is not text. Chrome counts a wrapped placeholder in an empty textarea's `scrollHeight`, so at a width
+// where it wraps beside the controls the box stacked, an empty stacked box unstacks, and the two flipped every render:
+// the composer, and the transcript above it, jumped up and down for as long as the box stayed empty. A placeholder long
+// enough to wrap at any width stands in for the screen size that showed it.
+test("an empty box whose placeholder would wrap stays on one row, still", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const row = page.locator(".composer .composer-row");
+    const box = row.locator(".cinput");
+    await box.evaluate((el) => { el.placeholder = "Send a message (or paste an image) to continue, ".repeat(6); });
+    // An edit makes the box re-measure, and clearing it leaves it empty with only the placeholder in it.
+    await box.fill("x");
+    await row.evaluate((el) => {
+        window.__flips = 0;
+        new MutationObserver(() => { window.__flips++; }).observe(el, { attributes: true, attributeFilter: ["class"] });
+    });
+    await box.fill("");
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(() => window.__flips)).toBeLessThanOrEqual(1);
+    await expect(row).not.toHaveClass(/stacked/);
+    // …and the placeholder stays on one line: the empty box is no taller than one line of text.
+    const empty = await box.evaluate((el) => el.getBoundingClientRect().height);
+    await box.fill("x");
+    expect(empty).toBeLessThanOrEqual(await box.evaluate((el) => el.getBoundingClientRect().height));
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The way it was found: resizing the window across 760px (NARROW_PX), where the page switches between one pane and two
+// and draws the session's composer again, empty. Just above it the two-pane composer is narrow enough for the
+// placeholder to wrap. Down to phone width and back up, each width held long enough for a loop to show.
+test("resizing the window across the pane breakpoint never sets the empty box flipping", async () => {
+    const { page, errors } = await open({ width: 960, height: 800 }, `#/s/${encodeURIComponent(CHAT)}`);
+    await expect(page.locator(".composer .cinput")).toBeVisible();
+    await page.evaluate(() => {
+        window.__flips = 0;
+        new MutationObserver((ms) => { for (const m of ms) if (m.target.classList?.contains("composer-row")) window.__flips++; })
+            .observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
+    });
+    const flips = [];
+    const widths = [];
+    for (let w = 900; w >= 600; w -= 20) widths.push(w);
+    for (const w of [...widths, ...[...widths].reverse()]) {
+        await page.setViewportSize({ width: w, height: 800 });
+        const before = await page.evaluate(() => window.__flips);
+        await page.waitForTimeout(150);
+        flips.push([w, (await page.evaluate(() => window.__flips)) - before]);
+    }
+    expect(flips.filter(([, n]) => n > 1), "widths where the box kept flipping").toEqual([]);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("the busy view draws no fold rails: it keeps the panel's own disclosures", async () => {
     const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80", { "view.calm": false });
     await page.locator('[data-astep-seq="1"] .astep-head').click();
