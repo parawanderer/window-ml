@@ -5,10 +5,12 @@
 
 /**
  * A fake host. Pass `onNative: host.onNative` to loadBackground.
- * @param opts `sandbox`: whether a sandbox is available (default true); `protocol` (default 1); `facts(args)`: the
- *   spawn answer for a call (default: the argv resolved under /usr/bin, everything in the root); `done(id, spawnArgs)`: the
- *   done event (default exit 0 with "out\n"); `refuse`: { call: code } answers that call with an error; `startError(id,
- *   n)`: an error code for the n-th `start` (0-based), as `PinChanged` when a hashed script changed since its spawn
+ * @param opts `sandbox`: whether a sandbox is available (default true); `protocol` (default 1); `landlockAbi`: the
+ *   `hello.sandbox.landlockAbi` value (a number on Linux, `null` on macOS); absent = pre-K3 (the key is not sent);
+ *   `facts(args)`: the spawn answer for a call (default: the argv resolved under /usr/bin, everything in the root);
+ *   `done(id, spawnArgs)`: the done event (default exit 0 with "out\n"); `refuse`: { call: code } answers that call
+ *   with an error; `startError(id, n)`: an error code for the n-th `start` (0-based), as `PinChanged` when a hashed
+ *   script changed since its spawn
  */
 export function fakeNativeHost(opts = {}) {
     const calls = [];
@@ -27,7 +29,7 @@ export function fakeNativeHost(opts = {}) {
                 calls.push(msg);
                 const { seq, call, args = {} } = msg;
                 if (opts.refuse?.[call]) return reply({ seq, error: { code: opts.refuse[call], message: `${call} refused` } });
-                if (call === "hello") return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox: { kind: "seatbelt", available: opts.sandbox !== false }, modes: ["host"] } });
+                if (call === "hello") return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox: { kind: "seatbelt", available: opts.sandbox !== false, ...(opts.landlockAbi !== undefined ? { landlockAbi: opts.landlockAbi } : {}) }, modes: ["host"] } });
                 if (call === "configure") return reply({ seq, value: { roots: args.roots.map((r) => ({ given: r, path: r })), sandboxed: args.sandbox !== false && opts.sandbox !== false } });
                 if (call === "spawn") {
                     const id = `c${++n}`;
