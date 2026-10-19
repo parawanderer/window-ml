@@ -106,6 +106,12 @@ report-only tripwire below is what covers the gap's threat; the host never rever
 renamed name there, files included: Landlock cannot withhold an absent FILE either, lane 4's finding), and every
 sandboxed call reports `protectedChanged` in `done`, report-only (`SHELL.md`, the host's security list). The tripwire is
 **K3b**, lane 4's, host side then extension side, branched after host #12 merges; the generalist reviews.
+**K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
+`git diff --output=.envrc` ran free) is window-ml #788, lane 4's, ahead of K3b: the top-level names of a root are
+outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
+acceptance tests come first unchanged; flaky-3f reviews, never the red team (rule 10). Host follow-up, unassigned: the
+host's manifest reader (`ProgramEffect`, a closed enum) needs a `WriteNames` variant at the next vector sync; until
+then the sync fails closed on the new word, which is the right failure.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
