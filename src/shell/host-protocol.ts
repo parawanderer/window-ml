@@ -51,6 +51,12 @@ export interface HostSpawn {
     walkCwd?: boolean;
     repoArg?: number;
     timeoutMs?: number;
+    /** Who the call is for, opaque to the host and listed by its `status` (host 0.3.0): the run and the step's seq. */
+    owner?: { run: string; seq: number };
+    /** The call's memory bound in bytes of physical footprint, clamped by the host to the person's ceiling (0.3.0). */
+    memoryBound?: number;
+    /** What happens to the call when the port closes: killed (the host's default) or kept as an orphan until a deadline. */
+    onOwnerLoss?: "kill" | "orphan";
 }
 
 /** One resolved path argument. `containsSecret` only for a walked one: null past the walk's cap. */
@@ -84,6 +90,8 @@ export interface HostFacts {
     sandboxed: boolean;
     placement: HostPlacement;
     expiresInMs: number;
+    /** The bound the call will run under, after clamping (host 0.3.0; absent from an older host). */
+    memoryBound?: number;
 }
 
 /** One stream of a finished call: a pointer to the bytes the host holds, or why it could not keep them. */
@@ -102,6 +110,11 @@ export interface HostDone {
     stdout: HostStream;
     stderr: HostStream;
     error?: { code: string; message: string };
+    /** `"oom"`: the call passed its memory bound and the host killed it (host 0.3.0). */
+    killed?: "oom" | null;
+    /** The highest physical footprint the host measured, in bytes, and the bound it ran under (host 0.3.0). */
+    peakFootprint?: number;
+    memoryBound?: number;
 }
 
 /** `read`'s answer: a range of held output, as base64 bytes. */

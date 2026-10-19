@@ -90,7 +90,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const cwd = h.configured.roots[0]?.path;
             if (!cwd) return refuse("Refused", "No workspace folder is configured for ml.sh.");
             const plan = planSpawn(req, { cwd });
-            const facts = await h.client.spawn(plan.spawn);
+            const facts = await h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
             const discard = () => h.client.discard(facts.id).catch(() => { /* expired or gone: nothing to start either way */ });
             let f: ShFacts;
             try { f = shFacts(facts, await versionOf(ctx, h, facts)); }
@@ -114,11 +114,16 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const stderr = await keep(ctx, h, done.stderr, f);
             const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
             recordRunLog(ctx.runId, { ...(result.ok ? {} : { level: "warn" as const }), subsystem: "shell", kind: "run", reason: verdict.by === "person" ? "person" : verdict.by === "builtin" ? "builtin" : "policy",
-                ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement } });
+                ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
+                    ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
+                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}) } });
             return { ok: result };
         });
     } catch (e) { return failure(e); }
 }
+
+/** The owner the host records for a call (its `status`, its orphan list): the run and the step's seq, never the script's word. */
+const ownerOf = (ctx: ShCallContext): { run: string; seq: number } => ({ run: ctx.runId, seq: ctx.seq });
 
 /** The facts as a policy's `c`: ShFacts is plain data with `effects`. */
 const asPolicyFacts = (f: ShFacts): Record<string, unknown> & { effects: EffectsData } => f as unknown as Record<string, unknown> & { effects: EffectsData };
@@ -165,7 +170,7 @@ async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Pr
     if (versions.has(fp)) return versions.get(fp) ?? null;
     // Nothing starts after a cancel, the probe included (finding B).
     if (ctx.signal.aborted) return null;
-    const probe = await h.client.spawn({ argv: [facts.program.path, ...m.version.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS });
+    const probe = await h.client.spawn({ argv: [facts.program.path, ...m.version.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }

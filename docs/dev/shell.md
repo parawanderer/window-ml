@@ -56,6 +56,13 @@ there. Nothing in the request names a step (docs/spec/ML_WIRE.md); a read-only c
 The result says who let it run (`approvedBy`) and how long it waited for the person (`waitedMs`); the exec's result
 adds a line when that was a second or more.
 
+**Every call has an owner and a memory bound** (SHELL.md, host 0.3.0). Each `spawn`, the version probe's included,
+names `owner: { run, seq }` from the call's context (`ownerOf`), never from the script: an `owner` option is
+`BadRequest`. The host keeps that in its owner table (`status`) and kills the call when the port closes. Past its
+memory bound (physical footprint) the host kills it: the result has `killed: "oom"`, `ok` false and an `error`, and
+`peakFootprint`/`memoryBound` in bytes, which the run log's `shell`/`run` record carries too. A host older than 0.3.0
+sends none of these fields, and the result has none.
+
 ## Capabilities
 
 `shellCapabilities()` feeds the runtime's `RuntimeCapabilities` (sw-sessions.ts): `shellHost` when the host was
