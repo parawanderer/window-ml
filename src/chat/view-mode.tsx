@@ -18,6 +18,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import { focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
+import { placePins } from "./pin-order";
 
 /** Preference keys, under the platform's own namespace. */
 export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
@@ -270,6 +271,13 @@ export function togglePin(key: string): void {
     if (!next.delete(key)) next.add(key);
     pinned.value = next;
     store?.set(PINNED_KEY, [...next]);
+}
+
+/** Put the pins the Pinned section shows in this order, on this device (`placePins`). */
+export function orderPins(keys: readonly string[]): void {
+    const out = placePins(pinned.value, keys);
+    pinned.value = new Set(out);
+    store?.set(PINNED_KEY, out);
 }
 
 /** Keep a model at the top of the lists on this device, or stop. */

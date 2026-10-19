@@ -22,7 +22,9 @@ import { openSession, mainView, openSearch } from "./nav";
 import { startableOn, type StartKind, StartMenu } from "./new-session";
 import { PageChip } from "./page-chip";
 import { isPinned, RowMenu } from "./row-menu";
-import { toggleRuntime, foldedRuntimes, pinned, ListToggle } from "./view-mode";
+import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins } from "./view-mode";
+import { pinnedInOrder } from "./pin-order";
+import { useReorder } from "./pin-reorder";
 
 /** The index's status as the panel's status dot draws it. A run stopped at its cap is `err` underneath (the reducer marks
  *  an answer `err` on `hitCap`), and is DRAWN amber, in the list and the transcript alike: it did not fail. */
@@ -208,6 +210,19 @@ function OlderFoot({ rt, left }: { rt: RuntimeInfo; left: number }) {
     );
 }
 
+/** The Pinned section, whose rows are put in order by dragging them (a long press first on touch) or with
+ *  Alt+ArrowUp/Down. The order is this device's (`orderPins`). */
+function PinnedGroup({ children }: { children: preact.ComponentChildren }) {
+    const ref = useRef<HTMLElement>(null);
+    useReorder(ref, orderPins);
+    return (
+        <section ref={ref} class="chat-group chat-pinned" aria-label="Pinned" aria-description="Drag a row, or press Alt+Up or Alt+Down on it, to change the order">
+            <div class="chat-group-label"><IconPin />Pinned</div>
+            {children}
+        </section>
+    );
+}
+
 /**
  * The session list: what is pinned, then each runtime's RECENT sessions, then a way to the rest.
  *
@@ -236,7 +251,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     // within one screen reads as a bug, and a row up here names its machine, so nothing is lost by moving it.
     const needsYou = sessions.filter((s) => s.pendingApprovals > 0 && rtOf.has(s.id.runtime)).sort((a, b) => b.lastTs - a.lastTs);
     const upTop = new Set(needsYou.map(keyOf));
-    const pinnedRows = sessions.filter((s) => isPinned(s) && !upTop.has(keyOf(s)) && rtOf.has(s.id.runtime));
+    const pinnedRows = pinnedInOrder(sessions.filter((s) => isPinned(s) && !upTop.has(keyOf(s)) && rtOf.has(s.id.runtime)), keyOf, pins);
     /** A runtime's sessions from before the recent window, newest first — the list's own, not a round trip. */
     const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s));
     const row = (s: SessionSummary, showRuntime = false, showPin = false, reveal?: number) => {
@@ -265,10 +280,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                     </section>
                 ) : null}
                 {pinnedRows.length ? (
-                    <section class="chat-group chat-pinned" aria-label="Pinned">
-                        <div class="chat-group-label"><IconPin />Pinned</div>
-                        {pinnedRows.map((s) => row(s, runtimes.length > 1))}
-                    </section>
+                    <PinnedGroup>{pinnedRows.map((s) => row(s, runtimes.length > 1))}</PinnedGroup>
                 ) : null}
                 {runtimes.map((rt) => {
                     const mine = sessions.filter((s) => s.id.runtime === rt.id && !isPinned(s) && !upTop.has(keyOf(s)) && isRecent(s));
