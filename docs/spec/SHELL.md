@@ -407,8 +407,10 @@ What follows from it:
   NAME, an absent file or a `write-names` effect at the top level of a root, is outside the sandbox's `B` and asks
   ([`EFFECTS.md`](EFFECTS.md), "The top-level names of a root are outside `B`"), so the floor's Linux gap is never
   reached by a call that names its target; a policy may allow it.
-- **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
-  proposal): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
+- **Every call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
+  proposal; EVERY call, sandboxed or not, ruled the same day on lane 4's K3b, window-ml-host #13: the compare refuses
+  nothing, costs 143 µs over 36 names against 1.04 ms to spawn `true`, and an unsandboxed call without the field would
+  read as an old host): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
   at `done`, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
   host, unknown, never "nothing"). An ORPHAN outlives `done`: its ledger entry keeps the start snapshot, and `status`
   reports `protectedChanged` for each live orphan, computed when `status` is read, so a session that asks sees what

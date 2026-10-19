@@ -104,7 +104,7 @@ as the pin of the absent case and gains a sibling that passes under `write: "roo
 envelope at the price of top-level `mkdir` was Shane's decision: **no** (2026-10-19), the default stays as ruled, and the
 report-only tripwire below is what covers the gap's threat; the host never reverts what the tripwire finds. **Later the same day:** under `write: "roots"` the top level of a root is name-immutable (no new, removed or
 renamed name there, files included: Landlock cannot withhold an absent FILE either, lane 4's finding), and every
-sandboxed call reports `protectedChanged` in `done`, report-only (`SHELL.md`, the host's security list). The tripwire is
+call (sandboxed or not, host #13) reports `protectedChanged` in `done`, report-only (`SHELL.md`, the host's security list). The tripwire is
 **K3b**, lane 4's, host side then extension side, branched after host #12 merges; the generalist reviews. K3b ships the
 compare at `done` and at `status` for a live orphan; the compare at an orphan's DEADLINE kill (an `ended` record next to
 the ledger, returned by the next session's `status`) is an open item, unassigned, because it adds persistence and a
