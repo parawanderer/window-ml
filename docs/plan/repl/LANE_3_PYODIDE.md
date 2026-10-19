@@ -10,8 +10,9 @@ desktop numbers are in [`LANE_3_RESULT_H.md`](LANE_3_RESULT_H.md); the design is
 
 ## What the series is
 
-The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `eac9d75` (10 commits on `v3.14.2`: slices 1,
-2, 4, 5, 6, the two mid-slice landings, the print fix and the lifted-generator removal fix; rebased from `v3.14.0` on
+The fork is `parawanderer/cpython`, branch `ml/restricted-mode`, head `8f6a50a` (11 commits on `v3.14.2`: slices 1,
+2, 4, 5, 6, the two mid-slice landings, the print fix, the lifted-generator removal fix and the address-reuse
+audit's tests; rebased from `v3.14.0` on
 2026-10-19, below). Export it from a clean checkout of that branch:
 
 ```sh
@@ -20,14 +21,14 @@ git -C ~/git/cpython-restricted format-patch v3.14.2..ml/restricted-mode \
     -- . ':(exclude)Tools/restricted'
 ```
 
-10 patches (`0010`–`0019`), 20 files, +3701/−31. `--start-number 10` is required: Pyodide's own `cpython/patches/`
-already holds `0001`–`0009`, and the build concatenates them in glob order (below). Without the exclusion the series is 10 patches
+11 patches (`0010`–`0020`), 20 files, +3809/−31. `--start-number 10` is required: Pyodide's own `cpython/patches/`
+already holds `0001`–`0009`, and the build concatenates them in glob order (below). Without the exclusion the series is 11 patches
 and 21 files — the only extra is `Tools/restricted/run_vectors.py` (created in 0014, a 7-line touch in 0015), the
 desktop vector runner. It is a test harness, not part of the interpreter, and it does not belong in a wasm build.
 `Lib/restricted.py` and `Lib/test/test_restricted.py` stay in: the test file is what "run `test_restricted` under
 node" means.
 
-The 10 patches and the files each touches (0014 and 0015 are the ones that carry the excluded runner):
+The 11 patches and the files each touches (0014 and 0015 are the ones that carry the excluded runner):
 
 | patch | files | touches |
 | --- | --- | --- |
@@ -41,6 +42,7 @@ The 10 patches and the files each touches (0014 and 0015 are the ones that carry
 | 0017 slice 6 (undo log) | 5 | `pycore_restricted.h`, `Lib/restricted.py`, `test_restricted.py`, `_restrictedmodule.c`, `restricted.c` |
 | 0018 print | 2 | `Lib/restricted.py`, `test_restricted.py` |
 | 0019 lifted-generator removal | 4 | `pycore_restricted.h`, `test_restricted.py`, `_restrictedmodule.c`, `restricted.c` |
+| 0020 address-reuse pins | 1 | `test_restricted.py` |
 
 ## How Pyodide applies patches
 
@@ -217,7 +219,7 @@ and [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md) for what stands in the meantime
 ## What this note claims, and what it infers
 
 Checked: the export command and its 9-patch / 20-file output (ran in `~/git/cpython-restricted` at `962ede6`, on
-`v3.14.2`; `eac9d75` adds the tenth, which touches no new file); that the series applies with `patch -p1` to a `git archive v3.14.2` tree and reproduces the branch; the
+`v3.14.2`; `eac9d75` and `8f6a50a` add the tenth and eleventh, which touch no new file); that the series applies with `patch -p1` to a `git archive v3.14.2` tree and reproduces the branch; the
 file list per patch; `pyodide/pyodide`'s `cpython/Makefile` patch application and `Makefile.envs`'s `PYVERSION` and
 archive hash (read 2026-10-19 via the GitHub API); the `pycore_code.h` specialization block and the
 `configure.ac` JIT default; the `RESUME_CHECK` / `emscripten_signal.c` / `_Py_HandlePending` chain as the code
