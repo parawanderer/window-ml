@@ -73,6 +73,26 @@ test("an answered ask is one line under its step, with how it ended and the pers
     assert.match(lines[1], /git checkout main.*denied after 8 s.*not that branch/);
 });
 
+test("an allowed ask that ran says what the host applied and what protected names changed during it, flagged", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ask7", "install"));
+    const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
+        protectedChanged: [{ root: "/w/proj", name: ".git/hooks/pre-commit", change: "created" }] };
+    await w.dispatch(running("ask7", [
+        ask({ state: "allowed", answeredAt: 2000, outcome }),
+        ask({ id: "a1123456789abcdef01234567", state: "denied", answeredAt: 3000, outcome }),
+        ask({ id: "a2123456789abcdef01234567", state: "allowed", answeredAt: 3000, outcome: { protectedChanged: "not a list" } }),
+    ]));
+    await open(w);
+    const [ran, denied, odd] = [...w.shadow.querySelectorAll(".astep-ask-done")];
+    const warned = [...ran.querySelectorAll(".ask-facts .warn dt")].map((d) => d.textContent);
+    assert.deepEqual(warned, ["Sandbox applied", "Protected names"], "less than was asked for, and a hook appeared: both flagged");
+    assert.match(ran.textContent, /changed during this call in \/w\/proj: \.git\/hooks\/pre-commit created/);
+    assert.match(ran.textContent, /not the write roots, exec program-only that was asked for/);
+    assert.equal(denied.querySelector(".ask-facts"), null, "a denied call never ran: no outcome is drawn");
+    assert.ok(odd, "an outcome of another shape does not break the line");
+});
+
 test("an ask only the external channel answers is drawn without buttons", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask4", "check the repo"));

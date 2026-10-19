@@ -23,7 +23,9 @@ export { ASK_ID, approvalKey } from "../approval-key";
 /** What the consumer gets back. `waitedMs` is the wall-clock time the call waited, which its result says: a reading
  *  taken after the wait is not simultaneous with one taken before. A refusal that waited for nobody (`unattended`, and
  *  the instant `ended`/`limit` ones) answers at the raise time and reports 0. */
-export interface AskOutcome { allowed: boolean; state: Exclude<AskState, "pending">; note?: string; raisedAt: number; answeredAt: number; waitedMs: number }
+export interface AskOutcome { allowed: boolean; state: Exclude<AskState, "pending">; note?: string; raisedAt: number; answeredAt: number; waitedMs: number;
+    /** The ask's id on the step, for {@link noteAskOutcome}; absent when none was recorded (no run, past the cap). */
+    askId?: string }
 
 /** How long an ask waits for the person before it is denied (the wall clock runs while a script waits; its step budget
  *  does not). Five minutes, the `ml` wire's ASK_TIMEOUT_MS. */
@@ -115,7 +117,7 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
         if (note) e.note = note.slice(0, 2000);
         run.emit(seq, list.map((a) => ({ ...a })));
         recordRunLog(runId, { ...(state === "allowed" ? {} : { level: "warn" as const }), subsystem: "consent", kind: "ask", reason: state, ms: e.answeredAt - raisedAt, detail: { kind: e.kind, seq } });
-        return { allowed: state === "allowed", state, ...(e.note ? { note: e.note } : {}), raisedAt, answeredAt: e.answeredAt, waitedMs: e.answeredAt - raisedAt };
+        return { allowed: state === "allowed", state, ...(e.note ? { note: e.note } : {}), raisedAt, answeredAt: e.answeredAt, waitedMs: e.answeredAt - raisedAt, askId: e.id };
     };
     if (list.length >= MAX_ASKS_PER_STEP) {
         // Not recorded on the step: a script past the cap would otherwise grow the event without end.
@@ -158,6 +160,24 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
         // turn of the event loop) must find the gate registered.
         run.emit(seq, list.map((a) => ({ ...a })));
     });
+}
+
+/**
+ * Record what an allowed call reported once it ran (an `ml.sh` call's sandbox and protected-name changes) on its ask,
+ * and re-emit the step, so the card under it says what happened as well as what was approved. A step that is no
+ * longer running, or an ask that was not allowed, is left alone: its event has been drawn for the last time.
+ * @param runId the run
+ * @param seq the step's OFFSET seq
+ * @param askId the ask's id, from its outcome
+ * @param outcome plain data, which the consumer keeps small: it rides every later event of the step
+ */
+export function noteAskOutcome(runId: string, seq: number, askId: string, outcome: Record<string, unknown>): void {
+    const run = runs.get(runId);
+    const list = asksByStep.get(`${runId}:${seq}`);
+    const entry = list?.find((a) => a.id === askId);
+    if (!run || !list || !entry || entry.state !== "allowed" || !run.running(seq)) return;
+    entry.outcome = plainCopy(outcome);
+    run.emit(seq, list.map((a) => ({ ...a })));
 }
 
 /**

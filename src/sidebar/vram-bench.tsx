@@ -26,7 +26,7 @@ import { followDrag } from "./drag";
 import { PanelHead, useDocked } from "./panel-head";
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
-export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" }): Extract<RenderDescriptor, { type: "python-out" }> {
+export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure" }): Extract<RenderDescriptor, { type: "python-out" }> {
     const stdout = r.stdout || undefined;
     if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
     // The SAME decision the model's python_exec step makes (py-render.ts), so a return draws identically on

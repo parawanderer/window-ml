@@ -51,6 +51,29 @@ test("a runtime's presence becomes a peer, verified against our own account root
     } finally { hub.stop(); }
 });
 
+// --- what a peer may do, read off its verified leaf ---
+
+test("whether a runtime may pair is read off its verified leaf, both ways, so renewal is never sent to one that cannot sign", T, async () => {
+    // A runtime paired with that permission off (the phone's default since #815) cannot renew another device, and the
+    // inbox needs to know which one to send a person to. From the root's signature, never from what the frame says.
+    const hub = await startHub();
+    try {
+        const root = await generateIdentity();
+        const signer = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: true });
+        const plain = await device(root, Role.ROLE_RUNTIME, [], "Home desktop", { mayPair: false });
+        const phone = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive]);
+        const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
+        const conn = await HubConnection.open({ ...common, ...phone, role: Role.ROLE_CLIENT });
+        const a = await HubClient.connect({ ...common, ...signer, role: Role.ROLE_RUNTIME });
+        const b = await HubClient.connect({ ...common, ...plain, role: Role.ROLE_RUNTIME });
+        const yes = await poll("the signer's presence", () => conn.peer(hex(signer.principal)));
+        const no = await poll("the other's presence", () => conn.peer(hex(plain.principal)));
+        assert.equal(yes.mayPair, true);
+        assert.equal(no.mayPair, false, "a definite no, not absent: absent means not known and counts as able");
+        a.close(); b.close(); conn.close();
+    } finally { hub.stop(); }
+});
+
 test("a command reaches the runtime and its result comes back, matched by nonce", T, async () => {
     const hub = await startHub();
     try {

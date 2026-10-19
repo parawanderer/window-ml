@@ -20,7 +20,7 @@ import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
 import { ChatApp } from "./chat-app";
 import type { ChatExtras } from "./extras";
-import { renewSelf } from "./renew";
+import { renewSelf, canSignRenewal } from "./renew";
 import { startAutoRenew } from "./auto-renew";
 import { ChatStore } from "./chat-store";
 import type { HubHost } from "./hub-host";
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
                 ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false }
                 : null;
         },
-        runtimeOnline: () => store.runtimes.value.some((rt) => rt.online),
+        runtimeOnline: () => store.runtimes.value.some(canSignRenewal),
         renew: () => extras.renewSelf!(),
     });
     render(<ChatApp store={store} platform={platform} extras={extras} />, root);

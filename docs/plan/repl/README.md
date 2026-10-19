@@ -105,7 +105,9 @@ envelope at the price of top-level `mkdir` was Shane's decision: **no** (2026-10
 report-only tripwire below is what covers the gap's threat; the host never reverts what the tripwire finds. **Later the same day:** under `write: "roots"` the top level of a root is name-immutable (no new, removed or
 renamed name there, files included: Landlock cannot withhold an absent FILE either, lane 4's finding), and every
 call (sandboxed or not, host #13) reports `protectedChanged` in `done`, report-only (`SHELL.md`, the host's security list). The tripwire is
-**K3b**, lane 4's, host side then extension side, branched after host #12 merges; the generalist reviews. K3b ships the
+**K3b**, lane 4's, DONE 2026-10-19: host side window-ml-host #13 (merged, the generalist reviewed), extension side window-ml
+#813 (merged 99b294d8, the janitor and the generalist reviewed; the run-log cut marker and the `run.json` ask outcome follow in
+#823). The envelope's extension side is the generalist's #807 (merged 1f79f663). K3b ships the
 compare at `done` and at `status` for a live orphan; the compare at an orphan's DEADLINE kill (an `ended` record next to
 the ledger, returned by the next session's `status`) is an open item, unassigned, because it adds persistence and a
 consume-once semantic that need their own design (ruled 2026-10-19).
@@ -158,6 +160,8 @@ listed as remaining is DONE unless named below.
   hosts (decided 2026-10-19, `SHELL.md`, revisable). #647 (site access, agent level) merged 2026-10-15 as ac417a98 and no longer waits on anyone.
 - **Round 3 (opened 2026-10-19, [`ROUND_3.md`](ROUND_3.md))**: five lanes on this list: 5 the Pyodide build, 6 lane 1's four
   follow-ups, 7 `mode` removal, 8 the phone's pairing UX, 9 telling a run why its next call asks.
+  Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
+  (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
   telling a run that relied on a removed policy why its next call asks, lane 1's four follow-ups above, and the phone's
   UX for pairing a desktop runtime (chat-hub topic).

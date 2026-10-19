@@ -77,7 +77,11 @@ export interface MlSh {
      *  `Refused`, `BadRequest`) throws with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
      *  `complete`) and a `@tool:` pointer (`token`) to the whole. `ran` says where it ran: `host-sandbox` (writes only
      *  inside the workspace folders, no network) or `host-plain`. A call past its memory bound is killed: `killed`
-     *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes.
+     *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes. `envelope` is the sandbox scope the host APPLIED
+     *  (`write` is `"today"` for the floor), or `null` when an older host reported nothing (unknown, never narrow);
+     *  `asked` is what was sent on start, absent when nothing was. `protectedChanged` lists the protected names
+     *  (`.envrc`, `.git/hooks/*`, …) that changed DURING the call, by it or by anything else, `[]` when none, or `null`
+     *  when the host reported nothing (unknown, never "none"); `protectedChangedTruncated` means the list was cut.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` */
@@ -88,6 +92,10 @@ export interface MlSh {
         stderr: { token: string | null; size: number; truncated: boolean; text: string; complete: boolean };
         approvedBy?: string; waitedMs?: number; error?: string;
         killed?: "oom"; peakFootprint?: number; memoryBound?: number;
+        envelope: { write: "today" | "roots" | "none"; exec: "any" | "program-only" } | null;
+        asked?: { write: "roots" | "none"; exec: "any" | "program-only" };
+        protectedChanged: { root: string; name: string; change: "created" | "modified" | "removed" }[] | null;
+        protectedChangedTruncated?: true;
     }>;
     /** Read a range of an output past its head (`complete` false), by its `token`, while the run lasts. Text comes back
      *  as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
@@ -198,7 +206,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

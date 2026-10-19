@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hostAsks, raiseAsk, canAsk, stepAsks, MAX_ASKS_PER_STEP } from "../src/sw/sw-asks.ts";
+import { hostAsks, raiseAsk, canAsk, stepAsks, noteAskOutcome, MAX_ASKS_PER_STEP } from "../src/sw/sw-asks.ts";
 import { ASK_ID, approvalKey, approvalPayload } from "../src/approval-key.ts";
 import { pendingApprovals, resolveApproval } from "../src/sw/sw-consent.ts";
 
@@ -84,6 +84,32 @@ test("an approver that answers the moment the ask is shown finds it registered: 
     assert.ok(id, "the ask was shown");
     assert.deepEqual([o.allowed, o.state], [false, "denied"], "the answer reached it");
     assert.equal(keysOf(r.runId).length, 0);
+    unhost();
+});
+
+test("an allowed ask's outcome lands on it and re-emits the step; a denied ask, an unknown id or a step that stopped is left alone", async () => {
+    let live = true;
+    const { r, emitted, unhost } = run({ running: () => live });
+    const p = raiseAsk(r.runId, 3, { kind: "sh", facts: FACTS });
+    resolveApproval(keysOf(r.runId)[0], { approved: true, source: "user" });
+    const o = await p;
+    assert.ok(ASK_ID.test(o.askId), "the outcome names its ask");
+    const q = raiseAsk(r.runId, 3, { kind: "sh", facts: FACTS });
+    resolveApproval(keysOf(r.runId)[0], { approved: false, source: "user" });
+    const no = await q;
+    const before = emitted.length;
+    const out = { protectedChanged: [{ root: "/w", name: ".envrc", change: "created" }] };
+    noteAskOutcome(r.runId, 3, o.askId, out);
+    out.protectedChanged.push("later");
+    assert.equal(emitted.length, before + 1, "re-emitted once");
+    assert.deepEqual(emitted.at(-1).asks.map((a) => a.outcome?.protectedChanged.length), [1, undefined], "a copy, on the allowed ask only");
+    noteAskOutcome(r.runId, 3, no.askId, out);
+    noteAskOutcome(r.runId, 3, "a000000000000000000000000", out);
+    noteAskOutcome(r.runId, 4, o.askId, out);
+    live = false;
+    noteAskOutcome(r.runId, 3, o.askId, { protectedChanged: [] });
+    assert.equal(emitted.length, before + 1, "none of those emitted");
+    assert.equal(stepAsks(r.runId, 3)[0].outcome.protectedChanged.length, 1, "nor changed what the step holds");
     unhost();
 });
 

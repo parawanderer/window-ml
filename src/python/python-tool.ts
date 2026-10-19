@@ -7,7 +7,7 @@ import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointe
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import { type MlTool, type ToolResult } from "../contract/contract-agent";
-import { type RenderDescriptor } from "../contract/contract-render";
+import { type RenderDescriptor, VISION_NUM_CTX } from "../contract/contract-render";
 import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue, tablesMapFromJson } from "../dom/dom";
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
@@ -49,6 +49,33 @@ export type MintToken = (q: { pt: { x: number; y: number } } | { box: { left: nu
  *  minting them as viewport coordinates would point somewhere else on the page. */
 export const CAST_NO_TRANSFORM = "cast refused: where the image was cropped from is not known, so its pixel coordinates cannot be turned into a point on the page. Run it again.";
 
+/** The question a vision reader is asked about an image a script made, for a driver that cannot see it (`verify`). */
+export const PY_VERIFY_QUESTION = "The image was just produced by a Python script, usually a chart. Describe what it shows: the kind of " +
+    "chart, the axes with their labels and ranges, the title, the legend, and the shape of the data. Then say plainly anything " +
+    "that looks wrong: empty or blank axes, labels that overlap or are cut off, a legend covering the data, an unreadable scale.";
+
+/**
+ * What `verify: true` adds to an image result: the image itself for a driver that sees, a vision reader's description
+ * for one that does not, and a sentence saying neither is possible when there is no reader. Never automatic: a picture
+ * costs the driver tokens, and a description costs a model call.
+ * @param ml the `ml` the tool was built on (its `chat` reaches the reader)
+ * @param ctx the call's context: `driverSees` and `visionModel`
+ * @param png the image, as a data URL
+ */
+export async function verifyPyImage(ml: MlApi, ctx: import("../contract").ToolContext | undefined, png: string): Promise<Partial<ToolResult>> {
+    const reason = "verify: the image the script made";
+    if (ctx?.driverSees) return { content: "\n\nYou set verify: true, so the image is attached: check it before you cite it.", image: png, imageLabel: reason, feedback: { reason, via: "image", image: png } };
+    const reader = ctx?.visionModel || null;
+    if (!reader) return { content: "\n\n(verify was requested, but no vision model is available to look at the image.)" };
+    let desc: string;
+    // `look`'s budget, not the 256 of click's verify: a reader that thinks (qwen3-vl) spent all 256 reasoning about a chart
+    // and answered with nothing (measured on the 2026-10-19 panel; at 512 it describes it).
+    try { desc = String(await ml.chat(PY_VERIFY_QUESTION, { images: [png], model: reader, maxTokens: 512, numCtx: VISION_NUM_CTX })).trim(); }
+    catch (e) { return { content: `\n\n(verify was requested, but the vision model could not describe the image: ${(e as Error)?.message || e})` }; }
+    if (!desc) return { content: `\n\n(verify was requested, but ${reader} returned an empty description. Ask it a narrower question with look({ selector: "@tool:python_exec", question: "…" }).)`, feedback: { reason, via: "text", text: "", prompt: PY_VERIFY_QUESTION, image: png } };
+    return { content: `\n\n👁 You can't see images, so this is ${reader}'s description of it:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: PY_VERIFY_QUESTION, image: png } };
+}
+
 export const buildPythonTool = (ml: MlApi): MlTool => {
     const mintVia = (ml as MlApi & { _mintToken?: MintToken })._mintToken;
     // `current` is only advertised when it actually resolves to something — the page is a Google Sheet,
@@ -77,7 +104,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             "table. Your inputs are ALREADY loaded as variables — `image`→`img`/`img_np` " +
             "(PIL + H×W×3 uint8), `tables`→DataFrame(s) — so reference them directly, never re-open/parse/read_csv " +
             "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box). RETURN TYPE " +
-            "auto-renders: a sympy expression → typeset LaTeX, a PIL Image (or to_base64()) → an image, a DataFrame " +
+            "auto-renders: a sympy expression → typeset LaTeX, a PIL Image (or to_base64()) or a matplotlib figure " +
+            "(returned, or just left open) → an image, a DataFrame " +
             "→ a table — so just `return sympy.diff(...)` / `return img` and cite `![…](@tool:…:out)` (no cast; add " +
             "`| raw` to force the literal text). " + stateClause + " In scope: " +
             PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…). `mode` 'readonly' (default) is a pure " +
@@ -89,6 +117,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return` OR a bare trailing expression (Jupyter-style: a last line `df` is the result). print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
                 cast: { type: "string", enum: ["pt", "box"], description: PYTHON.cast },
+                verify: { type: "boolean", description: PYTHON.verify },
                 mode: { type: "string", enum: ["readonly", "full"], description: PYTHON.mode },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
                 tables: {
@@ -116,7 +145,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, verify = false, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
             // Effective per-slot output cap (default: OUTPUT_CAP.python_exec). A raise past it is only reachable AFTER the human
             // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
             const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);
@@ -199,7 +228,13 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // HOW it is drawn is shared with the bench (py-render.ts); what the model is TOLD stays here.
             const parts = pyValueParts(v, { render: r.render, table: r.resultTable }, stringify);
             // An image return is unambiguous → always shown (no cast needed).
-            if (parts.image) return done(`${pre}Returned an image.`, parts);
+            if (parts.image) {
+                const said = r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
+                const base = done(`${pre}${said}`, parts);
+                if (!verify) return base;
+                const seen = await verifyPyImage(ml, ctx, parts.image);
+                return { ...base, ...seen, content: base.content + (seen.content ?? "") };
+            }
             // Coordinates are opt-in via `cast` (auto-detecting [x,y] would mangle a general
             // script that returns two numbers). A mismatch is an honest error, not a guess.
             // A cast over an image projects through the rect that was cropped; with none, nothing is minted (checked once

@@ -37,6 +37,10 @@ export interface HubPeer {
     role: Role;
     /** it signs the account's revocations, from its verified leaf. Absent is "not that, or not seen". */
     mayRevoke?: true;
+    /** whether it may pair devices, and so sign another device's renewal, from its verified leaf. Always set once a
+     *  presence verified: a runtime paired with that permission switched off (the phone's default since #815) cannot
+     *  renew anyone, and a client must not send people to it. */
+    mayPair?: boolean;
 }
 
 /** What one subscription hears about its stream. The payload is still SEALED: opening it needs a grant, which is the
@@ -305,6 +309,7 @@ export class HubConnection {
                 // talk a person into minting a second signer.
                 role: verified.leaf.role,
                 ...(verified.leaf.mayRevoke ? { mayRevoke: true as const } : {}),
+                mayPair: !!verified.leaf.mayPair,
             });
             this.announce();
         } catch {

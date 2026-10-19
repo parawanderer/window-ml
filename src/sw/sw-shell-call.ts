@@ -13,13 +13,13 @@
 import type { EffectsData } from "../effects";
 import type { ShCallSpan } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
-import { bytesOf, HostError, READ_CHUNK, type HostClient, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { manifestFor, parseShRun, planSpawn, shFacts, shOut, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
+import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
+import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
 import { judgeCall, lapsedLine, lapsedSentence } from "./sw-policies";
-import { raiseAsk } from "./sw-asks";
+import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 
@@ -128,8 +128,9 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
             let facts = await spawn();
             let f: ShFacts;
-            let verdict: { by: string; waitedMs?: number };
+            let verdict: { by: string; waitedMs?: number; askId?: string };
             let done;
+            let asked: HostEnvelope | undefined;
             for (let attempt = 0; ; attempt++) {
                 const id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
@@ -145,8 +146,15 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                 // Listening BEFORE the start: a cancel that lands while the host is starting it still reaches it (finding C).
                 const onAbort = () => { void h.client.cancel(id).catch(() => { /* not started yet, or already done */ }); };
                 ctx.signal.addEventListener("abort", onAbort);
+                // The narrowest envelope the approved claims permit, and only to a sandboxed call on a host that both
+                // understands it (K3's `hello.sandbox.landlockAbi`) and can hold it. An unsandboxed call is refused
+                // an envelope outright (window-ml-host `src/session.rs`: "this call is not sandboxed, so it cannot
+                // hold an envelope"), and `hostTakesEnvelope` already excludes a bwrap without Landlock. The script's
+                // word is never an input: `envelopeFor` reads only the facts the person or the policy approved.
+                // Absent = today's floor, never a silent widening.
+                asked = f.placement === "host-sandbox" && hostTakesEnvelope(h.hello) ? envelopeFor(f) : undefined;
                 try {
-                    try { await h.client.start(id); }
+                    try { await h.client.start(id, asked); }
                     catch (e) {
                         if (!(e instanceof HostError && e.code === "PinChanged")) throw e;
                         // The script changed after its facts were read: it is another program than the one judged. Its fresh
@@ -168,11 +176,18 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             }
             const stdout = await keep(ctx, h, done.stdout, f);
             const stderr = await keep(ctx, h, done.stderr, f);
-            const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
+            const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }, asked), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
             recordRunLog(ctx.runId, { ...(result.ok ? {} : { level: "warn" as const }), subsystem: "shell", kind: "run", reason: verdict.by === "person" ? "person" : verdict.by === "builtin" ? "builtin" : "policy",
                 ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
                     ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
-                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}) } });
+                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}), ...envelopeDetail(result) } });
+            if (result.protectedChanged?.length) {
+                // Its own record, at warn: what someone reading the log after a surprise looks for.
+                recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "protected-changed", reason: f.placement,
+                    detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated),
+                        ...(result.protectedChangedTruncated ? { truncated: true } : {}) } });
+            }
+            if (verdict.askId) noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
             const k = `${ctx.runId}:${ctx.seq}`;
             spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result)]);
             if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
@@ -196,7 +211,7 @@ const denyText = (by: unknown): string => `the policy "${(by as { label?: string
  * @param ctx the step
  * @param f the call's facts
  */
-async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; waitedMs?: number } | { refused: string }> {
+async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; waitedMs?: number; askId?: string } | { refused: string }> {
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(f), f.placement);
     if (j.decision === "deny") return { refused: `ml.sh: ${denyText(j.by)}` };
     if (j.decision === "allow") return { by: j.by === "builtin" ? "builtin" : `policy "${(j.by as { label?: string } | undefined)?.label ?? "?"}"` };
@@ -205,7 +220,23 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; wai
     if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
-    return { by: "person", waitedMs: o.waitedMs };
+    return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };
+}
+
+/**
+ * The run record's words for the sandbox and the protected names: what was asked (`floor` when nothing was sent), what
+ * the host applied (`unknown` when it reported nothing), a mismatch between the two, and how many protected names
+ * changed during the call (`unknown` from a host that reported none).
+ * @param r the call's result
+ */
+function envelopeDetail(r: ShResult): Record<string, string | number | boolean> {
+    return {
+        asked: r.asked ? envelopeText(r.asked) : "floor",
+        applied: r.envelope ? envelopeText(r.envelope) : "unknown",
+        ...(envelopeMismatch(r.envelope, r.asked) ? { envelopeMismatch: true } : {}),
+        protectedChanged: r.protectedChanged ? r.protectedChanged.length : "unknown",
+        ...(r.protectedChangedTruncated ? { protectedChangedTruncated: true } : {}),
+    };
 }
 
 /**

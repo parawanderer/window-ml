@@ -298,8 +298,12 @@ export interface CertState {
     mayRevoke?: boolean;
     /** its certificate was issued by the root, so a runtime holding `may_pair` can re-sign it (`renewalPredecessor`) */
     renewable: boolean;
-    /** a runtime that could do the renewing is reachable right now; without one the item says what to open instead */
+    /** a runtime that could do the renewing is reachable right now (`canSignRenewal`); without one the item says what to
+     *  open instead */
     issuerOnline: boolean;
+    /** who can renew it, by name, when none can right now: the runtimes that may sign one, and the ones online that may
+     *  not because they were paired without permission to pair devices (`renewalSigners`). Absent: not known. */
+    signers?: { signers: string[]; cannot: string[] };
     /** THIS SURFACE can carry a press out (it holds a keyring to install into and a way to ask). Absent is false, so a
      *  surface that has not wired it up offers nothing rather than a button that does nothing. */
     canRenew?: boolean;
@@ -354,6 +358,12 @@ export function certItems(cert: CertState | null, nowMs: number): StateAttention
         return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
             title: `This device's access runs out ${when}`,
             detail: `It was paired by another device rather than by the one holding the account's root key, so there is nothing to renew: pair it again. ${tail}` }];
+    }
+    if (!cert.issuerOnline && cert.signers?.cannot.length) {
+        // A browser IS awake, and "open one of your browsers" would point at it. Say why it cannot, and who can.
+        return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
+            title: `This device's access runs out ${when}`,
+            detail: `${noSignerOnline(cert.signers.signers, cert.signers.cannot)} ${tail}` }];
     }
     if (!cert.issuerOnline) {
         return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
@@ -428,4 +438,17 @@ export function deviceItems(env: DeviceEnv, hidden: ReadonlySet<string> = new Se
     if (hidden.has(key)) return [];
     const k = KNOWN["add-to-home"];
     return [{ key, code: "add-to-home", level: k.level, title: k.title, detail: k.detail }];
+}
+
+/**
+ * Why the browsers that answered cannot renew this device, naming names, and which ones can. Shared by the inbox item
+ * and a press of Renew, so both say the same. Never "from the root device": nothing there renews another device.
+ */
+export function noSignerOnline(signers: readonly string[], cannot: readonly string[]): string {
+    const list = (xs: readonly string[]) => xs.length === 1 ? xs[0] : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+    const one = cannot.length === 1;
+    const which = `${list(cannot)} ${one ? "was" : "were"} paired without permission to pair devices, so ${one ? "it" : "they"} cannot renew this one.`;
+    return signers.length
+        ? `${which} ${list(signers)} can: open ${signers.length === 1 ? "it" : "one of them"} and try again.`
+        : `${which} None of your browsers that can is known here, so pair this device again before it runs out.`;
 }

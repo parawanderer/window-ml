@@ -65,6 +65,18 @@ sends none of these fields, and the result has none. The event lane shows them t
 (`shSpanOf`, then `takeShSpans` when the step's tool returns) that rides the step's DONE event as `shCalls`; see
 resource-panel.md, "ml.sh calls on a tool step".
 
+**What the host applied, and what changed, is told three times, as one fact** (SHELL.md, the envelope and tripwire
+bullets; host K3 and K3b). The result carries `envelope` (what the host APPLIED, `null` from an older host), `asked`
+(what was sent on start, absent for the floor), and `protectedChanged`: the protected names (`.envrc`, `.git/hooks/*`,
+…) that changed DURING the call, `[]` when none, `null` when the host reported nothing, which is unknown and never
+"none" (a list with one malformed entry is `null` too, never a shorter list that reads as complete), with
+`protectedChangedTruncated` when the host cut it. The run log's `shell`/`run` record says `asked` (`floor`), `applied`
+(`unknown`), `envelopeMismatch` and the `protectedChanged` count (`unknown`); a change also writes its own
+`shell`/`protected-changed` record at warn. A call the PERSON allowed gets its `ShOutcome` on the ask
+(`noteAskOutcome`, the list cut at `SH_CHANGES_SHOWN`), so the line under the step shows "Sandbox applied" and
+"Protected names" once it ran. A call a policy or the default allowed has no ask, so for it the run log and the
+script's result are the only surfaces.
+
 **An interpreted script is described by its own manifest** (PROGRAM_MANIFEST.md, "Interpreted script tools"; root K,
 slice K1, host 0.4.0). A manifest with an `entrypoint: { path, sha256 }` has no `version`: `program` is the
 interpreter, and `manifestFor` chooses it only when `argv[1]`, taken from the cwd, is `<root>/<path>` for a root as the
