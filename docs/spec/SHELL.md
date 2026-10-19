@@ -426,7 +426,12 @@ What follows from it:
   fixed-shape under 1 KB, so `done` provably fits the output cap and a lost `done` never happens for the tripwire's
   sake (the host's SANDBOX.md and PROTOCOL.md carry the numbers). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
   and never attributes: two calls in one root see each other's change, so the card and the run log say "changed
-  during this call". The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
+  during this call". The script reads the same fact (ruled 2026-10-19, the generalist's question on lane 4's K3b
+  extension side): `ShResult` carries `protectedChanged` under the envelope's convention, the host's list or `null`
+  for a host that reported none (an old host, unknown, never "nothing"; `[]` is "nothing changed"), with
+  `protectedChangedTruncated` beside it exactly as on `done`; one fact, three surfaces, and the model that made the
+  change is told what the person is told. The field is lane 4's, in the K3b extension PR after host #13, not the
+  generalist's envelope PR. The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
   design, and the person decides what to do with the report.
 - **No secret crosses into a process by the script's hand**: the backend URL and API key never reach the host; the
   host's environment is scrubbed to a whitelist, and a container sees only its mounts. A credential a process NEEDS
