@@ -10,7 +10,8 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, orderPins, pinned, pinnedModels, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
 
@@ -630,6 +631,30 @@ test("view prefs: a pin is this device's, survives a reload, and a delete from h
     dropPin("laptop:bbbb0002");
     dropPin("laptop:never");   // not pinned: nothing happens
     assert.deepEqual([...pinned.value], []);
+});
+
+test("view prefs: the Pinned section keeps the order it was put in, and a pin it is not showing keeps its slot", () => {
+    // UPGRADE: what the old code stored is the order pins were MADE in, which is the order the section now draws.
+    const prefs = fakePrefs({ [PINNED_KEY]: ["laptop:aaaa0001", "laptop:bbbb0002", "box:cccc0003"] });
+    installViewPrefs(prefs);
+    const row = (key, ts) => ({ key, ts });
+    const key = (r) => r.key;
+    // Rows arrive by recency; a runtime-only pin (made on another device) comes after the placed ones, by recency.
+    const rows = [row("phone:eeee0005", 9), row("box:cccc0003", 8), row("laptop:bbbb0002", 7), row("phone:dddd0004", 6), row("laptop:aaaa0001", 5)];
+    assert.deepEqual(pinnedInOrder(rows, key, pinned.value).map(key), ["laptop:aaaa0001", "laptop:bbbb0002", "box:cccc0003", "phone:eeee0005", "phone:dddd0004"]);
+    // A pin made here goes on the end.
+    togglePin("phone:dddd0004");
+    assert.deepEqual(pinnedInOrder(rows, key, pinned.value).map(key).slice(0, 4), ["laptop:aaaa0001", "laptop:bbbb0002", "box:cccc0003", "phone:dddd0004"]);
+
+    // The section shows only some pins ("box" is offline): they swap, and the hidden one stays in its slot.
+    orderPins(["phone:dddd0004", "laptop:bbbb0002", "laptop:aaaa0001"]);
+    assert.deepEqual(prefs.all.get(PINNED_KEY), ["phone:dddd0004", "laptop:bbbb0002", "box:cccc0003", "laptop:aaaa0001"]);
+    // Placing a pin this device never stored adopts it, where it was put.
+    orderPins(["phone:eeee0005", "phone:dddd0004", "laptop:bbbb0002", "laptop:aaaa0001"]);
+    assert.deepEqual([...pinned.value], ["phone:eeee0005", "phone:dddd0004", "box:cccc0003", "laptop:bbbb0002", "laptop:aaaa0001"]);
+    // …and the order survives a reload.
+    installViewPrefs(fakePrefs({ [PINNED_KEY]: prefs.all.get(PINNED_KEY) }));
+    assert.deepEqual([...pinned.value], ["phone:eeee0005", "phone:dddd0004", "box:cccc0003", "laptop:bbbb0002", "laptop:aaaa0001"]);
 });
 
 test("view prefs: a pinned model is this device's, and every model list is drawn in the same order", async () => {

@@ -200,8 +200,11 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         return m[1] && m[2] ? "center" : m[2] ? "right" : m[1] ? "left" : "";
     };
     const isSep = (l: string): boolean => { const c = splitRow(l); return c.length > 0 && c.every(x => alignOf(x) !== null); };
-    const cell = (c: string, tag: string, a: string | null) =>
-        `<${tag}${a ? ` style="text-align:${a}"` : ""}>${inline(c)}</${tag}>`;
+    const cell = (c: string, tag: string, a: string | null, num = false) =>
+        `<${tag}${num ? ` class="md-num"` : ""}${a ? ` style="text-align:${a}"` : ""}>${inline(c)}</${tag}>`;
+    // A cell that is a NUMBER for alignment's sake: an optional sign and currency symbol, digits with `,`/`_`
+    // thousands groups and a decimal part, then an optional `%` or a short unit (`ms`, `GB`, `5 ms`). No digit, no match.
+    const NUMERIC_CELL = /^(?=[^0-9]*[0-9])[-+\u2212]?[$\u20ac\u00a3\u00a5]?(?:\d+(?:[,_]\d{3})*|\d*)(?:\.\d+)?(?:%|\s?[A-Za-z\u00b5\u00b0]{1,3}|[A-Za-z\u00b5\u00b0]{1,4})?$/;
     const indentOf = (l: string): number => (l.match(/^[ \t]*/)?.[0].replace(/\t/g, "  ").length ?? 0);
     // A list item: leading indent (nesting) + a `-`/`*`/`+` bullet OR an ordered `1.` / `1)` marker.
     const markerRe = /^([ \t]*)(?:[-*+]|\d+[.)])\s+(.*)$/;
@@ -235,11 +238,18 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
             // Table = a pipe header row immediately followed by a separator row.
             if (line.includes("|") && i + 1 < ls.length && isSep(ls[i + 1])) {
                 const aligns = splitRow(ls[i + 1]).map(alignOf);
-                const head = splitRow(line).map((c, j) => cell(c, "th", aligns[j] || null)).join("");
-                const body: string[] = [];
+                const headCells = splitRow(line);
+                const rows: string[][] = [];
                 i += 2;                                             // consume header + separator
-                for (; i < ls.length && ls[i].includes("|"); i++)
-                    body.push("<tr>" + splitRow(ls[i]).map((c, j) => cell(c, "td", aligns[j] || null)).join("") + "</tr>");
+                for (; i < ls.length && ls[i].includes("|"); i++) rows.push(splitRow(ls[i]));
+                // A column is numeric when it has a body cell with content and every non-empty one is a number;
+                // the header never counts. Computed here, so both renderers (panel, calm) can right-align it.
+                const numeric = headCells.map((_, j) => {
+                    const vals = rows.map(r => r[j] ?? "").filter(v => v !== "");
+                    return vals.length > 0 && vals.every(v => NUMERIC_CELL.test(v));
+                });
+                const head = headCells.map((c, j) => cell(c, "th", aligns[j] || null, numeric[j])).join("");
+                const body = rows.map(r => "<tr>" + r.map((c, j) => cell(c, "td", aligns[j] || null, numeric[j])).join("") + "</tr>");
                 i--;                                                // step back onto the last consumed row (loop re-increments)
                 out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${head}</tr></thead><tbody>${body.join("")}</tbody></table></div>`);
                 continue;
