@@ -61,7 +61,9 @@ names `owner: { run, seq }` from the call's context (`ownerOf`), never from the 
 `BadRequest`. The host keeps that in its owner table (`status`) and kills the call when the port closes. Past its
 memory bound (physical footprint) the host kills it: the result has `killed: "oom"`, `ok` false and an `error`, and
 `peakFootprint`/`memoryBound` in bytes, which the run log's `shell`/`run` record carries too. A host older than 0.3.0
-sends none of these fields, and the result has none.
+sends none of these fields, and the result has none. The event lane shows them too: each finished call leaves a span
+(`shSpanOf`, then `takeShSpans` when the step's tool returns) that rides the step's DONE event as `shCalls`; see
+resource-panel.md, "ml.sh calls on a tool step".
 
 ## Capabilities
 

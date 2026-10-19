@@ -9,6 +9,7 @@ import { MAX_SAMPLE_GAP_MS } from "./resource-axis";
 import { Roofline } from "./resource-decode";
 import { PredictedDecode, ServerHint } from "./resource-gens";
 import { ResourceSample, LoadEstimate, MemoryBreakdown, formatBytes } from "./resource-model";
+import type { ShCallSpan } from "../contract";
 
 /** Where an event sits on the chart's x-axis, as fractions of the whole axis ({@link placeEvents}, {@link Axis}).
  *  The axis is linear in clock time, gaps included, so an event is placed by its time alone: one that happened in a
@@ -155,6 +156,10 @@ export interface ResourceEvent {
      *  before the model will serve. So the span says "resident at 4s, usable at 10s", which is a readiness
      *  fact and the explanation a reader otherwise lacks for a memory trace that went flat while they waited. */
     phases?: { kind: PhaseKind; until: number }[];
+    /** The `ml.sh` calls a tool step made, in the order they finished, each with what the host measured of its memory
+     *  (`shCallText`). They happened INSIDE the step's `tool` phase, whose time they share, so they are not phases of
+     *  their own. Absent when the step made none. */
+    shCalls?: ShCallSpan[];
     /** What a model LOAD moved into memory, as the server measured it: `loadBytes` is the whole load,
      *  `weightsBytes` the first half — so the context is the difference. Only a patched Ollama reports them
      *  (`size_vram` on the `load.weights` and `load.complete` edges).
@@ -250,4 +255,18 @@ export function eventsIn(events: ResourceEvent[], from: number, to: number): Res
     return events
         .filter((e) => (e.until != null ? e.until >= from && e.t <= to : e.t >= from && e.t <= to))
         .sort((a, b) => a.t - b.t);
+}
+
+/**
+ * What the tooltip says of one `ml.sh` call's memory: the peak against the bound, or that the host killed it past the
+ * bound. Bytes go through `formatBytes` here and nowhere else. A field the host did not report (older than 0.3.0)
+ * says nothing: absent is not "0 B".
+ * @param c the call's span
+ * @returns the sentence, or null when the host reported neither a peak nor a kill
+ */
+export function shCallText(c: ShCallSpan): string | null {
+    const bound = c.memoryBound !== undefined ? formatBytes(c.memoryBound) : null;
+    if (c.killed === "oom") return bound ? `killed: past its ${bound} memory bound` : "killed: past its memory bound";
+    if (c.peakFootprint === undefined) return null;
+    return bound ? `peak ${formatBytes(c.peakFootprint)} of ${bound} bound` : `peak ${formatBytes(c.peakFootprint)}`;
 }

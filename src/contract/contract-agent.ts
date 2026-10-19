@@ -216,6 +216,17 @@ export interface RemoteTiming {
     bootMs?: number;
 }
 
+/** One `ml.sh` call a step made, as the event lane draws it: the program, how long it ran and what the host measured of
+ *  its memory. `peakFootprint` and `memoryBound` are bytes and ABSENT from a host older than 0.3.0 (absent is not
+ *  zero); `killed` is set when the host killed the call past its bound. Rides to the timeline, never to the model. */
+export interface ShCallSpan {
+    program: string;
+    durationMs: number;
+    peakFootprint?: number;
+    memoryBound?: number;
+    killed?: "oom";
+}
+
 /** Where a remote tool actually runs. `via` names the dispatch mechanism, because "an HTTP endpoint
  *  evaluates this" is a fact about our own dispatch and the only one we can honestly record — an
  *  in-process tool can reach a container over IPC and nothing here would see it. */

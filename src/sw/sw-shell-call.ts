@@ -11,6 +11,7 @@
 // channel, iso-channel.ts): no page-started message reaches here (tests/redteam.test.js).
 
 import type { EffectsData } from "../effects";
+import type { ShCallSpan } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, READ_CHUNK, type HostClient, type HostFacts, type HostStream } from "../shell/host-protocol";
 import { manifestFor, parseShRun, planSpawn, shFacts, shOut, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
@@ -43,6 +44,38 @@ export const SH_HELD_PER_RUN = 32;
 
 /** The version probe's limits (the coordinator's ruling): two seconds, and the first 4 KiB of what it prints. */
 export const PROBE_TIMEOUT_MS = 2000, PROBE_BYTES = 4096;
+
+/** The calls a step has made and its tool result has not yet carried to the timeline, by run and the step's OFFSET seq. */
+const spansByStep = new Map<string, ShCallSpan[]>();   // state: plumbing — filled by shRun, drained when the step's tool returns
+/** At most this many steps' spans wait to be drained; past it the oldest go (a call whose step is never drained). */
+const SPAN_STEPS_MAX = 256;
+
+/**
+ * The span the event lane draws for one finished call: the program's basename, its duration and what the host measured.
+ * A field the host did not send is left out, so an older host draws nothing extra.
+ * @param program `argv[0]` as the script wrote it
+ * @param r the call's result
+ * @returns the span
+ */
+export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed">): ShCallSpan {
+    return { program: program.split("/").pop() || program, durationMs: r.durationMs,
+        ...(r.peakFootprint !== undefined ? { peakFootprint: r.peakFootprint } : {}),
+        ...(r.memoryBound !== undefined ? { memoryBound: r.memoryBound } : {}),
+        ...(r.killed ? { killed: r.killed } : {}) };
+}
+
+/**
+ * Take the spans of the calls a step made, forgetting them.
+ * @param runId the run
+ * @param seq the step's offset seq
+ * @returns the spans in the order the calls finished, or undefined when it made none
+ */
+export function takeShSpans(runId: string, seq: number): ShCallSpan[] | undefined {
+    const k = `${runId}:${seq}`;
+    const s = spansByStep.get(k);
+    spansByStep.delete(k);
+    return s?.length ? s : undefined;
+}
 
 /** One output the host holds for a run, by its pointer id. */
 interface HeldOut { runId: string; ptr: string; size: number; client: HostClient }
@@ -117,6 +150,9 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                 ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
                     ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
                     ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}) } });
+            const k = `${ctx.runId}:${ctx.seq}`;
+            spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result)]);
+            if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
             return { ok: result };
         });
     } catch (e) { return failure(e); }

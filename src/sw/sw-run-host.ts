@@ -13,7 +13,7 @@ import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
 import type { CurrentSnapshot } from "../agent/current-context";
-import type { ToolMeta } from "../agent/agent-loop";
+import type { ToolMeta, ToolRunResult } from "../agent/agent-loop";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote, pageWorldResult } from "../agent/output-clip";
@@ -58,7 +58,7 @@ import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, 
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
-import { shRead, shRun } from "./sw-shell-call";
+import { shRead, shRun, takeShSpans } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { GATED_BUILTINS } from "../tools/tool-registry";
@@ -100,6 +100,21 @@ async function againIfHandedOver<T>(call: () => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
         try { return await call(); } catch (e) { if (!(e instanceof HandedOverMidCall) || attempt >= 2) throw e; }
     }
+}
+
+/**
+ * Run one tool call and attach the `ml.sh` calls it made to its result, for the event lane. A call that throws
+ * drops its spans, so they are not left for a later step with the same seq (a resumed turn).
+ * @param runId the run
+ * @param seq the step's offset seq, or undefined for a call with no step
+ * @param tool the dispatch
+ * @returns the dispatch's result, with `shCalls` when the step made any
+ */
+async function withShCalls(runId: string, seq: number | undefined, tool: () => Promise<ToolRunResult>): Promise<ToolRunResult> {
+    let r: ToolRunResult;
+    try { r = await tool(); } catch (e) { if (seq !== undefined) takeShSpans(runId, seq); throw e; }
+    const spans = seq === undefined ? undefined : takeShSpans(runId, seq);
+    return spans ? { ...r, shCalls: spans } : r;
 }
 
 const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
@@ -855,7 +870,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
-                delegateTool: (name, args, onStream, call) => againIfHandedOver(async () => {
+                delegateTool: (name, args, onStream, call) => withShCalls(runId, call ? seqBase + call.seq : undefined, () => againIfHandedOver(async () => {
                     // This call's own key for the grants it mints on the tab (sw-consent.ts): another run on the same tab
                     // ending its call drops only its own.
                     const callKey = {};
@@ -1227,7 +1242,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         if (reads) execReads.delete(runId);
                         if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                     }
-                }),
+                })),
                 // Pre-run In render for a PENDING step (streaming runs): ask the page to compute the tool's
                 // In descriptor without running it, so a step you watch stream shows exec's beautified JS /
                 // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.

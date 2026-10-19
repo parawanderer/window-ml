@@ -41,6 +41,8 @@ export interface ToolMeta { name: string; requiresApproval?: boolean; capabiliti
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
 // the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
 export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("../contract").ReusedGrant[]; remoteMs?: import("../contract").RemoteTiming;
+    /** The `ml.sh` calls the step made (the worker sets it; ShCallSpan). */
+    shCalls?: import("../contract").ShCallSpan[];
     /** The value-store key of the whole text `result` was clipped from; the host sets it only for a tool the worker ran
      *  itself (ToolResult.textValue). */
     textValue?: string; }
@@ -102,7 +104,7 @@ export interface AgentLoopDeps {
      *  the request goes out, so a surface can draw the call while it happens rather than back-dating a
      *  finished block over memory it already drew. Optional: a host that has no live surface omits it. */
     emitTurn?(ev: { step: number; phases?: import("../contract").GenPhase[] }): void;
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("../contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("../contract").RemoteTiming }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("../contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("../contract").RemoteTiming; shCalls?: import("../contract").ShCallSpan[] }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -1111,7 +1113,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // beside it and not in a block of its own.
             const renderInWithDiff = revision && tr?.renderIn && (tr.renderIn.type === "code" || tr.renderIn.type === "python-in")
                 ? { ...tr.renderIn, revision } : tr?.renderIn;
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: renderInWithDiff, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: renderInWithDiff, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}), ...(tr?.shCalls?.length ? { shCalls: tr.shCalls } : {}) });   // DONE (patches the START)
             pushed(() => deps.pushToolResult(messages, call, forModel), { seq: s, tool: call.name, truncated: cutBeforeModel(tr?.renderOut) });
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

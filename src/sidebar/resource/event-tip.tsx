@@ -5,7 +5,7 @@ import { SPILL_FLOOR } from "../../resource/resource-bands";
 import { decodeCeiling } from "../../resource/resource-decode";
 import { kvFill, predictionLine, serverGenNote } from "../../resource/resource-gens";
 import { percentOf, type ResourceSample, loadTrace, formatBytes } from "../../resource/resource-model";
-import type { ResourceEvent, PhaseKind } from "../../resource/resource-timeline";
+import { shCallText, type ResourceEvent, type PhaseKind } from "../../resource/resource-timeline";
 import { colorFor } from "../palette";
 import { fmtDur, hhmmssms } from "../timestamps";
 import { phaseFill, isPattern } from "./lane-paint";
@@ -365,6 +365,20 @@ export function EventTipBody({ e, clipped = false, opts = {} }: { e: ResourceEve
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
+            {/* THE ml.sh CALLS this step made, under its phases: they ran inside the tool phase and share its time, so they
+                are rows of their own rather than phases. Each says its program and how long, and the host's memory
+                figure when it reported one: the peak against the bound, or that it was killed past the bound. */}
+            {(e.shCalls || []).map((c, i) => {
+                const mem = shCallText(c);
+                return (
+                    <div class={`rc-tip-line rc-tip-phase${i === 0 ? " sep" : ""}`} key={`sh${i}`}>
+                        <span class="rc-tip-phase-body">
+                            <span class="rc-tip-name">ml.sh: <code>{c.program}</code></span>
+                            {mem ? <span class={`rc-chip ${c.killed ? "rc-chip-warn" : "rc-chip-dim"}`}>{mem}</span> : null}
+                        </span>
+                        <span class="rc-tip-size">{ms(c.durationMs)}</span></div>
+                );
+            })}
             {e.gen && e.genCtx ? <KvBar gen={e.gen} ctx={e.genCtx} model={e.model} /> : null}
             {/* An OPEN span has no end yet, so every duration in this tooltip is "so far". Said once, plainly,
                 because the alternative is a reader taking a number that is still growing as a measurement. */}

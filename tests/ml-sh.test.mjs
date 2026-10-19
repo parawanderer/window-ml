@@ -201,6 +201,25 @@ test("an older host's done (no footprint fields) still makes a result, with none
     assert.deepEqual([r.killed, r.peakFootprint, r.memoryBound], [undefined, undefined, undefined]);
 });
 
+// --- the event lane gets each call's footprint on the step that made it ---
+
+test("the finished step carries its ml.sh calls with peak and bound; a killed one says so; an older host's carries neither", T, async () => {
+    for (const [done, expect] of [
+        [{ peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576 }, { peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576 }],
+        [{ killed: "oom", peakFootprint: 5000 * 1048576, memoryBound: 4096 * 1048576 }, { killed: "oom", peakFootprint: 5000 * 1048576, memoryBound: 4096 * 1048576 }],
+        [{}, {}],
+    ]) {
+        const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0, ...done }) });
+        const seen = [];
+        await runOn("userScripts", [runs(["/usr/bin/ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: (bg, ev) => { if (ev.shCalls) seen.push(ev); } });
+        assert.equal(seen.length, 1, JSON.stringify(done));
+        assert.equal(seen[0].shCalls.length, 1);
+        const { durationMs, ...rest } = seen[0].shCalls[0];
+        assert.equal(typeof durationMs, "number");
+        assert.deepEqual(rest, { program: "ls", ...expect }, "the basename, and only the fields the host sent");
+    }
+});
+
 // --- what the script is and is not given ---
 
 test("a script that does not name ml.sh gets none, even in an isolated world reached by another key", T, async () => {

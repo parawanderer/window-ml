@@ -8,7 +8,7 @@
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
 import type { JsonSchema } from "../contract";
 import type { ExtendProfile, NeutralMessage, TokenUsage, GenPhase } from "./contract-chat";
-import type { RemoteToolTarget, RemoteTiming, PersistGrant, ReusedGrant, StartAsk } from "./contract-agent";
+import type { RemoteToolTarget, RemoteTiming, ShCallSpan, PersistGrant, ReusedGrant, StartAsk } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "./contract-render";
 
 /** Groups turns of one createChat conversation; `turn` is the 0-based index. */
@@ -205,6 +205,8 @@ export interface DebugAgentStep extends DebugBase {
      *  clock around the whole dispatch, so it contains the network and the far end's overhead too; this is
      *  what lets the timeline draw those apart instead of charging the difference to the tool. */
     remoteMs?: RemoteTiming;
+    /** The `ml.sh` calls this step made, in the order they finished. Absent when it made none. */
+    shCalls?: ShCallSpan[];
     /** A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */
