@@ -111,6 +111,11 @@ call (sandboxed or not, host #13) reports `protectedChanged` in `done`, report-o
 compare at `done` and at `status` for a live orphan; the compare at an orphan's DEADLINE kill (an `ended` record next to
 the ledger, returned by the next session's `status`) is an open item, unassigned, because it adds persistence and a
 consume-once semantic that need their own design (ruled 2026-10-19).
+**K3d** (the red team's #827 audit, 2026-10-19): bwrap re-bound only part of the protected names, so the host now reads one
+list per layer (bwrap re-bind, Landlock enumeration, tripwire snapshot) from `PROTECTED_TOP` (+ `PROTECTED_GIT`), with an
+enumerating test per layer and a real-kernel read-only proof: window-ml-host #15 (merged 2026-10-19, cd56124, lane 4's; the
+generalist reviewed; the red team verifies after merge, rule 10). Lane 4's next host PR, taken 2026-10-19: macOS denies the whole
+`.claude` directory, as the Linux rule does, not only the files it lists.
 **K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
 `git diff --output=.envrc` ran free) is window-ml #788 (merged 2026-10-19, a6826b0), lane 4's, ahead of K3b: the top-level names of a root are
 outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
