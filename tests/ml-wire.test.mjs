@@ -262,10 +262,10 @@ test("property: a real $secret handle is refused at every wrap shape, and its me
 });
 
 test("property: an own __proto__ key cannot hide a handle from handlesIn or put one on the copy's prototype", async () => {
-    // toWire's `out[k] = …` invokes the __proto__ setter for k === "__proto__", so the copy loses the key, its
-    // [[Prototype]] becomes the attacker value (copied.$secret === "gh" via inheritance), handlesIn sees no own
-    // $secret, and the member runs. The member's own copy is clean (fromWire copies own keys only) — the break is
-    // the missed refusal and the attacker-controlled prototype on the wire-form args object.
+    // Before #757: toWire's `out[k] = …` invoked the __proto__ setter for k === "__proto__", so the copy lost the
+    // key, its [[Prototype]] became the attacker value (copied.$secret === "gh" via inheritance), handlesIn saw no
+    // own $secret, and the member ran. The member's own copy was clean (fromWire copies own keys only); the break
+    // was the missed refusal and the attacker-controlled prototype on the wire-form args object.
     const v = JSON.parse('{"__proto__": {"$secret": "gh"}, "k": 1}');
     const ran = [];
     const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
@@ -278,9 +278,9 @@ test("property: an own __proto__ key cannot hide a handle from handlesIn or put 
 });
 
 test("property: a handle three wrap levels down is refused by handlesIn like any other", async () => {
-    // handlesIn's wrap branch looks at the values inside ONE `{ "$": {…} }` and, for a nested wrap, again one
-    // level; at three `$` levels the innermost `$secret` is never reached. A facade that wraps tag-shaped data at
-    // every level can put a real handle there.
+    // Before #757: handlesIn's wrap branch looked at the values inside ONE `{ "$": {…} }` and, for a nested wrap,
+    // again one level; at three `$` levels the innermost `$secret` was never reached. A facade that wraps
+    // tag-shaped data at every level can put a real handle there.
     const v = { $: { $: { $: { $secret: "gh" } } } };
     const ran = [];
     const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
