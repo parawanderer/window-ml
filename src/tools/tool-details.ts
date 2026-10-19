@@ -20,6 +20,7 @@ export const PYTHON_FULL = {
         "just asks once to approve, then loads as a normal df). " +
         "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
     cast: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Compute it in your INPUT IMAGE's pixel space — casting AUTO-projects it to on-screen VIEWPORT coordinates (dpr + crop offset), so the returned @pt/@box is the correct click point, NOT displaced. Omit for a raw text result.",
+    verify: "Set it when the result is an IMAGE (a chart, a picture) you want to check before citing: the image is attached for you to see, or described if you cannot see images. Default false: it costs a picture or a model call.",
     mode: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs — including Google Sheets (the extension fetches those for you, so 'full' is NOT needed). Only pick 'full' to fetch some OTHER arbitrary URL yourself.",
 };
 
@@ -30,6 +31,7 @@ export const PYTHON: typeof PYTHON_FULL = {
         "a URL fetch_url read, or an `@tool:` pointer to a table.",
     cast: "'pt' or 'box': the return is a clickable point ([x,y]) or box ([x1,y1,x2,y2]) in the input image's pixels, " +
         "placed on the page for you.",
+    verify: "Look at an image result (a chart) before citing it. Default false.",
     mode: "'readonly' (default): no network, may run without asking, Google Sheets included. 'full': network, always " +
         "asks; only to fetch some other URL yourself.",
 };
