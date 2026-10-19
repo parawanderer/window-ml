@@ -1900,6 +1900,27 @@ button.chat-page-go:hover { color: var(--fg); }
 .astreak-bad { color: var(--err); font-size: .88em; }
 .astreak-ms { color: var(--fg-faint); font-size: .88em; font-style: italic; margin-left: auto; }
 .astreak.open > .astreak-head { margin-bottom: 4px; }
+/* THE SUMMARY LEAVES WHEN THE ROWS ARRIVE. Folded, the names and the failure count are the only account of what is
+   inside; open, the rows say it themselves (the failure as a red dot), so repeating it beside them is noise. It
+   slides out to the left and fades on the same distance and curves as the reply fold (`chat-asst-sum-in` / `-out`),
+   and slides back the same way when the group folds, so the two folds read as one gesture. A TRANSITION on
+   `.expanded` and not a keyframe animation: it is a state change the reader made, so a transcript drawn already
+   folded or already open has nothing to play, and only a click moves it.
+   The space is KEPT (opacity and transform only), so neither the count nor the duration shifts while it goes; the
+   duration hangs off `margin-left: auto` and the count off the left edge, neither of which depends on the names.
+   `visibility` follows the fade so a hidden summary cannot be selected, and the button's aria-label already names
+   the tools, so a screen reader loses nothing. */
+.chat.calm .astreak-tools, .chat.calm .astreak-bad {
+    transition: opacity .18s cubic-bezier(0, 0, .2, 1), transform .18s cubic-bezier(0, 0, .2, 1), visibility 0s;
+}
+.chat.calm .astreak.expanded .astreak-tools, .chat.calm .astreak.expanded .astreak-bad {
+    opacity: 0; transform: translateX(-14px); visibility: hidden;
+    transition: opacity .18s cubic-bezier(.4, 0, 1, 1), transform .18s cubic-bezier(.4, 0, 1, 1), visibility 0s .18s;
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .astreak-tools, .chat.calm .astreak-bad,
+    .chat.calm .astreak.expanded .astreak-tools, .chat.calm .astreak.expanded .astreak-bad { transition: none; }
+}
 /* WHICH ROWS BELONG TO THE GROUP. Open, the members are turns in the transcript again, at the same indent as the
    turns above and below the streak — so the only thing marking where the group ended was the gap before the next
    one, which is nothing. A rail down the left is the ordinary way to say "these are inside that", and it descends
