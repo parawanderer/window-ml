@@ -224,6 +224,12 @@ gh run list --branch main --limit 3             # does MAIN fail it too? then it
   no extension code; a rerun of the shard passed. Treat a single failure as flaky, rerun the shard
   (`gh run rerun <id> --failed`), and look properly only if it fails twice running on the same branch.
 
+- **`mobile-android` › Publish it as the rolling Android build** (main only, not a PR gate) — the Gradle build
+  succeeds and `gh release delete android-latest` / `gh release create` races on the rolling tag; the job dies
+  with `HTTP 404` / `cleaning up draft failed`. 1 of 8 recent main runs (39115250209, a docs merge whose diff
+  touches no native code). Rerun the job; do not blame the PR. A fix would retry the publish once after a
+  failed delete/create cycle.
+
 The three entries above did not occur once in the 80 `tests` runs of 2026-10-15 (08:09–14:02Z, 24 with e2e): each
 passed first try everywhere it ran. Six hours is weak evidence for events this rare, so they stay listed until a longer
 window says otherwise.
