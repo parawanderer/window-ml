@@ -282,7 +282,7 @@ export function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!gr
 export const KEEP_HINT = (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")) ? "⌘K" : "Ctrl K";
 /** WHY A CALL IS ASKING when a policy that used to allow it is gone (archived, removed, edited): one line on the approval
  *  card, the sentence the model read in the tooltip. Text only: it never changed the decision.
- * @gallery {"why":{"line":"Asking because the policy \"fetch https://example.com/a\" was removed when this session was archived.","detail":"This call needed approval because the policy was removed when this session was archived; the call itself did not change."}}
+ * @gallery {"why":{"line":"Asking because the policy \"fetch https://example.com/a\" was removed when this session was archived.","detail":"This call needed approval because the policy was removed when this session was archived; the call itself did not change.","cause":"archived","policy":"fetch https://example.com/a"}}
  * @group card */
 export function AskWhyLine({ why }: { why: import("../../contract").AskWhy }) {
     return <div class="appr-note appr-askwhy" {...cursorTipOn(why.detail)}><IconWarn /><span>{why.line}</span></div>;

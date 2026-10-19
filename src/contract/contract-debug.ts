@@ -163,7 +163,14 @@ export type AskState = "pending" | "allowed" | "denied" | "cancelled" | "timeout
 
 /** Why a call asks when a policy that used to cover it is gone: `line` for the approval card, `detail` the sentence the
  *  model read in the tool result (so the tooltip and the export show what the model saw). */
-export interface AskWhy { line: string; detail: string }
+export interface AskWhy {
+    line: string;
+    detail: string;
+    /** Why the policy is gone (`archived`, `removed`, `narrowed`), for the run log, whose `reason` is a slug. */
+    cause: string;
+    /** The gone policy's label. */
+    policy: string;
+}
 
 /** One nested ask as a step event carries it (docs/spec/ML_WIRE.md, "Per-call asking"). Plain data: every surface draws
  *  it, both exports record it, and its `facts` are the policy's `c` for the call. */

@@ -828,7 +828,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         if (resumeMessages?.length) await forModelHistory(messages);
                         // A session that comes back after an archive is told once, before its first step, that its run policies went.
                         const gone = resumeMessages?.length ? takeArchiveNotice(runId) : undefined;
-                        if (gone) { (messages as { role: string; content: string }[]).push({ role: "user", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: gone }); }
+                        if (gone) { (messages as { role: string; content: string }[]).push({ role: "user", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
@@ -1408,7 +1408,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // ml.fetch literals) ONCE, background-side. The SAME list feeds the descriptor/step the
                     // human reviews AND the persistence below, so what's shown IS what's remembered.
                     const grants = extractGrants(tool, args);
-                    if (askWhy) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.line, detail: { tool, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
+                    if (askWhy) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -1495,7 +1495,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 askWhy: (name, a) => {
                     if (name !== "fetch_url" || a.credentials || !byWorker() || !runsInWorker(p, "fetch_url")) return undefined;
                     const l = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered })).lapsed;
-                    return l ? { line: lapsedLine(l), detail: lapsedSentence(l) } : undefined;
+                    return l ? { line: lapsedLine(l), detail: lapsedSentence(l), cause: l.cause, policy: l.label } : undefined;
                 },
                 fetchPolicy: (url, o) => {
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));

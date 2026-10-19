@@ -327,3 +327,10 @@ test("a resumed session is told once that an archive took its run policies; a se
     assert.equal(P.archivedPolicyLoss("h-told").labels.length, 1, "the resume note's record is kept");
     assert.equal(P.takeArchiveNotice("h-never"), undefined);
 });
+
+test("the run log keeps a lapsed record: its reason is the cause slug, never the sentence (the sanitizer drops a non-slug reason)", async () => {
+    const { sanitizeRunReport } = await import("../src/log/run-log.ts");
+    const rec = (reason) => sanitizeRunReport({ run: "a".repeat(64), subsystem: "policy", kind: "lapsed", reason, detail: { tool: "fetch_url", policy: "fetch https://a.example/" } });
+    assert.equal(rec("removed")?.reason, "removed");
+    assert.equal(rec("Asking because the policy was removed.")?.reason, undefined, "a sentence would be dropped");
+});

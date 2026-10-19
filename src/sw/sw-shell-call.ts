@@ -201,8 +201,8 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; wai
     if (j.decision === "deny") return { refused: `ml.sh: ${denyText(j.by)}` };
     if (j.decision === "allow") return { by: j.by === "builtin" ? "builtin" : `policy "${(j.by as { label?: string } | undefined)?.label ?? "?"}"` };
     // No policy answers (or the store is not loaded yet): the person does, on a card inside the running step.
-    const why = j.lapsed ? { line: lapsedLine(j.lapsed), detail: lapsedSentence(j.lapsed) } : undefined;
-    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: "lapsed", reason: why.line, detail: { tool: "sh" } });
+    const why = j.lapsed ? { line: lapsedLine(j.lapsed), detail: lapsedSentence(j.lapsed), cause: j.lapsed.cause, policy: j.lapsed.label } : undefined;
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs };

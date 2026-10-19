@@ -2235,11 +2235,21 @@
         },
         "detail": {
           "type": "string"
+        },
+        "cause": {
+          "description": "Why the policy is gone (`archived`, `removed`, `narrowed`), for the run log, whose `reason` is a slug.",
+          "type": "string"
+        },
+        "policy": {
+          "description": "The gone policy's label.",
+          "type": "string"
         }
       },
       "required": [
         "line",
-        "detail"
+        "detail",
+        "cause",
+        "policy"
       ],
       "additionalProperties": true
     },

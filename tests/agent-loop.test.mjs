@@ -687,7 +687,7 @@ test("a tool's answer that cannot be made text is an error result, not the run's
 
 // --- why a call asks: a policy that covered it is gone (lane 9) ---
 
-const why = { line: "Asking because the policy \"p\" was removed by the person.", detail: "This call needed approval because the policy \"p\" was removed by the person; the call itself did not change." };
+const why = { line: "Asking because the policy \"p\" was removed by the person.", detail: "This call needed approval because the policy \"p\" was removed by the person; the call itself did not change.", cause: "removed", policy: "p" };
 
 test("a gate that asks for a lapsed policy hands the reason to the card, and the model reads it with the result, approved or denied", async () => {
     for (const approve of [true, false]) {

@@ -106,7 +106,7 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
     const list = asksByStep.get(stepKey) ?? [];
     asksByStep.set(stepKey, list);
     const id = `a${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
-    const entry: StepAsk = { id, kind: String(ask.kind), facts: plainCopy(ask.facts), state: "pending", ...(ask.why ? { why: ask.why } : {}), raisedAt, ...(run.routing === "external" ? { external: true as const } : {}) };
+    const entry: StepAsk = { id, kind: String(ask.kind), facts: plainCopy(ask.facts), state: "pending", ...(ask.why ? { why: { ...ask.why } } : {}), raisedAt, ...(run.routing === "external" ? { external: true as const } : {}) };
     const settle = (e: StepAsk, state: AskOutcome["state"], note?: string, instant = false): AskOutcome => {
         e.state = state;
         // An instant refusal answers at the raise time, as `ended()` does: there was no wait to measure, and a
