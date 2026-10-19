@@ -1212,6 +1212,52 @@ test("desktop: a run whose tab is still open gets its composer, not a resume", a
     await page.close();
 });
 
+// --- pinned sessions: the Pinned section's order, and a row's menu ---
+
+test("desktop: pinned rows are put in order by dragging them or with Alt+arrows, and keep it across a reload", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const pinnedKeys = () => page.locator(".chat-pinned .chat-row").evaluateAll((els) => els.map((e) => e.dataset.session));
+    for (const key of [CHAT, CAPPED, POINTERS]) {
+        await page.locator(`.chat-row-wrap:has(.chat-row[data-session="${key}"]) .chat-row-more`).first().click();
+        await page.getByRole("menuitem", { name: "Pin to the top" }).click();
+    }
+    // A new pin goes on the end, and the section stays in the order pins were made, not in recency.
+    await expect.poll(pinnedKeys).toEqual([CHAT, CAPPED, POINTERS]);
+
+    // A mouse drag of the last row to the top: it moves, the others make room, and the release opens nothing.
+    const row = (key) => page.locator(`.chat-pinned .chat-row[data-session="${key}"]`);
+    await page.waitForFunction(() => !document.querySelector(".chat-pinned").getAnimations({ subtree: true }).some((a) => a.playState === "running" && a.effect?.getTiming().iterations !== Infinity));
+    const from = await row(POINTERS).boundingBox(), to = await row(CHAT).boundingBox();
+    const before = page.url();
+    await page.mouse.move(from.x + 40, from.y + from.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(from.x + 40, from.y + from.height / 2 + (to.y - 4 - from.y) * i / 8);
+    await expect(page.locator(".chat-pinned .chat-row-wrap.dragging")).toHaveCount(1);
+    await page.mouse.up();
+    await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+    await expect(page.locator(".chat-pinned .chat-row-wrap[style*=translate]")).toHaveCount(0);
+    expect(page.url()).toBe(before);
+
+    // A plain click still opens the chat.
+    await row(CHAT).click();
+    await expect(page).toHaveURL(new RegExp(encodeURIComponent(CHAT)));
+
+    // The keyboard: Alt+ArrowDown moves the focused row and keeps the focus on it.
+    await row(POINTERS).focus();
+    await page.keyboard.press("Alt+ArrowDown");
+    await expect.poll(pinnedKeys).toEqual([CHAT, POINTERS, CAPPED]);
+    await expect(row(POINTERS)).toBeFocused();
+    await page.keyboard.press("Alt+ArrowUp");
+    await page.keyboard.press("Alt+ArrowUp");   // already first: nothing moves
+    await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+
+    // A device pref: a reload keeps it.
+    await page.reload();
+    await expect.poll(pinnedKeys).toEqual([POINTERS, CHAT, CAPPED]);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: a row's menu pins a session to the top, and deletes one only after asking", async () => {
     const { page, errors } = await open(DESKTOP);
     const menuOf = (key) => page.locator(`.chat-row-wrap:has(.chat-row[data-session="${key}"]) .chat-row-more`);

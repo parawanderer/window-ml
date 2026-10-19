@@ -1160,6 +1160,18 @@ button.chat-page-go:hover { color: var(--fg); }
    also is — the two together slid it diagonally, each on its own clock. */
 .chat-list .chat-row-wrap.revealed .chat-row { animation: none; }
 @media (prefers-reduced-motion: reduce) { .chat-row-wrap.revealed { animation: none; } }
+/* A PINNED ROW BEING MOVED (pin-reorder.ts). The row under the pointer lifts, a raised card that follows it with no
+   transition, and the rows it passes slide out of its way on the list's curve; on the drop it eases into its slot
+   (`.settling`) and its shadow goes as it lands. No text is selected while a row is dragged, and a phone's long press
+   does not raise its callout over the row it is lifting. */
+.chat-pinned .chat-row-wrap { -webkit-touch-callout: none; }
+.chat-pinned.reordering { user-select: none; -webkit-user-select: none; }
+.chat-pinned.reordering .chat-row-wrap { transition: transform .18s cubic-bezier(.2, .8, .2, 1); }
+.chat-pinned.reordering .chat-row-wrap.dragging { transition: none; z-index: 2; cursor: grabbing; }
+.chat-pinned .chat-row-wrap.dragging, .chat-pinned .chat-row-wrap.settling { z-index: 2; }
+.chat-pinned .chat-row-wrap.dragging .chat-row { background: var(--panel); box-shadow: 0 6px 18px rgb(0 0 0 / .18); transition: box-shadow .18s ease; }
+.chat-pinned .chat-row-wrap.settling .chat-row { background: var(--panel); box-shadow: none; transition: box-shadow .18s ease; }
+@media (prefers-reduced-motion: reduce) { .chat-pinned.reordering .chat-row-wrap, .chat-pinned .chat-row-wrap .chat-row { transition: none; } }
 
 /* A row's `⋮`. It arrives with the pointer, in the corner the timestamp was using — the time is what you read on a
    row you are scanning, the menu is what you want from the one you are on, and they never need to be seen together.
