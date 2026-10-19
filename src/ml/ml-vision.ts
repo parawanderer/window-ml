@@ -13,7 +13,7 @@
 // CORS taints the canvas, so pixel readback fails even for something already rendered on screen.
 
 import { makeBackgroundTaskPromise } from "../bridge";
-import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "../tools/builtin-tools";
+import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor, pointedImageNote } from "../tools/builtin-tools";
 import type { MlApi } from "../contract";
 import type { MlPublicConfig } from "../contract/contract-config";
 import type { MlTool, ToolResult } from "../contract/contract-agent";
@@ -465,7 +465,7 @@ export function buildNativeLookTool(ml: Pick<MlApi, "defineTool"> & Partial<MlAp
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector of an element; omit to see the page." },
+                selector: { type: "string", description: "CSS selector of an element, or an `@tool:<id>` pointer to an image this run already has (a screenshot, or a python_exec figure); omit to see the page." },
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                 index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
                 margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." },
@@ -474,7 +474,10 @@ export function buildNativeLookTool(ml: Pick<MlApi, "defineTool"> & Partial<MlAp
         },
         // In: the target as a hoverable ref (hover → outline it on the page). No selector → raw args.
         render: (_input, args) => targetRender(args),
-        run: async ({ selector, scope, index, margin, views }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[] } = {}): Promise<string | ToolResult> => {
+        run: async ({ selector, scope, index, margin, views, _image, _imageLabel, _imageDrawn }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string; _imageDrawn?: boolean } = {}): Promise<string | ToolResult> => {
+            // An `@tool:` image pointer the LOOP resolved (it owns the store): show the driver those pixels. Without this
+            // the pointer went to the page as a CSS selector and failed to match.
+            if (_image) return { content: `${pointedImageNote(_imageLabel, _imageDrawn)} Shown to you in the next message.`, image: _image, imageLabel: _imageLabel || "an earlier image" };
             const host = hostOf();
             const fullPage = scope === "page" && !selector;
             const isPoint = !!selector && POINT_RE.test(selector.trim());
