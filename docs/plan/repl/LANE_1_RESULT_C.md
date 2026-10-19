@@ -7,7 +7,7 @@ suite passes on the branch (85/85), but no new test drives the worker's dict in 
 
 ## What landed
 
-Uncommitted at the time of writing, on `repl-lane1/ml-wiring`; the PR number is not known yet.
+PR #757, branch `repl-lane1/ml-wiring`.
 
 - **PR 2b, the transport.** `python-worker.ts` answers an `ml` call by `seq` (`pendingWire`) and posts only
   `{ seq, call, args }`. `offscreen.ts` stamps every `ML_CALL` with the `{ client, run }` it holds for the cell, holds an
