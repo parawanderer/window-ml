@@ -220,6 +220,53 @@ test("the finished step carries its ml.sh calls with peak and bound; a killed on
     }
 });
 
+// --- a pinned script that changed after its facts were read (root K, rulings of 2026-10-19) ---
+
+/** Facts for `python3 x.py` whose script the host hashed, to `hashes[n]` on the n-th spawn (1-based). */
+const hashedFacts = (hashes) => {
+    let n = 0;
+    return (args) => {
+        n++;
+        return {
+            argv: args.argv, program: { path: "/usr/bin/python3", inRoot: false, fingerprint: "1:2:3:4" }, cwd: { path: args.cwd, inRoot: true },
+            env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+            paths: [{ arg: 1, given: "x.py", path: `${args.cwd}/x.py`, inRoot: true, secret: false, exists: true, sha256: hashes[n - 1] }],
+            effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox",
+        };
+    };
+};
+
+test("PinChanged on a call no person approved: it is described again from fresh facts and judged afresh, once", T, async () => {
+    const host = fakeNativeHost({ startError: (_id, n) => n === 0 ? "PinChanged" : undefined });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(host.calls.filter((c) => c.call === "spawn").length, 2, "fresh facts");
+    assert.equal(host.calls.filter((c) => c.call === "start").length, 2);
+    // a second change, on the fresh call, is not retried a third time
+    const twice = fakeNativeHost({ startError: () => "PinChanged" });
+    const again = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: twice.onNative, configExtra: ON, onStep: answering(true).onStep });
+    assert.equal(valueOf(again.results[0]).code, "Denied");
+    assert.equal(twice.calls.filter((c) => c.call === "start").length, 2, "no third attempt");
+});
+
+test("PinChanged on a call the PERSON approved is refused, naming both hashes, never a card to re-approve, and the run log has both", T, async () => {
+    const A = "a".repeat(64), B = "b".repeat(64);
+    const host = fakeNativeHost({ facts: hashedFacts([A, B]), startError: () => "PinChanged" });
+    const ask = answering(true);
+    const { results, bg, hash } = await runOn("userScripts", [runs(["python3", "x.py"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const r = valueOf(results[0]);
+    assert.equal(r.code, "Denied");
+    assert.match(r.threw, new RegExp(`x\\.py changed between approval and start \\(sha256 ${A} approved, now ${B}\\): not run`));
+    assert.equal(ask.asked.length, 1, "the one card the person answered; none to re-approve");
+    assert.equal(host.calls.filter((c) => c.call === "start").length, 1, "nothing started after the change");
+    assert.ok(host.calls.filter((c) => c.call === "discard").length >= 1, "the fresh facts are discarded");
+    const log = (await bg.context.__mlRunLog.all()).filter((x) => x.run === hash && x.subsystem === "shell" && x.kind === "pin-changed");
+    assert.equal(log.length, 1);
+    assert.deepEqual([log[0].detail.approved, log[0].detail.now], [A, B]);
+});
+
 // --- what the script is and is not given ---
 
 test("a script that does not name ml.sh gets none, even in an isolated world reached by another key", T, async () => {

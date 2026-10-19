@@ -49,10 +49,10 @@ test("the options are cwd, env and timeoutMs, each checked; an unknown one is re
 
 test("the manifests are found by the program's basename, and only the shipped ones", () => {
     assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "git", "head", "jq", "ls", "rg", "tail", "wc"]);
-    assert.equal(manifestFor("/usr/bin/git")?.program, "git");
-    assert.equal(manifestFor("python3"), undefined);
-    assert.equal(manifestFor("constructor"), undefined, "a prototype name is not a manifest");
-    assert.equal(manifestFor("__proto__"), undefined);
+    assert.equal(manifestFor(["/usr/bin/git"])?.program, "git");
+    assert.equal(manifestFor(["python3"]), undefined);
+    assert.equal(manifestFor(["constructor"]), undefined, "a prototype name is not a manifest");
+    assert.equal(manifestFor(["__proto__"]), undefined);
 });
 
 test("the spawn carries the HARDENED argv, and its path indices point into that argv, not the one the script wrote", () => {
@@ -137,6 +137,94 @@ test("the facts are plain data: no reference into the host's answer survives", (
     assert.deepEqual(f.argv, ["cat", "a.txt"]);
     assert.equal(f.paths[0].inRoot, true);
     assert.deepEqual(f.env.set, []);
+});
+
+// --- interpreted scripts: (program, entrypoint) pinned by sha256 (PROGRAM_MANIFEST.md, rulings of 2026-10-19) ---
+
+const PIN = "a".repeat(64);
+/** A script manifest for `node scripts/tool.mjs`, reading the files it is given. */
+const TOOL = { program: "node", entrypoint: { path: "scripts/tool.mjs", sha256: PIN }, command: { effects: ["read"], paths: "operands", flags: { "-n": {} } } };
+const P = { cwd: "/w", roots: ["/w"], manifests: [TOOL] };
+/** The host's facts for `node <script> ...args`, with the script resolved to `path` and hashed to `sha256`. */
+const scriptFacts = ({ argv = ["node", "scripts/tool.mjs", "a.txt"], path = "/w/scripts/tool.mjs", sha256 = PIN, cwd = "/w", ...over } = {}) => facts({
+    argv, cwd: { path: cwd, inRoot: true }, program: { path: "/usr/local/bin/node", inRoot: false },
+    paths: [{ arg: 1, given: argv[1], path, inRoot: true, secret: false, exists: true, sha256 },
+        { arg: 2, given: "a.txt", path: "/w/a.txt", inRoot: true, secret: false, exists: true }], ...over,
+});
+const placeOf = { roots: ["/w"], manifests: [TOOL] };
+
+test("a script's manifest is chosen by argv[1] under a root, its options parse from argv[2], and the host is asked to hash it", () => {
+    assert.equal(manifestFor(["node", "scripts/tool.mjs"], P, P.manifests), TOOL);
+    assert.equal(manifestFor(["node", "./scripts/../scripts/tool.mjs"], P, P.manifests), TOOL, "normalised");
+    assert.equal(manifestFor(["node", "tool.mjs"], { cwd: "/w/scripts", roots: ["/w"] }, P.manifests), TOOL, "a relative argv[1] is taken from the cwd");
+    assert.equal(manifestFor(["node", "/w/scripts/tool.mjs"], P, P.manifests), TOOL, "an absolute one as given");
+    assert.equal(manifestFor(["node", "scripts/other.mjs"], P, P.manifests), undefined);
+    assert.equal(manifestFor(["node", "scripts/tool.mjs"], undefined, P.manifests), undefined, "with no roots, no script manifest");
+    const p = planSpawn(parseShRun([["node", "scripts/tool.mjs", "-n", "a.txt"]]), P);
+    assert.deepEqual(p.spawn.pathArgs, [{ arg: 1, hash: true }, { arg: 3 }]);
+    assert.equal(p.description.described, true);
+});
+
+test("ruling 3: any interpreter flag before the entrypoint, -u, -X, -W, -- or --import, leaves the call undescribed", () => {
+    for (const flags of [["-u"], ["-X", "dev"], ["-W", "error"], ["--"], ["--import", "./evil.mjs"], ["-e", "1"]]) {
+        const argv = ["node", ...flags, "scripts/tool.mjs", "a.txt"];
+        assert.equal(manifestFor(argv, P, P.manifests), undefined, flags.join(" "));
+        const p = planSpawn(parseShRun([argv]), P);
+        assert.equal(p.description, null, `${flags.join(" ")}: nothing to describe it by`);
+        assert.equal(p.spawn.pathArgs, undefined);
+        assert.equal(shFacts(scriptFacts({ argv, paths: [] }), null, placeOf).effects, "unknown", flags.join(" "));
+    }
+    // describeCall itself refuses a flag at argv[1] even if handed the manifest
+    assert.equal(shFacts(scriptFacts(), null, placeOf).described, true, "positive control");
+});
+
+test("ruling 2: the pin is the RESOLVED file's hash, the path must resolve to the entrypoint itself, and the card names both paths", () => {
+    const ok = shFacts(scriptFacts(), null, placeOf);
+    assert.equal(ok.described, true);
+    assert.deepEqual(ok.effects, [{ op: "read", res: { kind: "fs", path: "/w/a.txt", inRoot: true, secret: false } }]);
+    // a link to a file outside the scripts folder
+    const moved = shFacts(scriptFacts({ path: "/w/tmp/evil.mjs" }), null, placeOf);
+    assert.equal(moved.described, false);
+    assert.match(moved.why.join(";"), /resolves to \/w\/tmp\/evil\.mjs, not scripts\/tool\.mjs in a workspace root/);
+    const wrong = shFacts(scriptFacts({ sha256: "b".repeat(64) }), null, placeOf);
+    assert.equal(wrong.effects, "unknown");
+    assert.match(wrong.why.join(";"), /not the file its manifest was pinned to \(sha256 b{64}\)/);
+    assert.equal(shFacts(scriptFacts({ sha256: null }), null, placeOf).described, false, "an unreadable file has no hash to match");
+    const card = shCardLines(shFacts(scriptFacts({ argv: ["node", "scripts/t.mjs", "a.txt"], path: "/w/scripts/tool.mjs" }), null, placeOf));
+    const script = card.find((l) => l.label === "Script");
+    assert.equal(script.value, `scripts/t.mjs → /w/scripts/tool.mjs (sha256 ${PIN.slice(0, 12)})`);
+});
+
+test("intended, not a gap: a symlinked entrypoint FILE is undescribed even when its target has the pinned content (a pin names a path AND a hash)", () => {
+    // scripts/tool.mjs is a link to lib/impl.mjs in the same root, whose bytes hash to the pin: still another file
+    const link = shFacts(scriptFacts({ path: "/w/lib/impl.mjs", sha256: PIN }), null, placeOf);
+    assert.equal(link.described, false);
+    assert.equal(link.effects, "unknown");
+    assert.match(link.why.join(";"), /resolves to \/w\/lib\/impl\.mjs, not scripts\/tool\.mjs in a workspace root/);
+});
+
+test("intended, not a gap: argv[1] outside every root that resolves to the entrypoint is not pre-selected, so it is undescribed", () => {
+    const argv = ["node", "/tmp/link.mjs", "a.txt"];
+    assert.equal(manifestFor(argv, P, P.manifests), undefined);
+    assert.equal(planSpawn(parseShRun([argv]), P).description, null);
+    const f = shFacts(scriptFacts({ argv, path: "/w/scripts/tool.mjs" }), null, placeOf);
+    assert.equal(f.described, false, "the host's resolution reaching the pinned file does not make it described");
+    assert.equal(f.effects, "unknown");
+});
+
+test("the pin counts only under the OS sandbox: on the plain host a pinned script is undescribed", () => {
+    const f = shFacts(scriptFacts({ sandboxed: false, placement: "host-plain" }), null, placeOf);
+    assert.equal(f.described, false);
+    assert.match(f.why.join(";"), /described only under the OS sandbox/);
+});
+
+test("K1 ships no script manifest: node with a script in the workspace is unknown and asks, as before", () => {
+    assert.equal(manifestFor(["node", "scripts/index.mjs"], { cwd: "/w", roots: ["/w"] }), undefined);
+    const p = planSpawn(parseShRun([["node", "scripts/index.mjs"]]), { cwd: "/w", roots: ["/w"] });
+    assert.deepEqual(p.spawn, { argv: ["node", "scripts/index.mjs"], cwd: "/w", mode: "host" }, "nothing hashed, nothing marked");
+    const f = shFacts(facts({ argv: ["node", "scripts/index.mjs"], paths: [] }), null, { roots: ["/w"] });
+    assert.equal(f.effects, "unknown");
+    assert.deepEqual(f.why, ["node has no program manifest"]);
 });
 
 // --- the card ---

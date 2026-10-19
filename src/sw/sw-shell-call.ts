@@ -122,27 +122,50 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
         return await withShell(async (h) => {
             const cwd = h.configured.roots[0]?.path;
             if (!cwd) return refuse("Refused", "No workspace folder is configured for ml.sh.");
-            const plan = planSpawn(req, { cwd });
-            const facts = await h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
-            const discard = () => h.client.discard(facts.id).catch(() => { /* expired or gone: nothing to start either way */ });
+            // The roots as the host resolved them (realpaths), which its path facts are compared against.
+            const roots = h.configured.roots.map((r) => r.path);
+            const plan = planSpawn(req, { cwd, roots });
+            const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
+            let facts = await spawn();
             let f: ShFacts;
-            try { f = shFacts(facts, await versionOf(ctx, h, facts)); }
-            catch (e) { await discard(); throw e; }
-            const verdict = await decide(ctx, f);
-            if ("refused" in verdict) { await discard(); return refuse("Denied", verdict.refused); }
-            // Judged again where the process starts: a policy saved while the card waited still holds.
-            const again = judgeCall(ctx.runId, "sh", asPolicyFacts(f), f.placement);
-            if (again.decision === "deny") { await discard(); return refuse("Denied", `ml.sh: ${denyText(again.by)}`); }
-            if (ctx.signal.aborted) { await discard(); return refuse("Denied", "ml.sh: the run was cancelled"); }
-            // Listening BEFORE the start: a cancel that lands while the host is starting it still reaches it (finding C).
-            const onAbort = () => { void h.client.cancel(facts.id).catch(() => { /* not started yet, or already done */ }); };
-            ctx.signal.addEventListener("abort", onAbort);
+            let verdict: { by: string; waitedMs?: number };
             let done;
-            try {
-                await h.client.start(facts.id);
-                if (ctx.signal.aborted) onAbort();
-                done = await h.client.waitDone(facts.id);
-            } finally { ctx.signal.removeEventListener("abort", onAbort); }
+            for (let attempt = 0; ; attempt++) {
+                const id = facts.id;
+                const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
+                try { f = shFacts(facts, await versionOf(ctx, h, facts), { roots }); }
+                catch (e) { await discard(); throw e; }
+                const v = await decide(ctx, f);
+                if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
+                verdict = v;
+                // Judged again where the process starts: a policy saved while the card waited still holds.
+                const again = judgeCall(ctx.runId, "sh", asPolicyFacts(f), f.placement);
+                if (again.decision === "deny") { await discard(); return refuse("Denied", `ml.sh: ${denyText(again.by)}`); }
+                if (ctx.signal.aborted) { await discard(); return refuse("Denied", "ml.sh: the run was cancelled"); }
+                // Listening BEFORE the start: a cancel that lands while the host is starting it still reaches it (finding C).
+                const onAbort = () => { void h.client.cancel(id).catch(() => { /* not started yet, or already done */ }); };
+                ctx.signal.addEventListener("abort", onAbort);
+                try {
+                    try { await h.client.start(id); }
+                    catch (e) {
+                        if (!(e instanceof HostError && e.code === "PinChanged")) throw e;
+                        // The script changed after its facts were read: it is another program than the one judged. Its fresh
+                        // facts no longer match the pin, so the first time it is described afresh and asks. A file the PERSON
+                        // approved that changed before it started is refused: what they approved is not what would run.
+                        const fresh = await spawn();
+                        if (attempt === 0 && verdict.by !== "person") { facts = fresh; continue; }
+                        void h.client.discard(fresh.id).catch(() => { /* gone */ });
+                        const hashOf = (x: HostFacts) => x.paths.find((p) => p.sha256 !== undefined);
+                        const was = hashOf(facts), now = hashOf(fresh);
+                        recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "pin-changed", reason: verdict.by === "person" ? "person" : "policy",
+                            detail: { seq: ctx.seq, path: was?.path ?? "", approved: was?.sha256 ?? "unreadable", now: now?.sha256 ?? "unreadable" } });
+                        return refuse("Denied", `ml.sh: ${was?.path ?? "the script"} changed between approval and start (sha256 ${was?.sha256 ?? "unreadable"} approved, now ${now?.sha256 ?? "unreadable"}): not run`);
+                    }
+                    if (ctx.signal.aborted) onAbort();
+                    done = await h.client.waitDone(id);
+                } finally { ctx.signal.removeEventListener("abort", onAbort); }
+                break;
+            }
             const stdout = await keep(ctx, h, done.stdout, f);
             const stderr = await keep(ctx, h, done.stderr, f);
             const result: ShResult = { ...shResult(done, f, plan.description, { stdout, stderr }), approvedBy: verdict.by, ...(verdict.waitedMs !== undefined ? { waitedMs: verdict.waitedMs } : {}) };
@@ -194,8 +217,8 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; wai
  * @returns the version, null when it was not read, or null too for a manifest that reads none
  */
 async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Promise<string | null> {
-    const m = manifestFor(facts.argv[0]);
-    if (!m || m.version.range === "*" || !m.version.args.length) return null;
+    const m = manifestFor(facts.argv);
+    if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
     const fp = facts.program.fingerprint;
     const log = (reason: string, version?: string | null) => recordRunLog(ctx.runId, { subsystem: "shell", kind: "version-probe", reason, detail: { program: facts.program.path, ...(version !== undefined ? { version: version ?? "unread" } : {}) } });
     // Refused BEFORE the cache: a hard link inside a root to a probed program shares its fingerprint, and must not

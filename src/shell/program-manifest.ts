@@ -76,19 +76,34 @@ export type CommandSpec = {
     harden?: readonly string[];
 };
 
-/** A program manifest: the program, the versions it was written against, and its command tree. */
-export type ProgramManifest = {
+/** What every program manifest says: the program, how it exits, and its command tree. */
+interface ManifestBase {
     program: string;
-    /** A version range (`>=2.30.0 <3`) and how the host reads the version (`args`, a regex whose group 1 is it). `"*"`
-     *  with no `args` is a program that reports no version (BSD `ls`, `find`): its manifest then lists only flags whose
-     *  meaning is the same in every implementation, and needs no reported version. */
-    version: { range: string; args: readonly string[]; pattern: string };
     okCodes?: readonly number[];
     echoes?: boolean;
     /** Environment variables that change what the program does: a call setting one is not described. */
     env?: readonly string[];
     command: CommandSpec;
-};
+}
+
+/** The version range a binary's manifest was written against (`>=2.30.0 <3`) and how the host reads the version
+ *  (`args`, a regex whose group 1 is it). `"*"` with no `args` is a program that reports no version (BSD `ls`,
+ *  `find`): its manifest then lists only flags whose meaning is the same in every implementation. */
+export type ManifestVersion = { range: string; args: readonly string[]; pattern: string };
+
+/** An interpreted script's pin (`node scripts/index.mjs`): `path` relative to a workspace root, `sha256` of the
+ *  resolved file. */
+export type ManifestEntrypoint = { path: string; sha256: string };
+
+/**
+ * A program manifest: a standalone binary pinned by a `version` range, or an interpreted script pinned by its
+ * `entrypoint`'s sha256, never both (PROGRAM_MANIFEST.md, "Interpreted script tools"). A script's `program` is the
+ * interpreter; the call matches only when `argv[1]` is the script with no interpreter flag before it, and its options
+ * parse from `argv[2]`. The interpreter's own version is not read: the manifest describes the script.
+ */
+export type ProgramManifest = ManifestBase & (
+    | { version: ManifestVersion; entrypoint?: undefined }
+    | { entrypoint: ManifestEntrypoint; version?: undefined });
 
 /** A path the host is asked to resolve: argv index, and the separator to split on when the path is a flag's attached
  *  value (`--output=f`). The shape of the host's `pathArgs` entries (window-ml-host docs/PROTOCOL.md). */
@@ -144,16 +159,20 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     const unknown = (why: string) => { d.described = false; d.why.push(why); };
     const base = (argv[0] ?? "").split("/").pop();
     if (base !== m.program) unknown(`argv[0] ${JSON.stringify(argv[0])} is not ${m.program}`);
-    if (m.version.range === "*") { /* written for every implementation */ }
+    if (m.entrypoint || m.version.range === "*") { /* pinned by its hash (shFacts), or written for every implementation */ }
     else if (opts.version === undefined) unknown("the program's version was not reported");
     else if (!inRange(opts.version, m.version.range)) unknown(`version ${opts.version} is outside ${m.version.range}`);
     for (const n of opts.envSet ?? []) if ((m.env ?? []).includes(n)) unknown(`the call sets ${n}, which changes what ${m.program} does`);
+    // An interpreted script: argv[1] is the script itself. Any interpreter flag before it (`-u`, `-X dev`, `--import`,
+    // even `--`) changes what runs, so the call is not this manifest's.
+    const ep = m.entrypoint;
+    if (ep && (argv.length < 2 || argv[1].startsWith("-"))) unknown(`${m.program} is described only as ${m.program} ${ep.path}, with no interpreter flag before it`);
 
     const terms: { term: ProgramEffect; targets: "command" | Resource[] }[] = [];
     let cmd = m.command;
-    let i = 1;
+    let i = ep ? 2 : 1;
     let operandPaths: number[] = [];
-    if (cmd.harden?.length) d.harden.push({ at: 0, args: [...cmd.harden] });
+    if (cmd.harden?.length) d.harden.push({ at: i - 1, args: [...cmd.harden] });
     // Descend through subcommands: options before a subcommand belong to the level above it.
     for (;;) {
         const r = cmd.syntax === "find" ? parseFind(argv, i, cmd, d, terms, unknown) : parseOptions(argv, i, cmd, d, terms, unknown);
@@ -399,7 +418,7 @@ const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "runs-code", "unknown"]);
 const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive"]);
 const PRIMARY_KEYS = new Set(["args", "until", "effects", "argIsPath", "runner"]);
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden"]);
-const MANIFEST_KEYS = new Set(["program", "version", "okCodes", "echoes", "env", "command"]);
+const MANIFEST_KEYS = new Set(["program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
 
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
  *  problems, so a misspelt `runer` cannot silently drop a runner flag. */
@@ -468,12 +487,23 @@ export function validateManifest(m: unknown): string[] {
     keys(m, MANIFEST_KEYS, "$");
     if (typeof m.program !== "string" || !/^[A-Za-z0-9._+-]+$/.test(m.program)) errs.push("$.program: a program name");
     const v = m.version;
-    if (!isObj(v) || typeof v.range !== "string" || !Array.isArray(v.args) || typeof v.pattern !== "string") errs.push("$.version: {range, args, pattern}");
+    if (m.entrypoint !== undefined && v === undefined) { /* pinned by its hash, checked below */ }
+    else if (!isObj(v) || typeof v.range !== "string" || !Array.isArray(v.args) || typeof v.pattern !== "string") errs.push("$.version: {range, args, pattern}");
     else {
         if (v.range === "*") { if (v.args.length || v.pattern) errs.push("$.version: a \"*\" range reads no version (args [], pattern \"\")"); }
         else if (!v.range.trim().split(/\s+/).every((c) => /^(>=|<=|>|<|=)?\d+(\.\d+)*$/.test(c))) errs.push("$.version.range: comparators like >=2.30.0 <3");
         try { new RegExp(v.pattern); } catch { errs.push("$.version.pattern: a regex"); }
         if (v.range !== "*" && !(v.args.length && v.pattern)) errs.push("$.version: a range needs the args and pattern that read it");
+    }
+    if (m.entrypoint !== undefined) {
+        const e = m.entrypoint;
+        if (!isObj(e) || typeof e.path !== "string" || typeof e.sha256 !== "string" || Object.keys(e).length !== 2) errs.push("$.entrypoint: {path, sha256}");
+        else {
+            if (!e.path || e.path.startsWith("/") || e.path.startsWith("-") || e.path.split("/").some((c) => c === "" || c === "." || c === ".."))
+                errs.push("$.entrypoint.path: a path relative to a workspace root, with no . or .. and no leading -");
+            if (!/^[0-9a-f]{64}$/.test(e.sha256)) errs.push("$.entrypoint.sha256: 64 lowercase hex digits");
+        }
+        if (v !== undefined) errs.push("$.version: a script is pinned by its entrypoint's sha256, so it has no version");
     }
     if (m.okCodes !== undefined) codes(m.okCodes, "$.okCodes");
     if (m.echoes !== undefined && typeof m.echoes !== "boolean") errs.push("$.echoes: boolean");

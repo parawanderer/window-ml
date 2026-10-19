@@ -65,6 +65,18 @@ sends none of these fields, and the result has none. The event lane shows them t
 (`shSpanOf`, then `takeShSpans` when the step's tool returns) that rides the step's DONE event as `shCalls`; see
 resource-panel.md, "ml.sh calls on a tool step".
 
+**An interpreted script is described by its own manifest** (PROGRAM_MANIFEST.md, "Interpreted script tools"; root K,
+slice K1, host 0.4.0). A manifest with an `entrypoint: { path, sha256 }` has no `version`: `program` is the
+interpreter, and `manifestFor` chooses it only when `argv[1]`, taken from the cwd, is `<root>/<path>` for a root as the
+host resolved it, with no interpreter flag before it (`-u`, `-X`, `--` included). `planSpawn` asks the host to hash
+`argv[1]` (`pathArgs` `{ arg: 1, hash: true }`), and `shFacts` describes the call only when the resolved file IS
+`<root>/<path>` (a symlinked entrypoint is not), its sha256 is the pin, and the call runs under the sandbox; otherwise
+it is unknown and asks, with a `why` line each. The card shows the script and its hash where a binary shows its
+version. If the host refuses the start with `PinChanged` (the file changed after its facts were read), a call no
+person approved is described again from fresh facts, once; one the person approved is refused, naming both hashes,
+and the run log's `shell`/`pin-changed` record keeps them. No script manifest ships: a pin is per repository, and the
+store that holds them is K2, so until then only tests pass their own list.
+
 ## Capabilities
 
 `shellCapabilities()` feeds the runtime's `RuntimeCapabilities` (sw-sessions.ts): `shellHost` when the host was

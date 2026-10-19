@@ -27,14 +27,62 @@ export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Obje
     ([cat, find, git, head, jq, ls, rg, tail, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
+/** The manifests a call is described by: the shipped ones, unless the caller names its own. */
+const SHIPPED_LIST: readonly ProgramManifest[] = Object.freeze(Object.values(SHIPPED_MANIFESTS));
+
+/** Where a call is made, for matching an interpreted script's manifest: its cwd and the workspace roots, both as the
+ *  host resolved them. */
+export interface ManifestPlace { cwd: string; roots: readonly string[] }
+
+/** `a/./b/../c` → `a/c`, for an absolute path; textual only (symlinks are the host's to resolve). */
+const normalPath = (p: string): string => {
+    const out: string[] = [];
+    for (const c of p.split("/")) {
+        if (c === "" || c === ".") continue;
+        if (c === "..") out.pop(); else out.push(c);
+    }
+    return "/" + out.join("/");
+};
+
 /**
- * The manifest for an argv's program, by the basename of `argv[0]`.
- * @param argv0 the program as the script wrote it
+ * The manifest for an argv's program. An interpreted script's manifest (`entrypoint`) is chosen when `argv[1]`, taken
+ * from the cwd, names its script under one of the roots, with no interpreter flag before it; otherwise the program's
+ * own manifest, by the basename of `argv[0]`.
+ * @param argv the call as the script wrote it
+ * @param place the call's cwd and the roots; without them no script manifest is chosen
+ * @param manifests the manifests to choose from (default: the shipped ones)
  * @returns the manifest, or undefined for an unannotated program
  */
-export function manifestFor(argv0: string): ProgramManifest | undefined {
-    const base = argv0.split("/").pop() ?? "";
-    return Object.prototype.hasOwnProperty.call(SHIPPED_MANIFESTS, base) ? SHIPPED_MANIFESTS[base] : undefined;
+export function manifestFor(argv: readonly string[], place?: ManifestPlace, manifests: readonly ProgramManifest[] = SHIPPED_LIST): ProgramManifest | undefined {
+    const base = (argv[0] ?? "").split("/").pop() ?? "";
+    const script = argv[1];
+    if (place && script && !script.startsWith("-")) {
+        const target = normalPath(script.startsWith("/") ? script : `${place.cwd}/${script}`);
+        const m = manifests.find((m) => m.program === base && m.entrypoint
+            && place.roots.some((r) => normalPath(`${r}/${m.entrypoint!.path}`) === target));
+        if (m) return m;
+    }
+    return manifests.find((m) => m.program === base && !m.entrypoint);
+}
+
+/**
+ * Whether the host's facts bear out an interpreted script's manifest: `argv[1]` resolved to the script under a root,
+ * its hash is the pin, and the call runs under the OS sandbox (on the plain host the script's imports are not bounded,
+ * PROGRAM_MANIFEST.md "Interpreted script tools"). Each failure is a line of `why`.
+ * @param facts what `spawn` answered
+ * @param m the chosen manifest
+ * @param roots the workspace roots as the host resolved them
+ * @returns why the manifest does not apply; empty when it does
+ */
+function entrypointMisses(facts: HostFacts, m: ProgramManifest, roots: readonly string[]): string[] {
+    const ep = m.entrypoint;
+    if (!ep) return [];
+    const why: string[] = [];
+    const f = facts.paths.find((p) => p.arg === 1);
+    if (!f || !roots.some((r) => normalPath(`${r}/${ep.path}`) === f.path)) why.push(`${f?.given ?? "argv[1]"} resolves to ${f?.path ?? "nothing"}, not ${ep.path} in a workspace root`);
+    else if (f.sha256 !== ep.sha256) why.push(`${ep.path} is not the file its manifest was pinned to (sha256 ${f.sha256 ?? "unreadable"})`);
+    if (!facts.sandboxed) why.push(`${ep.path} is described only under the OS sandbox: on the plain host, what it imports is not bounded`);
+    return why;
 }
 
 /** Bounds on what one call may carry, set far past any real command line, so a script cannot make the worker or the
@@ -123,9 +171,9 @@ export interface ShPlan {
  * @param session the session's working directory (an absolute path inside a root); a relative `cwd` is taken from it
  * @returns the plan
  */
-export function planSpawn(req: ShRunRequest, session: { cwd: string }): ShPlan {
+export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[] }): ShPlan {
     const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
-    const m = manifestFor(req.argv[0]);
+    const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots } : undefined, session.manifests);
     const spawn: HostSpawn = { argv: req.argv, cwd, ...(Object.keys(req.env).length ? { env: { ...req.env } } : {}), mode: "host", ...(req.timeoutMs ? { timeoutMs: req.timeoutMs } : {}) };
     if (!m) return { spawn, description: null };
     const first = describeCall(req.argv, m, { envSet: Object.keys(req.env) });
@@ -137,6 +185,8 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string }): ShPlan {
     const d = argv === req.argv ? first : describeCall(argv, m, { envSet: Object.keys(req.env) });
     spawn.argv = argv;
     const pathArgs: HostPathArg[] = d.pathArgs.map((p) => ({ arg: p.arg, ...(p.split ? { split: p.split } : {}), ...(p.walk ? { walk: true } : {}) }));
+    // The script itself, resolved and hashed, so its facts say which file runs and whether it is the pinned one.
+    if (m.entrypoint) pathArgs.unshift({ arg: 1, hash: true });
     if (pathArgs.length) spawn.pathArgs = pathArgs;
     if (d.recursive && d.actsOnDir && d.dirArg === null) spawn.walkCwd = true;
     if (m.program === "git" && d.dirArg !== null) spawn.repoArg = d.dirArg;
@@ -145,7 +195,7 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string }): ShPlan {
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
  *  tell. */
-export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; containsSecret?: boolean | null }
+export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; containsSecret?: boolean | null; sha256?: string | null }
 
 /**
  * One call as a policy's `c` and the card see it: everything resolved by the host or read from the manifest, nothing
@@ -183,8 +233,8 @@ const secretBeneath = (containsSecret: boolean | null | undefined): boolean => c
  *   describes nothing: its effects are `unknown`)
  * @returns the policy's `c`
  */
-export function shFacts(facts: HostFacts, version: string | null = null): ShFacts {
-    const m = manifestFor(facts.argv[0]);
+export function shFacts(facts: HostFacts, version: string | null = null, place?: { roots: readonly string[]; manifests?: readonly ProgramManifest[] }): ShFacts {
+    const m = manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots } : undefined, place?.manifests);
     const why: string[] = [];
     let effects: EffectsData = "unknown";
     let described = false;
@@ -203,6 +253,8 @@ export function shFacts(facts: HostFacts, version: string | null = null): ShFact
         described = d.described;
         runner = d.runner;
         why.push(...d.why);
+        const misses = entrypointMisses(facts, m, place?.roots ?? []);
+        if (misses.length) { why.push(...misses); effects = "unknown"; described = false; }
     }
     // A variable off the free list changes what a program does in ways no manifest lists (SHELL.md, "The environment is
     // scrubbed"): the call is not described, whatever its argv says.
@@ -217,7 +269,7 @@ export function shFacts(facts: HostFacts, version: string | null = null): ShFact
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,
@@ -247,7 +299,12 @@ export function shCardLines(f: ShFacts): ShCardLine[] {
     for (const p of f.paths) {
         const notes = [!p.inRoot && "outside the roots", p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
             p.containsSecret === null && "too large to check for secrets", !p.exists && "does not exist yet"].filter(Boolean);
-        lines.push({ label: `Path ${p.arg}`, value: p.path + (notes.length ? ` (${notes.join(", ")})` : ""), ...(notes.some((n) => n !== "does not exist yet") ? { warn: true } : {}) });
+        // A hashed argument is the script that runs: where it was named, the file it resolved to, and its hash, which
+        // stands where a binary's version does.
+        const label = p.sha256 !== undefined ? "Script" : `Path ${p.arg}`;
+        const where = p.sha256 !== undefined && p.given !== p.path ? `${p.given} → ${p.path}` : p.path;
+        const hash = p.sha256 !== undefined ? ` (sha256 ${p.sha256 ? p.sha256.slice(0, 12) : "unreadable"})` : "";
+        lines.push({ label, value: where + hash + (notes.length ? ` (${notes.join(", ")})` : ""), ...(notes.some((n) => n !== "does not exist yet") ? { warn: true } : {}) });
     }
     if (secretBeneath(f.cwd.containsSecret)) lines.push({ label: "Reads", value: f.cwd.containsSecret ? "the whole directory, which has secret-looking files in it" : "the whole directory, too large to check for secrets", warn: true });
     if (f.repoConfigRunsCode) lines.push({ label: "Repository", value: `its own config makes git run a program: ${f.repo?.reasons.join(", ") || "see .git/config"}`, warn: true });
