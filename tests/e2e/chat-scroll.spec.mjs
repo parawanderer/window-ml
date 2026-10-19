@@ -103,7 +103,11 @@ test("a standalone tool call slides in, and a pair that becomes a group says so 
         return "laptop:a11e5001";
     });
     await page.evaluate((k) => { location.hash = `#/s/${encodeURIComponent(k)}`; }, key);
-    await page.locator(".chat-transcript").waitFor();
+    // THIS session's first paint, not the transcript box `?long=0` already had. HistoryPaint is true only for the
+    // commit that first draws the transcript (history-paint.ts / chat-app.tsx): a step that mounts in that commit is
+    // history however recent its stamp, and `longAgent(0)` leaves nothing else to wait on. The task bubble is that
+    // commit's visible marker; after it, a live emit is a live arrival.
+    await page.locator(".chat-transcript .msg.user", { hasText: "Tabulate every fare" }).first().waitFor();
     // One call on its own: the row slides in (and the turn may drift with it).
     await page.evaluate((k) => globalThis.__chatFake.emit(k, {
         kind: "agent-step", id: "solo-tool", ts: Date.now(), save: true, session: { hash: "a11e5001", turn: 1 },
