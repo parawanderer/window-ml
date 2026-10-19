@@ -42,7 +42,7 @@ test("python_exec streams print() output live (worker → page ctx.stream → st
         const seen = [];
         await watchRunEvents(ext, page, (d) => { if (d && d.kind === "agent-step" && d.streamOutput != null) seen.push(d.streamOutput); });
         approveGates(ext);   // no cell is known to be inside the dialect yet, so the run asks
-        await page.evaluate(() => window.ml.agent("run the code", { stream: true, extraTools: [window.ml.pythonTool()] }));
+        await page.evaluate(() => window.ml.agent("run the code", { stream: true, approvalRouting: "both", extraTools: [window.ml.pythonTool()] }));
 
         // Poll until a delta carries the printed text (the whole chain worked), bounded well past the ~1s run.
         await expect.poll(() => seen.some((d) => /LIVE-ALPHA/.test(d)), { timeout: 15000 }).toBe(true);

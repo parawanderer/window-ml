@@ -493,8 +493,8 @@ export function approveGates(ext, tool = "python_exec") {
     (async () => {
         while (on) {
             try {
-                const keys = await ext.sw.evaluate((/** @type {string} */ t) => (globalThis.__mlApprovals?.list?.() || []).filter((g) => String(g.tool) === t).map((g) => g.key), tool);
-                for (const k of keys) await ext.sw.evaluate((/** @type {string} */ key) => globalThis.__mlApprovals.resolve(key, true), k);
+                const keys = await ext.sw.evaluate((/** @type {string} */ t) => ((/** @type {any} */ (globalThis)).__mlApprovals?.list?.() || []).filter((/** @type {any} */ g) => String(g.tool) === t).map((/** @type {any} */ g) => g.key), tool);
+                for (const k of keys) await ext.sw.evaluate((/** @type {string} */ key) => (/** @type {any} */ (globalThis)).__mlApprovals.resolve(key, true), k);
             } catch { /* the worker is restarting or the browser closed */ }
             await new Promise((r) => setTimeout(r, 250));
         }

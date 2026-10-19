@@ -111,7 +111,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const rawComplete = payload?.complete;
     if (rawComplete && !ownSurface) return { error: "Refused: code completion is a workbench feature." };
     const complete = rawComplete
-        ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0) }
+        ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0), bench: "readonly" as const }
         : null;
     // The bench's KEPT STATE is ours alone: a page's run always executes in the namespace every run resets, and a page
     // cannot clear a person's variables.

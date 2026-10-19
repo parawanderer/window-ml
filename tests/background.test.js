@@ -4405,7 +4405,7 @@ test("PYTHON_EXEC: the bench's completion request is forwarded, HARDENED whateve
         { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
     const run = bg.pyRuns.find(m => m.type === "PY_RUN");
     assert.equal(run?.hardened, true, "always the hardened sandbox");
-    assert.deepEqual(run?.complete, { line: 2, column: 3 }, "coerced to integers — they are spliced into a Python call");
+    assert.deepEqual(run?.complete, { line: 2, column: 3, bench: "readonly" }, "coerced to integers — they are spliced into a Python call");
 });
 
 test("PYTHON_EXEC: an ordinary run carries no completion field", async () => {
@@ -4444,7 +4444,8 @@ test("PYTHON_EXEC: the bench's keep-state run, reset and completion all reach th
     const runs = bg.pyRuns.filter(m => m.type === "PY_RUN");
     assert.equal(runs[0].persist, true);
     assert.equal(runs[1].benchReset, true);
-    assert.ok(!("bench" in runs[2].complete) && !("bench" in runs[3].complete), "there is no namespace name to forward: mode is gone");
+    assert.equal(runs[2].complete.bench, "readonly", "the one bench namespace, whatever the caller named");
+    assert.equal(runs[3].complete.bench, "readonly", "an unknown namespace name is dropped, never forwarded");
 });
 
 // ---- Request hints (RequestHint → `hint` on the wire; a patched ollama records it on gen.end) ----
