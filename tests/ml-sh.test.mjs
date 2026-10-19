@@ -343,7 +343,7 @@ test("with ml.sh off in Settings, the call is refused and the host is never star
 // A runner (`exec(process)` approved) gets NO envelope: both keys must derive, and a runner's writes derive from
 // no manifest. Ruled in SHELL.md's envelope bullet and EFFECTS.md's exec row (window-ml #805).
 
-test("hello.sandbox.landlockAbi gates the envelope: absent (pre-K3) gets none, null (macOS) gets one", { todo: "OPEN (K3 envelope, 2026-10-19): the builder gates on hello.sandbox.landlockAbi being PRESENT (a number on Linux, null on macOS). A pre-K3 host has no such key and silently ignores an envelope on start, so sending one would let the card claim a bound that never applied. fakeNativeHost's hello now supports opts.landlockAbi (default: the key's ABSENCE). The second assertion fails first: HostStart has no envelope field (src/shell/host-protocol.ts:240)." }, T, async () => {
+test("hello.sandbox.landlockAbi gates the envelope: absent (pre-K3) gets none, null (macOS) gets one", T, async () => {
     // Pre-K3: hello carries no landlockAbi → the worker sends no envelope.
     const old = fakeNativeHost();
     await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: old.onNative, configExtra: ON });
@@ -356,7 +356,7 @@ test("hello.sandbox.landlockAbi gates the envelope: absent (pre-K3) gets none, n
     assert.ok(macStart?.args.envelope, "a K3 hello (landlockAbi: null) gets an envelope on start");
 });
 
-test("the write envelope is derived from the approved claims: none / roots / NO envelope for a top-level claim", { todo: `OPEN (K3 envelope, 2026-10-19): HostStart carries no envelope field (src/shell/host-protocol.ts:240: start(id) sends { id }). SHELL.md's envelope bullet and EFFECTS.md's B row: write: "none" when the claims carry no write(fs); write: "roots" when every write is nested and in-root; and a claim on a top-level NAME (absent entry, write-names at the top level, or on the root) that the person APPROVED gets NO envelope — the floor — since both keys are required and write would be the floor. The card says the floor applies. Envelope rides start, not spawn (PROTOCOL.md).` }, T, async () => {
+test("the write envelope is derived from the approved claims: none / roots / NO envelope for a top-level claim", T, async () => {
     const host = fakeNativeHost({ landlockAbi: null });
     const ask = answering(true);
     const three = () => `(async () => {
@@ -377,7 +377,7 @@ test("the write envelope is derived from the approved claims: none / roots / NO 
     assert.equal("envelope" in starts[2].args, false, "a top-level name claim gets the floor: no envelope at all");
 });
 
-test("a runner gets NO envelope: both keys must derive, and a runner's writes derive from no manifest", { todo: "OPEN (K3 envelope, 2026-10-19): ruled 2026-10-19 (window-ml #805). A call whose approved claims carry exec(process) (a RUNNER: find -exec, xargs, npm run) gets NO envelope at all: the envelope's two keys are both required, a runner starts programs no manifest describes, and find . -exec rm claims no write of its own. Under #805, exec: \"any\" with an envelope is NEVER sent — a runner gets none. General rule: the worker sends an envelope only when BOTH keys derive from the approved claims; when either does not, it sends none and the floor applies." }, T, async () => {
+test("a runner gets NO envelope: both keys must derive, and a runner's writes derive from no manifest", T, async () => {
     const host = fakeNativeHost({ landlockAbi: null });
     const ask = answering(true);
     const two = () => `(async () => {
@@ -399,7 +399,7 @@ test("a runner gets NO envelope: both keys must derive, and a runner's writes de
     for (const s of starts) assert.notEqual(s.args.envelope?.exec, "any", "exec: \"any\" is never sent under #805");
 });
 
-test("the script cannot set, widen or remove the envelope: an envelope key in options, env or argv never reaches start as a wider one", { todo: "OPEN (K3 envelope, 2026-10-19): rule 4 (sender, never message) — authority comes from what the worker verifies about who sent a call, never from a field in it. The envelope is derived from the APPROVED ShFacts and what the worker SENDS on start is that, whatever the script put in ml.sh.run's options, its env or its argv. parseShRun refuses an unknown option by name (sh-call.ts:130, safe: nothing sent). The env and argv legs are ignored by construction. Assert on start, not spawn (envelope rides start/pipe)." }, T, async () => {
+test("the script cannot set, widen or remove the envelope: an envelope key in options, env or argv never reaches start as a wider one", T, async () => {
     const host = fakeNativeHost({ landlockAbi: null });
     const three = () => `(async () => {
         const a = await ml.sh.run(["ls"], { envelope: { write: "roots", exec: "any" } }).catch((e) => ({ threw: e.message }));
@@ -418,7 +418,7 @@ test("the script cannot set, widen or remove the envelope: an envelope key in op
     }
 });
 
-test("done.envelope is compared against what was sent: the record carries the host's applied envelope; absent is null", { todo: "OPEN (K3 envelope, 2026-10-19): HostDone carries no envelope (host-protocol.ts:104-121) and shResult (sh-call.ts:407-418) reads none. The ruled shape is ShResult.envelope: HostDoneEnvelope | null — required and null-able, where null means the host reported none. Assert r.envelope verbatim. For the mismatch (host reports wider than sent, or write: \"today\" when \"roots\" was sent), the card or the run log names both sent and applied — drop the separate marker until a field is ruled. The absent case is assert.strictEqual(r2.envelope, null) — not r2.envelope ?? \"unknown\", which also passes when the field is missing altogether." }, T, async () => {
+test("done.envelope is compared against what was sent: the record carries the host's applied envelope; absent is null", T, async () => {
     // The host reports write: "today" (the floor) when the worker sent write: "roots" for a nested write: a mismatch.
     const host = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "today", exec: "program-only" } }) });
     const { results } = await runOn("userScripts", [runs(["find", "src/gen", "-delete"])], {
@@ -434,7 +434,7 @@ test("done.envelope is compared against what was sent: the record carries the ho
     assert.strictEqual(r2.envelope, null, "an absent envelope on done is null, never undefined or missing");
 });
 
-test("the same script and the same approval derive the same envelope wherever the call is issued and however it is judged", { todo: "OPEN (K3 envelope, 2026-10-19): rule 5 (placement is unobservable) — the same script gives the same result wherever it runs. The envelope is a function of the APPROVED ShFacts alone, so an ml.sh call issued from exec, the same call issued from python_exec, and the same call re-judged after a policy is stored all derive one envelope. Read start, not spawn (envelope rides start/pipe). The python_exec leg is not reachable from this harness; it is named so the builder routes python_exec through one sw-shell-call.ts derivation, not a second." }, T, async () => {
+test("the same script and the same approval derive the same envelope wherever the call is issued and however it is judged", T, async () => {
     // Issuer 1: a free call from exec (the built-in allow).
     const host = fakeNativeHost({ landlockAbi: null });
     await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
