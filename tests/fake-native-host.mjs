@@ -50,7 +50,7 @@ export function fakeNativeHost(opts = {}) {
                     const ptr = (text) => { const p = `out:${held.size + 1}`; held.set(p, Buffer.from(text)); return { ptr: p, size: Buffer.byteLength(text), sha256: "x", truncated: false }; };
                     const oom = d.killed === "oom";
                     return reply({ event: "done", id: args.id, code: oom ? null : d.code, signal: oom ? "SIGKILL" : null, ok: !oom && d.code === 0, timedOut: false, cancelled: false, durationMs: 3,
-                        stdout: ptr(d.out), stderr: ptr(d.err), ...(d.peakFootprint !== undefined ? { killed: d.killed ?? null, peakFootprint: d.peakFootprint, memoryBound: d.memoryBound } : {}) });
+                        stdout: ptr(d.out), stderr: ptr(d.err), ...(d.peakFootprint !== undefined ? { killed: d.killed ?? null, peakFootprint: d.peakFootprint, memoryBound: d.memoryBound } : {}), ...(d.envelope !== undefined ? { envelope: d.envelope } : {}) });
                 }
                 if (call === "read") {
                     const b = held.get(args.ptr);
