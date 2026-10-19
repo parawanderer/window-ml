@@ -16,7 +16,7 @@ node scripts/android.mjs boot            # headless; --window to watch it. Retur
 node scripts/android.mjs install         # build-web → sync-embed → expo prebuild → gradle assembleRelease → adb install
 node scripts/android.mjs launch          # cold start (force-stop first)
 node scripts/android.mjs shot [file]     # PNG, default test-results/android.png; Read it to see the screen
-node scripts/android.mjs flows [file…]   # Maestro: every tests/mobile/*.yaml, or the ones named
+node scripts/android.mjs flows [file…]   # Maestro: every tests/mobile/*.yaml, or the ones named (--report f: JUnit)
 node scripts/android.mjs stop
 ```
 
@@ -43,6 +43,11 @@ node scripts/ios.mjs launch
 `android-latest` release at it (`.github/workflows/tests.yml`, the `mobile-android` job), so the phone downloads
 `window-ml.apk` from that page itself. `install` is for a device you are DRIVING from here: an emulator, or a phone
 plugged in with USB debugging on.
+
+**CI runs the demo flows too** (`.github/workflows/android-flows.yml`): the same `android.mjs` steps on an x86_64
+emulator with KVM, about half an hour, so only on main when the app's inputs changed, on demand, and on a PR labelled
+`run:android-flows`. It counts the JUnit report's test cases against the `demo-*.yaml` files, since Maestro passes when
+it ran nothing. A failed run uploads `android-flows`: the report, `logcat.txt` and Maestro's own screenshots.
 
 On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
 <file>`), tapping by visible text or by accessible name (a pill's is `Model: <id>`, not its text).

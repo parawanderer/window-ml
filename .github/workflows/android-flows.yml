@@ -1,0 +1,114 @@
+# THE PHONE APP'S MAESTRO FLOWS ON AN ANDROID EMULATOR: the demo build installed and every `tests/mobile/demo-*.yaml`
+# driven against it, the same as `node scripts/android.mjs flows` on a laptop. `tests.yml` only asks whether the app
+# PACKAGES (`mobile-bundle`, `mobile-android`); this asks whether it still WORKS.
+#
+# It is its own workflow because of what it costs: about half an hour of runner (an emulator boot, a release build, the
+# flows), which every PR should not pay. It runs on main when something the app is made of changed, on demand, and on a
+# PR that carries the `run:android-flows` label. Adding the label runs it; every later push to that PR runs it again.
+#
+# Only the DEMO flows: `first-run.yaml` and `join.yaml` need a real build and a hub, which a runner does not have.
+#
+# The emulator is driven by the repo's own `scripts/android.mjs` (setup, boot, install, flows), not a marketplace
+# action, so CI and a laptop run the same steps and a break in the script shows up here first.
+name: android-flows
+
+on:
+  push:
+    branches: [main]
+    # What the app is built from (the folders Metro watches: mobile/metro.config.js), the flows and the scripts that
+    # drive them. The same set as `tests.yml`'s `phone` filter, plus the flows and scripts.
+    paths:
+      - "mobile/**"
+      - "src/chat/**"
+      - "src/native/**"
+      - "src/pairing/**"
+      - "tests/mobile/**"
+      - "scripts/android.mjs"
+      - "scripts/mobile-prebuild.mjs"
+      - "scripts/build-web.mjs"
+      - "package-lock.json"
+      - ".github/workflows/android-flows.yml"
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: android-flows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  flows:
+    # On a PR: only with the label, and on a `labeled` event only when THAT label was the one added, so labelling a
+    # PR `@ui` does not start half an hour of emulator.
+    if: >-
+      github.event_name != 'pull_request'
+      || (contains(github.event.pull_request.labels.*.name, 'run:android-flows')
+          && (github.event.action != 'labeled' || github.event.label.name == 'run:android-flows'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # The runner has /dev/kvm but only root may open it, and without KVM an x86_64 emulator is too slow to boot.
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      # 17, as in `tests.yml`'s `mobile-android`: the JDK React Native's gradle plugin targets.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      # `packages: ""`: see `mobile-android` in tests.yml. `android.mjs setup` installs what the emulator needs.
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ""
+      # Pinned, from its own release: the version the flows were written against on a laptop.
+      - name: Install Maestro
+        run: |
+          mkdir -p ~/.maestro && cd ~/.maestro
+          curl -sSLf -o maestro.zip https://github.com/mobile-dev-inc/maestro/releases/download/cli-2.10.0/maestro.zip
+          unzip -qo maestro.zip && rm maestro.zip
+          echo "$HOME/.maestro/maestro/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - run: npm ci
+        working-directory: mobile
+      - name: Install the SDK packages and create the emulator
+        run: node scripts/android.mjs setup
+      - name: Boot the emulator
+        run: node scripts/android.mjs boot
+        env:
+          BOOT_TIMEOUT_S: 600
+      # A release build for the emulator's ABI (x86_64), the demo world bundled in.
+      - name: Build and install the demo app
+        run: node scripts/android.mjs install --demo
+      - name: Run the demo flows
+        run: node scripts/android.mjs flows --report test-results/maestro.xml tests/mobile/demo-*.yaml
+      # Maestro exits 0 when it found nothing to run, so a glob that matched less than it should, or a flow it skipped,
+      # would pass. Count them.
+      - name: Check that every flow ran
+        run: |
+          want=$(ls tests/mobile/demo-*.yaml | wc -l)
+          ran=$(grep -o '<testcase ' test-results/maestro.xml | wc -l)
+          echo "flows: $want, ran: $ran"
+          test "$want" -gt 0 && test "$ran" -eq "$want"
+      - name: Save the device log
+        if: always()
+        run: |
+          mkdir -p test-results
+          "$ANDROID_HOME/platform-tools/adb" logcat -d > test-results/logcat.txt || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-flows
+          path: |
+            test-results/
+            ~/.maestro/tests/
+          if-no-files-found: ignore
