@@ -71,6 +71,13 @@ idle-connection measurement reached a session that had never run one, and only a
 3. **Scope** — agents declare what they hold (paths, branches, subsystems); the system matches a message's subject
    against those declarations.
 
+All three route on the MESSAGE. On 2026-10-19 (six sessions, three models) most routing was on the RECEIVER: work a
+Claude session must not do (reading the sandbox lockdown trips a safety classifier) went to a different model; a
+security review went to any session except the one that wrote the code; a red-team pass went to the session that had
+NOT built the defence. So a message, and a work order in particular, carries a constraint on who may take it, in
+terms the system can check: the receiver's model or trust class, and `not: <lineage>` for "anyone but the author".
+A claim that fails the constraint is refused, not queued.
+
 A message none of the three places goes to an **unrouted queue that the human owns** — and that queue already has
 a UI. `src/chat/attention.ts` is "what needs someone's hand", with levels, fixes, dismissal and a phone surface. An
 unrouted message is an attention item. Human routing stops being the transport for every message and becomes the
