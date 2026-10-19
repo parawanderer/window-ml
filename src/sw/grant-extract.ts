@@ -123,7 +123,7 @@ export const pyCodeCovers = (granted: ReadonlySet<string>, outside: boolean, cod
 export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sheets: string[]; pyCode: string[] }
 
 /**
- * Decide the grants an approved call mints on its tab. Pure, so each rule is tested on its own.
+ * Decide the grants an approved call mints on its tab. Pure but for the dialect verdict (`pythonCellInDialect`, replaceable in tests), so each rule is tested on its own.
  *
  * - An `exec`: the URLs its code spells out (its inline `ml.fetch`), and no others.
  * - A server tool: the exact call the person saw (`remoteKey`, `serverToolKey`).

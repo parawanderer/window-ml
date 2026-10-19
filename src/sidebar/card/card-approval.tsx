@@ -32,6 +32,7 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
     const summary = key ? codeSummaries.get(key) : undefined;
     const pos = highlightPos.value;
     const sheets = externalSheetGrant(st.arguments);
+    const dialectNote = st.tool === "python_exec" ? pythonDialectVerdict(String(st.arguments?.code ?? "")) : null;
     const isType = !!intent && intent.verb.toLowerCase() === "type";
     return (
         <div class="action" data-rev={rv}>
@@ -43,9 +44,7 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {/* The dialect's verdict on a Python cell: why the person is being asked (python-dialect.ts). */}
-                    {st.tool === "python_exec" && pythonDialectVerdict(String(st.arguments?.code ?? ""))
-                        ? <div class="action-summary dim">{pythonDialectVerdict(String(st.arguments?.code ?? ""))}.</div>
-                        : null}
+                    {dialectNote ? <div class="action-summary dim">{dialectNote}.</div> : null}
                   </div>
                 : intent
                     ? <div class="action-card">
