@@ -364,7 +364,7 @@ export class HubRuntime {
         // ("an intermediate may not pair", keys.ts) and answer the asker with that sentence, which nobody can act on.
         // The phone pairs runtimes without it by default (#815), so this is the common case, not an edge.
         if (!CertificateBody.decode(this.opts.membership.chain[0].body).mayPair)
-            return fail("unsupported", "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from the root device, or from a browser paired with that permission");
+            return fail("unsupported", "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from a browser paired with that permission, or pair the device again");
         const t = (this.opts.now ?? Date.now)();
         if (body.notAfterMs <= t) return fail("conflict", "this certificate has already expired; pair the device again");
         // Not due: answered with what it has rather than signed again.

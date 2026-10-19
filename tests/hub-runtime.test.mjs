@@ -407,7 +407,8 @@ test("a runtime paired WITHOUT may_pair refuses a renewal before signing, in wor
         const r = await w.ask(tablet, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
         assert.deepEqual([r.ok, r.error?.code], [false, "unsupported"], JSON.stringify(r));
         assert.match(r.error.message, /without permission to pair devices/);
-        assert.match(r.error.message, /root device/, "names where it CAN be renewed");
+        assert.match(r.error.message, /from a browser paired with that permission, or pair the device again/, "names what works: only a runtime that may pair answers device.renew");
+        assert.doesNotMatch(r.error.message, /root device/, "nothing on the root device renews another device");
         assert.doesNotMatch(r.error.message, /intermediate/, "not the verifier's sentence");
     } finally { tablet?.close(); await w.close(); }
 });
