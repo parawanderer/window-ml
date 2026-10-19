@@ -161,7 +161,7 @@ const { generateAgreementKey } = await import("../src/hub/hpke.ts");
 const { CertificateBody } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
 
 /** A runtime that keeps an allowlist and signs revocations, an admin phone, and a second phone to revoke. */
-async function revocationWorld({ runtimeMs = 3_600_000, runtimeSigns = true } = {}) {
+async function revocationWorld({ runtimeMs = 3_600_000, runtimeSigns = true, runtimeMayPair = true } = {}) {
     const hub = await startHub();
     const root = await generateIdentity();
     // `runtimeMs` is how long the RUNTIME's own certificate lasts, which bounds every renewal it signs
@@ -170,7 +170,7 @@ async function revocationWorld({ runtimeMs = 3_600_000, runtimeSigns = true } = 
     // `runtimeSigns` exists because the hub admits ONE `may_revoke` principal per account (v0.4.2): a test that needs
     // a may_revoke CLIENT cannot also have a may_revoke runtime, since whichever connects first takes the record and
     // the other is refused its login. The default is the real shape, where the runtime signs.
-    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: true, mayRevoke: runtimeSigns, notAfterMs: Date.now() + runtimeMs });
+    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: runtimeMayPair, mayRevoke: runtimeSigns, notAfterMs: Date.now() + runtimeMs });
     const admin = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive, SCOPE.admin], "root phone");
     const tablet = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive], "tablet");
     const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
@@ -394,6 +394,22 @@ test("a device paired by ANOTHER DEVICE cannot be renewed, and is told to pair a
         assert.match(r.error.message, /paired by another device/);
         assert.match(r.error.message, /pair it again/);
     } finally { paired?.close(); await w.close(); }
+});
+
+test("a runtime paired WITHOUT may_pair refuses a renewal before signing, in words the asker can act on", LIVE, async () => {
+    // It used to sign, fail its own verifyChain and answer `conflict: an intermediate may not pair`. The phone pairs a
+    // runtime without may_pair by default (#815), so this is what most runtimes answer.
+    const w = await revocationWorld({ runtimeMs: 30 * 86_400_000, runtimeSigns: false, runtimeMayPair: false });
+    let tablet;
+    try {
+        tablet = await w.connect(w.tablet);
+        await poll("the tablet seen", () => w.devices.list().some((d) => d.label === "tablet"));
+        const r = await w.ask(tablet, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
+        assert.deepEqual([r.ok, r.error?.code], [false, "unsupported"], JSON.stringify(r));
+        assert.match(r.error.message, /without permission to pair devices/);
+        assert.match(r.error.message, /root device/, "names where it CAN be renewed");
+        assert.doesNotMatch(r.error.message, /intermediate/, "not the verifier's sentence");
+    } finally { tablet?.close(); await w.close(); }
 });
 
 test("device.scopes NARROWS at once, from the allowlist, and the certificate is not what is consulted", LIVE, async () => {
