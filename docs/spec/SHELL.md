@@ -386,10 +386,14 @@ What follows from it:
   reviewing window-ml-host #12). Landlock grants by inode, so "the roots minus the protected names" is not a bound the
   kernel can hold for a name that does not exist yet (`.envrc`, `.mcp.json`, `.vscode/`). So under `write: "roots"` the
   rule is a universal, not a list: at the top level of every root nothing is created, removed or renamed; the root
-  inode carries write and truncate only. An existing, non-protected top-level file stays editable; an existing
+  inode carries write and truncate only. An existing, non-protected top-level file stays editable IN PLACE; an existing
   protected name is read-only as today; below a non-protected top-level directory nothing changes. The worker sends
   `write: "roots"` only when the call's claims permit it (`cargo build`, `npm install` and `git worktree add` create
-  top-level names and do not get it). An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
+  top-level names and do not get it). An editor that writes a temp file beside the target and renames it over the
+  original (`sed -i`, `perl -i`, npm's `write-file-atomic`, many formatters) creates a top-level name too, so an edit
+  of an existing top-level file by such a program is counted as a claim on a new top-level name and does not get
+  `write: "roots"` either (lane 4, 2026-10-19); under the narrow envelope it would fail as `ok: false` and look like
+  the program's own error. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
   then protects nothing; the tripwire above is what covers the gap's threat.
 - **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
