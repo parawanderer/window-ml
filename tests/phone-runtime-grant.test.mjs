@@ -29,8 +29,8 @@ test("the lines say what the grant sends, for every mayPair x mayRevoke x signer
         const text = receivesLines({ signer }, { scopes: [], mayPair, mayRevoke }).join("\n");
         assert.equal(/can add devices to this account by itself/.test(text), mayPair);
         assert.equal(/cannot add devices/.test(text), !mayPair);
-        assert.equal(/It will be the device that signs removals/.test(text), mayRevoke && !signer);
-        assert.equal(/also signs revocations/.test(text), mayRevoke && !!signer);
+        assert.equal(/It will be the device that signs removals/.test(text), mayRevoke);
+        assert.doesNotMatch(text, /also signs revocations/, "a second holder is never described");
         assert.equal(/signs removals for this account, and only one device can/.test(text), !mayRevoke && !!signer);
     }
 });

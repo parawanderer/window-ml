@@ -248,7 +248,8 @@ export function receivesLines(found: Pick<FoundOffer, "signer">, grant: Pick<Gra
     lines.push(grant.mayPair
         ? "It can add devices to this account by itself, without asking here."
         : "It cannot add devices. A browser runtime without this cannot re-sign other devices' certificates when they renew.");
-    if (grant.mayRevoke) lines.push(found.signer ? "It also signs revocations for this account." : "It will be the device that signs removals for this account. Exactly one does, and without it a removal reaches nothing.");
+    // `mayRevoke` with a known signer is never offered (the hub refuses a second holder), so only the first-runtime case is told.
+    if (grant.mayRevoke) lines.push("It will be the device that signs removals for this account. Exactly one does, and without it a removal reaches nothing.");
     else if (found.signer) lines.push(`“${found.signer}” signs removals for this account, and only one device can, so this one will not.`);
     return lines;
 }
