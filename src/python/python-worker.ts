@@ -288,6 +288,8 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         if (onStdout) { try { py.setStdout({}); } catch { /* ignore */ } }
         for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
         try { ns.delete("_ipc_result"); } catch { /* not set */ }
+        // The loaders' namespace pointer is per cell: a stale one must not keep a released run's dict reachable.
+        try { py.globals.set("_ml_load_ns", undefined); } catch { /* the interpreter is gone */ }
         // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and
         // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
         // `pd.read_csv("sales")` could have been handed the model's last table. Clear them now instead.

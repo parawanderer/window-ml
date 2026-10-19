@@ -697,13 +697,41 @@ test("run dict: a cell's tables are bound by name and in `tables`, and stay for 
     assert.deepEqual(await runCell("return sorted(tables)", ns, { tables: [rows("u", ["b"], [[4]])] }), { value: ["u"] });
 });
 
-test("run dict: the injected inputs are coerced to str/None, and the loaders are not patched from it", { skip }, async () => {
+test("run dict: the injected inputs are coerced to str/None, and the loaders' originals are not left in it", { skip }, async () => {
     const ns = freshNs();
     assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64, INJECTED_TABLES_JSON]", ns), { value: [null, null] });
-    // The loaders read the namespace that defined them; defined in a run's dict, every later namespace's
-    // Image.open would chain onto it and could be handed this run's `img`.
+    // The shared patch keeps its originals in its own closure, so a run's dict holds none to chain onto.
     assert.equal(ns.has("_ml_orig_image_open"), false);
     assert.equal(ns.has("_ml_orig_read_csv"), false);
+    assert.equal(ns.has("_ml_orig_read_html"), false);
+});
+
+// --- the loader redirect in a run's dict: ONE patch per interpreter, reading the namespace of the cell that runs ---
+
+test("run dict loaders: a cell that passed an image is redirected; a run with none is not handed another run's", { skip }, async () => {
+    const a = freshNs();
+    const b = freshNs();
+    assert.deepEqual(await runCell("return Image.open('canvas#stage') is img", a, { image: TINY_PNG }), { value: true }, "run A: the redirect works");
+    const bOpen = await runCell("return Image.open('canvas#stage') is not None", b);
+    assert.match(String(bOpen.error), /FileNotFoundError|No such file/, "run B has no image: the real open runs and fails, nothing is served");
+    assert.deepEqual(await runCell("return Image.open('canvas#stage') is img", a), { value: true }, "run A still has its own after B ran");
+});
+
+test("run dict loaders: a re-import of Image neither loses the redirect nor leaks another run's image", { skip }, async () => {
+    const a = freshNs();
+    const b = freshNs();
+    assert.deepEqual(await runCell("from PIL import Image\nreturn Image.open('x') is img", a, { image: TINY_PNG }), { value: true }, "neither lose");
+    const bOpen = await runCell("from PIL import Image\nreturn Image.open('x') is not None", b);
+    assert.match(String(bOpen.error), /FileNotFoundError|No such file/, "neither leak");
+});
+
+test("run dict loaders: tables are served per run, and a later run's prelude installs nothing over the first", { skip }, async () => {
+    const a = freshNs();
+    const b = freshNs();
+    assert.deepEqual(await runCell("return int(pd.read_csv('t')['a'].sum())", a, { tables: [rows("t", ["a"], [[1], [2]])] }), { value: 3 });
+    const bRead = await runCell("return int(pd.read_csv('t')['a'].sum())", b, { tables: [rows("u", ["a"], [[10]])] });
+    assert.deepEqual(bRead, { value: 10 }, "run B's only table is the one they meant, not run A's");
+    assert.deepEqual(await runCell("import PIL.Image as m\nn = 0\nf = m.open\nwhile hasattr(f, '__wrapped__'): f = f.__wrapped__; n += 1\nreturn n", a), { value: 0 }, "no chain of wrappers");
 });
 
 // --- the _ml_in coercion runs on every run-dict cell, not only the first ---
@@ -730,13 +758,22 @@ test("run dict: no other host-injected name reaches the dict uncoerced", { skip 
         { value: ["str", "str"] }, "the only two injected names are the coerced ones, and a passing cell gets str");
 });
 
+test("run dict loaders: the bench is never served a run's image or tables", { skip }, async () => {
+    const run = freshNs();
+    await runCell("return 1", run, { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] });
+    const open = await benchRun("Image.open('x')", freshNs());
+    assert.match(String(open.error), /FileNotFoundError|No such file/);
+    const csv = await benchRun("pd.read_csv('t')", freshNs());
+    assert.match(String(csv.error), /FileNotFoundError|No such file|Errno/);
+});
+
 test("run dict: persist true (bench), \"run\" and false cannot be confused", { skip }, async () => {
     const { wrapUserCode } = await import("../src/python/python-runtime.ts");
     const bench = wrapUserCode("return 1", true, true);
     const run = wrapUserCode("return 1", false, "run");
     const old = wrapUserCode("return 1", true, false);
     assert.ok(!bench.includes("def _ml_in") && !bench.includes("_ml_image_open"), "the bench gets neither the coercion nor the loaders (it injects no names)");
-    assert.ok(run.includes("def _ml_in") && !run.includes("_ml_image_open"), "\"run\" coerces and does not run the loaders (PRELUDE_DATA_KEPT has none)");
+    assert.ok(run.includes("def _ml_in") && run.includes("_ml_image_open"), "\"run\" coerces and installs the shared loaders (a no-op after the first)");
     assert.ok(old.includes("def _ml_in") && old.includes("_ml_image_open") && old.includes("for _k in list(globals().keys())"), "the old path coerces, runs the loaders, and RESETs");
     const reset = "img = None\nimg_np = None\nH = W = 0";
     assert.ok(!run.includes(reset), "\"run\" keeps a later cell's img when it passes none");
