@@ -86,9 +86,14 @@ PR #757, branch `repl-lane1/ml-wiring`.
   (`tests/python-run-namespace-py.test.mjs`, the positive control, failed without it).
 
 - **A run's dict is recorded when its cell is POSTED** (redteam-e3's re-review of `1bcdd5a2`). The worker creates the
-  dict before the cell runs, and a cell that failed before returning a scope manifest (a syntax error is enough) left a
-  dict on `full` that the offscreen document never learned of, so neither delete nor loss reached it. `runPrincipals`
-  is now filled at the post, and the worker's error return carries the manifest as well.
+  dict before the cell runs, and a cell that failed before returning a scope manifest (a wrapper-level failure, a
+  kill mid-cell; a user syntax error is caught inside the wrapper and already carried one) left a dict on `full` that
+  the offscreen document never learned of, so neither delete nor loss reached it. `runPrincipals` is now filled at the
+  post, and the worker's error return carries the manifest as well.
+- **`runPrincipals` is the ONE record of "this run has a dict on this worker"** (redteam-e3's re-check of `b2a478cf`,
+  the coordinator's root fix). `killWorker` used to gate the loss note on `seenRuns`/`runNsVars`, both filled only from
+  a returned manifest, so a run whose cells all failed got no note when its worker died. `seenRuns` is gone; delete and
+  loss both iterate `runPrincipals`.
 
 ## Noted by the red-team pass, not changed
 

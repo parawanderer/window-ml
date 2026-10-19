@@ -91,12 +91,10 @@ const respawned = new Set<string>();   // state: plumbing — principals awaitin
 // last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
 // the copy the state inspector and `ml.current.env` read. Dropped with the run (`PY_DELETE_RUN`) or its worker.
 const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
-// Runs that have ever had a kept namespace on this document, so a kill knows a loss is worth telling (the first
-// cell of a run that never persisted is not a reset).
-const seenRuns = new Set<string>();   // state: plumbing — runs that have held a kept namespace
 // Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
 // ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
-// held. Recorded when a cell of the run is posted to a worker (and again from its scope manifest).
+// held. Recorded when a cell of the run is posted to a worker, since the worker creates the dict before the cell runs:
+// this is the ONE record of "has a dict", and nothing reads a returned manifest as a proxy for it.
 const runPrincipals = new Map<string, Set<string>>();   // state: plumbing — run id → principals holding its dict
 // A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run.
 const nsLoss = new Map<string, { at: number; reason: string }>();   // state: plumbing — one loss note per wiped run
@@ -149,7 +147,6 @@ function killWorker(principal: string, reason: string): void {
         respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
         for (const runId of killedRuns) {
             runPrincipals.get(runId)?.delete(principal);
-            if (!runNsVars.has(runId) && !seenRuns.has(runId)) continue;
             nsLoss.set(runId, { at: Date.now(), reason: lossReason });
             runNsVars.delete(runId);
         }
@@ -234,7 +231,6 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         if (entry?.wire?.run) {
             const runId = entry.wire.run;
             if (result.bench) {
-                seenRuns.add(runId);
                 runNsVars.set(runId, { id: result.bench.id, vars: result.bench.vars });
                 if (entry.principal) (runPrincipals.get(runId) ?? runPrincipals.set(runId, new Set()).get(runId)!).add(entry.principal);
             }
@@ -432,7 +428,6 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     principals.add(String(msg.principal ?? `run:${run}`));
     runPrincipals.delete(run);
     runNsVars.delete(run);
-    seenRuns.delete(run);
     nsLoss.delete(run);
     const asks: Promise<void>[] = [];
     for (const principal of principals) {

@@ -163,11 +163,13 @@ test("a worker that dies between two cells of a run puts the reset line at the h
     assert.equal(third.answer.stdout, "three", "the notice is told once");
 });
 
-test("a run that never kept a namespace is not told it lost one", async () => {
-    const first = await runCell({ principal: "run:loss-b", wire: { client: "mlw-m1", run: "loss-b" } }, { stdout: "one" });
+test("a run whose only cell failed WITHOUT a scope manifest is still told its dict died with the worker", async () => {
+    // The worker creates the dict before the cell runs, so a cell that returned no manifest still left one.
+    const first = await runCell({ principal: "run:loss-b", wire: { client: "mlw-m1", run: "loss-b" } }, { ok: false, error: "boom" });
+    assert.ok(!("bench" in first.answer), "positive control: no manifest came back");
     first.w.onerror({ message: "boom" });
     const second = await runCell({ principal: "run:loss-b", wire: { client: "mlw-m2", run: "loss-b" } }, { stdout: "two" });
-    assert.equal(second.answer.stdout, "two");
+    assert.match(second.answer.stdout, /^namespace reset at .*: crashed\ntwo$/);
 });
 
 test("a cell with no wire (a page-started cell) never gets the reset line", async () => {
