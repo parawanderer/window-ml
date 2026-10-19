@@ -389,13 +389,16 @@ What follows from it:
   inode carries write and truncate only. An existing, non-protected top-level file stays editable; an existing
   protected name is read-only as today; below a non-protected top-level directory nothing changes. The worker sends
   `write: "roots"` only when the call's claims permit it (`cargo build`, `npm install` and `git worktree add` create
-  top-level names and do not get it). An ABSENT envelope keeps today's floor, bubblewrap with its documented gap.
+  top-level names and do not get it). An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
+  gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
+  then protects nothing; the tripwire above is what covers the gap's threat.
 - **Every sandboxed call reports what changed among the protected names during it** (ruled 2026-10-19, lane 4's
   proposal): the host records each protected name at the top of each root and `.git/hooks`' entries at `start`, compares
   at `done` and at an orphan's deadline, and `done` carries `protectedChanged` (`[]` when nothing; absent means an old
   host, unknown, never "nothing"). It is a FACT like the footprint, on both OSes, and refuses nothing. It reports
   and never attributes: two calls in one root see each other's change, so the card and the run log say "changed
-  during this call". Whether the host reverts what it finds is the owner's decision, open.
+  during this call". The host never reverts what it finds (Shane, 2026-10-19): the tripwire is report-only by
+  design, and the person decides what to do with the report.
 - **No secret crosses into a process by the script's hand**: the backend URL and API key never reach the host; the
   host's environment is scrubbed to a whitelist, and a container sees only its mounts. A credential a process NEEDS
   (`git push`, `gh`, a cloud CLI) arrives as a handle ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), "Processes as a
