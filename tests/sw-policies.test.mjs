@@ -211,3 +211,20 @@ test("policies are kept in local storage, never sync", () => {
     assert.ok(writes.length > 0);
     assert.ok(!globalThis.chrome.storage.sync, "the store never reached for sync");
 });
+
+// --- SHELL.md's name-immutable top level at the judge (2026-10-19): a top-level write is not the builtin's allow ---
+
+test("judgeCall: a shell call that claims a top-level write in a root is not the builtin's allow", { todo: "OPEN (SHELL.md name-immutable top level, 2026-10-19): free() treats any in-root fs effect as covered by write(fs(roots)), so a call that creates .envrc / .mcp.json / .vscode/ at a root's top level is judged allow/builtin and runs UNASKED. With the narrow write envelope absent from HostSpawn and protectedChanged absent from HostDone, nothing refuses the write and nothing reports it. The host's narrow envelope (window-ml-host #12) would fail the write as ok:false; the extension's half of the rule is not implemented. What holds instead: a write OUTSIDE the roots or to a secret-flagged path asks, and unknown effects always ask." }, () => {
+    const topLevelWrite = {
+        argv: ["git", "diff", "--output=.envrc"],
+        effects: [{ op: "write", res: { kind: "fs", path: "/r/.envrc", inRoot: true, secret: false, topLevel: true } }],
+    };
+    const j = P.judgeCall("h-top", "sh", topLevelWrite, "host-sandbox");
+    assert.notEqual(j.decision, "allow", "a top-level write is never the built-in default's allow");
+    assert.notEqual(j.by, "builtin", "…so it is never the builtin that allows it");
+    // Positive control: the same call writing below a top-level directory is the builtin's allow.
+    const nested = { ...topLevelWrite, effects: [{ op: "write", res: { kind: "fs", path: "/r/src/a.ts", inRoot: true, secret: false, topLevel: false } }] };
+    const ok = P.judgeCall("h-top", "sh", nested, "host-sandbox");
+    assert.equal(ok.decision, "allow", "a write below a top-level directory is free under the OS sandbox");
+    assert.equal(ok.by, "builtin", "…and the builtin is what allows it");
+});

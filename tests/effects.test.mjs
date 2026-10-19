@@ -266,3 +266,33 @@ test("an effect set is frozen all the way down", () => {
     assert.equal(Object.isFrozen(s.writes), true);
     assert.equal(Object.isFrozen(effectSet("unknown").reads), true);
 });
+
+// --- SHELL.md's name-immutable top level (2026-10-19): a top-level write is inside no bound ---
+
+test("a write that creates a top-level name in a root is not free — the name-immutable rule reaches the free tier", { todo: "OPEN (SHELL.md name-immutable top level, 2026-10-19): the effect algebra has no top-level marker — covers() matches any in-root fs effect, and ShPathFact carries only inRoot/secret. A call cannot be described as a top-level write, so nothing asks for one. HostSpawn also carries no write envelope (the narrow write: \"roots\" is never sent) and HostDone no protectedChanged (the tripwire never reports), so with the envelope absent nothing refuses or reports the write either." }, () => {
+    // SHELL.md's security list (ruled 2026-10-19): under `write: "roots"` nothing is created, removed or renamed
+    // at the top level of every root. Landlock cannot hold "the roots minus the protected names" for a name that
+    // does not exist yet (.envrc, .mcp.json, .vscode/), so the rule is a universal. A call that claims such a write
+    // is a claim on a new top-level name and runs ASKED, never free: with the narrow envelope absent (the
+    // extension's HostSpawn carries no write field) nothing else refuses the write.
+    const b = boundFor("host-sandbox");
+    const topLevel = { op: "write", res: { ...fs("/r/.envrc", true, false), topLevel: true } };
+    assert.equal(free([topLevel], b), false, "a top-level write is inside no enforcer's bound");
+    // Positive control: a nested write inside the roots is free under the OS sandbox.
+    assert.equal(free([{ op: "write", res: { ...fs("/r/src/a.ts", true, false), topLevel: false } }], b), true,
+        "a write below a top-level directory is bounded by the sandbox");
+    // Positive control: the same call with no top-level marker is free — the marker is what changes the answer.
+    assert.equal(free([{ op: "write", res: fs("/r/.envrc", true, false) }], b), true,
+        "an unmarked in-root write is still free (the marker is the claim)");
+});
+
+test("a removal or a rename of a top-level name is not free, whichever direction the claim runs", { todo: "OPEN (SHELL.md name-immutable top level + the atomic-rename rule, 2026-10-19): ProgramEffect is read|write|runs-code|unknown|{network} — no term expresses \"creates/renames a top-level name\", so a manifest cannot make the claim and the worker cannot withhold write: \"roots\" for a rename-based editor (sed -i, perl -i, write-file-atomic). Same missing top-level marker as the test above." }, () => {
+    // The rule names three verbs: created, removed or renamed. A `git clean` that removes `.envrc`, and an
+    // atomic-rename editor (SHELL.md's third bullet) that swaps a temp over `.envrc`, both claim a top-level name.
+    const b = boundFor("host-sandbox");
+    for (const [label, topLevel] of [["remove", true], ["rename-in", true], ["rename-out", true]]) {
+        assert.equal(free([{ op: "write", res: { ...fs("/r/.envrc", true, false), topLevel } }], b), false, label);
+    }
+    // Positive control: a nested write is free in every one of those verbs' place.
+    assert.equal(free([{ op: "write", res: { ...fs("/r/src/a.ts", true, false), topLevel: false } }], b), true);
+});
