@@ -646,6 +646,42 @@ test("bench: one namespace cannot see another's, and the model's namespace sees 
     assert.match(String(error), /NameError/, "a python_exec never sees a person's bench variables");
 });
 
+// ── A RUN'S KEPT DICT (`wrapUserCode(..., "run")`, ROOT C) ─────────────────────────────────────────────────
+// What the worker does for a cell of a worker-hosted run: its injected inputs set into the run's own dict, then the
+// wrapper in "run" mode. Unlike the bench, a cell that passes an image or tables gets them decoded.
+async function runCell(code, ns, { image = null, tables = null } = {}) {
+    const { wrapUserCode, injectInputs } = await import("../src/python/python-runtime.ts");
+    injectInputs(ns, image, Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+    await py.runPythonAsync(wrapUserCode(code, false, "run"), { globals: ns });
+    const err = ns.get("_err");
+    if (err) return { error: String(err) };
+    const r = ns.get("_json_result");
+    return { value: typeof r === "string" ? JSON.parse(r) : r };
+}
+
+test("run dict: a cell that passes an image gets img/img_np/H/W, and a later cell without one keeps them", { skip }, async () => {
+    const ns = freshNs();
+    assert.deepEqual(await runCell("x = 5\nreturn [list(img_np.shape), H, W]", ns, { image: TINY_PNG }), { value: [[1, 1, 3], 1, 1] });
+    assert.deepEqual(await runCell("return [x, img.size[0], int(img_np.shape[0])]", ns), { value: [5, 1, 1] });
+});
+
+test("run dict: a cell's tables are bound by name and in `tables`, and stay for a cell that passes none", { skip }, async () => {
+    const ns = freshNs();
+    assert.deepEqual(await runCell("return int(t['a'].sum())", ns, { tables: [rows("t", ["a"], [[1], [2]])] }), { value: 3 });
+    assert.deepEqual(await runCell("return [int(t['a'].sum()), list(tables)]", ns), { value: [3, ["t"]] });
+    // A later cell that passes tables replaces the `tables` dict with its own.
+    assert.deepEqual(await runCell("return sorted(tables)", ns, { tables: [rows("u", ["b"], [[4]])] }), { value: ["u"] });
+});
+
+test("run dict: the injected inputs are coerced to str/None, and the loaders are not patched from it", { skip }, async () => {
+    const ns = freshNs();
+    assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64, INJECTED_TABLES_JSON]", ns), { value: [null, null] });
+    // The loaders read the namespace that defined them; defined in a run's dict, every later namespace's
+    // Image.open would chain onto it and could be handed this run's `img`.
+    assert.equal(ns.has("_ml_orig_image_open"), false);
+    assert.equal(ns.has("_ml_orig_read_csv"), false);
+});
+
 test("completion: the prelude's names complete with NOTHING kept — no import, no namespace", { skip: skipJedi }, async () => {
     // Before a bench's first run, after a reset, after a restart: no namespace exists, but the prelude still
     // binds these for the run. Static analysis of the script alone offered none of them.

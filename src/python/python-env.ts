@@ -88,6 +88,7 @@ export const PY_RESERVED_NAMES: string[] = [
  *  so `img`/`df`/`tables`/`H`/`W` are ordinary names a user may bind there. */
 export const PY_BENCH_BASE_NAMES: string[] = [
     "io", "base64", "sys", "contextlib", "to_base64", "result",
+    "ml", "MlError",   // the `ml` facade, bound in every cell the worker gave a wire
     ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
 ];
 

@@ -150,7 +150,7 @@ function benchVars(py: any, ns: any): BenchSession["vars"] {
     try {
         return JSON.parse(py.runPython(`import json as _jv
 _jv.dumps([{"name": _k, "type": type(_v).__name__} for _k, _v in sorted(_ml_v_ns.items())
-           if not _k.startswith("_") and _k not in ${JSON.stringify(PY_BENCH_BASE_NAMES)}])`) as string);
+           if not _k.startswith("_") and _k not in ${JSON.stringify([...PY_BENCH_BASE_NAMES, "INJECTED_IMAGE_B64", "INJECTED_TABLES_JSON"])}])`) as string);
     } finally { try { py.globals.delete("_ml_v_ns"); } catch { /* */ } }
 }
 
@@ -213,7 +213,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     } else if (keptRun) {
         // ROOT C: a run's kept dict still gets the injected names and the harness, assigned WITHOUT
         // wiping the run's other bindings. `injectInputs` sets the injected inputs; the wrapper's
-        // PRELUDE_ASSIGN assigns `df`/`tables`/`img` only when they are present.
+        // wrapper's `"run"` prelude decodes `img`/`tables` only when they are present.
         const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
         injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
     } else {
@@ -238,7 +238,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // stripped the JS realm. The full worker passes false and keeps the bridges.
         // `persist` is true for ANY kept namespace (bench or ROOT C's per-run dict): no RESET, and the
         // wrapper's async `await _user()` drives `await ml.*` cells.
-        await py.runPythonAsync(wrapUserCode(code, hardened, !!kept), { globals: ns });
+        await py.runPythonAsync(wrapUserCode(code, hardened, bench ? true : keptRun ? "run" : false), { globals: ns });
         const stdout = String(ns.get("_stdout") ?? "");
         // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
         const dropped = Number(ns.get("_ml_stdout_dropped") ?? 0) || 0;

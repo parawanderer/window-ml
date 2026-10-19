@@ -158,6 +158,26 @@ if "_ml_orig_read_html" not in globals():
     pd.read_html = _ml_read_html
 `;
 export const PRELUDE = PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA.slice(0, -1) + PRELUDE_LOADERS;
+/**
+ * Replace one exact piece of a prelude, refusing when it is not there exactly once, so an edit to `PRELUDE_DATA`
+ * cannot silently leave the kept variant resetting what it must not.
+ * @param src the prelude source
+ * @param from the exact text to replace
+ * @param to its replacement
+ * @returns the edited source
+ */
+const replaceOnce = (src: string, from: string, to: string): string => {
+    if (src.split(from).length !== 2) throw new Error(`prelude: expected exactly one ${JSON.stringify(from)}`);
+    return src.replace(from, to);
+};
+// ROOT C's per-run dict: the same DATA, but `img`/`img_np`/`H`/`W` and `df`/`tables` are bound only by a cell that
+// passes an image or tables, so a later cell that passes none keeps them. No LOADERS: they patch module attributes
+// once per namespace and read that namespace, so a second run's dict would chain onto the first's and could be handed
+// the first run's `img`.
+const PRELUDE_DATA_KEPT = replaceOnce(replaceOnce(PRELUDE_DATA,
+    "img = None\nimg_np = None\nH = W = 0\n", ""),
+    "df = None\ntables = {}\n_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n",
+    "_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n    df = None\n    tables = {}\n");
 
 // Network policy. pandas' read_csv/read_html and urllib all funnel through
 // `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported). The
@@ -237,12 +257,13 @@ for _k in list(globals().keys()):
  * The script the sandbox runs: prelude, network policy, and the user's code wrapped so a top-level `return`,
  * a trailing expression and a traceback all come back.
  *
- * @param persist the bench's KEEP-STATE mode. No per-run reset and only `PRELUDE_BASE`, and the script's own
- *   top-level names are declared `global` in the wrapper, so they land in the namespace it runs in (the
- *   worker hands it a bench-only one) and are still there next run. Without that the wrapper's function
- *   scope would swallow them: `x = 1` is a LOCAL of `_user` and disappears when the run ends.
+ * @param persist a KEEP-STATE mode: `true` is the bench (only `PRELUDE_BASE`), `"run"` is ROOT C's per-run dict
+ *   (`PRELUDE_BASE` and the injected image/tables, bound only when a cell passes them). Neither resets, and the
+ *   script's own top-level names are declared `global` in the wrapper, so they land in the namespace it runs in and
+ *   are still there next run. Without that the wrapper's function scope would swallow them: `x = 1` is a LOCAL of
+ *   `_user` and disappears when the run ends.
  */
-export const wrapUserCode = (code: string, hardened = true, persist = false): string => /* python */ `
+export const wrapUserCode = (code: string, hardened = true, persist: boolean | "run" = false): string => /* python */ `
 # THE HARNESS'S OWN REFS (lockdown.ts captured them at boot, before any cell ran). A cell that patches
 # \`ast.parse\` or \`json.loads\` changes what the RUN's own later cells see, never what the harness parses,
 # encodes or injects. Looked up in the NAMESPACE — \`injectInputs\` re-binds the module before every cell —
@@ -298,7 +319,7 @@ else:
 # (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
 del _ml_h
 globals().pop("_ml_harness", None)
-${persist ? "" : `
+${persist === true ? "" : `
 # The injected inputs are PYTHON \`None\` or \`str\`. A host \`set\` of a JS null lands as \`JsNull\` (a
 # JsProxy in the namespace — the P3 vector); coerce here so the cell's namespace holds none. Belt to
 # the host's \`injectInputs\`, which is the one that converts at the boundary.
@@ -307,7 +328,7 @@ def _ml_in(_v):
 INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
 INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
 `}
-${persist ? PRELUDE_BASE : RESET + PRELUDE}
+${persist === true ? PRELUDE_BASE : persist === "run" ? PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA_KEPT : RESET + PRELUDE}
 ${netPolicy(hardened)}
 # THE \`ml\` OBJECT A CELL CALLS THE WIRE THROUGH (ML_FACADE). Built from the harness's transport and
 # its own codec refs, then those pieces are dropped: the cell sees \`ml\`/\`MlError\` and nothing that
