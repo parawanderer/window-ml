@@ -39,6 +39,14 @@ make itself. Count requests, tab messages and captures before and after, as `att
 does. Enumerate inputs instead of sampling them: loop over `PAGE_STARTED_TYPES`, every contract event kind, every
 sender shape. (A tab hosting a run is lent nothing since site access part 5; `RUN_TAB_TYPES` is gone.)
 
+## Every probe ends as a test or a reason
+
+A scratch driver (`probe-*.mjs`) is how you explore; it is never the record. Before you report, every shape a probe
+tried lands in one of three places: a committed test (an escape as a `todo` that fails first, and a shape that HELD as
+a plain passing test, since a defence nobody pins can flip on the next re-pin or refactor), an existing test you name,
+or a one-line reason it is not worth pinning (a setup control, a duplicate). Put that triage in the report. A probe
+left untracked in a worktree is lost with it: on #880/#901 ten such drivers held shapes no committed test covered.
+
 ## The two harnesses
 
 **vm, fast, first choice** (`tests/redteam.test.js`, `tests/site-access.test.mjs`, `tests/run-start.test.mjs`): the
@@ -83,4 +91,5 @@ one case. Record the provider string in the checkpoint when you stop, so the own
 
 By session mail (`~/git/session-mail/window-ml/`, its README is the protocol) to whoever owns the fix: each property
 that does not hold, the file and line the gap goes through, the failing test (branch and commit), and which parts are
-checked versus inferred. A failing test is the report; prose is the cover note.
+checked versus inferred, and the probe triage above (pinned, already covered by a named test, or why not). A failing
+test is the report; prose is the cover note.

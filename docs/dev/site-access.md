@@ -656,7 +656,9 @@ file.
 ## Adding a tool, a member or a message
 
 The red-team pass AGENTS.md requires. Run it as its own agent, told to find where a property does not hold rather
-than to review; each gap it finds becomes a test titled by the property, failing before the fix. The threat is a page
+than to review; each gap it finds becomes a test titled by the property, failing before the fix, and each shape it
+tried that HELD is pinned too (or given a one-line reason it is not), so a re-pin or refactor that reopens it fails a
+test. A scratch probe script is never the only record. The threat is a page
 that shares the main world with `window.ml` and with any tool code run there, posts any window message, acts on the
 extension's shadow HOSTS (their roots are closed since attack 17), and knows every run id. Cover:
 
