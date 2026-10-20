@@ -128,10 +128,15 @@ outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting on
 acceptance tests come first unchanged; flaky-3f reviews, never the red team (rule 10). Host follow-up: the host's manifest
 reader's `WriteNames` variant landed in window-ml-host #14 (the generalist's, 2026-10-19, a6637b6); what was missing were
 the two guards, window-ml-host #17 (lane 4, 2026-10-20, tests only: every effect term and direction enumerated against the
-call vectors, an unknown-word refusal; the janitor reviews, the red team reads after merge; a send-only network effect
-has no vector yet). Also lane 4's (2026-10-20): a
-transcript line for an `ml.sh` call that ran under a policy or the default, in the sidebar and both exports, with the
-covering policy and the applied envelope in the card's words; then its setsid residual.
+call vectors, an unknown-word refusal; a send-only network effect has no vector yet). Host #17 merged 2026-10-20 as
+54caaa85 with the inventory compiler-enforced (`ProgramEffect::ALL` beside the enum, an exhaustive `slot()`; the janitor
+replayed three mutations that no longer compile; the red team reads it after merge). Also lane 4's, done 2026-10-20: the
+transcript line for an `ml.sh` call that ran under a policy or the default, window-ml #864 (merged 1d0ad45e, the Chat
+Page session reviewed): `unasked` on the call's span, drawn in the sidebar and both exports through the card's own code
+path, the JSON export carrying the spans verbatim. Then its setsid residual, window-ml-host #18 (open, the red team
+reviews and gates it: the kill set is the group plus recorded members and their descendants, re-sampled; the LIVE path
+had the same hole and is fixed with it; two residuals named), with window-ml #868 (`SHELL.md`, the Ownership bullet's
+dated paragraph, its claim softened to "up to the two residuals") merging after it.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
