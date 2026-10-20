@@ -133,10 +133,13 @@ call vectors, an unknown-word refusal; a send-only network effect has no vector 
 replayed three mutations that no longer compile; the red team reads it after merge). Also lane 4's, done 2026-10-20: the
 transcript line for an `ml.sh` call that ran under a policy or the default, window-ml #864 (merged 1d0ad45e, the Chat
 Page session reviewed): `unasked` on the call's span, drawn in the sidebar and both exports through the card's own code
-path, the JSON export carrying the spans verbatim. Then its setsid residual, window-ml-host #18 (open, the red team
-reviews and gates it: the kill set is the group plus recorded members and their descendants, re-sampled; the LIVE path
-had the same hole and is fixed with it; two residuals named), with window-ml #868 (`SHELL.md`, the Ownership bullet's
-dated paragraph, its claim softened to "up to the two residuals") merging after it.
+path, the JSON export carrying the spans verbatim. Then its setsid residual, window-ml-host #18 (merged 2026-10-20,
+318977df, the red team gated it: the kill set is the group plus recorded members and their descendants, re-sampled, and
+a group signal only while the group is still the call's own, the red team's overkill finding; the LIVE path had the
+same hole and is fixed with it), with window-ml #868 (merged 94fb146a: `SHELL.md`'s Ownership bullet, its claim
+softened to "up to the residuals", three named: a child that leaves the group within one sample, a host killed outright
+with calls running, and the owner-lost and final kills signalling the group without the ownership check inside the
+5 s drain). Lane 4 stood down 2026-10-20, clones removed.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
