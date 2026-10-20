@@ -20,7 +20,7 @@ import ls from "./manifests/ls.json";
 import rg from "./manifests/rg.json";
 import tail from "./manifests/tail.json";
 import wc from "./manifests/wc.json";
-import type { StepAsk } from "../contract";
+import type { ShCallSpan, ShUnasked, StepAsk } from "../contract";
 
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
@@ -592,3 +592,19 @@ export function askOutcomeLines(a: StepAsk): ShCardLine[] {
     if (a.kind !== "sh" || a.state !== "allowed" || !a.outcome) return [];
     try { return shOutcomeLines(a.outcome as unknown as ShOutcome); } catch { return []; }
 }
+
+/**
+ * The lines under a step for an `ml.sh` call that ran without asking: what allowed it, then what it reported, in the
+ * ask card's own words (`shOutcomeLines`), so the two paths never describe one call differently. Human-facing text.
+ * @param u what the span carried
+ * @returns the lines, in reading order
+ */
+export function unaskedLines(u: ShUnasked): ShCardLine[] {
+    const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by === "policy" ? `the policy "${u.policy ?? "?"}"` : "the built-in default" }];
+    try { lines.push(...shOutcomeLines(u.outcome as unknown as ShOutcome)); } catch { /* an outcome of another shape: the line says who allowed it */ }
+    return lines;
+}
+
+/** The `ml.sh` calls of a step that ran without asking, in the order they finished. */
+export const unaskedCalls = (shCalls: readonly ShCallSpan[] | undefined): ShUnasked[] =>
+    (shCalls ?? []).flatMap((c) => (c.unasked && Array.isArray(c.unasked.argv) ? [c.unasked] : []));

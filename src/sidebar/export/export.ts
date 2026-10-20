@@ -32,7 +32,7 @@ const sizeTag = (s: string): string => `(${s.length.toLocaleString()} chars, ~${
 // commit in a log is trustworthy only when it's absent) — the same provenance the agent reads via agent_api_docs.
 const buildLabel = (): string => `${BUILD_INFO.shortCommit}${(BUILD_INFO as { dirty?: boolean }).dirty ? "-dirty (uncommitted changes)" : ""} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`;
 import { annotatedConfig, resolveModel, shownModel } from "../model";
-import { askOutcomeLines } from "../../shell/sh-call";
+import { askOutcomeLines, unaskedCalls, unaskedLines } from "../../shell/sh-call";
 
 type Sidecar = { name: string; bytes: Uint8Array };
 
@@ -395,6 +395,11 @@ function writeAgent(s: Session, d: Sink): void {
             // Once an allowed call ran, what it reported: the same lines as the card under the step.
             for (const l of askOutcomeLines(a)) d.note(`${l.label}: ${l.value}`);
             d.details(`Asked · ${a.kind} · the facts`, () => d.code(JSON.stringify(a.facts, null, 2), "json"));
+        }
+        // Each ml.sh call that ran without asking: the argv the host got, as it is, and the card's words for it.
+        for (const u of unaskedCalls(st.shCalls)) {
+            d.note(`ran without asking (sh): ${JSON.stringify(u.argv)}`);
+            for (const l of unaskedLines(u)) d.note(`${l.label}: ${l.value}`);
         }
         if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);

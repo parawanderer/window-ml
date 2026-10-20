@@ -218,13 +218,30 @@ export interface RemoteTiming {
 
 /** One `ml.sh` call a step made, as the event lane draws it: the program, how long it ran and what the host measured of
  *  its memory. `peakFootprint` and `memoryBound` are bytes and ABSENT from a host older than 0.3.0 (absent is not
- *  zero); `killed` is set when the host killed the call past its bound. Rides to the timeline, never to the model. */
+ *  zero); `killed` is set when the host killed the call past its bound. Rides to the timeline and the transcript,
+ *  never to the model. */
 export interface ShCallSpan {
     program: string;
     durationMs: number;
     peakFootprint?: number;
     memoryBound?: number;
     killed?: "oom";
+    /** Set when the call ran with no one asked (a policy or the built-in default allowed it); a call the person
+     *  approved is recorded on its ask instead (`StepAsk.outcome`). */
+    unasked?: ShUnasked;
+}
+
+/** What let an `ml.sh` call run without asking, and what it reported: drawn as a line under the step in the sidebar and
+ *  both exports, in the words the ask card uses (docs/spec/SHELL.md, "Approval"). */
+export interface ShUnasked {
+    /** The built-in default (effects inside the placement's bound) or one of the person's policies. */
+    by: "default" | "policy";
+    /** The policy's label, when `by` is `policy`. */
+    policy?: string;
+    /** The argv the host got (after hardening), as its facts carried it: what was judged and what ran. */
+    argv: string[];
+    /** What the call reported once it ran (`ShOutcome`: where it ran, the sandbox applied, the protected names). */
+    outcome: Record<string, unknown>;
 }
 
 /** Where a remote tool actually runs. `via` names the dispatch mechanism, because "an HTTP endpoint

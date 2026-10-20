@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN } from "../src/shell/sh-call.ts";
+import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -633,6 +633,29 @@ test("every host error code maps to a wire code: enforcement is Refused, the cal
     };
     for (const [h, w] of Object.entries(want)) assert.equal(wireCodeOf(h), w, h);
     assert.equal(wireCodeOf("SomethingNew"), "Failed", "a code from a newer host fails, never passes");
+});
+
+// --- a call that ran without asking: the card's words, under the step ---
+
+test("a call that ran without asking says who allowed it, then exactly the lines its ask would have drawn", () => {
+    const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
+        protectedChanged: [{ root: "/w", name: ".envrc", change: "modified" }] };
+    for (const [u, by] of [
+        [{ by: "default", argv: ["ls"], outcome }, "the built-in default"],
+        [{ by: "policy", policy: "tidy build", argv: ["find", "build", "-delete"], outcome }, 'the policy "tidy build"'],
+        [{ by: "policy", argv: ["ls"], outcome }, 'the policy "?"'],
+    ]) {
+        const lines = unaskedLines(u);
+        assert.deepEqual(lines[0], { label: "Allowed by", value: by });
+        assert.deepEqual(lines.slice(1), shOutcomeLines(outcome), "one function says it, so the card and this line never disagree");
+    }
+    assert.deepEqual(unaskedLines({ by: "default", argv: ["ls"], outcome: { protectedChanged: "not a list" } }).map((l) => l.label), ["Allowed by"], "an outcome of another shape still says who allowed it");
+});
+
+test("only a span that carries an unasked record with an argv is a line", () => {
+    const u = { by: "default", argv: ["ls"], outcome: {} };
+    assert.deepEqual(unaskedCalls([{ program: "ls", durationMs: 1 }, { program: "ls", durationMs: 1, unasked: u }, { program: "x", durationMs: 1, unasked: { by: "default" } }]), [u]);
+    assert.deepEqual(unaskedCalls(undefined), []);
 });
 
 // --- the host client: seq, done, close ---

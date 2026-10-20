@@ -93,6 +93,24 @@ test("an allowed ask that ran says what the host applied and what protected name
     assert.ok(odd, "an outcome of another shape does not break the line");
 });
 
+test("a call that ran without asking is a line under its step: the raw argv, who allowed it, and the card's outcome lines", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("unask1", "tidy"));
+    const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" }, protectedChanged: [] };
+    await w.dispatch(agentStep("unask1", 1, { seq: 1, approval: "user", tool: "exec", arguments: { js: SCRIPT }, result: "0", shCalls: [
+        { program: "ls", durationMs: 3 },
+        { program: "find", durationMs: 7, unasked: { by: "policy", policy: "tidy build", argv: ["find", "build", "-name", "*.o", "-delete"], outcome } },
+    ] }));
+    await open(w);
+    const lines = [...w.shadow.querySelectorAll(".astep-ask-done.unasked")];
+    assert.equal(lines.length, 1, "a span with no unasked record draws nothing");
+    assert.equal(lines[0].querySelector("code").textContent, JSON.stringify(["find", "build", "-name", "*.o", "-delete"]));
+    assert.match(lines[0].textContent, /Allowed bythe policy "tidy build"/);
+    const warned = [...lines[0].querySelectorAll(".ask-facts .warn dt")].map((d) => d.textContent);
+    assert.deepEqual(warned, ["Sandbox applied"], "less than was asked for is flagged here as on the card");
+    assert.doesNotMatch(lines[0].textContent, /SCRIPT-TEXT/, "the facts, never the script");
+});
+
 test("an ask only the external channel answers is drawn without buttons", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask4", "check the repo"));

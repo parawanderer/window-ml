@@ -58,6 +58,13 @@ there. Nothing in the request names a step (docs/spec/ML_WIRE.md); a read-only c
 The result says who let it run (`approvedBy`) and how long it waited for the person (`waitedMs`); the exec's result
 adds a line when that was a second or more.
 
+**A call no one was asked about is drawn under its step** (SHELL.md, "Approval"). Its span (`shSpanOf`) carries
+`unasked`: `by` (`default` or `policy`, with the policy's label), the argv from the host's facts, and the same
+`shOutcome` an allowed ask records. `UnaskedList` (ask-card.tsx) and the Markdown export draw it through
+`unaskedLines`, which is `shOutcomeLines` after an "Allowed by" line, so the card and this line cannot word one call
+differently; the JSON export carries the step's `shCalls` verbatim. A call the person approved has no `unasked`: its
+ask already shows what ran.
+
 **Every call has an owner and a memory bound** (SHELL.md, host 0.3.0). Each `spawn`, the version probe's included,
 names `owner: { run, seq }` from the call's context (`ownerOf`), never from the script: an `owner` option is
 `BadRequest`. The host keeps that in its owner table (`status`) and kills the call when the port closes. Past its

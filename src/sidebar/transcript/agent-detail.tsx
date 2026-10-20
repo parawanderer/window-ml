@@ -32,7 +32,7 @@ import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak, InStreak } from "./step-streak";
 import { FoldRail } from "./fold-rail";
-import { AskList } from "./ask-card";
+import { AskList, UnaskedList } from "./ask-card";
 import { CALL_TITLE } from "../../tools/tool-params";
 import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
@@ -617,6 +617,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
             {/* NESTED ASKS: calls made while this step ran that need the person (an ml.sh from an approved exec). Below
                 the step, open or not, like the step's own gate: a card for each waiting, a line for each answered. */}
             <AskList st={st} hash={hash ?? undefined} live={live} />
+            <UnaskedList st={st} />
         </div>
     );
 }
