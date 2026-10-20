@@ -4,7 +4,7 @@
 // over and keeps the channel open until the run finishes.
 
 import { runBackgroundAgent } from "../agent/agent-host";
-import { pythonCellInDialect } from "../agent/python-dialect";
+import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
 import { evalReadonlyInWorker } from "./sw-readonly";
 import { deletePythonRun } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
@@ -54,7 +54,8 @@ import { withEnv } from "./sw-current-env";
 import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
-import { grantRunFetch, runFetchConsented, grantRunPython } from "./worker-tools";
+import { grantRunFetch, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
+import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
@@ -614,6 +615,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const modelTools = offerWorld ? withExecWorld(p.tools) : p.tools;
         const toolDefs = modelTools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
+        // state: plumbing — why this run's python_exec cell was not run inside the dialect, by its exact source: written by the
+        // read-only try, read once by the gate's why-asks line. A cell with no entry (edited, or never tried) is outside.
+        const pyOutside = new Map<string, string>();
         // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
         // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
         // skip the gate). A run that didn't opt into crossOrigin never gates (its tool refuses cross-origin).
@@ -815,6 +819,38 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             }, (doc, selector, index, media) => workerAnswerMedia(runId, tabId, doc, selector, index, media));
         }
         let historyScrubbed = false;   // the resumed history has crossed `forModel` (callModel's first call)
+        /**
+         * A python_exec cell, tried INSIDE the read-only dialect before the gate (docs/spec/PYTHON_DIALECT.md, "Membership
+         * replaces `mode`"): run under the fork's gate in the worker, it is the call's result with no card. Refused (a
+         * module, call, attribute or node outside the dialect, or its budget or memory cap), its output is discarded,
+         * `pyOutside` says where, and the call goes to the person, whose approval runs it on the full path. Only a run the
+         * worker drives, with Python auto-approval on and every other gate of `autoApprovePython` passed.
+         */
+        const tryPythonInside = async (args: Record<string, unknown>): Promise<import("../agent/agent-loop").ToolRunResult | null> => {
+            const code = String((args as { code?: unknown }).code ?? "");
+            pyOutside.delete(code);
+            await handOverSettled(tabId);
+            const declined = (why: string): null => { pyOutside.set(code, why); return null; };
+            if (!p.autoApprovePython) return declined("auto-approval of Python is off");
+            if (!byWorker() || !runsInWorker(p, "python_exec")) return declined("this run's Python runs on the page, where nothing is tried inside the dialect");
+            if (!autoApprovePython(args, { autoApprovePython: true }, (id) => approvedSheets.has(id), () => true)) return declined("it asks for something the dialect does not decide (an unapproved sheet, a raised output cap, or hidden characters)");
+            await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia);
+            // A sandbox that cannot judge membership (the stock core) refuses every cell, so none of the call's inputs is read.
+            const unready = await pythonDialectReady(runId);
+            if (unready) return declined(unready);
+            grantRunPython(runId, { sheets: externalSheetIds(args), code: null, inside: true });
+            let env: Partial<import("../contract").PageToolEnvelope> | null;
+            let refused: string | undefined;
+            try { env = await sendTool({ runId, name: "python_exec", args }) as Partial<import("../contract").PageToolEnvelope> | null; }
+            finally { refused = takePyRefusal(runId); grantRunPython(runId, null); }
+            if (refused !== undefined) {
+                recordRunLog(runId, { subsystem: "routing", kind: "python-outside", reason: "not-in-dialect", detail: { tool: "python_exec", where: refused } });
+                return declined(refused);
+            }
+            if (!env) return declined("the worker did not run it");
+            recordRunLog(runId, { subsystem: "routing", kind: "python-inside", reason: "in-dialect", detail: { tool: "python_exec" } });
+            return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
+        };
         runBackgroundAgent(
             { task: modelTask, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
               // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
@@ -1278,8 +1314,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
                 // The whole of a stored text the run's pointer names, for the dereference tool. Only a value this run holds.
                 readText: (key) => readStoredText(key, runId),
-                tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
-                    if (name !== "exec") return null;
+                tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live) => {
+                    if (name === "python_exec") return tryPythonInside(args);
+                    if (name !== "exec" || !p.autoApproveReadonly) return null;
                     // Every decision below reads `byWorker()`: a navigation's hand-over must be decided first, as delegateTool does.
                     await handOverSettled(tabId);
                     // A call that names its world: one it cannot have goes to the precheck, which says why, and one that asked
@@ -1411,7 +1448,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // ml.fetch literals) ONCE, background-side. The SAME list feeds the descriptor/step the
                     // human reviews AND the persistence below, so what's shown IS what's remembered.
                     const grants = extractGrants(tool, args);
-                    if (askWhy) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
+                    if (askWhy?.policy !== undefined) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -1496,6 +1533,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // the fetch's own choke point (worker-tools.ts `consented`) consult the same policies.
                 // Why a fetch_url that asks is asking: a policy that would have allowed it is gone. Text only (judgeCall's `lapsed`).
                 askWhy: (name, a) => {
+                    // A Python cell asks because it is outside the dialect: where the inside try left it, keyed by its source.
+                    if (name === "python_exec") return pythonOutsideWhy(pyOutside.get(String(a.code ?? "")));
                     if (name !== "fetch_url" || a.credentials || !byWorker() || !runsInWorker(p, "fetch_url")) return undefined;
                     const l = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered })).lapsed;
                     return l ? { line: lapsedLine(l), detail: lapsedSentence(l), cause: l.cause, policy: l.label } : undefined;

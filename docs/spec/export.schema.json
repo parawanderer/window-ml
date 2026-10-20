@@ -2235,7 +2235,7 @@
     },
     "AskWhy": {
       "type": "object",
-      "description": "Why a call asks when a policy that used to cover it is gone: `line` for the approval card, `detail` the sentence the model read in the tool result (so the tooltip and the export show what the model saw).",
+      "description": "Why a call asks: a policy that used to cover it is gone, or a Python cell is outside the read-only dialect. `line` for the approval card, `detail` the sentence the model read in the tool result (so the tooltip and the export show what the model saw).",
       "properties": {
         "line": {
           "type": "string"
@@ -2244,19 +2244,18 @@
           "type": "string"
         },
         "cause": {
-          "description": "Why the policy is gone (`archived`, `removed`, `narrowed`), for the run log, whose `reason` is a slug.",
+          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), or `outside-dialect`.",
           "type": "string"
         },
         "policy": {
-          "description": "The gone policy's label.",
+          "description": "The gone policy's label; absent when no policy is involved.",
           "type": "string"
         }
       },
       "required": [
         "line",
         "detail",
-        "cause",
-        "policy"
+        "cause"
       ],
       "additionalProperties": true
     },

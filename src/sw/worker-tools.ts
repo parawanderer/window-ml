@@ -62,8 +62,9 @@ interface RunCtx {
     /** As-you (credentialed) fetches the person approved, each spent by the one call it was approved for. */
     credOnce: Set<string>;
     /** What the python_exec call now running was approved for: external sheet ids, and the code of a cell outside the dialect. Set around the
-     *  one call (`grantRunPython`), never on the tab. */
-    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } } };
+     *  one call (`grantRunPython`), never on the tab. `inside`: the call is the host's try of the cell INSIDE the dialect,
+     *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). */
+    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string };
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
     media?: WorkerPyMedia;
 }
@@ -128,9 +129,44 @@ export function grantRunFetch(runId: string, url: string, credentials: boolean):
 
 /** Grant the python_exec call about to run in the worker what its approval covers, and the step it runs in (its `ml`
  *  calls' asks are shown there); `null` ends the call's grant. */
-export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } } } | null): void {
+export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean } | null): void {
     const ctx = runs.get(runId);
-    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}) } : undefined;
+    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}), ...(grant.inside ? { inside: true } : {}) } : undefined;
+}
+
+// state: cache — "" once this worker's Python sandbox runs cells inside the dialect, else why it cannot; asked once
+let pyDialectReady: Promise<string> | null = null;
+
+/**
+ * Whether the sandbox can run a cell inside the dialect at all, asked once per worker life with an empty cell and no
+ * inputs: a core without the predicate (the stock one) then never has a call's page table or screenshot read for a try
+ * that could only be refused. A probe that cannot be answered is not remembered, so the next try asks again.
+ * @param runId the run whose sandbox answers
+ * @returns "" when it can, else the reason every cell asks
+ */
+export function pythonDialectReady(runId: string): Promise<string> {
+    const ctx = runs.get(runId);
+    if (!ctx) return Promise.resolve("the run's tools are not built here");
+    return pyDialectReady ??= runPython({ code: "pass" }, `wpy-${crypto.randomUUID()}`, {
+        ownSurface: false, tabId: ctx.tabId, disclose: false, untrusted: async () => true, runGated: true, inside: true, wireRun: ctx.runId, tabUrl: ctx.tabUrl,
+    }).then((r) => {
+        const why = (r.data as { notInDialect?: unknown } | undefined)?.notInDialect;
+        if (r.error !== undefined) { pyDialectReady = null; return `the sandbox did not answer (${r.error})`; }
+        return typeof why === "string" ? why : "";
+    });
+}
+
+/**
+ * Where the fork refused the inside try of the python_exec call now running (its `NotInDialect` text), or undefined
+ * when the cell ran inside to the end. Read once by the host's read-only try, which then asks the person.
+ * @param runId the run
+ * @returns the refusal, or undefined
+ */
+export function takePyRefusal(runId: string): string | undefined {
+    const call = runs.get(runId)?.pyCall;
+    const r = call?.refused;
+    if (call) delete call.refused;
+    return r;
 }
 
 /** Whether this run's worker-side fetch_url was already approved for `url` (a new one goes to the gate). */
@@ -305,8 +341,12 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         valueOk: (holders) => holders.includes(ctx.runId),
         wireRun: ctx.runId, tabUrl: ctx.tabUrl, ...(ctx.pyCall?.step ? { wireStep: ctx.pyCall.step } : {}),
         ...(opts.onStdout ? { stream: opts.onStdout } : {}),
+        ...(ctx.pyCall?.inside ? { inside: true } : {}),
     });
     if (r.error !== undefined) throw new Error(r.error);
+    // Outside the dialect: nothing of the try reaches the model (its output is discarded); the host reads the refusal.
+    const outside = (r.data as { notInDialect?: unknown } | undefined)?.notInDialect;
+    if (ctx.pyCall?.inside && typeof outside === "string") { ctx.pyCall.refused = outside; throw new Error(`Not in the Python dialect: ${outside}`); }
     const res = r.data as { table?: { columns: string[]; rows: unknown[][] }; valueKey?: string } & Record<string, unknown>;
     const extra: Record<string, unknown> = {};
     // What the sandbox saw, the crop transform a cast projects through, and the document a cast mints its token in.

@@ -358,6 +358,39 @@ test("tryReadonly returning null → falls through to the normal gate", async ()
     assert.equal(calls.runTool.length, 1);
 });
 
+// --- a python_exec cell: tried INSIDE the dialect before the gate (PYTHON_DIALECT.md, "Membership replaces `mode`") ---
+
+test("a python_exec cell the read-only try ran inside the dialect is approved as sandbox, with no gate and no runTool", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("python_exec", { code: "return 1 + 1" }), reply("done")] });
+    deps.tryReadonly = async (name) => (name === "python_exec" ? { result: "2" } : null);
+    const res = await runAgentLoop("x", { tools: [{ name: "python_exec", requiresApproval: true }] }, deps);
+    assert.equal(calls.approve.length, 0);
+    assert.equal(calls.runTool.length, 0, "the inside run's result is the call's");
+    assert.equal(res.transcript[0].result, "2");
+    assert.equal(calls.emits.find(e => e.tool === "python_exec" && !e.pending).approval, "sandbox");
+});
+
+test("a python_exec cell the try refused asks, says where it left the dialect, and only the full-path run's result counts", async () => {
+    const { pythonOutsideWhy } = await import("../src/agent/python-dialect.ts");
+    for (const approve of [true, false]) {
+        const { deps, calls } = makeDeps({ turns: [toolCall("python_exec", { code: "import os" }), reply("done")], approve: () => approve });
+        deps.tryReadonly = async (_n, _a, live) => { live?.push?.("partial output of the refused try"); return null; };
+        deps.askWhy = (name) => (name === "python_exec" ? pythonOutsideWhy("not in dialect: import 'os' (line 1)") : undefined);
+        const res = await runAgentLoop("x", { tools: [{ name: "python_exec", requiresApproval: true }] }, deps);
+        assert.equal(calls.approve.length, 1, "outside → the person is asked");
+        assert.equal(calls.approve[0].askWhy.line, "Outside the read-only Python dialect: import 'os' (line 1)");
+        assert.equal(calls.runTool.length, approve ? 1 : 0, "approved, it runs on the full path");
+        assert.doesNotMatch(res.transcript[0].result, /partial output/, "nothing of the refused try reaches the model");
+        assert.match(res.transcript[0].result, /outside the read-only Python dialect \(import 'os' \(line 1\)\)/, "the model reads why it asked");
+    }
+});
+
+test("pythonOutsideWhy: no recorded reason (an edited cell, or one never tried) is still outside", async () => {
+    const { pythonOutsideWhy } = await import("../src/agent/python-dialect.ts");
+    assert.deepEqual(pythonOutsideWhy(undefined), { line: "Outside the read-only Python dialect", detail: "This cell asked because it is outside the read-only Python dialect. A cell inside it runs without asking.", cause: "outside-dialect" });
+    assert.equal("policy" in pythonOutsideWhy("x"), false, "no policy: the run log does not record it as a lapsed one");
+});
+
 test("SALVAGE: empty content + reasoning → the reasoning becomes the answer (thinking model that never 'said' it)", async () => {
     // gemma (esp. right after a vision step) sometimes puts its whole conclusion in the reasoning/thinking
     // channel and returns EMPTY content + no tool call. The loop would otherwise return a BLANK summary even

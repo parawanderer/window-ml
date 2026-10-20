@@ -907,7 +907,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // autoApprove may return the bare provenance OR { approval, reused } (grants it reused).
                 const auto: { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
                 if (ro) {
-                    approval = "readonly";
+                    approval = call.name === "python_exec" ? "sandbox" : "readonly";   // a Python cell ran inside the dialect, in the sandbox
                     tr = ro; result = ro.result;   // the interpreter already produced the result
                 } else if (auto?.refused) {
                     // A POLICY refused it (sw-policies.ts): no card, and runTool is never called. The model is told which

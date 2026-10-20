@@ -210,15 +210,40 @@ before a cell's result is returned. The strip, the harness capture and the wrapp
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
 cell the import fallback, and `loadPackage` of a wheel still works after the strip. There is **no `mode`**
-(removed 2026-10-19, lane 7): every cell runs in a hardened worker, and `pythonCellInDialect` (`agent/python-dialect.ts`)
-decides whether it is inside the read-only dialect (no card, the read-only slice of `ml`) or outside it (asks, the full
-gated `ml`). It returns false for every cell until the Pyodide build carries a membership predicate, so **no cell
-auto-approves yet**; the plug-in point is that one function. A grant keeps the old prefixes (`full:` outside,
-`readonly:` inside), so a stored `full:` grant still covers its code and a stored `readonly:` one no longer does.
+(removed 2026-10-19, lane 7): every cell runs in a hardened worker, inside the read-only dialect (no card) or outside
+it (asks, the full gated `ml`).
+
+**Membership is decided by RUNNING the cell under the fork's gate, never by its source alone**
+(`docs/spec/PYTHON_DIALECT.md`, "Membership replaces `mode`"). The fork's `restricted.check()` admits `import`, calls
+and attributes; which modules, calls and attributes are allowed is enforced only by the allow tables while
+`restricted.run_cell` runs. So `import os` passes `check()` and is refused by `run_cell`. The path, for a run the
+worker drives with `autoApprovePython` on:
+
+1. The host's read-only try (`tryPythonInside`, `sw-run-host.ts`) runs the cell before the gate, with the run's grant
+   marked `inside` (`grantRunPython`). `runPython` passes `inside` to the worker only for a `runGated` caller.
+2. The worker loads the allow tables once (`dialectSetup`, from `dialect-data.ts`, which bundles
+   `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
+   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
+3. `wrapUserScript(…, inside)` runs the cell through `run_cell` in a COPY of the namespace that holds no `_` name.
+   A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
+4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`. A function a cell
+   defines runs UNGATED when unrestricted code calls it later, so the wrapper must never call one.
+5. If it is refused (`NotInDialect`, including the step budget and the memory cap, or a `SystemError` from an undo
+   log that did not replay), the namespace is left as it was and the output and value are discarded. The worker
+   answers `notInDialect`, with the line from the cell's frame for a run-time refusal; the fork's check-time line is
+   one past the cell's, and is corrected. The try returns null. The gate then asks, with
+   `askWhy = pythonOutsideWhy(where)` keyed by the cell's exact source. An edited cell has no entry and is outside.
+   Approved, the cell runs on the full path, and only that run's result is the cell's.
+
+`pythonCellInDialect` stays false for every cell: every path that has not run the cell treats it as outside. That
+covers the page's own loop, a page-started cell, a grant's prefix and the run's call grant.
+A grant keeps the old prefixes (`full:` outside, `readonly:` inside), so a stored `full:` grant still covers its code
+and a stored `readonly:` one no longer does.
 Config `autoApprovePython`
-(ON by default, Advanced settings) auto-approves calls **inside the dialect** (badge provenance
-`sandbox`) — but code outside it, or containing hidden/bidi characters (`suspiciousChars`,
-the same check the manual prompt shows), always falls through to the prompt. The background
+(ON by default, Advanced settings) lets the inside try run (badge provenance `sandbox`). A cell with hidden/bidi
+characters (`suspiciousChars`, the same check the manual prompt shows), an unapproved external sheet or a raised
+output cap is never tried: it goes to the prompt. Cost: one inside run measured against the same cell on the full
+path in Node on the fork core (`tests/python-dialect-inside.test.mjs`, COST) differs by about a millisecond. The background
 retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
 exist"). The sandbox's third-party packages are a **single source of truth** in
 `python-env.ts` (`PY_PACKAGES`) — the offscreen `loadPackage`, the prelude imports, and the

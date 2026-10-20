@@ -23,5 +23,5 @@ Specs that relied on `autoApprovePython` for Python now approve through `approve
 ## Left
 
 - The `hardened: false` branch in `offscreen.ts` and `python-worker.ts` is unreachable from the service worker; delete it with the Pyodide build.
-- `pythonDialectVerdict` always says membership is unavailable; phrase it from the verdict once a predicate exists.
+- DONE (lane 3, 2026-10-20): `pythonDialectVerdict` is gone; a Python cell's card says where it left the dialect (`pythonOutsideWhy`, the step's `askWhy`).
 - No red-team pass: no new tool, member or message type, and the change only narrows what runs unasked.

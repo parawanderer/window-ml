@@ -80,6 +80,10 @@ export interface PythonCaller {
     wireStep?: { seq: number; local: { step: number; seq: number } };
     /** The cell's tab URL now, for its `ml.config()`. */
     tabUrl?: () => string;
+    /** Run the cell INSIDE the dialect only, under the fork's gate (docs/spec/PYTHON_DIALECT.md, "Membership replaces
+     *  `mode`"): a run the worker drives trying it before its own gate. Honoured only with `runGated`. A cell outside
+     *  comes back as `notInDialect` and nothing it did is kept. */
+    inside?: boolean;
 }
 
 /** PYTHON_EXEC through the router: the caller is read off the sender, which the browser sets. */
@@ -138,7 +142,9 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const persist = !!payload?.persist && ownSurface;
     const benchReset = !!payload?.benchReset;
     // Decided by the worker from the code itself, never from a field the caller sent: inside the dialect, or outside it.
-    const outside = !complete && !pythonCellInDialect(String(payload?.code ?? ""));
+    // A cell run INSIDE is judged by the fork as it runs, so it needs no grant: what it cannot do, it is refused.
+    const inside = !complete && !!caller.inside && !!caller.runGated;
+    const outside = !complete && !inside && !pythonCellInDialect(String(payload?.code ?? ""));
     if (outside && !ownSurface && await caller.untrusted()) {
         const code = String(payload?.code ?? "");
         const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : pyCodeGranted(caller.tabId, true, code);
@@ -172,7 +178,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         : caller.tabId != null ? `page:${caller.tabId}`
         : "own";
     const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}) };
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
     try {
         const res = await attempt().catch((err) => {
