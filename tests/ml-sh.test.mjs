@@ -524,3 +524,82 @@ test("the same script and the same approval derive the same envelope wherever th
     // Issuer 2 (python_exec): the derivation is one path in sw-shell-call.ts.
     assert.ok(first, "there is a derived envelope to compare across issuers");
 });
+
+// --- every start carries the envelope its approved claims derive: the version probe included (K3 end-to-end audit) ---
+// `versionOf` starts a probe of its own (sw-shell-call.ts) and that start is the one hole left in the
+// derivation path: shRun's start goes through `envelopeFor`, the probe's does not. A probe is judged with
+// `effects: []` — zero approved claims, which derive `write: "none"` — and then started under today's floor.
+
+test("every start on a K3 host carries the envelope its claims derive — the version probe included", T, async () => {
+    // jq lists `--version` (flag {}) and has a version range, so a first call raises a probe AND starts the call.
+    const host = fakeNativeHost({
+        landlockAbi: null,
+        done: (_id, spawn) => spawn?.argv?.[1] === "--version"
+            ? { out: "jq-1.7.1\n", err: "", code: 0 }
+            : { out: "true\n", err: "", code: 0 },
+    });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["jq", "--version"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true, "the call ran (the honest path works): " + JSON.stringify(r).slice(0, 300));
+    const starts = host.calls.filter((c) => c.call === "start");
+    assert.equal(starts.length, 2, `the version probe and the call both start (calls: ${host.names().join(",")})`);
+    // The probe is judged with effects: []; the call is a listed read. Both derive write none + program-only.
+    for (const [i, s] of starts.entries()) {
+        assert.deepEqual(s.args.envelope, { write: "none", exec: "program-only" },
+            `start ${i} (argv ${JSON.stringify(host.calls.find((c) => c.call === "spawn" && c.id === s.args.id)?.args.argv)}): the approved claims derive both keys, so both are sent`);
+    }
+});
+
+test("git's version probe sends write none too: the approved claims are the judge's facts, never an unlisted option (ruled 2026-10-19)", T, async () => {
+    // `git --version` is an option git's manifest does not list, so unoverridden facts would be unknown and derive no
+    // envelope; the probe is JUDGED with effects: [], and that is what derives what it is sent (SHELL.md, #829).
+    const host = fakeNativeHost({ landlockAbi: null, done: (_id, spawn) => spawn?.argv?.[1] === "--version" ? { out: "git version 2.44.0\n", err: "", code: 0 } : { out: "", err: "", code: 0 } });
+    await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: answering(true).onStep });
+    const probe = host.calls.find((c) => c.call === "spawn" && c.args.argv[1] === "--version");
+    assert.ok(probe, "the probe was spawned");
+    const start = host.calls.find((c) => c.call === "start" && c.args.id === probe.id);
+    assert.deepEqual(start?.args.envelope, { write: "none", exec: "program-only" });
+    // Positive control: a host that cannot hold an envelope is sent none, the probe included.
+    const pre = fakeNativeHost({ done: (_id, spawn) => spawn?.argv?.[1] === "--version" ? { out: "git version 2.44.0\n", err: "", code: 0 } : { out: "", err: "", code: 0 } });
+    await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: pre.onNative, configExtra: ON, onStep: answering(true).onStep });
+    const starts = pre.calls.filter((c) => c.call === "start");
+    assert.ok(starts.length >= 2, "the probe and the call started");
+    for (const s of starts) assert.equal(s.args.envelope, undefined, "a pre-K3 host gets no envelope");
+});
+
+// --- a done that does not match what was sent is a fact on the run log, never accepted silently (K3 audit) ---
+// `done.envelope` is what the host APPLIED (SHELL.md). `shResult` keeps it beside `asked`, and
+// `sandboxAppliedLine` knows how to say they differ — but nothing on the live path compares them for a
+// person: the run-log `shell`/`run` detail carries neither, and the card's only caller omits both.
+
+test("a done report that does not match what was sent is a fact on the run log: the difference is never accepted silently", T, async () => {
+    // Mismatch: the worker sent write roots (a nested in-root delete); the host reports the floor.
+    const mismatch = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "today", exec: "program-only" } }) });
+    const a = await runOn("userScripts", [runs(["find", "src/gen", "-delete"])], { ...NO_FETCH, onNative: mismatch.onNative, configExtra: ON });
+    const ra = valueOf(a.results[0]);
+    assert.equal(ra.ok, true, "the call ran (the honest path works): " + JSON.stringify(ra).slice(0, 200));
+    // The worker holds both facts on the result already — so "we lost it" is not why the log is empty.
+    assert.deepEqual(ra.asked, { write: "roots", exec: "program-only" }, "what was sent");
+    assert.deepEqual(ra.envelope, { write: "today", exec: "program-only" }, "what was applied");
+    const recs = (await a.bg.context.__mlRunLog.all()).filter((x) => x.run === a.hash && x.subsystem === "shell" && x.kind === "run");
+    assert.equal(recs.length, 1, "the shell call is on the run log");
+    const blob = JSON.stringify(recs[0]);
+    assert.match(blob, /roots/, "the record names what was SENT");
+    assert.match(blob, /today/, "the record names what was APPLIED");
+    assert.ok(recs[0].level === "warn" || /mismatch|not the|differ/i.test(blob), "and the difference is marked, not left to the reader");
+    // Positive control: a matching done is the same call, and its record is not marked wrong.
+    const match = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "roots", exec: "program-only" } }) });
+    const b = await runOn("userScripts", [runs(["find", "src/gen", "-delete"])], { ...NO_FETCH, onNative: match.onNative, configExtra: ON });
+    assert.equal(valueOf(b.results[0]).ok, true, "the matching leg ran");
+    const recs2 = (await b.bg.context.__mlRunLog.all()).filter((x) => x.run === b.hash && x.subsystem === "shell" && x.kind === "run");
+    assert.equal(recs2.length, 1);
+    assert.match(JSON.stringify(recs2[0]), /roots/, "the matching record also names what was sent");
+    // An absent done.envelope (an older host) is UNKNOWN, never read as a match.
+    const old = fakeNativeHost({ landlockAbi: null });
+    const c = await runOn("userScripts", [runs(["find", "src/gen", "-delete"])], { ...NO_FETCH, onNative: old.onNative, configExtra: ON });
+    assert.equal(valueOf(c.results[0]).ok, true, "the older-host leg ran");
+    const recs3 = (await c.bg.context.__mlRunLog.all()).filter((x) => x.run === c.hash && x.subsystem === "shell" && x.kind === "run");
+    assert.equal(recs3.length, 1);
+    assert.match(JSON.stringify(recs3[0]), /unknown/i, "an absent done.envelope is unknown on the record, never a match");
+});
