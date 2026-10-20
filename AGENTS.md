@@ -84,7 +84,8 @@ dialect".
 
 **RULE — a new agent tool, `ml.*` member or page-started message type gets a RED-TEAM PASS, without being asked.** A
 separate agent writes what a hostile page must NOT get from it as tests that fail first (`tests/redteam.test.js`,
-`tests/e2e/site-access.spec.mjs`); the change lands with them passing. `docs/dev/site-access.md`, "Adding a tool, a
+`tests/e2e/site-access.spec.mjs`); the change lands with them passing. Every shape it probes, escape or one that
+held, ends as a committed test or a one-line reason, never only in an untracked scratch driver. `docs/dev/site-access.md`, "Adding a tool, a
 member or a message"; the `redteam` skill.
 
 ## Where the implementation notes live — read the one you are about to change
