@@ -1277,6 +1277,7 @@ test("the macro cannot smuggle a non-readonly method past the dialect", async ()
 // Each case runs in a WORKER with a timeout: the interpreter is synchronous between awaits, so a regression here
 // is an infinite loop, and on the main thread it would hang the whole runner instead of failing one test.
 import { Worker } from "node:worker_threads";
+import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
 // A worker does not inherit the runner's tsx hooks (Node's own type stripping takes the import instead, and it
 // rejects the interpreter's parameter properties), so the worker registers tsx itself before importing.
@@ -1309,25 +1310,25 @@ function ensureWorker() {
 // Terminated explicitly: its message listener keeps the port referenced, so an unref'd worker still holds the
 // file's process open after the last test.
 after(() => worker?.terminate());
-function inWorker(src, ms = 5000, stepBudget = TEST_BUDGET) {
+function inWorker(src, stepBudget = TEST_BUDGET) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
-        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
+        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, watchdogMs(stepBudget));
         pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
         w.postMessage({ id, src, stepBudget });
     });
 }
 /** The survey must END, and end OUT of dialect (→ the human gate), not with a value and not with a runtime error. */
 async function fallsBack(src, why, stepBudget) {
-    const r = await inWorker(src, 5000, stepBudget);
-    assert.ok(!r.hung, `${why}: still running after 5 s`);
+    const r = await inWorker(src, stepBudget);
+    assertNotHung(r, why, stepBudget ?? TEST_BUDGET);
     assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
     return r;
 }
 /** Asserts a halting vector in the worker: refused (fell back to approval) or ended with its value. */
 async function checkHalting(v) {
     if (v.expect === "refused") return fallsBack(v.js, v.name, v.budget);
-    const r = await inWorker(v.js, 5000, v.budget);
+    const r = await inWorker(v.js, v.budget);
     assert.deepEqual(r, { value: v.expect.value }, v.js);
     return r;
 }
@@ -1762,7 +1763,7 @@ test("ADVERSARIAL `**`: it produces a number from anything and reaches nothing",
 
 test("HALTING `**`: a power is one bounded operation — repeated squaring ends at Infinity, at once", async () => {
     const r = await inWorker(`return [..."abcdefghijklmnopqrst"].reduce((a) => a ** 2, 2) + (10 ** 10 ** 10)`);
-    assert.ok(!r.hung, "finished");
+    assertNotHung(r, "the survey", TEST_BUDGET);
     assert.equal(r.value, Infinity);
 });
 

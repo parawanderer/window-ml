@@ -14,6 +14,7 @@ import { Worker } from "node:worker_threads";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
 import { mlJsonPath } from "../src/json-path.ts";
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
+import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const CONFIG = { model: "qwen3.8-flash-next:vision", ocrModel: "qwen3-vl:30b", apiFormat: "openai", autoApproveReadonly: true };
@@ -130,18 +131,18 @@ function ensureWorker() {
     return worker;
 }
 after(() => worker?.terminate());
-function inWorker(src, ms = 8000, stepBudget = 3_000_000) {
+function inWorker(src, stepBudget = 3_000_000) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
-        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
+        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, watchdogMs(stepBudget));
         pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
         w.postMessage({ id, src, stepBudget });
     });
 }
 /** The survey must END, and end OUT of dialect (the human gate), not with a value and not with a runtime error. */
-async function fallsBack(src, why) {
-    const r = await inWorker(src);
-    assert.ok(!r.hung, `${why}: still running after 8 s`);
+async function fallsBack(src, why, stepBudget) {
+    const r = await inWorker(src, stepBudget);
+    assertNotHung(r, why, stepBudget ?? 3_000_000);
     assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
     return r;
 }

@@ -12,6 +12,7 @@ import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 import { vectors } from "./dialect-vectors.mjs";
+import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
 
 /** The shared vectors (tests/fixtures/dialect-vectors/<genre>.json) lifted from a named group of this file. */
 const lifted = (genre, label) => vectors(genre, `tests/readonly-soundness.test.mjs ${label}`);
@@ -45,20 +46,20 @@ function ensureWorker() {
 }
 after(() => worker?.terminate());
 
-/** Run a survey in the worker; `{ hung: true }` past `ms`. */
-function inWorker(src, { setup, stepBudget = 200_000, ms = 5000 } = {}) {
+/** Run a survey in the worker; `{ hung: true }` if the halting watchdog fires first. */
+function inWorker(src, { setup, stepBudget = 200_000, ms } = {}) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
-        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
+        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms ?? watchdogMs(stepBudget));
         pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
         w.postMessage({ id, src, setup, stepBudget });
     });
 }
 
 /** The survey must END, and end OUT of dialect (the human gate), not with a value and not with a runtime error. */
-async function fallsBack(src, why, o) {
+async function fallsBack(src, why, o = {}) {
     const r = await inWorker(src, o);
-    assert.ok(!r.hung, `${why}: still running after 5 s`);
+    assertNotHung(r, why, o.stepBudget ?? 200_000);
     assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
     return r;
 }
@@ -176,7 +177,8 @@ test("the charge leaves an ordinary survey alone: a filter-and-map over 20,000 r
         const hits = rows.filter(r => r[2] === 3 && r[1].includes("9")).map(r => r[1].toUpperCase());
         const text = rows.map(r => r.join(",")).join("\\n");
         [hits.length, text.split("\\n").length, text.indexOf("row 19999") > 0, JSON.stringify(rows.slice(0, 100)).length > 0].join("|")`, { stepBudget: STEP_BUDGET });
-    assert.ok(!r.hung && !r.threw, JSON.stringify(r));
+    assertNotHung(r, "the survey", STEP_BUDGET);
+    assert.ok(!r.threw, JSON.stringify(r));
     assert.match(String(r.value), /^\d+\|20000\|true\|true$/);
 });
 
