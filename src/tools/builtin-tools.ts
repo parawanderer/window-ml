@@ -18,6 +18,7 @@ import { LOCATE } from "./tool-details";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
+import { READER_MAX_TOKENS } from "../contract/contract-render";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, resolvePoint, markSeen, seenNearby, BOX_RE } from "../util";
 import { annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box } from "../dom/locate";
 import { OpaqueKind, canvasAt, reservedSurfaceAt, pageVisionHost } from "../dom/page-geometry";
@@ -204,7 +205,7 @@ export const pointedImageNote = (label: string | undefined, drawn: boolean | und
 
 /** The delegated `look` tool: a reader model describes a screenshot (of the viewport, an element, an `@pt`/`@box`
  *  token or the stitched page) to a driver that cannot see images; it runs on the page's VisionHost unless given one. */
-export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null, host = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null } = {}): MlTool => {
+export const buildLookTool = (ml: MlApi, { model = null, maxTokens = READER_MAX_TOKENS, memory = null, host = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null } = {}): MlTool => {
     // The page's host unless one is given, made when the tool RUNS: a run the worker assembles builds this tool there,
     // where there is no page, and runs it in the page that hosts the run.
     const hostOf = (): VisionHost => host || pageVisionHost(ml, memory);
@@ -606,8 +607,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // Text-only driver: the reader describes the crop; the driver gets words, not the image.
                 const describePrompt = `Describe concisely what is at the marked spot on this crop — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.${CLICK_MARK_NOTE}`;
                 let desc: string;
-                try { desc = String(await host.chat(describePrompt, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+                try { desc = String(await host.chat(describePrompt, { images: [sent], model, maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX })).trim(); }
                 catch { return base; }   // describe failed → leave the manual look() nudge intact
+                if (!desc) return base;   // …and so does a reader that answered nothing
                 return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}${legend}`, feedback: { reason, via: "text", text: desc, prompt: describePrompt, image: sent, label: o.label } };
             };
 
@@ -1078,10 +1080,15 @@ export async function captureVerify(host: VisionHost, ctx: ToolContext | undefin
         ? `The image is a crop of the page just AFTER a "${verb}" action; the target is at the exact CENTRE. Describe what is now shown there and around it — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).`
         : `The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.`;
     let desc: string;
-    try { desc = String(await host.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    try { desc = String(await host.chat(question, { images: [crop], model: reader, maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
+    if (!desc) return { content: `${readerSaidNothing(reader || "the reader", tok ?? undefined)}${legend}`, feedback: { reason, via: "text", text: "", prompt: question, image: crop } };
     return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${clickPoint}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
+/** What a text-only driver reads when its verify's reader answered with nothing (a thinking reader can spend its whole
+ *  budget reasoning), instead of an empty quote: that it happened, and how to look again. */
+const readerSaidNothing = (reader: string, selector?: string): string =>
+    `\n\n(verify was requested, but ${reader} returned an empty description. Read the result with ${selector ? `look({ selector: ${JSON.stringify(selector)} })` : "look"} next.)`;
 /** Verify by cropping the WHOLE target element (not a fixed-radius point crop) — what `type` wants: a picture
  *  of the field/canvas it typed into. `target` is a selector (its `index`th match) or the focused element; the
  *  host's `shoot` crops it to its bounding box. Same native (inline image) / delegated (reader describes) split +
@@ -1099,8 +1106,9 @@ export async function captureVerifyElement(host: VisionHost, ctx: ToolContext | 
     if (driverSees) return { content: `\n\n Here's ${what} after you ${verb} it. Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
     const question = `The image is a screenshot of ${what} just AFTER a "${verb}" action. Describe what it now shows — especially anything that CHANGED (a new value, text that appeared on it).`;
     let desc: string;
-    try { desc = String(await host.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    try { desc = String(await host.chat(question, { images: [crop], model: reader, maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
+    if (!desc) return { content: readerSaidNothing(reader || "the reader", typeof target === "string" ? target : undefined), feedback: { reason, via: "text", text: "", prompt: question, image: crop } };
     return { content: `\n\n👁 Here's ${what} after you ${verb} it. You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
 // The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.

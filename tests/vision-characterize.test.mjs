@@ -512,14 +512,14 @@ test("click verify of a worker-built run, native: the worker crops 300 px around
     } finally { w.page.close(); }
 });
 
-test("click verify of a worker-built run, delegated: the worker asks the reader about the same crop, with a 256-token cap, and counts its spend", T, async () => {
+test("click verify of a worker-built run, delegated: the worker asks the reader about the same crop, with the reader token cap (READER_MAX_TOKENS), and counts its spend", T, async () => {
     const w = await startVisionRun({ model: "text-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, turns: [{ name: "click", args: { selector: "#save", verify: true } }], reader: () => "Saved." });
     try {
         assert.deepEqual(pageSent(w.page), [], "the page sends no CAPTURE_TAB and no FETCH_LLM");
         const [call] = w.subs();
         assert.equal(w.subs().length, 1);
         assert.equal(call.body.model, "reader-vl");
-        assert.equal(call.body.max_tokens, 256);
+        assert.equal(call.body.max_tokens, 512);
         assert.equal(promptOf(call.body), 'The image is a crop of the page just AFTER a "clicked" action; the target is at the exact CENTRE. Describe what is now shown there and around it — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).');
         assert.deepEqual(recipe(w.wimages, imagesIn(call.body)[0]).draws, [["VIEWPORT", 210, 70, 300, 300, 0, 0, 300, 300]]);
         assert.equal(call.body.hint.session, `wml-${w.hash}`, "labelled as the run's own sub-call");
@@ -596,7 +596,7 @@ test("wait verify of a worker-built run, delegated: the reader describes the who
         const [call] = w.subs();
         assert.equal(promptOf(call.body), "The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.");
         assert.deepEqual(imagesIn(call.body), [PNG_VIEWPORT], "the capture itself, uncropped");
-        assert.equal(call.body.max_tokens, 256);
+        assert.equal(call.body.max_tokens, 512);
         assert.equal(seenByDriver(w).text, "Waited 10ms.\n\n👁 The page settled — here's the current viewport. You can't see images, so this is reader-vl's description:\nSettled." + LEGEND_LINE);
     } finally { w.page.close(); }
 });
@@ -625,7 +625,7 @@ test("the navigate verify ring-back (verifyViewport), which the page still answe
         assert.equal(call.messages[0].content, "The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.",
             "a navigate verify reuses the wait verify's prompt");
         assert.deepEqual(call.messages[0].images, [VIEWPORT]);
-        assert.equal(call.maxTokens, 256);
+        assert.equal(call.maxTokens, 512);
         assert.deepEqual(plain(env), { result: "\n\n👁 The page settled — here's the current viewport. You can't see images, so this is reader-vl's description:\nThe new page.",
             feedback: { reason: "after wait", via: "text", text: "The new page.", prompt: call.messages[0].content, image: VIEWPORT } });
     } finally { w.page.close(); }
