@@ -125,14 +125,16 @@ function judge(vec, out) {
     return [status, reason];
 }
 
-// --- under CI the fork's core is required: a skip must not pass for a run ---
+// --- under CI a fetched fork core must be the one shipped: a skip must not pass for a run ---
 
-test("under CI with an artefact pinned, a dist/pyodide that exists is the restricted-mode core", (t) => {
-    const pinned = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../tools/pyodide-dist.json"), "utf8")).artefact.sha256;
-    if (!process.env.CI || !pinned) return t.skip("only under CI, once an artefact sha256 is pinned");
-    // A job that never fetched Pyodide (no dist/pyodide) has nothing to check; one that shipped the stock core must fail.
+test("under CI, a job that fetched the fork core ships it in dist/pyodide", (t) => {
+    const fetched = fs.existsSync(path.resolve(import.meta.dirname, "../pyodide-core/.pin"));
+    if (!process.env.CI || !fetched) return t.skip("only under CI, in a job that ran `npm run fetch-pyodide` with an artefact pinned");
+    // A job that never fetched (the hub job) builds the stock core on purpose and has nothing to check; one that fetched
+    // and still ships the stock core means the vectors below would SKIP and pass for a run.
     assert.strictEqual(stockCore, false, `the vectors would be skipped: ${skip}`);
 });
+
 
 // --- the build gate: specialization, tier 2 and the JIT off, or the warm vectors pass by chance ---
 
