@@ -435,6 +435,11 @@ thing. The parts:
   left) — not merely for one step to land, or the test opens a step while the next is still arriving and the
   sidebar re-renders under it, which only shows once CPU is contended. A test whose time is the same on a
   laptop and on CI is waiting on a timer.
+- **RULE — an auto-approver outlives the wait it is approving for.** One `for (…; i < 60) { resolve gates; if finished break; sleep(400) }` stops approving when its budget expires, and a gate that
+  opens after that stays open forever: the run never finishes and every later wait is waiting on something that
+  will never be drawn (annotate-diff, main run `39388219944`, page snapshot at the failure: step 3 still
+  `button "python_exec"` with no "approved"). Split them: the approver runs while the wait is outstanding, and
+  the wait is `expect.poll` on the run-finished facts above so it FAILS at its budget.
 - **A headless capture of a window shows its newest page, whatever `chrome.tabs` says is active.** `watchRunEvents`
   therefore opens its watcher in an unfocused window of its own (`chrome.windows.create`); a helper that opens any
   extra page beside a run's tab makes every worker capture, crop and verify of that run a picture of the extra page
