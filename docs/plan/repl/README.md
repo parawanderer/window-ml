@@ -205,7 +205,8 @@ listed as remaining is DONE unless named below.
   `askWhy` on its own card, control and line-separator characters in labels, an unfiltered card label, a cross-origin
   archive-note consume; the resume note is a system message marked as the extension's), [`LANE_9_RESULT.md`](LANE_9_RESULT.md).
   Lane 6: items 2 and 3 are #822 (merged 2026-10-20, 4ca4201d), item 1 (the one shared loader patch with a per-cell lookup)
-  is #830 (merged 2026-10-20, c789e647), item 4 was already closed by #772; the generalist reviewed both; its result file is next.
+  is #830 (merged 2026-10-20, c789e647), item 4 was already closed by #772; the generalist reviewed both. Lane 6 is closed:
+  [`LANE_6_RESULT.md`](LANE_6_RESULT.md) (#849, merged 73e57802), clone removed.
 - **Unassigned**: the host's hub transport is no longer; left is the typed-node policy tree (the derived breadth). Lanes
   6 to 9 took the rest of the old list (2026-10-19 to 2026-10-20, above).
 
@@ -244,7 +245,8 @@ Each lane's second task is unblocked by its own first one, so a session never wa
   your session id, model id and work slug. Work slugs: `repl-lane1`, `repl-lane2`, `repl-lane3`, `repl-lane4`.
 - **Merge your own green PR** with `node scripts/merge-when-green.mjs <pr> --wait --merge --session <id>` once CI is
   green, no test was removed and no review is unread. Spec-only PRs merge the same way. A review that asks nothing still
-  refuses until the operator names it read: `--read <id>`, the janitor's #853 (open 2026-10-20; the refusal prints the ids).
+  refuses until the operator names it read: `--read <id>` (the janitor's #853, merged 2026-10-20, 5c91dbdb; the refusal
+  prints the ids; the tool never parses a body).
 - **Session mail** (`~/git/session-mail/README.md` is the protocol; the `session-mail` skill adds the Claude Code
   specifics): when your work touches a file another lane owns, when a root another lane consumes has merged (D for
   lane 4; A for whoever takes the host's extension side later), or when you have a question only another session can
