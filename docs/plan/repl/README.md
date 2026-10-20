@@ -177,8 +177,12 @@ listed as remaining is DONE unless named below.
   larger than the two vectors: Pyodide builds CPython without pymalloc, so the cap, hooked on the RAW domain and the
   arenas, counted almost nothing under wasm32; the fix wraps the MEM and OBJ domains whenever the allocator is not
   pymalloc and judges a repeat's size before the overflow guards (`PYTHON_DIALECT.md`, the memory row; fork PR against
-  `ml/restricted-mode` from `~/git/cpython-wasm32`). Until it lands and lane 5 rebuilds, the per-cell memory bound does
-  not hold under Pyodide; the step budget and the static halting rules do.
+  `ml/restricted-mode`, merged 2026-10-20 as de165bb7, lane 5 verified it under wasm32 first). Re-pinned the same day:
+  release `pyodide-314.0.3-ml-de165bb7`, 87 of 87 vectors under wasm32, `WASM32_GAPS` deleted, so the per-cell memory
+  bound holds under Pyodide from #835 on. Its cost, measured by lane 5 on a noisy laptop (a million small tuples,
+  minimum of four alternating rounds): a metered cell 0.31 s → 0.46 s, an UNMETERED one 0.15 s → 0.20 s, about 1.3 to
+  1.5x either way, because the MEM/OBJ wrappers stay installed outside restricted cells. Open, the fork's (lane 3):
+  whether the wrappers can be installed only for a restricted entry's extent, measured before it is claimed cheaper.
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
   (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
