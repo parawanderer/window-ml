@@ -34,6 +34,13 @@ async function servePage() {
 /** The tool results the driver was sent in its last call, in order. */
 const toolResults = (fake) => (fake.calls().filter((c) => c.tools?.length).at(-1)?.messages ?? []).filter((m) => m.role === "tool").map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)));
 
+// --- under CI a fetched fork core must be the one shipped: a skip must not pass for a run ---
+
+test("under CI, a job that fetched the fork core ships it in dist/pyodide", () => {
+    test.skip(!process.env.CI || !existsSync(join(HERE, "../../pyodide-core/.pin")), "only under CI, in a job that ran `npm run fetch-pyodide` with an artefact pinned");
+    expect(HAS_FORK, "the spec below would be skipped").toBe(true);
+});
+
 // --- inside runs unasked; outside asks with where it left ---
 
 test("an inside cell runs with no card; an `import os` cell asks, and the card names the import and its line", async () => {

@@ -21,6 +21,7 @@ const NODES = JSON.parse(FILES["whitelist.json"]).nodes;
 const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 
 let py = null;
+let stockCore = false;
 let skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
 // The vectors' worlds (run_vectors.py's `_world`), bound into a fresh namespace dict.
@@ -58,7 +59,7 @@ before(async () => {
     if (!hasPyodide) return;
     const { loadPyodide } = await import(path.join(PYODIDE_DIR, "pyodide.mjs"));
     py = await loadPyodide({ indexURL: PYODIDE_DIR });
-    if (py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`)) { skip = "dist/pyodide is the stock core, not the restricted-mode fork"; return; }
+    if (py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`)) { stockCore = true; skip = "dist/pyodide is the stock core, not the restricted-mode fork"; return; }
     await py.loadPackage(["numpy", "pandas", "pillow"]);
     py.runPython(WORLDS);
 }, { timeout: 240000 });
@@ -86,6 +87,14 @@ async function cell(ns, code, inside = true) {
 
 /** The names a namespace holds that a cell could have bound, each by value or identity. */
 const snapshot = (ns) => JSON.stringify(py.globals.get("_ml_test_snapshot")(ns).toJs({ dict_converter: Object.fromEntries }), (_, v) => typeof v === "bigint" ? String(v) : v);
+
+// --- under CI a fetched fork core must be the one shipped: a skip must not pass for a run ---
+
+test("under CI, a job that fetched the fork core ships it in dist/pyodide", (t) => {
+    const fetched = fs.existsSync(path.resolve(import.meta.dirname, "../pyodide-core/.pin"));
+    if (!process.env.CI || !fetched) return t.skip("only under CI, in a job that ran `npm run fetch-pyodide` with an artefact pinned");
+    assert.ok(hasPyodide && !stockCore, `the inside tests would be skipped: ${skip}`);
+});
 
 // --- the allow tables load once, and only on the fork's build ---
 
@@ -208,13 +217,16 @@ test("a cell's own function is never what the wrapper calls: one shadowing str s
 test("COST: an inside cell against the full path, measured (reported, not asserted)", { timeout: 120000 }, async (t) => {
     if (skip) return t.skip(skip);
     const N = 50, code = "xs = [i * i for i in range(1000)]\nreturn sum(xs)";
-    const time = async (inside) => {
-        const ns = world("none");
-        await cell(ns, code, inside);   // warm
-        const t0 = performance.now();
-        for (let i = 0; i < N; i++) await cell(ns, code, inside);
-        return (performance.now() - t0) / N;
-    };
-    const full = await time(false), inside = await time(true);
-    t.diagnostic(`per cell: full ${full.toFixed(2)} ms, inside ${inside.toFixed(2)} ms, overhead ${(inside - full).toFixed(2)} ms`);
+    // Interleaved, one full and one inside per round, and the MEDIAN of each: a shared machine's load drifts over a
+    // run, and a block of one then a block of the other charges that drift to whichever ran second.
+    const nsFull = world("none"), nsIn = world("none");
+    await cell(nsFull, code, false); await cell(nsIn, code, true);   // warm
+    const full = [], inside = [];
+    for (let i = 0; i < N; i++) {
+        let t0 = performance.now(); await cell(nsFull, code, false); full.push(performance.now() - t0);
+        t0 = performance.now(); await cell(nsIn, code, true); inside.push(performance.now() - t0);
+    }
+    const median = (xs) => xs.sort((a, b) => a - b)[xs.length >> 1];
+    const f = median(full), n = median(inside);
+    t.diagnostic(`per cell (median of ${N}, interleaved): full ${f.toFixed(2)} ms, inside ${n.toFixed(2)} ms, overhead ${(n - f).toFixed(2)} ms (${(n / f).toFixed(2)}x)`);
 });
