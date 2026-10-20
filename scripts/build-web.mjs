@@ -97,7 +97,8 @@ function singleFile(js, css) {
 
 /**
  * THE NATIVE SHELL'S PAGE (`dist-native/`): `embed.html` over this device's account and `embed-demo.html` over the demo
- * world, each self-contained, with the KaTeX fonts beside them (the stylesheet names them relatively). The phone app
+ * world, each self-contained, with the KaTeX fonts beside them (the stylesheet names them relatively) and the diagram frame
+ * (`mermaid.html`, its script inline), which the page loads from its own directory. The phone app
  * (mobile/) takes one of the two into its bundle with `mobile/scripts/sync-embed.mjs`.
  */
 async function buildNative(web, out) {
@@ -116,6 +117,20 @@ async function buildNative(web, out) {
         rmSync(path.join(stage, `${entry}.js`));
     }
     if (existsSync(path.join(web, "fonts"))) cpSync(path.join(web, "fonts"), path.join(stage, "fonts"), { recursive: true });
+    // The diagram frame, beside the page, with its script INLINE: the app writes it next to `index.html`
+    // (mobile/src/embed.tsx), and a sandboxed frame has an opaque origin, which Android's WebView refuses any file://
+    // load ("Not allowed to load local resource"), so a `<script src>` there never runs. The extension keeps the two
+    // files, since its sandbox CSP allows no inline script.
+    const frameJs = readFileSync(path.join(web, "mermaid-frame.js"), "utf8").replace(/<\/script/gi, "<\\/script");
+    const frameHtml = readFileSync(path.join(web, "mermaid.html"), "utf8");
+    if (!frameHtml.includes('<script src="mermaid-frame.js"></script>')) throw new Error("mermaid.html no longer loads mermaid-frame.js as this expects");
+    // The extension's sandbox CSP, with the script pinned by HASH instead of 'self': nothing else may run here, not an
+    // injected handler and not a nested frame's inline script, since the phone gives every frame its own native bridge
+    // (src/mermaid/no-bridge.ts). `frame-src 'none'` refuses a nested frame that loads a URL; a `srcdoc` one
+    // inherits this policy, so the hash refuses its script.
+    const hash = createHash("sha256").update(frameJs).digest("base64");
+    const csp = `<meta http-equiv="Content-Security-Policy" content="script-src 'sha256-${hash}'; object-src 'none'; connect-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">`;
+    writeFileSync(path.join(stage, "mermaid.html"), frameHtml.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">${csp}`).replace('<script src="mermaid-frame.js"></script>', () => `<script>${frameJs}</script>`));
     rmSync(out, { recursive: true, force: true });
     renameSync(stage, out);
     console.log(`built ${path.relative(ROOT, out)}/ (the phone app's page: embed.html, embed-demo.html)`);

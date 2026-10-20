@@ -219,8 +219,8 @@ draws nothing.
 ## Mermaid diagrams in model text
 
 A ```mermaid fence in anything `markdown()` renders (a reply, an answer, prose between steps, the HUD card) is drawn as
-its diagram, on the sidebar, the DevTools panel and the chat page (extension and web). The phone app and the exports
-still show the code (a follow-up). Code: `src/mermaid/`.
+its diagram, on the sidebar, the DevTools panel, the chat page (extension and web) and the phone app, and in the PDF.
+The Markdown export keeps the source. Code: `src/mermaid/`.
 
 - **Drawn in a sandbox, shown as an image.** `mermaid-frame.ts` runs Mermaid in `mermaid.html`, a manifest
   `sandbox.pages` entry with its own CSP (`script-src 'self'`, no eval) in the extension and an iframe with
@@ -240,6 +240,15 @@ still show the code (a follow-up). Code: `src/mermaid/`.
 - **The frame must be web-accessible** (`manifest.json`): the overlay is an extension frame inside a web page, and
   Chrome refuses a nested extension frame there otherwise. On the installable web app the service worker passes
   `mermaid.html` to the network rather than answering it with the app page, and does not precache the 5 MB script.
+- **On the phone the frame is one file with its script inline** (`buildNative` in `scripts/build-web.mjs`; the app
+  writes it beside the page, `mobile/src/embed.tsx`). A sandboxed frame has an opaque origin, and Android's WebView
+  refuses it any `file://` load, so a `<script src>` there never runs. Its CSP pins that one script by hash.
+- **The phone gives every frame the native bridge.** react-native-webview registers `ReactNativeWebView` for origin
+  `*`, the sandboxed frame and any frame nested in it included, and the app cannot tell their messages from the page's
+  (both come from origin "null"). So the frame deletes it before Mermaid evaluates (`no-bridge.ts`), and the hash CSP
+  is what stops injected script, which could otherwise reach a fresh bridge in a nested `srcdoc` frame.
+- **The PDF** (`printSession`) draws every fence in the light theme first, then `markdown(…, { diagrams: "light" })`
+  writes each as its `<img>` alone: no buttons and no pending block, since nothing in a printed page runs.
 
 ## Traps
 

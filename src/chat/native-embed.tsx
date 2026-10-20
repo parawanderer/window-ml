@@ -29,6 +29,7 @@ import { startAutoRenew } from "./auto-renew";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
+import { installMermaid } from "../mermaid/mermaid-client";
 import { rev, sessionMap } from "../sidebar/store";
 import { exportSession, exportSessionJson } from "../sidebar/export/export";
 import { SessionPane } from "./chat-app";
@@ -201,6 +202,7 @@ function perFrame(send: () => void): () => void {
 /** Everything the page does, over `host`. `account` is what the app's settings show about this device. */
 export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | null; bundle: string; reconnect?: () => void; pairing?: PairingApi; cache?: EventCache }): void {
     initThemeStyle();
+    installMermaid(document);   // ```mermaid fences become diagrams; the app writes mermaid.html beside this page (embed.tsx)
     applyCodePrefs();
     installViewPrefs(webPlatform.prefs);
     calm.value = true;

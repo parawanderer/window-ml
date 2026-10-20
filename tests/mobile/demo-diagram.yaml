@@ -1,0 +1,17 @@
+# demo-diagram.yaml — the React Native app's DEMO build (`install --demo`): a reply's ```mermaid fence is drawn as its
+# diagram on the phone too. The frame that draws it (mermaid.html, mermaid-frame.js) is written beside the page by the
+# app (mobile/src/embed.tsx) and loaded as a sandboxed file:// frame, which only a real WebView can show works. Needs the
+# demo world's sessions, so it fails on a real build: name it when you run `flows`.
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "How a step is chosen"
+    timeout: 60000
+- tapOn: "How a step is chosen"
+- extendedWaitUntil:
+    visible: "Diagram"
+    timeout: 30000
+- assertNotVisible: "Couldn't draw this diagram.*"
+- assertVisible: "A step cap stops it early.*"

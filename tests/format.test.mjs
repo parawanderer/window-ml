@@ -183,3 +183,21 @@ test("a fence drawn before comes out FINISHED, as an <img> of its SVG with the t
     assert.doesNotMatch(err, /<img/);
     done.clear();
 });
+
+test("in a STATIC document (the PDF) a drawn fence is its <img> alone, in the theme asked for; an undrawn one stays code", async () => {
+    const { done, keyOf } = await import("../src/mermaid/mermaid-block.ts");
+    const src = "graph TD\n  A --> B";
+    done.set(keyOf(src, false), { svg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'><text>light</text></svg>", w: 40, h: 20 });
+    done.set(keyOf(src, true), { svg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'><text>dark</text></svg>", w: 40, h: 20 });
+    const html = markdown("```mermaid\n" + src + "\n```", { diagrams: "light" });
+    assert.match(html, /<div class="mmd" data-mmd="done"><img class="mmd-img" alt="Diagram" width="40" height="20" src="data:image\/svg\+xml/);
+    assert.match(decodeURIComponent(html), /<text>light<\/text>/, "the light drawing, not the dark one the page shows");
+    assert.doesNotMatch(html, /mmd-tools|<button|data-mmd-hide|mmd-src/, "nothing to click and no hidden source in a printed page");
+    const never = markdown("```mermaid\ngraph LR\n  X --> Y\n```", { diagrams: "light" });
+    assert.match(never, /<pre class="code mmd-src"><code class="hljs">graph LR\n {2}X --&gt; Y<\/code><\/pre>/);
+    assert.doesNotMatch(never, /data-mmd="pending"/, "no pending block: nothing in a printed page would ever draw it");
+    const bad = "graph TD\n  A -->";
+    done.set(keyOf(bad, false), { error: "Parse error" });
+    assert.match(markdown("```mermaid\n" + bad + "\n```", { diagrams: "light" }), /data-mmd="error"><pre class="code mmd-src">.*<div class="mmd-note">Couldn't draw this diagram: Parse error<\/div>/s);
+    done.clear();
+});

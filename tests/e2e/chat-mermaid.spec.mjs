@@ -154,3 +154,43 @@ test("a 'finished drawing' posted by any window other than the frame is ignored"
     expect(svg).toContain("Start");
     await close();
 });
+
+// --- the PDF: the drawing, in the light theme it prints in ---
+
+test("the PDF carries each diagram as its light drawing, with nothing to click, though the page only ever drew it dark", async () => {
+    const context = await browser.newContext({ viewport: DESKTOP, colorScheme: "dark" });
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    // The document the export hands its print frame (print-frame.ts), and no print dialog.
+    await page.addInitScript(() => {
+        window.__printed = [];
+        const make = URL.createObjectURL.bind(URL);
+        URL.createObjectURL = (b) => { if (b instanceof Blob && b.type === "text/html") b.text().then((t) => window.__printed.push(t)); return make(b); };
+        window.print = () => {};
+        const frameWindow = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow").get;
+        Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", { get() { const w = frameWindow.call(this); if (w && this.className === "printframe") w.print = () => {}; return w; } });
+    });
+    const DIAGRAM = "laptop:d1a6a4a5";   // demo-world.ts: "How a step is chosen"
+    await page.goto(`${server.url}#/s/${DIAGRAM}`);
+    await page.locator(`.chat-row[data-session="${DIAGRAM}"]`).last().click();
+    await expect(page.locator(".chat-transcript .mmd[data-mmd='done'] img.mmd-img")).toBeVisible({ timeout: 15_000 });
+    expect(await page.evaluate(() => document.documentElement.dataset.theme)).not.toBe("light");
+
+    await page.locator(".chat-more-float").click();
+    await page.locator(".chat-head-menu").getByRole("menuitem", { name: /Export chat/ }).click();
+    const dialog = page.locator(".chat-dialog");
+    await dialog.locator(".chat-export-opt", { hasText: "PDF" }).click();
+    await dialog.getByRole("button", { name: "Export" }).click();
+    await expect.poll(() => page.evaluate(() => window.__printed.length), { timeout: 15_000 }).toBe(1);
+    const doc = await page.evaluate(() => window.__printed[0]);
+    const img = doc.match(/<img class="mmd-img" alt="Diagram"[^>]*src="data:image\/svg\+xml;charset=utf-8,([^"]*)"/);
+    expect(img, "the diagram is an image in the printed document, not its code").toBeTruthy();
+    expect(doc).not.toMatch(/mmd-tools|<button|data-mmd="pending"/);
+    // Drawn for the PDF in Mermaid's light theme: its default node fill, which the dark theme does not use.
+    const svg = decodeURIComponent(img[1]);
+    expect(svg.replace(/<[^>]+>/g, "")).toContain("Read the page");   // one <tspan> per word
+    expect(svg).toMatch(/#ECECFF/i);
+    expect(errors).toEqual([]);
+    await context.close();
+});

@@ -744,7 +744,7 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     // Visible rows: a folded group stays mounted so it can slide, hidden once it has.
     const rows = page.locator(".chat-list .chat-row:visible");
-    await expect(rows).toHaveCount(7);
+    await expect(rows).toHaveCount(8);
 
     // Calm: the heading's chevron sits after the name and shows only while the pointer is on the heading.
     const head = page.locator(".chat-rt[data-runtime='laptop']");
@@ -770,7 +770,7 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     await page.reload();
     await expect(rows).toHaveCount(3);
     await page.locator(".chat-rt[data-runtime='laptop']").click();
-    await expect(rows).toHaveCount(7);
+    await expect(rows).toHaveCount(8);
 
     // A session that moves while another one is open is marked; reading it is catching up with it.
     await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
@@ -1406,9 +1406,9 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(search.locator(".chat-search-row").first().locator(".chat-search-date")).toHaveText(/\S/);
     const toEnd = () => search.locator(".chat-sheet-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
     await toEnd();
-    await expect(search.locator(".chat-search-row")).toHaveCount(55);
+    await expect(search.locator(".chat-search-row")).toHaveCount(56);
     // Past what the page holds, the runtime's ARCHIVE: asked for a page at a time, and each of its rows marked.
-    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(85); }).toPass();
+    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(86); }).toPass();
     await expect(search.locator(".chat-search-arch")).toHaveCount(30);
     // A runtime whose archive folder lost its permission says so at the foot: search still works, the copy is paused.
     await expect(search.locator(".chat-search-foot")).toContainText("Reconnect Work laptop's archive folder");

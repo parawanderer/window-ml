@@ -5,6 +5,7 @@
 // is a string of SVG, which the asker shows as an `<img>`, where no script in it can run. `securityLevel: "strict"`
 // also strips script, event handlers and `click` callbacks from what Mermaid emits, and `htmlLabels: false` keeps the
 // labels SVG text rather than `foreignObject` HTML, which an `<img>` would draw without the fonts measured here.
+import "./no-bridge";   // first: before Mermaid evaluates (no-bridge.ts)
 import mermaid from "mermaid";
 
 /** One request: the diagram source and the theme to draw it in. */

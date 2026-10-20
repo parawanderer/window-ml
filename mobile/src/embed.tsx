@@ -117,7 +117,7 @@ export function useEmbed(): EmbedApi {
     return v;
 }
 
-/** Write the page and its fonts to `documents/web/`, only when the bundled page changed; answers the page's file URI. */
+/** Write the page, its fonts and the diagram frame (`mermaid.html`) to `documents/web/`, only when the bundled page changed; answers the page's file URI. */
 function writePage(): string {
     const dir = new Directory(Paths.document, "web");
     if (!dir.exists) dir.create({ intermediates: true });
@@ -133,6 +133,12 @@ function writePage(): string {
         for (const [name, b64] of Object.entries(EMBED.fonts as Record<string, string>)) {
             const f = new File(fonts, name);
             if (!f.exists) { f.create(); f.write(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))); }
+        }
+        for (const [name, text] of Object.entries(EMBED.files as Record<string, string>)) {
+            const f = new File(dir, name);
+            if (f.exists) f.delete();
+            f.create();
+            f.write(text);
         }
         if (stamp.exists) stamp.delete();
         stamp.create();

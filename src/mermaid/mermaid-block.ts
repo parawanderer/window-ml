@@ -35,6 +35,17 @@ export function mermaidBlock(src: string): string {
     return `<div class="mmd" data-mmd="done"${showingSource.has(src) ? " data-mmd-source" : ""}>${toolsHtml(showingSource.has(src))}${imgHtml(r)}${code}</div>`;
 }
 
+/** A ```mermaid fence in a STATIC document (the PDF's HTML): the drawing alone, with nothing to click, since nothing
+ *  there runs; its code with the note when it could not be drawn, or plain code when it was never drawn. `dark` picks
+ *  the drawing made in that theme, which the caller asks for first (`renderMermaid`). */
+export function mermaidStatic(src: string, dark: boolean): string {
+    const code = `<pre class="code mmd-src"><code class="hljs">${escapeHtml(src)}</code></pre>`;
+    const r = mermaidCached(src, dark);
+    if (!r) return code;
+    if ("error" in r) return `<div class="mmd" data-mmd="error">${code}${noteHtml(r.error)}</div>`;
+    return `<div class="mmd" data-mmd="done">${imgHtml(r)}</div>`;
+}
+
 const noteHtml = (error: string): string => `<div class="mmd-note">Couldn't draw this diagram: ${escapeHtml(error)}</div>`;
 const imgHtml = (r: { svg: string; w: number; h: number }): string =>
     `<img class="mmd-img" alt="Diagram" width="${r.w}" height="${r.h}" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.svg)}">`;
