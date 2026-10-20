@@ -208,10 +208,18 @@ name. The red team showed both: `def f(): import os; return os.listdir('/')` adm
 `f()` listed the filesystem; `def f(): return ml.config()` the same way sent a wire call, a write reaching `ml` from an
 inside run. The rule has two layers, and one is not the other's substitute:
 
-1. **The fork honours `CO_RESTRICTED` wherever the code runs**, not only under `_restricted.run`: a code object compiled
-   under an inside try carries its gate into every later call, from any frame, a generator's resumption included. This
-   is the universal statement (where a value ends up is unobservable), and the fork change that makes it true lands
-   with the check-time line fix and its re-pin (lane 3).
+1. **The fork honours `CO_RESTRICTED` wherever the code runs**, not only under `_restricted.run`: a `CO_RESTRICTED`
+   frame entered while no run is active is REFUSED with `NotInDialect` ("restricted code runs only inside the
+   dialect"), never run ungated and never run gated outside a run (ruling 2026-10-20, lane 3's R over G: gating
+   outside a run would need ownership, a budget, an undo log and a frame-exit hook with no run to hold them, while
+   refusing is a subset of that and loosens nothing if gating is ever wanted). The check sits where the interpreter
+   resumes a frame, so it covers a direct call, a generator's or coroutine's resumption, `exec(f.__code__)` and a C
+   library calling a cell lambda from a full-path cell; inside a run nothing changes. The cost claimed is one flag test
+   per call, and the fork PR carries the native number. It lands with the check-time line fix and its re-pin (lane 3).
+   After the re-pin: a `FunctionType` whose code and every nested code constant is `CO_RESTRICTED` may cross back,
+   later inside cells call it unasked, and a full-path cell that calls it gets the refusal, whose text names the
+   function and says it was defined in an unasked cell, to be redefined in the approved one. Captured builtins, bound
+   methods and anything not `CO_RESTRICTED` stay refused; classes and `yield` stay outside.
 2. **The copy-back admits data only.** A binding an inside cell made persists only when its value carries no cell code
    and is no builtin: until layer 1 is in the pinned core, no function, lambda, class, bound method, generator,
    coroutine or `builtin_function_or_method` crosses back, and the check is RECURSIVE, since the container case is
@@ -223,8 +231,8 @@ inside run. The rule has two layers, and one is not the other's substitute:
    and numpy/pandas object values, and a cell whose binding or returned value falls outside it is OUTSIDE the dialect
    and asks, so the model sees why on the card instead of finding a name silently missing. An inside try no longer
    writes to the live stdout stream at all (a test holds the real stdout to nothing from an inside try), and a refused
-   try's captured stdout is dropped. Once layer 1 holds, a cell-defined function may cross back, since it stays gated; a captured builtin never
-   does, because it is not cell code and layer 1 never sees it.
+   try's captured stdout is dropped. Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
+   never does, because it is not cell code and layer 1 never sees it.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
 wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
