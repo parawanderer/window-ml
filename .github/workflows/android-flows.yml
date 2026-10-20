@@ -84,6 +84,18 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: mobile
+      # GRADLE'S DOWNLOADS, kept between runs: without them every run fetched the whole dependency set again, most of the
+      # sixteen-minute build. Keyed on what decides that set (the app's lockfile and its Expo config); a change to
+      # either starts from the newest older cache and saves a new one. `android/` itself is generated each run, so its
+      # *.gradle files cannot be the key, which is why this is not `setup-java`'s `cache: gradle`.
+      - name: Cache Gradle's downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/package-lock.json', 'mobile/app.json') }}
+          restore-keys: gradle-${{ runner.os }}-
       - name: Install the SDK packages and create the emulator
         run: node scripts/android.mjs setup
       - name: Boot the emulator
