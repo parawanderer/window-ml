@@ -46,8 +46,8 @@ export function injectInputs(ns: any, image: string | null, tablesJson: string |
 // The prelude in three parts, so the persistent BENCH can take only the first. BASE: imports + helpers.
 // DATA: the injected image/tables for a `python_exec` (resets `img`/`df`/`tables` to None each run, so it
 // would wipe a bench user's `df` between runs). LOADERS: the redirects that serve those injected objects —
-// defined in, and reading, the namespace that runs them, so a second namespace would patch on top of the
-// first. The bench has no injected data, so it needs neither. `PRELUDE` is the three joined, unchanged.
+// ONE patch per interpreter, reading the namespace the running cell's prelude names (`__main__._ml_load_ns`).
+// The bench has no injected data, so it needs neither (and names no namespace). `PRELUDE` is the three joined, unchanged.
 export const PRELUDE_BASE = /* python */ `
 import io, base64, sys, contextlib
 ${PY_PRELUDE_IMPORTS}
@@ -128,45 +128,64 @@ const PRELUDE_LOADERS = /* python */ `
 # hijacked (a genuine http read_csv, or Image.open(BytesIO(...)), passes straight through). The
 # on-error redirect hint in builtin-tools.ts stays as the fallback for what this can't resolve.
 #
-# Patched ONCE — the module attrs (Image.open/pd.read_*) and the _-prefixed originals both
-# survive RESET (module state persists on Pyodide's single heap; _-names aren't cleared). The
-# patched funcs resolve img/tables DYNAMICALLY from globals() each call, so across runs they
-# always see the CURRENT run's freshly-loaded data, never a stale closure.
-def _ml_pick_table(_name):
-    _t = globals().get("tables") or {}
-    if isinstance(_name, str) and _name in _t: return _t[_name]
-    if len(_t) == 1: return next(iter(_t.values()))   # one table loaded → that's the one they meant
-    return None
-def _ml_tableish(_s):
-    # A string that names a loaded table, not a real resource (not a URL, not raw HTML).
-    return isinstance(_s, str) and "://" not in _s and not _s.lstrip().startswith("<")
-if "_ml_orig_image_open" not in globals():
-    _ml_orig_image_open = Image.open
+# ONE patch per interpreter. It is installed inside a function, so the originals live in its closure and no
+# namespace (a run's dict included) holds an \`_ml_orig_*\` name to chain onto. The guard is on the patched
+# module, so a later prelude run in ANY namespace installs nothing. The wrappers read img/tables from the
+# namespace the prelude of the cell that is running named (\`__main__._ml_load_ns\`, set per cell below), never
+# from the dict that defined them, so a second run cannot be handed the first run's image. None (the bench)
+# means no redirect: the real open runs.
+def _ml_install_loaders(_Image, _pd):
+    import __main__ as _main
+    def _ns():
+        return getattr(_main, "_ml_load_ns", None) or {}
+    def _pick_table(_name):
+        _t = _ns().get("tables") or {}
+        if isinstance(_name, str) and _name in _t: return _t[_name]
+        if len(_t) == 1: return next(iter(_t.values()))   # one table loaded → that's the one they meant
+        return None
+    def _tableish(_s):
+        # A string that names a loaded table, not a real resource (not a URL, not raw HTML).
+        return isinstance(_s, str) and "://" not in _s and not _s.lstrip().startswith("<")
+    _orig_open = _Image.open
     def _ml_image_open(_fp, *_a, **_k):
         # No str can name a real file here → if an image is loaded, that's what they meant.
-        if isinstance(_fp, str) and globals().get("img") is not None: return globals()["img"]
-        return _ml_orig_image_open(_fp, *_a, **_k)
-    Image.open = _ml_image_open
-if "_ml_orig_read_csv" not in globals():
-    _ml_orig_read_csv = pd.read_csv
+        _img = _ns().get("img")
+        if isinstance(_fp, str) and _img is not None: return _img
+        return _orig_open(_fp, *_a, **_k)
+    _orig_read_csv = _pd.read_csv
     def _ml_read_csv(_fp, *_a, **_k):
         # The exact source a table was loaded from (a URL included) is that table: the sandbox has no network,
         # and re-reading what \`tables\` already loaded is the commonest first try. Any other URL is not hijacked.
-        if isinstance(_fp, str) and _fp in (globals().get("tables") or {}): return globals()["tables"][_fp]
-        if _ml_tableish(_fp):
-            _t = _ml_pick_table(_fp)
+        _tt = _ns().get("tables") or {}
+        if isinstance(_fp, str) and _fp in _tt: return _tt[_fp]
+        if _tableish(_fp):
+            _t = _pick_table(_fp)
             if _t is not None: return _t
-        return _ml_orig_read_csv(_fp, *_a, **_k)
-    pd.read_csv = _ml_read_csv
-if "_ml_orig_read_html" not in globals():
-    _ml_orig_read_html = pd.read_html
+        return _orig_read_csv(_fp, *_a, **_k)
+    _orig_read_html = _pd.read_html
     def _ml_read_html(_fp, *_a, **_k):
-        if isinstance(_fp, str) and _fp in (globals().get("tables") or {}): return [globals()["tables"][_fp]]
-        if _ml_tableish(_fp):
-            _t = _ml_pick_table(_fp)
+        _tt = _ns().get("tables") or {}
+        if isinstance(_fp, str) and _fp in _tt: return [_tt[_fp]]
+        if _tableish(_fp):
+            _t = _pick_table(_fp)
             if _t is not None: return [_t]   # read_html returns a LIST of tables
-        return _ml_orig_read_html(_fp, *_a, **_k)
-    pd.read_html = _ml_read_html
+        return _orig_read_html(_fp, *_a, **_k)
+    _Image.open, _pd.read_csv, _pd.read_html = _ml_image_open, _ml_read_csv, _ml_read_html
+    _main._ml_load_ns = None
+if not hasattr(pd, "_ml_loaders_installed"):
+    _ml_install_loaders(Image, pd)
+    pd._ml_loaders_installed = True
+del _ml_install_loaders
+import __main__ as _ml_m
+_ml_m._ml_load_ns = globals()
+del _ml_m
+`;
+// The bench injects no data and keeps no redirect: it names NO namespace for the loaders, so a patch an earlier
+// cell installed falls through to the real open rather than serving another namespace's names.
+const PRELUDE_NO_LOADS = /* python */ `
+import __main__ as _ml_m
+_ml_m._ml_load_ns = None
+del _ml_m
 `;
 export const PRELUDE = PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA.slice(0, -1) + PRELUDE_LOADERS;
 /**
@@ -182,9 +201,9 @@ const replaceOnce = (src: string, from: string, to: string): string => {
     return src.replace(from, to);
 };
 // ROOT C's per-run dict: the same DATA, but `img`/`img_np`/`H`/`W` and `df`/`tables` are bound only by a cell that
-// passes an image or tables, so a later cell that passes none keeps them. No LOADERS: they patch module attributes
-// once per namespace and read that namespace, so a second run's dict would chain onto the first's and could be handed
-// the first run's `img`.
+// passes an image or tables, so a later cell that passes none keeps them. The "run" prelude then adds the LOADERS:
+// one shared patch per interpreter that reads the namespace of the cell running, so a second run's dict installs
+// nothing over the first and cannot be handed the first run's `img`.
 const PRELUDE_DATA_KEPT = replaceOnce(replaceOnce(PRELUDE_DATA,
     "img = None\nimg_np = None\nH = W = 0\n", ""),
     "df = None\ntables = {}\n_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n",
@@ -343,7 +362,7 @@ def _ml_in(_v):
 INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
 INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
 `}
-${persist === true ? PRELUDE_BASE : persist === "run" ? PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA_KEPT : RESET + PRELUDE}
+${persist === true ? PRELUDE_BASE + PRELUDE_NO_LOADS : persist === "run" ? PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA_KEPT.slice(0, -1) + PRELUDE_LOADERS : RESET + PRELUDE}
 ${netPolicy(hardened)}
 # THE \`ml\` OBJECT A CELL CALLS THE WIRE THROUGH (ML_FACADE). Built from the harness's transport and
 # its own codec refs, then those pieces are dropped: the cell sees \`ml\`/\`MlError\` and nothing that

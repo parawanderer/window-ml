@@ -121,9 +121,12 @@ with the selector/name they passed — `Image.open('canvas#stage')`, `pd.read_cs
 patches `Image.open`/`pd.read_csv`/`pd.read_html` to return the pre-loaded `img`/`df` **when it's
 actually loaded** (never for a real file-like or a URL — except the exact URL a table was loaded FROM, which is that
 table: re-reading what `tables` already fetched is the commonest first try — a genuine http `read_csv` /
-`Image.open(BytesIO)` passes through). Patched once (module attrs + `_`-prefixed originals survive
-RESET; funcs resolve `img`/`tables` from `globals()` each call → current-run data, no stale
-closure). And when that CAN'T resolve it — data preloaded but the code still errors trying to
+`Image.open(BytesIO)` passes through). ONE patch per interpreter (the module attrs survive RESET;
+the originals live in the install function's closure, so no namespace holds an `_ml_orig_*` name and a later
+prelude run in any namespace installs nothing, never a chain). The wrappers resolve `img`/`tables` from the
+namespace the running cell's prelude named (`__main__._ml_load_ns`), never from the dict that defined them: a
+run with no image of its own is not handed another run's, and `from PIL import Image` in a cell neither loses
+the redirect nor leaks one. The bench names none (`None`), so for it the real loader runs. And when that CAN'T resolve it — data preloaded but the code still errors trying to
 (re)load it (`read_excel`/`read_json`/`open`/`requests`, an ambiguous name across many tables, a
 URL in readonly), the tool **appends a redirect hint** ("use `df`/`img` directly") as the
 fallback, catching any hallucinated load pattern on the failure. The tool
@@ -350,8 +353,9 @@ Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) an
   list of statement shapes. Without it `x = 1` is a local of `_user` and vanishes at the end of the run. A name
   a nested function declares `nonlocal` stays local, or the script would not compile.
 - **Only `PRELUDE_BASE`** (imports + helpers). The injected-data part resets `img`/`df`/`tables` every run — it
-  would wipe a bench user's `df` — and the loader redirects are defined in, and read, the namespace that runs
-  them, so a second namespace would patch on top of the first and read the other's data.
+  would wipe a bench user's `df` — and it keeps no loader redirect: it names no
+  namespace for the shared patch (`__main__._ml_load_ns = None`), so a patch a run cell installed falls
+  through to the real `Image.open`/`pd.read_*` for the bench rather than serving another namespace's names.
 - **After a `python_exec`, main is reset** (worker `finally`): its injected screenshot and tables otherwise
   linger until the next run, where a bench script's `pd.read_csv("sales")` could reach them through the
   redirect.
