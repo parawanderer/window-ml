@@ -89,15 +89,39 @@ const setup = async () => {
         });
     });
     const frame = await openRunInSidebar(page, { task: "total the quarters" });
-    for (let i = 0; i < 60; i++) {
-        const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
-        for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
-        // Wait for the RUN TO FINISH, told from outside the step bodies: every scripted turn served and no tool
-        // step pending. Waiting on `.r-py-in` (inside a collapsed body) ran this loop to its cap, 24s of every
-        // test here; waiting on only two landed steps let a test open step 2 while step 3 was still arriving.
-        if (fake.calls().length >= 4 && await frame.locator(".astep.tool").count() >= 3
-            && !(await frame.locator(".astep.tool.pending").count())) break;
-        await sleep(400);
+    // APPROVAL IS NOT A LOOP WITH A BUDGET. The old `for (i < 60) { approve; if finished break; sleep(400) }`
+    // stopped resolving gates when its 24s ran out, and a gate that opened after that stayed open forever: the
+    // run never finished and every later `.r-diff` wait was waiting on a diff that would never be drawn. On
+    // main's run 39388219944 the page snapshot at the failure shows step 3 as `button "python_exec"` with no
+    // "approved", while steps 1 and 2 are approved and step 2 already has its diff. So the approver runs until
+    // the run has finished, and the wait below is what decides when that is.
+    let approving = true;
+    (async () => {
+        while (approving) {
+            try {
+                const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
+                for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
+            } catch { /* the worker is restarting or the browser closed */ }
+            await sleep(250);
+        }
+    })();
+    try {
+        // Wait for the RUN TO FINISH, told from outside the step bodies: every scripted turn served, every tool
+        // step landed, none pending, and no gate left open. `expect.poll` FAILS at its budget instead of running
+        // to its cap and passing anyway, which is how a half-finished run used to reach a test body and die later
+        // on `.r-diff`. The 40s budget is chosen to fit inside the 60s test timeout alongside `openRunInSidebar`
+        // and the assertions that follow; it is not a raised test timeout.
+        await expect.poll(async () => {
+            const steps = await frame.locator(".astep.tool").count();
+            const pendingSteps = await frame.locator(".astep.tool.pending").count();
+            const gates = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).length).catch(() => 1);
+            return fake.calls().length >= 4 && steps >= 3 && pendingSteps === 0 && gates === 0;
+        }, {
+            timeout: 40_000,
+            message: "the run never finished (every scripted turn served, 3 tool steps landed, none pending, no gate open)",
+        }).toBe(true);
+    } finally {
+        approving = false;
     }
     return { fake, ext, frame, asked: () => asked };
 };
@@ -252,11 +276,9 @@ test("focus mode folds the diff's rows and keeps its header", async () => {
 test("the diff opens on a failed retry and collapses to one line on a successful one", async () => {
     const { fake, ext, frame } = await setup();
     try {
-        // Wait for the third step, which is the one that succeeds.
-        for (let i = 0; i < 40; i++) {
-            if (await frame.locator(".astep.tool").count() >= 3) break;
-            await sleep(400);
-        }
+        // setup() does not return until the run has finished: all three tool steps landed, none pending, no gate
+        // open. The third step is the one that succeeds; there is no second wait for it here, because a wait whose
+        // cap can expire is what let this test open step 3 while it was still sitting at its approval gate.
         const failedStep = frame.locator(".astep").nth(1);
         const okStep = frame.locator(".astep").nth(2);
         for (const st of [failedStep, okStep]) {
