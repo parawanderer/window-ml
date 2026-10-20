@@ -202,6 +202,67 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     assert.strictEqual(String(await py.runPythonAsync("repr(f)", { globals: ns })), "[1, 2, 3]");
 });
 
+test("P2-alias: a non-data value crosses back only under a name it already had (a = ml and f = [ml] put the cell outside)", { timeout: 60000, todo: "the identity pass admits pre-existing callables under new names; #896 rules the alias shapes outside" }, async (t) => {
+    if (skip) return t.skip(skip);
+    // 1. a new name for a pre-existing instance — the ruling's first example
+    {
+        const ns = world();
+        const out = await cell(ns, "a = ml");
+        assert.ok(out.refused, `a = ml puts the cell outside (a non-data value under a new name, #896): ${JSON.stringify(out)}`);
+    }
+    // 2. a new container holding a pre-existing instance — the ruling's second example
+    {
+        const ns = world();
+        const out = await cell(ns, "f = [ml]");
+        assert.ok(out.refused, `f = [ml] puts the cell outside (a non-data value in a new container, #896): ${JSON.stringify(out)}`);
+    }
+    // 3. a new container holding a pre-existing function
+    {
+        const ns = world();
+        await cell(ns, "def helper(x):\n    return x", false);
+        const out = await cell(ns, "f = [helper]");
+        assert.ok(out.refused, `f = [helper] puts the cell outside: ${JSON.stringify(out)}`);
+    }
+    // 4. a new name for a pre-existing function
+    {
+        const ns = world();
+        await cell(ns, "def helper(x):\n    return x", false);
+        const out = await cell(ns, "a = helper");
+        assert.ok(out.refused, `a = helper puts the cell outside: ${JSON.stringify(out)}`);
+    }
+    // 5. a new name for the error class
+    {
+        const ns = world();
+        const out = await cell(ns, "a = MlError");
+        assert.ok(out.refused, `a = MlError puts the cell outside: ${JSON.stringify(out)}`);
+    }
+    // 6. a tuple / set holding a pre-existing instance
+    {
+        const ns = world();
+        const out = await cell(ns, "f = (ml, 1)");
+        assert.ok(out.refused, `f = (ml, 1) puts the cell outside: ${JSON.stringify(out)}`);
+    }
+    // 7. the returned value is a new container holding a non-data value
+    {
+        const ns = world();
+        const out = await cell(ns, "return [ml]");
+        assert.ok(out.refused, `return [ml] puts the cell outside (the result carries a non-data value): ${JSON.stringify(out)}`);
+    }
+    // 8. the returned value is itself a non-data value
+    {
+        const ns = world();
+        const out = await cell(ns, "return ml");
+        assert.ok(out.refused, `return ml puts the cell outside: ${JSON.stringify(out)}`);
+    }
+    // positive controls: a data alias and an admitted import's target cross
+    {
+        const ns = world();
+        await cell(ns, "x = 42\ny = x\nimport math\nz = math");
+        assert.strictEqual(String(await py.runPythonAsync("repr(y)", { globals: ns })), "42");
+        assert.strictEqual(String(await py.runPythonAsync("'z' in globals()", { globals: ns })), "true");
+    }
+});
+
 // --- property 3: fail closed ---
 
 test("P3-fail-closed: the seam answers outside for every cell (no source-only positive verdict)", () => {
