@@ -28,9 +28,12 @@
 //
 // MAIN'S COPY JUDGES. Before anything else it fetches origin/main and compares this file and every local file it
 // imports with main's. If any differs (a PR that edits this script, a stale branch), it writes main's set to a temp
-// directory and runs that, with the same arguments and this repo as its root, so a branch never judges its own merge.
+// directory and runs that, with the same arguments and this repo as its root, so a branch that leaves the handover intact never judges its own merge.
 // When main's copy cannot run from there (it predates this, imports a package, or imports a computed name), it
 // refuses and says why.
+// The handover lives in the file it guards, so it holds only while a branch leaves it intact: a PR that edits this file
+// could take the handover out and judge itself. Read the handover in any PR that touches this file. What closes that is
+// a program manifest pinning this script by sha256 (docs/spec/POLICIES.md, "A condition about the outside world").
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -161,8 +164,8 @@ export function localImports(src) {
         else if (!spec.startsWith("node:")) bare.add(spec);
     };
     for (const m of src.matchAll(/^\s*(?:import\s*["']([^"']+)["']|(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["'])/gm)) add(m[1] ?? m[2]);
-    for (const m of src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) add(m[1]);
-    const dynamic = [...src.matchAll(/\bimport\(\s*(?!["'][^"']*["']\s*\))/g)].length;
+    for (const m of src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*[,)]/g)) add(m[1]);
+    const dynamic = [...src.matchAll(/\bimport\(\s*(?!["'][^"']*["']\s*[,)])/g)].length;
     return { local: [...local], bare: [...bare], dynamic };
 }
 

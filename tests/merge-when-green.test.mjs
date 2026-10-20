@@ -298,9 +298,10 @@ test("localImports finds every relative static, re-export and literal dynamic im
         'const d = await import("./d.mjs");',
         'import pkg from "some-package";',
         "const e = await import(name);",
+        'const f = await import("./f.json", { with: { type: "json" } });',
     ].join("\n");
     const r = localImports(src);
-    assert.deepEqual(r.local.sort(), ["../lib/b.mjs", "./a.mjs", "./c.mjs", "./d.mjs", "./side.mjs"]);
+    assert.deepEqual(r.local.sort(), ["../lib/b.mjs", "./a.mjs", "./c.mjs", "./d.mjs", "./f.json", "./side.mjs"]);
     assert.deepEqual(r.bare, ["some-package"]);
     assert.equal(r.dynamic, 1);
 });

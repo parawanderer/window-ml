@@ -73,9 +73,13 @@ that session "marked yours", so you can tell which of the listed ids are your ow
 
 The script first fetches `origin/main` and compares itself and its local imports with main's. When they differ (your
 PR edits the script, or your branch is behind), it prints `running main's copy` to stderr and runs main's version from a
-temp directory with the same arguments, so a branch never judges its own merge. It refuses, saying why, when main's
+temp directory with the same arguments, so a branch that leaves the handover intact never judges its own merge. It refuses, saying why, when main's
 copy cannot run that way: main's version predates this, or imports a package or a computed name. Then run it from a
 checkout of main.
+
+The handover lives in the script it guards, so it holds only while a branch leaves it intact. A PR that edits
+`scripts/merge-when-green.mjs` could take the handover out and judge itself. Read the handover in any such PR before it
+merges. Pinning the script by sha256 in a program manifest closes that (`docs/spec/POLICIES.md`).
 
 ## A post that asks nothing further
 
