@@ -237,8 +237,12 @@ inside run. The rule has two layers, and one is not the other's substitute:
    one: an approved cell reading `a.config()` hides that `a` is `ml`, and the card shows the person the alias, not the
    thing. Ruled the same day: a non-data value crosses back only under a name it already had (so `np` stays `np`, and
    rebinding it elsewhere than its own name makes the cell outside, `h = helper` and `m = math` included) or as the
-   target of an import the gate admitted (`import numpy as np` is the gate's decision, not the copy-back's). The
-   identity pass under a NEW name is gone. Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
+   target of an import the gate admitted. As built (#880, ddc35ea9): the gate still decides whether the import may run;
+   the copy-back then admits a binding made by the cell's `Import`/`ImportFrom` nodes only if its value IS that
+   module (`sys.modules[m]`) or that attribute of it, so `import numpy as np`, `from numpy import array` and
+   `from numpy import sum as total, mean` cross back, while `m = math`, `xs = [math]`, `f = np.sum` and `return math`
+   make the cell outside (measured 2026-10-20 against the python genre, 335 pass, 0 fail; before this the from-import of
+   a function was refused by the walk, since a function is not data). The identity pass under a NEW name is gone. Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
    never does, because it is not cell code and layer 1 never sees it.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already

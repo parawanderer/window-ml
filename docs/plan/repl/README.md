@@ -221,7 +221,9 @@ listed as remaining is DONE unless named below.
   and runs ungated on the full path (reaches `os` and `ml`); also captured builtins cross back, and a refused try's
   stdout is not dropped. Ruled in [`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "What an inside run may leave
   behind is data, never code": the fork honours `CO_RESTRICTED` on every call (with the line fix and re-pin), and the
-  copy-back admits data only, now, in #880. #880 is held until the red team gates the fix.
+  copy-back admits data only, now, in #880. The red team's second pass cleared it (11/11); the alias gap (#896) is
+  closed at ddc35ea9; #880 (head 97b3f2f7) waits on the janitor's build review. Fork parawanderer/cpython#5 (layer 1
+  as refuse, plus the line fix) waits on the janitor's review and Shane's by-hand merge.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
