@@ -431,7 +431,7 @@ Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
 ## Traps
 
-- **Each call is stateless.**
+- **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
 - **`readonly` mode hardens the sandbox and may auto-approve; `full` always asks.**
 - **The wheels (`pyodide-wheels/`) are gitignored, and a missing set fails only at run time**, as
   `No module named 'numpy'`.

@@ -129,7 +129,7 @@ docs/dev/*.md`.
   short (`normModel`); screen↔time only via `axisFrac`/`axisTime`; frames come from the pinned `events.proto`. → resource-panel.md
 - **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases. → resource-panel.md
 - **Pointers.** `PIPE_CMDS` is the single source for the dialect; the three reference forms are told apart by SHAPE. → pointers.md
-- **Python.** Each call is stateless; `full` mode always asks; missing wheels (`pyodide-wheels/`) fail only at run time. → python-sandbox.md
+- **Python.** A worker-hosted run keeps one namespace across its cells; every other call is stateless. `full` mode always asks; missing wheels (`pyodide-wheels/`) fail only at run time. → python-sandbox.md
 - **Tables.** One `TableLike`, one set of parsers (`table-data.ts`); the delimiter is DISCOVERED; pass `rowCount` when you cap. → wire-and-fetch.md
 - **Wire formats.** Protobuf is chosen from the RESPONSE's content type; no `TextDecoder` near binary (`binaryKind`). → wire-and-fetch.md
 - **One design language.** A palette or icon change to the chat page's CALM view is a change to `mobile/` too. → chat-page.md
