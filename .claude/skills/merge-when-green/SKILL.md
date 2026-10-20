@@ -8,6 +8,7 @@ description: Merge your own PR only when the standing rule holds (pipeline green
 ```bash
 node scripts/merge-when-green.mjs 501                  # check once: OK, or why not (exit 0 / 1)
 node scripts/merge-when-green.mjs 501 --wait --merge --session <your session id>   # while CI runs, one API call a minute (up to 90 min; sleeps if the account's hourly API budget runs low), then squash-merge
+node scripts/merge-when-green.mjs 501 --read 5577239105 --read 444   # a post you have read that asks nothing further
 ```
 
 Run the `--wait` form in the background (the `background-work` skill): it exits when the PR is merged or refused, so the
@@ -22,7 +23,8 @@ The owner's standing rule for a session's OWN PR, nothing more:
 - no test file deleted (a `*.test.*` or `*.spec.*` file or a fixture under `tests/fixtures/`; the harness and the bench's
   own code also live under `tests/`, and moving one of those is not removing a test), and no more `test(` lines removed
   than added (an edited test counts once each way);
-- no review and no comment (the pr-conflicts bot's notice excepted): an unread review means stop and read it;
+- no review and no comment (the pr-conflicts bot's notice excepted): an unread review means stop and read it. A post
+  you have read and that asks nothing further is named with `--read <id>` (below); every other post still stops the merge;
 - nothing stacked on it, and GitHub says it is mergeable.
 
 The merge is pinned to the commit the rule was checked on (`--match-head-commit`), so a push during the wait is
@@ -56,8 +58,9 @@ So run sweeps you want to keep from the main clone, or `--keep-bench` them befor
 
 ## Keeping this current
 
-The rule lives in `judge()` and the disk check in `diskOnly()`/`keepBench()`, tested by `tests/merge-when-green.test.mjs`.
-Change the rule there, here and in AGENTS.md together.
+The rule lives in `judge()`, what still counts as unread in `pickUnread()`/`postKey()`, and the disk check in
+`diskOnly()`/`keepBench()`, tested by `tests/merge-when-green.test.mjs`. Change the rule there, here and in AGENTS.md
+together.
 
 ## Your own comments
 
@@ -65,3 +68,26 @@ Pass `--session <id>` (your harness's session id) so a comment YOU posted on the
 recognises it by the `<!-- agent-post: … session=<id> … -->` marker every agent post ends with (AGENTS.md, "every GitHub
 post an agent makes says WHICH SESSION made it"; `docs/dev/working-in-the-repo.md`). Without the flag, or on a post with
 no marker or another session's marker, it stops and says "read them", as before.
+
+## A post that asks nothing further
+
+**The standing rule is unchanged: an unread review is a reason to stop, not to merge.** What `--read <id>` adds is a way
+past a post you HAVE read and found to ask nothing further (a "LGTM, no changes requested" review, a note you already
+answered). It is repeatable and takes comma-separated ids, and the refusal prints each unread post's id in exactly the
+form the flag takes, so the next run is a copy of what it printed:
+
+```
+834: has 1 reviews/comments and 0 inline comments: read them (--read 5577239105)
+  review 5577239105 parawanderer: Reviewed on `7afaedde` because the red team cannot review it
+```
+
+- **The tool never parses a body.** The flag is YOU saying you read that one post and nothing is outstanding on it. A
+  review that asks something and is not named still refuses, as does one you never look at.
+- **The id is GitHub's number**, the same one in the URL's fragment: `#pullrequestreview-5577239105`,
+  `#issuecomment-123`, `#discussion_r9`. `--read` takes the bare number, the whole fragment, or the GraphQL node id.
+- **Naming an id that matches nothing reads nothing.** The post still blocks. Fail safe, never open.
+- **Read it before naming it.** `--read` is the record that you did. Naming every id to get to green is exactly the
+  bypass the rule exists to prevent, and is what `gh pr merge` was for when no flag existed.
+
+So: read what arrived, answer or fix what it asks, and `--read` only the ones that ask nothing further or that the
+push you just made has already answered.

@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -74,6 +74,93 @@ test("a post is the session's own only when its marker names that session (full 
     assert.strictEqual(isOwnPost(post(SESSION), null), false);
     assert.strictEqual(isOwnPost(post(SESSION), "69c7"), false);
     assert.strictEqual(isOwnPost(post("69c7"), SESSION), false);
+});
+
+// --- --read: a named post is read and asks nothing; everything else still refuses ---
+// The standing rule is unchanged: an unread review is a reason to stop. `--read <id>` is the operator saying they
+// have read that one post and it asks nothing further. The tool never parses a body to decide that.
+
+const PRR = "PRR_kwDOTNcuQs8AAAABTG3qQQ";
+const posts = {
+    reviews: [{ id: 5577239105, node_id: PRR, user: { login: "alice" }, body: "LGTM, no changes requested." }],
+    comments: [
+        { id: 111, user: { login: "bob" }, body: "Please also cover the hub." },
+        { id: 222, user: { login: "carol" }, body: "looks fine" },
+        { id: 333, user: { login: "dave" }, body: "CI looks red\n<!-- pr-conflicts -->" },
+    ],
+    inline: [{ id: 444, user: { login: "erin" }, body: "Missing index on user_id" }],
+};
+
+test("postKey collapses the URL's fragment forms to the bare id, and leaves a node id alone", () => {
+    assert.equal(postKey("5577239105"), "5577239105");
+    assert.equal(postKey("pullrequestreview-5577239105"), "5577239105");
+    assert.equal(postKey("issuecomment-123"), "123");
+    assert.equal(postKey("discussion_r9"), "9");
+    assert.equal(postKey(PRR), PRR);
+    assert.equal(postKey(undefined), "");
+    assert.equal(postKey(null), "");
+    assert.equal(postKey(5577239105), "5577239105");
+});
+
+test("a post --read names stops blocking; the rest still do, and the conflicts notice never does", () => {
+    // Nothing named: every post blocks, the conflicts workflow's notice excepted (it is about CI, which the run settles).
+    assert.deepEqual(pickUnread(posts, {}).map((u) => u.id), ["5577239105", "111", "222", "444"]);
+    // The review and the "looks fine" comment are read and ask nothing; the ask and the inline still refuse.
+    const left = pickUnread(posts, { read: ["5577239105", "222"] });
+    assert.deepEqual(left.map((u) => u.kind), ["comment", "inline"]);
+    assert.deepEqual(left.map((u) => u.id), ["111", "444"]);
+    assert.deepEqual(left.map((u) => u.author), ["bob", "erin"]);
+});
+
+test("--read takes the bare id, the URL fragment and the GraphQL node id alike", () => {
+    const one = { reviews: [{ id: 5577239105, node_id: PRR, body: "x", user: { login: "a" } }] };
+    for (const named of ["5577239105", "pullrequestreview-5577239105", PRR]) {
+        assert.deepEqual(pickUnread(one, { read: [named] }), [], `--read ${named}`);
+    }
+    const c = { comments: [{ id: 123, body: "y", user: { login: "b" } }] };
+    for (const named of ["123", "issuecomment-123"]) assert.deepEqual(pickUnread(c, { read: [named] }), [], `--read ${named}`);
+    const i = { inline: [{ id: 9, body: "z", user: { login: "c" } }] };
+    for (const named of ["9", "discussion_r9"]) assert.deepEqual(pickUnread(i, { read: [named] }), [], `--read ${named}`);
+    // A name that matches nothing reads nothing: the post still blocks. Fail safe, never open.
+    assert.equal(pickUnread(one, { read: ["999"] }).length, 1);
+    assert.equal(pickUnread(one, { read: ["pullrequestreview-999"] }).length, 1);
+    assert.equal(pickUnread(one, { read: [""] }).length, 1);
+});
+
+test("a post the merging session made itself is never an unread, whether or not it is also named", () => {
+    const mine = { comments: [{ id: 5, body: post(SESSION), user: { login: "parawanderer" } }] };
+    assert.deepEqual(pickUnread(mine, { session: SESSION }), []);
+    assert.deepEqual(pickUnread(mine, { session: SESSION, read: ["5"] }), []);
+    // Without --session it counts as a person's post and blocks.
+    assert.equal(pickUnread(mine, {}).length, 1);
+});
+
+test("an empty-body review still blocks: a review that only carries inline comments is a review", () => {
+    const empty = { reviews: [{ id: 7, body: "", user: { login: "a" } }], inline: [{ id: 8, body: "nit", user: { login: "a" } }] };
+    const u = pickUnread(empty, {});
+    assert.deepEqual(u.map((x) => x.id), ["7", "8"]);
+    assert.match(u[0].preview, /no body/);
+    // Naming only the inline leaves the review standing.
+    assert.deepEqual(pickUnread(empty, { read: ["8"] }).map((x) => x.id), ["7"]);
+});
+
+test("the refusal names the ids --read takes, and an unread review that asks something is still a refusal", () => {
+    const v = judge({
+        ...green,
+        reviews: 1,
+        inlineComments: 1,
+        unread: [
+            { kind: "review", id: "5577239105", author: "alice", preview: "Please also cover the hub." },
+            { kind: "inline", id: "444", author: "erin", preview: "Missing index on user_id" },
+        ],
+    });
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /read them/);
+    assert.match(v.reason, /--read 5577239105/);
+    assert.match(v.reason, /--read 444/);
+    // With counts alone (no detail list) the reason still refuses, as before.
+    assert.match(judge({ ...green, reviews: 1 }).reason, /read them/);
+    assert.match(judge({ ...green, inlineComments: 2 }).reason, /read them/);
 });
 
 // --- the reminder: what a merge would leave behind on disk ---
