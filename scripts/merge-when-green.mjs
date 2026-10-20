@@ -7,7 +7,8 @@
 //   node scripts/merge-when-green.mjs 501             # check once: prints OK, or why not (exit 0 / 1)
 //   node scripts/merge-when-green.mjs 501 --wait      # poll every 30 s while CI runs (up to an hour), then check
 //   node scripts/merge-when-green.mjs 501 --wait --merge   # …and squash-merge when it says OK
-//   … --session <id>  # your harness's session id: comments YOU posted (their agent-post marker) do not count as unread
+//   … --session <id>  # your harness's session id: a post whose agent-post marker names it is LABELLED yours in the
+//                     # refusal. It still blocks: a marker is text anyone can write, so it can only block, never allow.
 //   … --read <id>     # a post you have read that asks nothing further (repeatable): it stops blocking, and the refusal
 //                     # prints the ids to name. The tool never parses a body: YOU are saying it asks nothing.
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
@@ -24,13 +25,22 @@
 // lists for it) and held run a linked worktree left running is stopped, since the worktree is about to go; each stopped server prints the `serve.mjs` line that serves its sweep
 // again. The main clone is only reminded: nothing removes it. A checkout on the branch also keeps its LOCAL branch, and
 // only the remote one is deleted.
+//
+// MAIN'S COPY JUDGES. Before anything else it fetches origin/main and compares this file and every local file it
+// imports with main's. If any differs (a PR that edits this script, a stale branch), it writes main's set to a temp
+// directory and runs that, with the same arguments and this repo as its root, so a branch never judges its own merge.
+// When main's copy cannot run from there (it predates this, imports a package, or imports a computed name), it
+// refuses and says why.
 
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+/** The variable a pinned copy of main's script is handed the repo root in. Main's copy must name it to be runnable. */
+export const PIN_SUPPORT = "MERGE_WHEN_GREEN_ROOT";
+const ROOT = process.env[PIN_SUPPORT] || path.resolve(import.meta.dirname, "..");
+const SELF = path.relative(path.resolve(import.meta.dirname, ".."), import.meta.filename).split(path.sep).join("/");
 const REPO = "parawanderer/window-ml";
 const POLL_MS = 60_000, POLL_LIMIT = 90;
 /** Below this many GitHub API calls left in the hour, a waiter sleeps until the budget resets: every session on the
@@ -81,7 +91,8 @@ export function agentMarker(body) {
 }
 
 /**
- * Is this post the merging session's OWN? Only when its marker names that session (the full id, or a prefix of at
+ * Does this post's marker CLAIM to be the merging session's? Only a label for the refusal, never a pass: anyone can
+ * write the marker. It claims so only when the marker names that session (the full id, or a prefix of at
  * least 8 characters either way, since a footer may show the short form). Another session's marked post still counts:
  * an agent's review is a review. An unmarked post counts as a person's, so a forgotten marker fails safe.
  */
@@ -103,11 +114,12 @@ export function postKey(id) {
 }
 
 /**
- * The posts a merge still has to wait for: everything that is not the merging session's own (its agent-post marker),
- * not the conflicts workflow's notice (`<!-- pr-conflicts -->`, about CI, which the run settles), and not one `--read`
+ * The posts a merge still has to wait for: everything that is not the conflicts workflow's notice (`<!-- pr-conflicts -->`, about CI, which the run settles), and not one `--read`
  * named as read and asking nothing further. A post answers to its numeric id and its GraphQL node id alike. Returns
- * `{ kind, id, author, preview }` for each, in review, comment, inline order. Pure, so the rule is testable. The tool
- * never parses a body to decide whether it asks: only `--read` does that, and only for what it names.
+ * `{ kind, id, author, preview, own }` for each, in review, comment, inline order. Pure, so the rule is testable. The tool
+ * never parses a body to decide whether it asks: only `--read` does that, and only for what it names. `own` says the
+ * post's marker names `session`; it only labels the refusal, since anyone can write a marker, so text can block a merge
+ * but never let one through.
  */
 export function pickUnread({ reviews = [], comments = [], inline = [] }, { session = null, read = [] } = {}) {
     const said = new Set(read.flatMap((r) => {
@@ -119,13 +131,13 @@ export function pickUnread({ reviews = [], comments = [], inline = [] }, { sessi
         for (const x of xs) {
             const body = String(x.body ?? "");
             if (body.includes("<!-- pr-conflicts -->")) continue;
-            if (isOwnPost(body, session)) continue;
             const keys = new Set([x.id, x.node_id].filter((v) => v != null).flatMap((v) => [String(v), postKey(v)]));
             if ([...keys].some((k) => said.has(k))) continue;
             out.push({
                 kind,
                 id: String(x.id ?? x.node_id ?? "?"),
                 author: who(x),
+                own: isOwnPost(body, session),
                 preview: body.replace(/\s+/g, " ").trim().slice(0, 60) || "(no body)",
             });
         }
@@ -135,6 +147,78 @@ export function pickUnread({ reviews = [], comments = [], inline = [] }, { sessi
     take("comment", comments, who);
     take("inline", inline, who);
     return out;
+}
+
+/**
+ * The imports in a module's source a pinned copy has to bring along: `local` (relative specifiers, static, re-exported
+ * or a literal dynamic import), `bare` (packages, which a temp directory cannot resolve; `node:` builtins are neither),
+ * and `dynamic`, the count of dynamic imports whose argument is not a string literal and so cannot be followed.
+ */
+export function localImports(src) {
+    const local = new Set(), bare = new Set();
+    const add = (spec) => {
+        if (spec.startsWith("./") || spec.startsWith("../")) local.add(spec);
+        else if (!spec.startsWith("node:")) bare.add(spec);
+    };
+    for (const m of src.matchAll(/^\s*(?:import\s*["']([^"']+)["']|(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["'])/gm)) add(m[1] ?? m[2]);
+    for (const m of src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) add(m[1]);
+    const dynamic = [...src.matchAll(/\bimport\(\s*(?!["'][^"']*["']\s*\))/g)].length;
+    return { local: [...local], bare: [...bare], dynamic };
+}
+
+/**
+ * Whether to run this script in place or main's copy of it. `readMain(p)` and `readLocal(p)` return a repo-relative
+ * file's text (null when absent). Walks main's import closure from `entry`, never the local one, so an import a branch
+ * added is not brought along. Returns `{ action: "here" }` when every file in it matches the local one, `{ action:
+ * "pin", files }` (path to text) when one differs, or `{ action: "refuse", reason }` when main's copy cannot run from
+ * a temp directory. Pure, so the rule is testable.
+ */
+export function pinPlan(entry, readMain, readLocal) {
+    const files = {}, todo = [entry];
+    while (todo.length) {
+        const p = todo.pop();
+        if (p in files) continue;
+        const src = readMain(p);
+        if (src == null) return { action: "refuse", reason: p === entry ? `main has no ${p}` : `main's ${entry} imports ${p}, which main does not have` };
+        if (p === entry && !src.includes(PIN_SUPPORT)) return { action: "refuse", reason: `main's ${entry} predates running main's copy (it does not read ${PIN_SUPPORT}): run it from a checkout of main` };
+        const { local, bare, dynamic } = localImports(src);
+        if (bare.length) return { action: "refuse", reason: `main's ${p} imports the package ${bare[0]}, which a temp directory cannot resolve` };
+        if (dynamic) return { action: "refuse", reason: `main's ${p} has a dynamic import of a computed name, so its files cannot be listed` };
+        files[p] = src;
+        for (const spec of local) todo.push(path.posix.normalize(path.posix.join(path.posix.dirname(p), spec)));
+    }
+    return Object.entries(files).every(([p, src]) => readLocal(p) === src) ? { action: "here" } : { action: "pin", files };
+}
+
+/**
+ * Run main's copy instead of this one when they differ ({@link pinPlan}). Returns only when this copy is main's;
+ * otherwise exits with the pinned copy's status, or 1 with the reason when main's copy cannot be run.
+ */
+function runMainsCopy(argv) {
+    if (process.env[PIN_SUPPORT]) return;
+    const refuse = (why) => { console.error(`merge-when-green: REFUSED: ${why}`); process.exit(1); };
+    if (spawnSync("git", ["fetch", "-q", "origin", "main"], { cwd: ROOT }).status !== 0) refuse("cannot fetch origin/main, so cannot tell whether this copy is main's");
+    const readMain = (p) => {
+        const r = spawnSync("git", ["show", `origin/main:${p}`], { cwd: ROOT, encoding: "utf8" });
+        return r.status === 0 ? r.stdout : null;
+    };
+    const readLocal = (p) => { try { return readFileSync(path.join(ROOT, p), "utf8"); } catch { return null; } };
+    const plan = pinPlan(SELF, readMain, readLocal);
+    if (plan.action === "here") return;
+    if (plan.action === "refuse") refuse(plan.reason);
+    const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "merge-when-green-")));
+    try {
+        for (const [p, src] of Object.entries(plan.files)) {
+            mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
+            writeFileSync(path.join(dir, p), src);
+        }
+        console.error(`merge-when-green: this copy differs from origin/main's: running main's copy`);
+        const r = spawnSync(process.execPath, [path.join(dir, SELF), ...argv], { stdio: "inherit", env: { ...process.env, [PIN_SUPPORT]: ROOT } });
+        process.exitCode = r.status ?? 1;
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+    process.exit();
 }
 
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
@@ -147,6 +231,7 @@ export function judge(f) {
     if (f.reviews || f.inlineComments) {
         // The ids to name once they have been read and found to ask nothing: `--read` is the only way past one.
         const flags = (f.unread || []).map((u) => `--read ${u.id}`).join(" ");
+        // An own post blocks too: its marker is text, which only blocks. Naming it read is the way past.
         return { ok: false, reason: `has ${f.reviews} reviews/comments and ${f.inlineComments} inline comments: read them${flags ? ` (${flags})` : ""}` };
     }
     if (f.stacked) return { ok: false, reason: "has PRs stacked on it: retarget them first" };
@@ -375,6 +460,7 @@ function releaseHeld(runs) {
 
 async function main() {
     const argv = process.argv.slice(2);
+    runMainsCopy(argv);
     // The PR number is the first bare number that is not a valued flag's argument: `--read 123` names a comment, not a PR.
     const wait = argv.includes("--wait"), merge = argv.includes("--merge");
     const keep = argv.includes("--keep-bench"), discard = argv.includes("--discard");
@@ -411,7 +497,7 @@ async function main() {
     }
     const { blocked, held, servers, heldRuns } = await leftovers(f.head, { keep, discard });
     console.log(`${pr}: ${v.reason}`);
-    for (const u of f.unread || []) console.log(`  ${u.kind} ${u.id} ${u.author}: ${u.preview}`);
+    for (const u of f.unread || []) console.log(`  ${u.kind} ${u.id} ${u.author}${u.own ? " (marked yours: still --read it)" : ""}: ${u.preview}`);
     if (!v.ok) process.exit(1);
     if (blocked) { console.log(`${pr}: ${merge ? "NOT MERGED" : "would not merge"}: a worktree holds work that is in no commit (above)`); process.exit(1); }
     if (!merge) return;

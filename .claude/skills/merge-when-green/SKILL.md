@@ -64,10 +64,18 @@ together.
 
 ## Your own comments
 
-Pass `--session <id>` (your harness's session id) so a comment YOU posted on the PR does not count as unread: the script
-recognises it by the `<!-- agent-post: … session=<id> … -->` marker every agent post ends with (AGENTS.md, "every GitHub
-post an agent makes says WHICH SESSION made it"; `docs/dev/working-in-the-repo.md`). Without the flag, or on a post with
-no marker or another session's marker, it stops and says "read them", as before.
+Your own comment blocks like anyone's: name it with `--read <id>` once it asks nothing further. A marker is text anyone
+can post, so letting the `<!-- agent-post: … session=<id> … -->` marker clear a post would let a comment copying it
+clear itself. Text can only block a merge. `--session <id>` still helps: the refusal labels a post whose marker names
+that session "marked yours", so you can tell which of the listed ids are your own notes.
+
+## Main's copy judges
+
+The script first fetches `origin/main` and compares itself and its local imports with main's. When they differ (your
+PR edits the script, or your branch is behind), it prints `running main's copy` to stderr and runs main's version from a
+temp directory with the same arguments, so a branch never judges its own merge. It refuses, saying why, when main's
+copy cannot run that way: main's version predates this, or imports a package or a computed name. Then run it from a
+checkout of main.
 
 ## A post that asks nothing further
 

@@ -461,11 +461,12 @@ a PR cannot tell its own note from a review, or one session's comment from anoth
 sessions' comments for their own. `merge-when-green` also refused a merge over a comment the merging session had
 posted itself (#591, 2026-10-12), because it could only see the account name.
 
-**What reads it.** `merge-when-green --session <id>` skips posts whose marker names that session. A post marked by
-ANOTHER session still blocks: an agent's review is a review. An unmarked post counts as a person's, so a forgotten
-marker fails safe (the merge waits) rather than open (a review goes unread). A post that is not yours and asks nothing
-further is named with `--read <id>` (the refusal prints the ids), which is the only way past one; the tool never parses
-a body to decide that, so an unread review still refuses.
+**What reads it.** `merge-when-green --session <id>` LABELS posts whose marker names that session ("marked yours") in
+its refusal, and nothing more: they still block. The marker is text anyone can post, so a marker that cleared a post
+would let a comment copying it clear itself; text may block a merge, never allow one. Every post that asks nothing
+further, your own included, is named with `--read <id>` (the refusal prints the ids), which is the only way past one;
+the tool never parses a body to decide that, so an unread review still refuses. Until 2026-10 the marker did skip the
+session's own posts (#591's fix); it was dropped once `--read` existed.
 
 **Not in commits.** `Co-Authored-By` already names the model, and a session knows its own branch.
 
