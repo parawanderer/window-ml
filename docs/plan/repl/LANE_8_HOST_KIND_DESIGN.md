@@ -1,6 +1,8 @@
 # Design: telling a desktop host from a browser runtime at pairing
 
-Status: proposal, 2026-10-20. Mail slug `repl-lane8`. `@hub-compat`: two PRs, window-ml-hub first, then this repo. Reads against [`RUNTIME_HUB.md`](../../spec/RUNTIME_HUB.md) "Principals and scopes" and [`LANE_8_RESULT.md`](LANE_8_RESULT.md).
+Status: **deferred 2026-10-20 (repl-specs)**, kept as a record. Build nothing; B is the right shape if a flag is ever wanted, and C is the real design once the device list needs it.
+
+Proposal as written, 2026-10-20. Mail slug `repl-lane8`. `@hub-compat`: two PRs, window-ml-hub first, then this repo. Reads against [`RUNTIME_HUB.md`](../../spec/RUNTIME_HUB.md) "Principals and scopes" and [`LANE_8_RESULT.md`](LANE_8_RESULT.md).
 
 ## Worth first
 
