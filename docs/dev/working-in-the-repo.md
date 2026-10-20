@@ -468,6 +468,11 @@ further, your own included, is named with `--read <id>` (the refusal prints the 
 the tool never parses a body to decide that, so an unread review still refuses. Until 2026-10 the marker did skip the
 session's own posts (#591's fix); it was dropped once `--read` existed.
 
+**A PR that touches `merge-when-green` is Shane's merge, by hand.** The local script is a trampoline that always runs
+main's copy, and main's copy refuses any PR whose diff touches the script or a file it imports. A script on a branch can
+never prove it ran main's copy, so the tool enforces this only for PRs that do not also disable it: the PR that could
+lie is the one it never merges and the person reads. `merge-when-green` skill.
+
 **Not in commits.** `Co-Authored-By` already names the model, and a session knows its own branch.
 
 ## Branches, PRs and CI

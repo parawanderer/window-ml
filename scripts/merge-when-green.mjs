@@ -26,14 +26,15 @@
 // again. The main clone is only reminded: nothing removes it. A checkout on the branch also keeps its LOCAL branch, and
 // only the remote one is deleted.
 //
-// MAIN'S COPY JUDGES. Before anything else it fetches origin/main and compares this file and every local file it
-// imports with main's. If any differs (a PR that edits this script, a stale branch), it writes main's set to a temp
-// directory and runs that, with the same arguments and this repo as its root, so a branch that leaves the handover intact never judges its own merge.
-// When main's copy cannot run from there (it predates this, imports a package, or imports a computed name), it
-// refuses and says why.
-// The handover lives in the file it guards, so it holds only while a branch leaves it intact: a PR that edits this file
-// could take the handover out and judge itself. Read the handover in any PR that touches this file. What closes that is
-// a program manifest pinning this script by sha256 (docs/spec/POLICIES.md, "A condition about the outside world").
+// MAIN'S COPY JUDGES. Before anything else it fetches origin/main and writes main's copy of this file and every local
+// file it imports to a temp directory, and runs that, with the same arguments and this repo as its root. It always does,
+// even when the local copy is identical: the local file is a trampoline with no path of its own to a verdict. When main's
+// copy cannot run from there (it predates this, imports a package, or imports a computed name), it refuses and says why.
+//
+// A PR THAT TOUCHES THE TOOL IS MERGED BY HAND. A script on a branch can never prove it ran main's copy: a PR that edits
+// this file could replace the trampoline. So main's copy REFUSES any PR whose diff touches this file or one it imports,
+// and names Shane's merge by hand, after reading it, as the route. The tool enforces that only for PRs that do not also
+// disable it; the PR that could lie is the one it never merges and the person reads.
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -170,11 +171,11 @@ export function localImports(src) {
 }
 
 /**
- * Whether to run this script in place or main's copy of it. `readMain(p)` and `readLocal(p)` return a repo-relative
+ * Main's copy of this script to run in place of this one. `readMain(p)` and `readLocal(p)` return a repo-relative
  * file's text (null when absent). Walks main's import closure from `entry`, never the local one, so an import a branch
- * added is not brought along. Returns `{ action: "here" }` when every file in it matches the local one, `{ action:
- * "pin", files }` (path to text) when one differs, or `{ action: "refuse", reason }` when main's copy cannot run from
- * a temp directory. Pure, so the rule is testable.
+ * added is not brought along. Returns `{ action: "pin", files, same }` (path to text; `same` when every file matches the
+ * local one, which changes only the message: main's copy runs either way), or `{ action: "refuse", reason }` when main's
+ * copy cannot run from a temp directory. Pure, so the rule is testable.
  */
 export function pinPlan(entry, readMain, readLocal) {
     const files = {}, todo = [entry];
@@ -190,12 +191,12 @@ export function pinPlan(entry, readMain, readLocal) {
         files[p] = src;
         for (const spec of local) todo.push(path.posix.normalize(path.posix.join(path.posix.dirname(p), spec)));
     }
-    return Object.entries(files).every(([p, src]) => readLocal(p) === src) ? { action: "here" } : { action: "pin", files };
+    return { action: "pin", files, same: Object.entries(files).every(([p, src]) => readLocal(p) === src) };
 }
 
 /**
- * Run main's copy instead of this one when they differ ({@link pinPlan}). Returns only when this copy is main's;
- * otherwise exits with the pinned copy's status, or 1 with the reason when main's copy cannot be run.
+ * Run main's copy instead of this one ({@link pinPlan}), always. Returns only inside that copy; otherwise exits with
+ * its status, or 1 with the reason when main's copy cannot be run.
  */
 function runMainsCopy(argv) {
     if (process.env[PIN_SUPPORT]) return;
@@ -207,7 +208,6 @@ function runMainsCopy(argv) {
     };
     const readLocal = (p) => { try { return readFileSync(path.join(ROOT, p), "utf8"); } catch { return null; } };
     const plan = pinPlan(SELF, readMain, readLocal);
-    if (plan.action === "here") return;
     if (plan.action === "refuse") refuse(plan.reason);
     const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "merge-when-green-")));
     try {
@@ -215,7 +215,7 @@ function runMainsCopy(argv) {
             mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
             writeFileSync(path.join(dir, p), src);
         }
-        console.error(`merge-when-green: this copy differs from origin/main's: running main's copy`);
+        console.error(`merge-when-green: running main's copy${plan.same ? "" : " (this one differs from it)"}`);
         const r = spawnSync(process.execPath, [path.join(dir, SELF), ...argv], { stdio: "inherit", env: { ...process.env, [PIN_SUPPORT]: ROOT } });
         process.exitCode = r.status ?? 1;
     } finally {
@@ -224,8 +224,19 @@ function runMainsCopy(argv) {
     process.exit();
 }
 
+/**
+ * The files of the merge tool a PR's diff touches: `changed` (the diff's paths) that are in `tool` (this script and
+ * its local imports). A PR that touches one is merged by hand ({@link judge}). Pure, so the rule is testable.
+ */
+export function touchesTool(changed, tool) {
+    const t = new Set(tool);
+    return changed.filter((p) => t.has(p));
+}
+
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
 export function judge(f) {
+    // First, and never pending: no amount of waiting lets the tool judge a change to itself.
+    if (f.touchesTool?.length) return { ok: false, reason: `changes the merge tool itself (${f.touchesTool.join(", ")}): Shane merges it by hand, after reading it` };
     if (!f.runId) return { ok: false, pending: true, reason: `no tests run for ${f.sha.slice(0, 8)} yet (or the PR conflicts with main: a conflicting PR runs no checks)` };
     if (f.runStatus !== "completed") return { ok: false, pending: true, reason: `run ${f.runId} ${f.runStatus}` };
     if (f.badJobs.length) return { ok: false, reason: `not green: ${f.badJobs.join(" ")} (a cancelled job prints as failed: check before blaming the change)` };
@@ -297,8 +308,14 @@ function facts(pr, session, read = []) {
         comments: restList(`repos/${REPO}/issues/${pr}/comments`),
         inline: restList(`repos/${REPO}/pulls/${pr}/comments`),
     }, { session, read });
+    // This copy's own files: main's, since the trampoline always hands over.
+    const own = path.resolve(import.meta.dirname, "..");
+    const readOwn = (p) => { try { return readFileSync(path.join(own, p), "utf8"); } catch { return null; } };
+    const plan = pinPlan(SELF, readOwn, readOwn);
+    const tool = plan.action === "pin" ? Object.keys(plan.files) : [SELF];
     return {
         head, sha, runId, runStatus, badJobs,
+        touchesTool: touchesTool(git("diff", "--name-only", range).split("\n").filter(Boolean), tool),
         tests: testLineCounts(git("diff", range, "--", "tests")),
         deletedTestFiles: deletedTests(git("diff", "--name-status", range, "--", "tests")).length,
         reviews: unread.filter((u) => u.kind !== "inline").length,

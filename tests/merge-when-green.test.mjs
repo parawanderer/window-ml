@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, localImports, pinPlan, PIN_SUPPORT } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, localImports, pinPlan, PIN_SUPPORT, touchesTool } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -314,13 +314,15 @@ test("this script can pin itself: its own closure has no package and no computed
     const { readFileSync } = await import("node:fs");
     const root = new URL("../", import.meta.url);
     const read = (p) => { try { return readFileSync(new URL(p, root), "utf8"); } catch { return null; } };
-    assert.deepEqual(pinPlan("scripts/merge-when-green.mjs", read, read), { action: "here" });
+    const plan = pinPlan("scripts/merge-when-green.mjs", read, read);
+    assert.equal(plan.action, "pin", plan.reason);
+    assert.ok("scripts/merge-when-green.mjs" in plan.files);
 });
 
-test("pinPlan runs in place when the script and its local imports match main byte for byte", () => {
+test("pinPlan hands over to main's copy even when it matches the local one byte for byte: there is no in-place path", () => {
     const tree = { "scripts/m.mjs": `// ${PIN_SUPPORT}\nimport "./h.mjs";\n`, "scripts/h.mjs": "export const x = 1;\n" };
     const read = (t) => (p) => t[p] ?? null;
-    assert.deepEqual(pinPlan("scripts/m.mjs", read(tree), read(tree)), { action: "here" });
+    assert.deepEqual(pinPlan("scripts/m.mjs", read(tree), read(tree)), { action: "pin", files: tree, same: true });
 });
 
 test("pinPlan copies main's closure when the script or any local import differs, including a file main lacks", () => {
@@ -333,6 +335,7 @@ test("pinPlan copies main's closure when the script or any local import differs,
     ]) {
         const plan = pinPlan("scripts/m.mjs", read(main), read(local));
         assert.equal(plan.action, "pin");
+        assert.equal(plan.same, false);
         assert.deepEqual(plan.files, main);
     }
     // An import the BRANCH added is not followed: main's closure is what runs.
@@ -388,4 +391,27 @@ test("run from a branch whose script differs from main's, main's copy runs, with
     assert.notEqual(old.status, 0);
     assert.doesNotMatch(old.stdout, /old main ran/);
     assert.match(old.stderr, /predates/);
+});
+
+// --- a PR that touches the tool: merged by hand, never by the tool ---
+// A branch's script can never prove it ran main's copy, so main's copy refuses every PR that changes the tool, and the
+// person reads that one. The tool enforces this only for PRs that do not also disable it.
+
+test("touchesTool names exactly the PR's paths that are the script or one of its local imports", () => {
+    const tool = ["scripts/merge-when-green.mjs", "scripts/lib/h.mjs"];
+    assert.deepEqual(touchesTool(["docs/x.md", "scripts/lib/h.mjs", "scripts/merge-when-green.mjs"], tool), ["scripts/lib/h.mjs", "scripts/merge-when-green.mjs"]);
+    assert.deepEqual(touchesTool(["scripts/other.mjs", "tests/merge-when-green.test.mjs"], tool), []);
+    assert.deepEqual(touchesTool([], tool), []);
+});
+
+test("a PR that touches the tool is refused at once, green or not, naming the by-hand merge", () => {
+    for (const f of [{ ...green }, { ...green, runStatus: "in_progress" }, { ...green, runId: null }]) {
+        const v = judge({ ...f, touchesTool: ["scripts/merge-when-green.mjs"] });
+        assert.equal(v.ok, false);
+        assert.ok(!v.pending, "waiting never lets the tool judge a change to itself");
+        assert.match(v.reason, /merge tool itself \(scripts\/merge-when-green\.mjs\)/);
+        assert.match(v.reason, /Shane merges it by hand/);
+    }
+    // A PR that touches none of it is judged as before.
+    assert.equal(judge({ ...green, touchesTool: [] }).ok, true);
 });

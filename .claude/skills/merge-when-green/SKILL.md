@@ -69,17 +69,17 @@ can post, so letting the `<!-- agent-post: … session=<id> … -->` marker clea
 clear itself. Text can only block a merge. `--session <id>` still helps: the refusal labels a post whose marker names
 that session "marked yours", so you can tell which of the listed ids are your own notes.
 
-## Main's copy judges
+## Main's copy judges, and a PR that touches the tool is Shane's to merge
 
-The script first fetches `origin/main` and compares itself and its local imports with main's. When they differ (your
-PR edits the script, or your branch is behind), it prints `running main's copy` to stderr and runs main's version from a
-temp directory with the same arguments, so a branch that leaves the handover intact never judges its own merge. It refuses, saying why, when main's
-copy cannot run that way: main's version predates this, or imports a package or a computed name. Then run it from a
-checkout of main.
+The script first fetches `origin/main`, writes main's copy of itself and its local imports to a temp directory, and runs
+that with the same arguments (`running main's copy` on stderr). It always does, even when your copy is identical: the
+local file is a trampoline with no verdict of its own. It refuses, saying why, when main's copy cannot run that way:
+main's version predates this, or imports a package or a computed name. Then run it from a checkout of main.
 
-The handover lives in the script it guards, so it holds only while a branch leaves it intact. A PR that edits
-`scripts/merge-when-green.mjs` could take the handover out and judge itself. Read the handover in any such PR before it
-merges. Pinning the script by sha256 in a program manifest closes that (`docs/spec/POLICIES.md`).
+A script on a branch can never prove it ran main's copy, since a PR can replace the trampoline. So main's copy refuses
+any PR whose diff touches `scripts/merge-when-green.mjs` or a file it imports: **a PR that touches the tool is Shane's
+merge, by hand, after he reads it.** The tool enforces that rule only for PRs that do not also disable it. Ask him; do
+not look for another way to merge it.
 
 ## A post that asks nothing further
 
