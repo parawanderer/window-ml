@@ -180,7 +180,8 @@ listed as remaining is DONE unless named below.
   hosts (decided 2026-10-19, `SHELL.md`, revisable). #647 (site access, agent level) merged 2026-10-15 as ac417a98 and no longer waits on anyone.
 - **Round 3 (opened 2026-10-19, [`ROUND_3.md`](ROUND_3.md))**: five lanes on this list: 5 the Pyodide build, 6 lane 1's four
   follow-ups, 7 `mode` removal, 8 the phone's pairing UX, 9 telling a run why its next call asks.
-  Lane 5's build is window-ml #835 (2026-10-19): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
+  Lane 5's build is window-ml #835 (2026-10-19; merged 2026-10-20 as b2bea587 after the janitor sanctioned one e2e rerun
+  on the annotate-diff flake that fails on main too, the janitor's fix): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
   tag `pyodide-314.0.3-ml-8f6a50ab` (Shane's decision, 2026-10-19, after the fetch-hub precedent), pinned by tag, URL and
   sha256 in the consumer's dist manifest (#835) and checked before unpack. Measured: tarball 6.4 MB; an incremental
   `make all-but-packages` 47 s on an M4, a full build from a clean tree 448 s. The build is NOT reproducible (lane 5,
@@ -202,7 +203,9 @@ listed as remaining is DONE unless named below.
   `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
   under pymalloc), fixed in parawanderer/cpython#3 (merged 2026-10-20, 7e400fbc), lane 4 verified it natively; no Pyodide rebuild. A hook on pymalloc before the first run brings the
   double count back; fixed by lane 3 in parawanderer/cpython#4 (merged 2026-10-20, b0bbaa5, lane 4 reviewed): a hidden
-  name defers to the startup choice; no wasm32 change, lane 5 re-pins when convenient. Per-run wrapping stays open.
+  name defers to the startup choice; no wasm32 change. Lane 5 next (2026-10-20): re-pin to b0bbaa5 with `pyodide` pinned
+  exactly in package.json, then `LANE_5_RESULT.md`, then its clone removed; lane 3's predicate wiring lands on that pin.
+  Per-run wrapping stays open.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
