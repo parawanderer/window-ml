@@ -207,9 +207,10 @@ listed as remaining is DONE unless named below.
   `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
   under pymalloc), fixed in parawanderer/cpython#3 (merged 2026-10-20, 7e400fbc), lane 4 verified it natively; no Pyodide rebuild. A hook on pymalloc before the first run brings the
   double count back; fixed by lane 3 in parawanderer/cpython#4 (merged 2026-10-20, b0bbaa5, lane 4 reviewed): a hidden
-  name defers to the startup choice; no wasm32 change. Lane 5 next (2026-10-20): re-pin to b0bbaa5 with `pyodide` pinned
-  exactly in package.json, then `LANE_5_RESULT.md`, then its clone removed; lane 3's predicate wiring lands on that pin.
-  Per-run wrapping stays open.
+  name defers to the startup choice; no wasm32 change. Re-pinned to b0bbaa5 the same day: window-ml #873 (merged
+  fecd6abe; release `pyodide-314.0.3-ml-b0bbaa52`, `pyodide` pinned exactly), the pin lane 3's predicate wiring lands on.
+  **Lane 5: CLOSED 2026-10-20**: [`LANE_5_RESULT.md`](LANE_5_RESULT.md) (#874, bcbb6543); build trees and clone removed.
+  Left, nobody's: per-run wrapping (the wasm number), and the dist manifest's mismatch throw, tested locally only.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
