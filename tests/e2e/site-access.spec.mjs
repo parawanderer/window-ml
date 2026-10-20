@@ -1350,12 +1350,36 @@ test.describe("@security attack 19: the start card", () => {
 });
 
 test.describe("@security attack 20: the diagram sandbox is not a render oracle", () => {
+    /**
+     * The positive control for a frame that, defended, says nothing to a foreign framer, so silence alone cannot tell a
+     * refusing frame from a dead one. Two halves: the hostile page's frame is this build's mermaid.html, its one script
+     * the frame bundle; and an EXTENSION page that frames the same file does get "ready", so that bundle loads and runs
+     * (a 404 or a throw at load would silence both). Resource timing cannot be the proof: an opaque-origin frame records
+     * no entry for its own script.
+     */
+    async function frameIsAlive(ext, frame) {
+        const scripts = await frame.evaluate(() => [...document.scripts].map((s) => s.src));
+        expect(scripts, "the hostile page's frame is mermaid.html with its frame bundle").toEqual([`chrome-extension://${ext.extensionId}/mermaid-frame.js`]);
+        const own = await ext.context.newPage();
+        try {
+            await own.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+            const ready = await own.evaluate(() => new Promise((resolve) => {
+                const f = document.createElement("iframe");
+                f.setAttribute("sandbox", "allow-scripts");
+                f.src = "mermaid.html";
+                const t = setTimeout(() => resolve("timeout"), 8000);
+                addEventListener("message", (e) => { if (e.source === f.contentWindow && e.data?.mmd === "ready") { clearTimeout(t); resolve("ready"); } });
+                document.body.append(f);
+            }));
+            expect(ready, "the same frame, framed by the extension's own page, announces itself").toBe("ready");
+        } finally { await own.close(); }
+    }
+
     test("a page that frames mermaid.html cannot drive it, though it is its parent", async () => {
-        // src/mermaid/mermaid.html is a web-accessible resource (manifest.json WAR, matches `<all_urls>`), so any
-        // page may embed it. The frame's only asker check is `e.source !== parent` (mermaid-frame.ts) — and a page
-        // that embeds it IS its parent. The page then gets a Mermaid render oracle through the extension, and the
-        // answer is posted back with targetOrigin "*". Positive control in the same test: the frame really did load
-        // and really does answer its parent ("ready"), so a silent no-answer below cannot be a broken setup.
+        // src/mermaid/mermaid.html is a web-accessible resource (manifest.json WAR, matches `<all_urls>`, which the
+        // overlay needs), so any page may embed it, and a page that does IS its parent: `e.source === parent` proves
+        // nothing. The frame must give such a page nothing: no "ready", no drawing (mermaid-frame.ts reads the framer's
+        // origin from `location.ancestorOrigins`). Positive control: `frameIsAlive`.
         const { site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test", "/attack-20"));
@@ -1386,13 +1410,13 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
                 return { ready, heard, rendered };
             }, ext.extensionId);
 
-            // Positive control: the frame really loaded inside the hostile page, as the extension's sandbox page with
-            // its script running, so the silence below is the frame refusing, not a broken fixture. (The defended
-            // frame says nothing to a foreign framer, not even "ready", so "ready" cannot be the control.)
+            // Positive control: the frame loaded in the hostile page, sandboxed, knows who framed it, and its script is
+            // alive (`frameIsAlive`), so the silence below is the frame refusing, not a broken fixture.
             const frame = page.frames().find((f) => f.url() === `chrome-extension://${ext.extensionId}/mermaid.html`);
             expect(frame, "the WAR page loaded in the hostile page's frame").toBeTruthy();
-            expect(await frame.evaluate(() => ({ origin, framer: location.ancestorOrigins[0], scripts: document.scripts.length })))
-                .toEqual({ origin: "null", framer: new URL(site.url("evil.test", "/")).origin, scripts: 1 });
+            expect(await frame.evaluate(() => ({ origin, framer: location.ancestorOrigins[0] })))
+                .toEqual({ origin: "null", framer: new URL(site.url("evil.test", "/")).origin });
+            await frameIsAlive(ext, frame);
 
             // Defended: a drawing must not come back to a window that merely framed the WAR page.
             if (holeOpen("mmdFrame", "any page may frame mermaid.html and render diagrams through the extension")) {
@@ -1408,8 +1432,7 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
 
     test("a page that framed mermaid.html cannot buy drawings at scale", async () => {
         // The same channel, spent: N distinct sources must not become N Mermaid parses in the extension's process.
-        // Positive control: one request does reach the frame (ready was seen above; here the count of "done" answers
-        // is what is bounded).
+        // Positive control: the asks reach a live frame (`frameIsAlive`); the count of "done" answers is what is bounded.
         const { site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test", "/attack-20-cost"));
@@ -1438,7 +1461,9 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
 
             // Positive control: the asks are real, sent to the extension's frame loaded in this page.
             expect(out.asked).toBe(40);
-            expect(page.frames().some((f) => f.url() === `chrome-extension://${ext.extensionId}/mermaid.html`), "the WAR page loaded").toBe(true);
+            const frame = page.frames().find((f) => f.url() === `chrome-extension://${ext.extensionId}/mermaid.html`);
+            expect(frame, "the WAR page loaded").toBeTruthy();
+            await frameIsAlive(ext, frame);
             if (holeOpen("mmdFrame", "unbounded distinct renders through the framed sandbox")) {
                 expect(out.got, `only ${out.got}/${out.asked} answered — a bound, not the open flood`).toBe(40);
                 return;
