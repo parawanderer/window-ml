@@ -311,3 +311,199 @@ test("P5-nameload: a name load of a refused builtin does not hand back the calla
     const ok = await cell(world(), "return [abs][0](-2)");
     assert.strictEqual(ok.value, "2", "positive control: an allowed builtin's name load works inside the cell");
 });
+
+// --- the probe table (PR #901, core 77376876): every route into a cell-defined function is refused on the full path ---
+// Pins the shapes the `probe-*.mjs` drivers drove, so a later change cannot flip one quietly. The fork's `OutsideRunTest`
+// holds the RESUME check at the C level; these hold the seam around it: what copy-back admits, and what the full path
+// of `wrapUserScript` does with what crossed back. `CELL FUNCTIONS` in `python-dialect-inside.test.mjs` already pins
+// the direct call and the later inside call; these are the other routes and the walk's own catches.
+
+/** The fork's outside-a-run refusal, whichever field the wrapper put it in. */
+function forkRefusal(out) {
+    const text = String(out.error ?? out.threw ?? "");
+    return /NotInDialect: not in dialect: .*was defined in a cell that ran inside the read-only dialect/.test(text) ? text : null;
+}
+
+test("P4-routes: a cell function is refused on the full path for every way in (call, exec, map, sorted, nested, container)", { timeout: 90000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const shapes = [
+        ["lambda in a list", "f = [lambda: 42]\nreturn 1", "return f[0]()"],
+        ["lambda in a dict", "f = {'g': lambda: 42}\nreturn 1", "return f['g']()"],
+        ["default-only def", "def f(x=1):\n    return x\nreturn 1", "return f()"],
+        ["nested def", "def outer():\n    def inner():\n        return 7\n    return inner\ng = outer\nreturn 1", "return outer()()"],
+        ["exec of its code", "def f():\n    return 42\nreturn 1", "exec(f.__code__, {})\nreturn 1"],
+        ["map's C callback", "def f(x):\n    return x\nreturn 1", "return list(map(f, [1]))"],
+        ["sorted's key callback", "def f(x):\n    return x\nreturn 1", "return sorted([2, 1], key=f)"],
+    ];
+    for (const [label, defCode, callCode] of shapes) {
+        const ns = world();
+        const def = await cell(ns, defCode);
+        assert.ok(!def.refused, `${label}: the def is admitted (a CO_RESTRICTED function crosses back, #901): ${JSON.stringify(def)}`);
+        const call = await cell(ns, callCode, false);
+        assert.match(forkRefusal(call) ?? String(call.error ?? call.threw ?? call), /NotInDialect: not in dialect: .*was defined in a cell that ran inside the read-only dialect/,
+            `${label}: the fork's outside-run refusal, not some other error: ${JSON.stringify(call)}`);
+    }
+    // positive control: the same call written on the full path is full Python (the person approved it)
+    const direct = await cell(world(), "return sorted([2, 1])", false);
+    assert.strictEqual(direct.value, "[1, 2]", "positive control: the full path runs ordinary code");
+});
+
+test("P4-generator: a cell-defined generator stays closed — gate-first today, and the full-path call refused if Yield ever enters the whitelist", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const ns = world();
+    const def = await cell(ns, "def gen():\n    yield 1\n    yield 2\nreturn 1");
+    if (def.refused) {
+        // Gate-first today: Yield is not in the node whitelist. Still closed if that ever changes.
+        t.diagnostic(`gate-first: ${def.refused}`);
+    } else {
+        const call = await cell(ns, "return list(gen())", false);
+        assert.match(forkRefusal(call) ?? String(call.error ?? call.threw ?? call), /NotInDialect: not in dialect: .*was defined in a cell that ran inside the read-only dialect/,
+            `a cell-defined generator must not run on the full path: ${JSON.stringify(call)}`);
+    }
+    // positive control: a generator written on the full path is full Python
+    const direct = await cell(world(), "def gen():\n    yield 1\nreturn list(gen())", false);
+    assert.strictEqual(direct.value, "[1]", "positive control: the full path is full Python");
+});
+
+test("P4-ml-closure: ml carried in a default or a closure puts the cell outside (it leaves 'name' holding a _Ml)", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const [label, code] of [
+        ["ml as a default", "def outer(ml=ml):\n    def inner():\n        return ml.config()\n    return inner\ng = outer()\nreturn 1"],
+        ["ml in a closure cell", "def outer():\n    x = ml\n    return lambda: x.config()\ng = outer()\nreturn 1"],
+    ]) {
+        const out = await cell(world(), code);
+        assert.ok(out.refused, `${label} must not cross back: ${JSON.stringify(out)}`);
+        assert.match(String(out.refused), /^it leaves '\w+' holding a _Ml/, label);
+    }
+    // positive control: a data default crosses
+    const ok = await cell(world(), "def f(x=1):\n    return x\nreturn 1");
+    assert.ok(!ok.refused, JSON.stringify(ok));
+});
+
+test("P4-strip: the stated residual (#903) — a full-path cell CAN strip CO_RESTRICTED and run the body ungated", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    // STATED RESIDUAL, not a hole to fix (#903): a fresh types.CodeType from the same bytes would do the same, and the
+    // flag cannot be made unstrippable without taking code-object access from the full path, which it has by design.
+    // This pin asserts the residual HOLDS AS RECORDED. If this test flips, the spec's layer-1 residual sentence
+    // (docs/spec/PYTHON_DIALECT.md, from #903) gets rewritten — the guarantee's edge moved.
+    const ns = world();
+    await cell(ns, "def f():\n    return 7");
+    const strip = await cell(ns, "import types, restricted\nc = f.__code__.replace(co_flags=f.__code__.co_flags & ~restricted.CO_RESTRICTED)\nf2 = types.FunctionType(c, f.__globals__)\nreturn f2()", false);
+    assert.strictEqual(strip.value, "7", `the residual: the stripped body runs ungated (spec layer-1, #903): ${JSON.stringify(strip)}`);
+    // and the unstripped call is still refused — the residual is the strip, not a general bypass
+    const raw = await cell(ns, "return f()", false);
+    assert.match(forkRefusal(raw) ?? String(raw.error ?? raw.threw ?? raw), /NotInDialect/, `the unstripped call is still refused: ${JSON.stringify(raw)}`);
+});
+
+// --- higher-order sinks (probe-hof): a library call invokes a cell-defined callable while the run is active ---
+
+test("P5-hof: a library call that invokes a cell-defined callable cannot smuggle an effect past the gate", { timeout: 120000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const HOST = /\/private\/|\/etc\/|root:|tmp|home|dev|proc|lib/;
+    const sinks = [
+        ["df.pipe(lambda)", "import pandas as pd\ndf = pd.DataFrame({'a': [1]})\nout = df.pipe(lambda d: open('/etc/hostname').read())\nreturn out"],
+        ["df.apply(lambda)", "import pandas as pd\ndf = pd.DataFrame({'a': [1]})\nout = df.apply(lambda s: open('/etc/hostname').read())\nreturn 1"],
+        ["sorted(key=)", "out = sorted([2, 1], key=lambda x: open('/etc/hostname').read())\nreturn out"],
+        ["max(key=)", "out = max([1, 2], key=lambda x: open('/etc/hostname').read())\nreturn out"],
+        ["list.sort(key=)", "xs = [2, 1]\nxs.sort(key=lambda x: open('/etc/hostname').read())\nreturn xs"],
+        ["re.sub(repl=)", "import re\nout = re.sub('x', lambda m: open('/etc/hostname').read(), 'x')\nreturn out"],
+        ["json.dumps(default=)", "import json\nout = json.dumps([object()], default=lambda o: open('/etc/hostname').read())\nreturn out"],
+        ["list comp with open", "out = [open('/etc/hostname').read() for _ in [1]]\nreturn out"],
+        ["dict comp with open", "out = {i: open('/etc/hostname').read() for i in [1]}\nreturn out"],
+        ["genexp passed to join", "out = ''.join(open('/etc/hostname').read() for _ in [1])\nreturn out"],
+        ["map forced by list()", "out = list(map(lambda x: open('/etc/hostname').read(), [1]))\nreturn out"],
+        ["pre-existing apply(fn)", "out = apply(lambda: open('/etc/hostname').read(), 1)\nreturn out"],
+    ];
+    for (const [label, code] of sinks) {
+        const ns = world();
+        await cell(ns, "def apply(f, x):\n    return f(x)", false);
+        const out = await cell(ns, code);
+        // Either the gate refuses the cell, or it finishes and the result is not a filesystem read.
+        if (out.refused || out.error || out.threw) continue;
+        assert.ok(!HOST.test(String(out.value)), `${label}: the callable's effect must not reach the result: ${JSON.stringify(out)}`);
+    }
+    // positive control: the same sinks with a pure callable return ordinary data
+    const ns = world();
+    await cell(ns, "def apply(f, x):\n    return f(x)", false);
+    const ok = await cell(ns, "import pandas as pd\ndf = pd.DataFrame({'a': [1]})\nout = df.pipe(lambda d: 42)\nreturn out");
+    assert.strictEqual(ok.value, "42", `positive control: df.pipe with a pure lambda works: ${JSON.stringify(ok)}`);
+});
+
+// --- identity / return-value corners (probe-id, probe-import): what the walk admits under a new name or as the result ---
+
+test("P5-return: a returned value that holds a pre-existing non-data object does not cross back", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const [label, code, re] of [
+        ["return (ml, 1)", "return (ml, 1)", /^it leaves the value it returns holding a _Ml/],
+        ["df.pipe(lambda d: ml)", "import pandas as pd\ndf = pd.DataFrame({'a': [1]})\nout = df.pipe(lambda d: ml)\nreturn 1", /^it leaves '\w+' holding a _Ml/],
+    ]) {
+        const out = await cell(world(), code);
+        assert.ok(out.refused, `${label} must not cross back: ${JSON.stringify(out)}`);
+        assert.match(String(out.refused), re, `${label}: ${JSON.stringify(out)}`);
+    }
+    // A key that returns ml dies before the walk: sorted compares the keys and `'<` is not supported on `_Ml`.
+    // Fail-closed either way — the cell does not finish and leave a binding holding ml.
+    const die = await cell(world(), "out = sorted([1, 2], key=lambda x: ml)\nreturn 1");
+    assert.ok(die.refused || die.error || die.threw, `sorted(key=… ml) must not finish with a binding holding ml: ${JSON.stringify(die)}`);
+    // positive control: a pipe that returns data crosses
+    const ok = await cell(world(), "import pandas as pd\ndf = pd.DataFrame({'a': [1]})\nout = df.pipe(lambda d: 42)\nreturn out");
+    assert.strictEqual(ok.value, "42", JSON.stringify(ok));
+});
+
+test("P5-rebind: the import exemption's name can be rebound to data, but not to a container holding the module", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    // data under the import's own name: admitted (the walk sees data)
+    const ok = await cell(world(), "import math\nmath = 5\nreturn math");
+    assert.ok(!ok.refused, JSON.stringify(ok));
+    assert.strictEqual(ok.value, "5");
+    // a new container holding the module, even under the import's name: outside (#896)
+    const bad = await cell(world(), "import math\nmath = [math]\nreturn 1");
+    assert.ok(bad.refused, JSON.stringify(bad));
+    assert.match(String(bad.refused), /^it leaves 'math' holding a module/, JSON.stringify(bad));
+});
+
+test("P5-import-gate: a dangerous import is gate-first, even in the from-shape the exemption would otherwise admit", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const code of ["from os import system\nreturn 1", "from numpy import __import__\nreturn 1", "import js\nreturn 1"]) {
+        const out = await cell(world(), code);
+        assert.ok(out.refused, `${code}: gate-first: ${JSON.stringify(out)}`);
+        assert.ok(!/^it leaves /.test(String(out.refused)), `${code}: the gate refuses the import itself, not the walk: ${JSON.stringify(out)}`);
+    }
+    // positive control: an admitted import's own binding crosses (attribute access on it is a separate gate)
+    const ns = world();
+    const ok = await cell(ns, "import math as z\nreturn 1");
+    assert.ok(!ok.refused, JSON.stringify(ok));
+    assert.strictEqual(await py.runPythonAsync("'z' in globals()", { globals: ns }), true, "positive control: z crossed back");
+});
+
+// --- shared-object writes (probe-inside P1d/g/h, probe-inside3 P3a/b): a refused or failed cell leaves them as it found them ---
+
+test("P1-shared-write: an in-place write on a shared object is gate-refused before it lands (probe-inside P1a–h)", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const [label, plant, code, want] of [
+        ["df.iloc", "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]})", "df.iloc[0, 0] = 99\nimport os", "df"],
+        ["df.loc", "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]})", "df.loc[0, 'a'] = 99\nimport os", "df"],
+        ["df column", "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]})", "df['a'][0] = 99\nimport os", "df"],
+        ["list append", "lst = [1, 2, 3]", "lst.append(4)\nimport os", "lst"],
+        ["list item", "lst = [1, 2, 3]", "lst[0] = 99\nimport os", "lst"],
+        ["dict key", "d = {'a': 1}", "d['x'] = 9\nimport os", "d"],
+    ]) {
+        const ns = world();
+        await cell(ns, plant, false);
+        const before = String(await py.runPythonAsync(`repr(${want})`, { globals: ns }));
+        const out = await cell(ns, code);
+        assert.ok(out.refused, `${label}: refused: ${JSON.stringify(out)}`);
+        assert.match(String(out.refused), /writes a value the cell does not own|not in dialect/, `${label}: the write is what is refused, not a later step: ${JSON.stringify(out)}`);
+        const after = String(await py.runPythonAsync(`repr(${want})`, { globals: ns }));
+        assert.strictEqual(after, before, `${label} left ${want} as it found it`);
+    }
+    // Positive controls: a write on an object the cell itself made is fine; a read of a shared one is fine.
+    // An inside cell cannot mutate a shared object at all — the write is refused even with no later refusal.
+    const own = world();
+    const ok = await cell(own, "lst = [1, 2, 3]\nlst.append(4)\nreturn lst");
+    assert.strictEqual(ok.value, "[1, 2, 3, 4]", `a cell owns what it made: ${JSON.stringify(ok)}`);
+    const ns = world();
+    await cell(ns, "lst = [1, 2, 3]", false);
+    const read = await cell(ns, "return len(lst)");
+    assert.strictEqual(read.value, "3", `a read of a shared value works: ${JSON.stringify(read)}`);
+});

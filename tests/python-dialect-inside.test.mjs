@@ -282,6 +282,47 @@ F.__module__, I.__module__ = "numpy", "pandas"   # forged: a module string is no
     assert.strictEqual(verdicts[2], undefined, "numpy scalars and pandas' own index classes are data");
 });
 
+test("DATA ONLY: the walk's type edges (iterators, patterns, partials, classes, buffers, numpy and pandas flavours)", { timeout: 90000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    // Nothing in this list may hand back a callable the full path can run. Each is either gate-first (the construct or
+    // the attribute is not in the dialect) or walk-refused (the value is not data). Pinned from `probe-walk.mjs` /
+    // `probe-after.mjs`; a shape the dialect admits later belongs in the plain-data test above instead.
+    const held = [
+        "f = slice(0, 1)\nreturn 1",
+        "f = bytearray(b'x')\nreturn 1",
+        "f = memoryview(b'x')\nreturn 1",
+        "f = {1: 2}.keys()\nreturn 1",
+        "f = filter(lambda x: x, [1])\nreturn 1",
+        "f = iter([1, 2])\nreturn 1",
+        "import re\nf = re.compile('x')\nreturn 1",
+        "import functools\nf = functools.partial(open, '/x')\nreturn 1",
+        "import operator\nf = operator.itemgetter(0)\nreturn 1",
+        "import collections\nf = collections.namedtuple('P', 'x')\nreturn 1",
+        "f = type('C', (), {})\nreturn 1",
+        "import io\nf = io.StringIO()\nreturn 1",
+        "import numpy as np\na = np.array(open, dtype=object)\nreturn 1",
+        "import numpy as np\na = np.array([(1, open)], dtype=[('a', int), ('b', object)])\nreturn 1",
+        "import numpy as np\na = np.matrix([[1, 2]])\nreturn 1",
+        "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]}, index=pd.MultiIndex.from_tuples([('x', 1), ('y', 2)]))\nreturn 1",
+        "import pandas as pd\ndf = pd.DataFrame({'a': [1]}, index=pd.Index([open], dtype=object))\nreturn 1",
+        "import pandas as pd\ns = pd.Series([1, 2], name=open)\nreturn 1",
+        "import pandas as pd\ndf = pd.DataFrame({'a': pd.Categorical(['x', 'y'])})\nreturn 1",
+        "import collections\nd = collections.deque([lambda: open])\nreturn 1",
+        "import collections\nc = collections.Counter({1: open})\nreturn 1",
+    ];
+    for (const code of held) {
+        const ns = world("none");
+        await cell(ns, "keep = 1");
+        const out = await cell(ns, code);
+        assert.ok(out.refused, `${code}: either the gate or the walk must refuse it: ${JSON.stringify(out)}`);
+        // and if it was the walk, it is the walk's own wording (so a gate-first change is visible in the output)
+        if (/^it leaves /.test(String(out.refused))) t.diagnostic(`walk: ${code.split("\n")[0]}`);
+    }
+    // positive control: plain data still crosses (the shapes above are held, not a blanket refusal)
+    const ok = await cell(world("none"), "f = [1, 2, 3]\nx = {'k': b'z'}\nreturn f");
+    assert.ok(!ok.refused, JSON.stringify(ok));
+});
+
 test("CELL FUNCTIONS: a function the cell defined crosses back; it runs in a later inside cell and is refused outside a run (#895)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ns = world("none");
