@@ -177,8 +177,10 @@ On every call not yet started:
 - **A card already showing** is re-judged when a policy changes: a new `allow` answers it, a new `always reject`
   refuses it, and the card closes saying why.
 - **A run that relied on a policy is told** when its next call meets the change: the result says the call now needs the
-  person (or was refused) because the policy that covered it was removed, not that the call itself changed. Not built
-  as of 2026-10-15 (lane 2): the call asks, and the reason is not said. It stays in the spec as the intended behaviour.
+  person (or was refused) because the policy that covered it was removed, not that the call itself changed. Built
+  2026-10-19 (REPL lane 9) for `fetch_url` and `sh` asks, with the cause (archived, removed, narrowed) on the card, in the
+  tool result and in the run log; text only, never an input to the decision. A session resumed after an archive is told
+  once before its first step. How: [`docs/dev/policies.md`](../dev/policies.md), "Why a call asks".
 - **Re-judging reads only resolved facts** (ruling, 2026-10-15). A showing card is re-judged only when its descriptor
   carries the consumer's resolved facts, effects included; a descriptor without them is left to the person, never judged
   with `effects` read as `unknown`. Reading it as the top element is right for the built-in default, which allows no

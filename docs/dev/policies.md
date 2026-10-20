@@ -165,6 +165,29 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   names them with the time, and the model reads them as `ml.current.policiesRemoved`. Deleting the session drops the
   record too.
 
+## Why a call asks (a policy that covered it is gone)
+
+Built by REPL lane 9 (2026-10-19), `POLICIES.md` "A change takes effect at once". Text only: the reason is never an input
+to the decision, and a call's payload cannot name a policy to claim it.
+
+- **The store keeps what went.** `removePolicy`, `editPolicy` (a changed source, or an effect no longer `allow`: `narrowed`)
+  and `forgetRunPolicies(..., "archived")` keep an ALLOWING policy, source included, in `lapsed` (storage key
+  `ml_policies_lapsed`, by session hash, `*` for global; 20 per key; state `policies.lapsed`). A deleted session drops its
+  entries; a removed `deny` is not kept, since it widened nothing.
+- **`judgeCall` says it.** When the decision is `undefined` it evaluates the kept policies over the same facts, like a live
+  one, and sets `lapsed: { id, scope, label, cause, at }` for the most recent that would have allowed the call. A
+  decision of any other kind carries none, and a live `allow` wins over a gone one.
+- **The card and the model.** `askWhy` on `AgentHostDeps`/`AgentLoopDeps` (built over `lapsed` for a worker-run uncredentialed
+  `fetch_url`, `sw-run-host.ts`) gives `{ line, detail }`. The loop hands it to `approve`, which puts it on the pending
+  step (`askWhy`, `AskWhyLine` in `agent-detail.tsx` and the HUD card; the tooltip is the model's sentence), and appends
+  `detail` to the tool result, so the export's `result` is what the model read. A nested `sh` ask carries it as
+  `StepAsk.why` (the ask card) and its refusal text. Both write a `policy`/`lapsed` run log record.
+- **Told on resume.** `takeArchiveNotice` returns once a sentence naming the policies an archive removed; the worker
+  pushes it as a SYSTEM message (the worker's note, marked as the extension's, never the person's words) before a resumed run's first model call (`sw-run-host.ts`), logs `policy`/`archive-told`,
+  and marks the stored record `told`, so a later resume does not repeat it. The resume note's `dropped` and
+  `ml.current.policiesRemoved` are unchanged.
+- Held by the red-team pass (`tests/lapsed-ask-redteam.test.mjs`): what is SAID of a label goes through `speakable` (one line, no double quote or control character, capped), whatever wrote it (a card's `ml.fetch` URL, a proposal, the person); a proposal's label may hold no control or line-separator character; a page's debug or session event loses `askWhy` and `asks[].why` (`withoutPageWhy`); the archive note goes only to a resume the worker built (`p.builtBy`), since the hash a page names is not the sender.
+
 ## A proposal from the model (`propose_policy`)
 
 The model never adds a policy; it asks for one, and the person answers a card (`POLICIES.md`, "Scopes").
@@ -197,8 +220,7 @@ The model never adds a policy; it asks for one, and the person answers a card (`
 
 - The DERIVED breadth for the decidable fragment of a typed-node policy (`POLICIES.md`), and a corpus wider than this
   run's own calls (the run log of every session). Today's breadth is this run's calls and a random probe: a sample.
-- Telling a run that RELIED on a removed policy, on its next call, that the call now asks because the policy went
-  (`POLICIES.md`, "A change takes effect at once"). The call asks; the reason is not said. Left out of REPL lane 2 by
-  repl-specs on 2026-10-15 (#719), which keeps it in the spec as intended behaviour.
+- A reason for a CREDENTIALED `fetch_url` ask: an `allow` never covered one, so none is said. `expired` is a cause the
+  type carries for a policy with a lifetime; no policy has one.
 - A page-built run's card is not judged again when a policy changes: its descriptor carries no facts, because its
   fetch runs in the page and an `allow` cannot answer it (see Traps). A `deny` would; it is left for the run's next call.

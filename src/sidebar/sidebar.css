@@ -1369,9 +1369,9 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
     color: var(--fg-dim); font-size: 0.86em; line-height: 1.4; }
-.astep-approve .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
+.astep-approve .appr-note, .card-foot .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
+.astep-approve .appr-note svg, .card-foot .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
 .astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */

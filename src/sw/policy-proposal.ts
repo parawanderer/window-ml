@@ -109,7 +109,7 @@ export function checkProposal(args: Record<string, unknown>): { proposal: Policy
     if (label.length > POLICY_LABEL_MAX) return { error: `Error: "label" is longer than ${POLICY_LABEL_MAX} characters.` };
     // The card quotes the label inside the worker's own sentences: a quote or a line break in it could pass the model's
     // words off as the worker's measure.
-    if (/["\r\n]/.test(label)) return { error: `Error: "label" may not hold a double quote or a line break.` };
+    if (/["\p{Cc}\p{Zl}\p{Zp}]/u.test(label)) return { error: `Error: "label" may not hold a double quote, a line break or a control character.` };
     // Evaluated once over a probe: a policy that cannot be read, or reads a field a fetch call does not have, is
     // refused here rather than shown to the person as a rule that would never answer anything.
     const r = evalPolicy(when, fetchFacts(FIXED_PROBE_URLS[0]), effect);

@@ -34,7 +34,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy } from "./sw-policies";
+import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy, lapsedLine, lapsedSentence, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
@@ -824,7 +824,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 callModel: async (messages, opts) => {
                     // A resumed history was written before this run, perhaps before the scrub or under another config: its
                     // tool results reach the model again here, so they cross `forModel` too, once, in place (and are stored so).
-                    if (!historyScrubbed) { historyScrubbed = true; if (resumeMessages?.length) await forModelHistory(messages); }
+                    if (!historyScrubbed) {
+                        historyScrubbed = true;
+                        if (resumeMessages?.length) await forModelHistory(messages);
+                        // A session that comes back after an archive is told once, before its first step, that its run policies went. A SYSTEM
+                        // message, never a user one: the note is the worker's, and must not read as the person's words.
+                        // Only a resume the person started (`builtBy` is the worker's to set): a page naming a hash must not be told, or consume, another origin's note.
+                        const gone = resumeMessages?.length && p.builtBy === "worker" ? takeArchiveNotice(runId) : undefined;
+                        if (gone) { (messages as { role: string; content: string }[]).push({ role: "system", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
+                    }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
@@ -1364,7 +1372,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                     return env && env.precheckFailed ? (env.result || "") : null;
                 },
-                approve: async ({ tool, arguments: args, seq, step }) => {
+                approve: async ({ tool, arguments: args, seq, step, askWhy }) => {
                     // Ask the page to compute the In render for THIS call (without running the tool) so the
                     // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
                     // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
@@ -1403,6 +1411,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // ml.fetch literals) ONCE, background-side. The SAME list feeds the descriptor/step the
                     // human reviews AND the persistence below, so what's shown IS what's remembered.
                     const grants = extractGrants(tool, args);
+                    if (askWhy) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -1476,7 +1485,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // the same origin-authed SET_APPROVAL, so the gate is unforgeable across every surface.
                         // approvalRouting "external" SUPPRESSES the UI buttons (the gate still blocks — only the
                         // __mlApprovals channel resolves it); "ui"/"both" show them as before.
-                        emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn, grants: grants.length ? grants : undefined });
+                        emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn, grants: grants.length ? grants : undefined, askWhy });
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
@@ -1485,6 +1494,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // The person's policies (sw-policies.ts), judged here in the worker over facts the worker resolved. A `deny`
                 // refuses any run's fetch; an `allow` answers only a fetch the worker itself runs, since only there does
                 // the fetch's own choke point (worker-tools.ts `consented`) consult the same policies.
+                // Why a fetch_url that asks is asking: a policy that would have allowed it is gone. Text only (judgeCall's `lapsed`).
+                askWhy: (name, a) => {
+                    if (name !== "fetch_url" || a.credentials || !byWorker() || !runsInWorker(p, "fetch_url")) return undefined;
+                    const l = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered })).lapsed;
+                    return l ? { line: lapsedLine(l), detail: lapsedSentence(l), cause: l.cause, policy: l.label } : undefined;
+                },
                 fetchPolicy: (url, o) => {
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
                     if (j.decision === "ask") return "unknown";   // not loaded yet: the call asks, free tiers included

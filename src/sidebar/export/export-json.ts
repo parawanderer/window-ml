@@ -72,6 +72,7 @@ function stepToJson(st: AgentStep): ExportStep {
 
         approval: st.approval,
         grants: st.grants?.length ? st.grants : undefined,
+        askWhy: st.askWhy,
         reused: st.reused?.length ? st.reused : undefined,
         asks: st.asks?.length ? st.asks : undefined,
 

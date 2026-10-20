@@ -39,7 +39,7 @@
 import type { TokenUsage } from "./contract/contract-chat";
 import type { PersistGrant, ReusedGrant } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
-import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig, StepAsk } from "./contract/contract-debug";
+import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig, StepAsk, AskWhy } from "./contract/contract-debug";
 import type { PromptDisplay } from "./contract/contract-run";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */
@@ -373,6 +373,8 @@ export interface ExportStep {
     approval?: string;
     /** Grants this step created / reused, for privileged fetches. */
     grants?: PersistGrant[];
+    /** Why the call asked when a policy that used to allow it was gone; `detail` is the sentence the model read. */
+    askWhy?: AskWhy;
     reused?: ReusedGrant[];
     /** Nested asks: calls made from inside this step while it ran that needed the person, each with the facts it was
      *  judged on, how it was answered and when (docs/spec/ML_WIRE.md, "Per-call asking"). */
