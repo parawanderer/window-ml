@@ -228,9 +228,11 @@ worker drives with `autoApprovePython` on:
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
-   numpy arrays, pandas frames, series and indexes, object values walked; a value the namespace already held passes by
-   identity). A function, class, iterator or captured builtin, at any depth, would run UNGATED in a later full-path
-   cell (the red team's #880 pass), so it makes the try a refusal: `it leaves 'f' holding …`. Until the fork carries
+   numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import
+   statement bound (`_ml_imported`: `import numpy as np`, `from numpy import sum as total`). A function, class, module,
+   iterator or captured builtin, at any depth, would run UNGATED in a later full-path cell (the red team's #880 pass),
+   so it makes the try a refusal: `it leaves 'f' holding …`. Nothing passes by identity: a value the namespace already
+   held, under a NEW name (`a = ml`, `h = helper`), would hide from the card what it is (#896). Until the fork carries
    `CO_RESTRICTED` into every call (#893), a cell that defines a function asks. The try writes nothing to the live
    stdout stream; its print reaches the call only when it finished.
 5. If it is refused (`NotInDialect`, including the step budget and the memory cap, or a `SystemError` from an undo

@@ -6,8 +6,9 @@
  * module, call or attribute outside the dialect, or the step budget or memory cap) sets `_ml_not_in_dialect` and leaves
  * the namespace as it was, and the host discards the run and asks the person. Only a finished run's bindings are copied
  * back, never one the wrapper itself reads (a builtin's name, or one starting with "_"), and only when each new binding
- * and the value are DATA (`_ml_not_inert`): a function, class, generator or captured builtin, at any depth, would run
- * ungated in a later cell, so it puts the cell outside instead (docs/spec/PYTHON_DIALECT.md, #892, #893). The try
+ * and the value are DATA (`_ml_not_inert`), or exactly what the cell's own import bound (`_ml_imported`): a function,
+ * class, module or captured builtin, at any depth or under a new name, would run ungated or disguised in a later cell,
+ * so it puts the cell outside instead (docs/spec/PYTHON_DIALECT.md, #892, #893, #896). The try
  * streams nothing, and a refused one's output is dropped.
  */
 export const INSIDE_CELL = /* python */ `
@@ -35,14 +36,15 @@ def _ml_trailing_return(_src):
     _b = _lines[_i].encode()
     _lines[_i] = (_b[:_c] + b"return " + _b[_c:]).decode()
     return "\\n".join(_lines)
-def _ml_not_inert(_roots, _before, _cap=2000000):
-    # Why the first value reachable from _roots is not inert DATA, else None. A value the namespace held before the run
-    # (by identity) was put there by approved code and passes unwalked. Data is an allowlist matched on the EXACT type (a
-    # subclass the cell made has methods the gate never ran): scalars, the builtin containers (walked), numpy arrays and
-    # pandas frames, series and indexes (their object values walked); a module is named wherever it is used.
+def _ml_not_inert(_roots, _cap=2000000):
+    # Why the first value reachable from _roots is not inert DATA, else None. Data is an allowlist matched on the EXACT
+    # type (a subclass the cell made has methods the gate never ran): scalars, the builtin containers (walked), numpy
+    # arrays and pandas frames, series and indexes (their object values walked). Nothing passes by identity: a value the
+    # namespace already held, under a NEW name, would hide what it is from the card (a = ml), so it is walked like any
+    # other (PYTHON_DIALECT.md #896).
     import sys as _sys, types as _t, datetime as _dt, decimal as _dc, fractions as _fr, collections as _co
     _scalar = {type(None), bool, int, float, complex, str, bytes, range, _dt.date, _dt.datetime, _dt.time, _dt.timedelta,
-               _dt.timezone, _dc.Decimal, _fr.Fraction, _t.ModuleType}
+               _dt.timezone, _dc.Decimal, _fr.Fraction}
     _seq = {list, tuple, set, frozenset, _co.deque}
     _map = {dict, _co.OrderedDict, _co.Counter}
     _np, _pd = _sys.modules.get("numpy"), _sys.modules.get("pandas")
@@ -52,7 +54,7 @@ def _ml_not_inert(_roots, _before, _cap=2000000):
         _stack, _seen, _n = [_root], set(), 0
         while _stack:
             _x = _stack.pop()
-            if id(_x) in _before or id(_x) in _seen:
+            if id(_x) in _seen:
                 continue
             _seen.add(id(_x))
             _n += 1
@@ -88,6 +90,26 @@ def _ml_not_inert(_roots, _before, _cap=2000000):
                          else "a " + _ty.__name__)
                 return "it leaves " + _ml_what(_name) + " holding " + _kind + ", which the dialect cannot vouch for"
     return None
+def _ml_imported(_src):
+    # What the cell's own import statements bind, by name: the binding the gate admitted when it let the import run, so it
+    # crosses back as itself (import numpy as np; from math import sqrt). Read from sys.modules after the run.
+    import ast as _a, sys as _sys
+    try:
+        _tree = _a.parse("def _f():\\n" + _ml_indent(_src, "    "))
+    except SyntaxError:
+        return {}
+    _out = {}
+    for _n in _a.walk(_tree):
+        if isinstance(_n, _a.Import):
+            for _al in _n.names:
+                _mod = _al.name if _al.asname else _al.name.split(".")[0]
+                if _mod in _sys.modules:
+                    _out[_al.asname or _mod] = _sys.modules[_mod]
+        elif isinstance(_n, _a.ImportFrom) and not _n.level and _n.module in _sys.modules:
+            for _al in _n.names:
+                if _al.name != "*" and hasattr(_sys.modules[_n.module], _al.name):
+                    _out[_al.asname or _al.name] = getattr(_sys.modules[_n.module], _al.name)
+    return _out
 def _ml_what(_name):
     return _name if _name.startswith("the ") else "'" + _name + "'"
 def _ml_inside_run(_src, _g):
@@ -95,7 +117,6 @@ def _ml_inside_run(_src, _g):
     import builtins as _bi, _restricted as _r, restricted as _rs
     _keep = lambda _k: not _k.startswith("_") and not hasattr(_bi, _k)
     _ns = {_k: _v for _k, _v in _g.items() if not _k.startswith("_")}
-    _before = {id(_x) for _x in _ns.values()}
     try:
         _v = _rs.run_cell(_ml_trailing_return(_src), _ns, frozenset(${JSON.stringify(nodes)}))
     except (_r.NotInDialect, SystemError) as _e:
@@ -120,9 +141,12 @@ def _ml_inside_run(_src, _g):
         return None
     # A finished run's new bindings, and its value, must be DATA: a function, class or generator it made carries a body
     # the gate never ran, and a builtin it captured (f = open) is a call the gate refused, either of which a later
-    # full-path cell would run ungated. Anything not shown to be data puts the cell outside, so it asks.
-    _bad = _ml_not_inert([(_k, _x) for _k, _x in _ns.items() if _keep(_k) and (_k not in _g or _g[_k] is not _x)]
-                         + [("the value it returns", _v)], _before)
+    # full-path cell would run ungated. Anything not shown to be data puts the cell outside, so it asks. The one
+    # exception is what the cell's own import statement bound, exactly: the gate admitted that import.
+    _imp = _ml_imported(_src)
+    _bad = _ml_not_inert([(_k, _x) for _k, _x in _ns.items() if _keep(_k) and (_k not in _g or _g[_k] is not _x)
+                          and not (_k in _imp and _imp[_k] is _x)]
+                         + [("the value it returns", _v)])
     if _bad:
         _ml_not_in_dialect = _bad
         return None

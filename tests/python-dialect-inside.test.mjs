@@ -250,22 +250,57 @@ test("DATA ONLY: a binding that reaches code, at any depth, puts the cell outsid
     }
 });
 
-test("DATA ONLY: plain data of every kind crosses back, and a value approved code bound passes by identity", { timeout: 60000 }, async (t) => {
+test("DATA ONLY: plain data of every kind crosses back", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ns = world("none");
-    await cell(ns, "def helper(x):\n    return x + 1\nimport math", false);
     const out = await cell(ns, [
         "import pandas as pd, numpy as np",
         "df = pd.DataFrame({'name': ['a', 'b'], 'n': [1, 2], 't': [None, 1.5]})",
         "s = df['name']",
         "a = np.array([1.0, 2.0]) * 1.5",
         "x = (np.sum(a), None, b'z', {1, 2}, 2.5, 'k')",
-        "h = helper",
-        "m = math",
         "return [len(df), s.tolist()]",
     ].join("\n"));
     assert.deepStrictEqual(out.value, [2, ["a", "b"]], JSON.stringify(out));
-    for (const k of ["df", "s", "a", "x", "h", "m"]) assert.strictEqual(ns.has(k), true, `${k} crossed back`);
+    for (const k of ["df", "s", "a", "x"]) assert.strictEqual(ns.has(k), true, `${k} crossed back`);
+});
+
+test("IMPORTS: what the cell's own import bound crosses back as itself, in every shape the gate admits", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const [code, names] of [
+        ["import math\nreturn 1", ["math"]],
+        ["import numpy as np\nreturn 1", ["np"]],
+        ["import pandas as pd, numpy\nreturn 1", ["pd", "numpy"]],
+        ["from numpy import array\nreturn len(array([1, 2]))", ["array"]],
+        ["from numpy import sum as total, mean\nreturn float(total(mean([1.0, 3.0])))", ["total", "mean"]],
+    ]) {
+        const ns = world("none");
+        const out = await cell(ns, code);
+        if (out.refused && !/^it leaves /.test(out.refused)) { t.diagnostic(`${JSON.stringify(code)}: the gate refuses the import itself (${out.refused})`); continue; }
+        assert.ok(!out.refused, `${code}: ${JSON.stringify(out)}`);
+        for (const k of names) assert.strictEqual(ns.has(k), true, `${code}: ${k} crossed back`);
+    }
+});
+
+test("DISGUISE: a non-data value under a NEW name puts the cell outside, even one the namespace already held (#896)", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const ns = world("none");
+    await cell(ns, "def helper(x):\n    return x + 1\nimport math", false);
+    for (const [code, re] of [
+        ["h = helper", /'h' holding a function or class it defined/],
+        ["m = math", /'m' holding a module/],
+        ["import math\nm = math", /'m' holding a module/],
+        ["xs = [math]", /'xs' holding a module/],
+        ["import numpy as np\nf = np.sum", /'f' holding a /],
+        ["return math", /the value it returns holding a module/],
+    ]) {
+        const out = await cell(ns, code);
+        if (out.refused && !/^it leaves /.test(out.refused)) { t.diagnostic(`${JSON.stringify(code)}: refused by the gate first (${out.refused})`); continue; }
+        assert.match(String(out.refused), re, code);
+    }
+    // Under the name it already had, it is the same binding: the namespace keeps it, and a cell that leaves it alone runs.
+    assert.strictEqual((await cell(ns, "return helper(1)")).refused, undefined, "a cell that only CALLS helper is not judged on helper's binding");
+    assert.strictEqual(ns.has("h"), false);
 });
 
 test("a try inside the dialect writes nothing to the real stdout; its print reaches the call only when it finished", { timeout: 60000 }, async (t) => {
