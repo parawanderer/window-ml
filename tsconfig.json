@@ -39,6 +39,7 @@
     // language service indexes it: that's what lets go-to-definition and
     // find-references cross between a test and the .ts source it imports.
     // mobile/ is the React Native shell, with its own tsconfig (React, not Preact); it imports src/ types, never the
-    // reverse. Checked by `npx tsc --noEmit -p mobile`.
-    "exclude": ["node_modules", "dist", "mobile"]
+    // reverse. Checked by `npx tsc --noEmit -p mobile`. tmp/ is scratch, and the Pyodide core build's default workspace
+    // (tools/build-pyodide-restricted.mjs): CMake writes `compiler_depend.ts` files there that are not TypeScript.
+    "exclude": ["node_modules", "dist", "mobile", "tmp"]
 }
