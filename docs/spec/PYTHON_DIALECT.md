@@ -175,6 +175,13 @@ cover. The model never chooses. A cell inside the dialect runs with no card, in 
 `while`, a class, an unannotated library call) goes to the person and runs as full Python with the gated `ml` callback,
 in a worker that is still hardened. That is the two-path story the JS `exec` already tells.
 
+Until a membership predicate exists in the Pyodide build, every cell is outside the dialect: it asks and runs hardened
+with the gated `ml`, and `autoApprovePython` approves nothing (ruled 2026-10-20, lane 7's narrower reading, #820; rule 1,
+narrow and fail closed). The one seam is `pythonCellInDialect`, false today, where the predicate plugs in; the wider
+reading, keep auto-approving what ran as `readonly`, would need a predicate that was not lane 7's to write and would let an
+old `full` cell arriving without `mode` run unasked. Stored grants keep their prefixes: an old `readonly:` grant no longer
+covers a cell, so it asks again; an old `full:` grant still covers the same code.
+
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".

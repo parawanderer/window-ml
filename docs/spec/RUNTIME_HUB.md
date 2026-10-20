@@ -79,8 +79,12 @@ what the grant carries before confirming. `mayPair` (the runtime may add devices
 for every runtime offer on the phone and is a visible switch whose line says what a browser runtime loses without it
 (it cannot re-sign its certificates); narrow beats wide, and a host never needs it. `mayRevoke` keeps its rule, the first
 runtime paired signs removals, and is shown as a sentence, never a switch. A role or an offer flag that tells a host
-from a browser runtime would only buy a better default for the browser case; it is not requested of the hub and is
-recorded as unassigned in the plan. What a browser runtime paired without `mayPair` fails at, and whether that failure is
+from a browser runtime would only buy a better default for the browser case; it is not requested of the hub. Ruled
+2026-10-20 on lane 8's design note (the plan's lane 8 host-kind design note, #852): deferred, nothing built. If a
+flag is ever wanted its shape is an optional, unsigned `PairingOffer.kind` the hub stores opaque and never reads, shown
+only as the runtime's own unchecked word, never a gate; wording plus one hidden switch whose default is already off does
+not pay for a wire field, a pin bump and a hub release, and once the device list must show the kind the signed
+certificate form is the real design. A host that wants the card to say what it is puts it in its label. What a browser runtime paired without `mayPair` fails at, and whether that failure is
 told to the person, is lane 8's measurement before its PR.
 
 | Scope | Lets the holder | Typically held by |
