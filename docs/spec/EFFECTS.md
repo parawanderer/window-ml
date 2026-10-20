@@ -31,6 +31,15 @@ reaches the network), and because sets compare: "is this call inside what the sa
 | `use` | exercises a capability without observing it (a secret injected into a request it never sees) |
 | `alloc` | takes memory or storage from it (bounded separately by cost, listed so a policy can see it) |
 
+`write` means CHANGES, never "sends" (ruled 2026-10-20, the red team's post-merge read of window-ml-host #17): `git fetch`
+is `read(net)` although its smart-HTTP transport is a POST, and `git push` is `write(net)`, and the vectors say so. A
+describer that knows only a request's method (`ml.fetch`) calls anything but GET and HEAD a write, fail closed, because the
+method is the only fact it has; a manifest knows the program and describes the change, not the transport. A green run of
+the shared vectors holds a READER to the fixtures, never the fixtures to the world: twelve calls record `effects: []`,
+the empty set, free on any bound, and a manifest that under-claims a program passes the vectors and marks its call free.
+That is the describe/enforce split, and why a manifest is reviewed as a claim about the program (window-ml-host #19,
+window-ml #882 carry the reader fixes from that read).
+
 | Resource | Meaning | Where it comes from |
 | --- | --- | --- |
 | `heap(owned)` / `heap(unowned)` / `heap(arg i)` | values inside the interpreter; a manifest says `arg i`, the interpreter resolves it to owned or unowned at the call | the dialects |
