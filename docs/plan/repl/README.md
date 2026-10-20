@@ -192,9 +192,8 @@ listed as remaining is DONE unless named below.
   natively no gain (2026-10-20, an ordering effect), so open for the wasm number only; the code sits on the fork's
   `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
   under pymalloc), fixed in parawanderer/cpython#3 (merged 2026-10-20, 7e400fbc), lane 4 verified it natively; no Pyodide rebuild. A hook on pymalloc before the first run brings the
-  double count back, listed as a known limit that errs toward refusing (`PYTHON_DIALECT.md`); lane 3's fix for it, reading
-  the startup choice when the name is hidden, is parawanderer/cpython#4 (open 2026-10-20, 136 native tests; lane 4 reviews;
-  the limit leaves the spec when it merges). Per-run wrapping stays open.
+  double count back; fixed by lane 3 in parawanderer/cpython#4 (merged 2026-10-20, b0bbaa5, lane 4 reviewed): a hidden
+  name defers to the startup choice; no wasm32 change, lane 5 re-pins when convenient. Per-run wrapping stays open.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until lane 5's membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Lane 8 is
