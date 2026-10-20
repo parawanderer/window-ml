@@ -18,7 +18,7 @@
     "count": 12
   },
   "artefact": {
-    "host": "github release on the fork (parawanderer/cpython), Shane's decision 2026-10-19",
+    "host": "github release on the fork (parawanderer/cpython), Shane's decision 2026-10-19; the consumer pins tag and sha256 and verifies before unpacking",
     "tag": "pyodide-314.0.3-ml-de165bb7",
     "name": "pyodide-restricted-314.0.3-de165bb7",
     "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-ml-de165bb7/pyodide-restricted-314.0.3-de165bb7.tar.gz",
