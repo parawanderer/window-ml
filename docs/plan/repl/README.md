@@ -114,8 +114,14 @@ consume-once semantic that need their own design (ruled 2026-10-19).
 **K3d** (the red team's #827 audit, 2026-10-19): bwrap re-bound only part of the protected names, so the host now reads one
 list per layer (bwrap re-bind, Landlock enumeration, tripwire snapshot) from `PROTECTED_TOP` (+ `PROTECTED_GIT`), with an
 enumerating test per layer and a real-kernel read-only proof: window-ml-host #15 (merged 2026-10-19, cd56124, lane 4's; the
-generalist reviewed; the red team verifies after merge, rule 10). Lane 4's next host PR, window-ml-host #16 (merged 2026-10-19, 816113a,
+generalist reviewed; the red team verified after merge, rule 10). Lane 4's next host PR, window-ml-host #16 (merged 2026-10-19, 816113a,
 the generalist reviewed): macOS denies the whole `.claude` directory, as the Linux rule does, not only the files it lists.
+The red team verified both on 2026-10-20 at 816113a, statically on both OSes: one list of fifteen names, read by the bwrap
+re-bind and by the Seatbelt regexes, with enumerating tests; a real-kernel Landlock run is not checked (no Linux box). The
+audit's extension half, the version probe's start carrying the envelope its judged facts derive (ruling A, one derivation
+path), is window-ml #834 (the generalist's, merged 2026-10-20, 274b8a6a; the janitor reviewed; the red team's two probe
+tests un-todo'd plus a git control: a pre-K3 host is sent no envelope). The red team's #827 is closed as superseded; its
+done-mismatch test already held on main through #813. K3's audit is closed.
 **K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
 `git diff --output=.envrc` ran free) is window-ml #788 (merged 2026-10-19, a6826b0), lane 4's, ahead of K3b: the top-level names of a root are
 outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
