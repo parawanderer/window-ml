@@ -215,7 +215,8 @@ listed as remaining is DONE unless named below.
   `def _user():`, one past the cell's, so #880's wrapper subtracts one (`python-dialect-run.ts`, `INSIDE_CELL`), which
   is correct against the pinned core and blocks nothing. The fork fix lands in two steps in this order: the fork reports
   the cell's own line and is re-pinned; the same window-ml PR as the re-pin drops the wrapper's subtraction, or every
-  check-time line comes out one too low (#880's inside test pins `(line 2)` on the real core).
+  check-time line comes out one too low (#880's inside test pins `(line 2)` on the real core). Lane 3 owns it after
+  #880 merges (Shane, 2026-10-20), so the fork is no longer nobody's.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
