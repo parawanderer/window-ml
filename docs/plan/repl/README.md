@@ -182,7 +182,10 @@ listed as remaining is DONE unless named below.
   bound holds under Pyodide from #835 on. Its cost, measured by lane 5 on a noisy laptop (a million small tuples,
   minimum of four alternating rounds): a metered cell 0.31 s → 0.46 s, an UNMETERED one 0.15 s → 0.20 s, about 1.3 to
   1.5x either way, because the MEM/OBJ wrappers stay installed outside restricted cells. Open, the fork's (lane 3):
-  whether the wrappers can be installed only for a restricted entry's extent, measured before it is claimed cheaper.
+  whether the wrappers can be installed only for a restricted entry's extent, measured before it is claimed cheaper:
+  natively no gain (2026-10-20, an ordering effect), so open for the wasm number only; the code sits on the fork's
+  `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
+  under pymalloc), fixed in parawanderer/cpython#3, lane 4 reviews; no Pyodide rebuild.
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
   (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
