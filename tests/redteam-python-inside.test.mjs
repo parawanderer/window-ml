@@ -106,7 +106,8 @@ test("P1-ml: a function a cell defines inside cannot reach `ml` when later code 
     const ns = world();
     const def = await cell(ns, "def f():\n    return ml.config()");
     // A function made inside carries a body the gate never ran: the try is outside and leaves nothing (#892).
-    assert.match(String(def.refused), /'f' holding a function or class, which/, JSON.stringify(def));
+    // The fork enters a cell's own code only inside a run (#895), so the function crosses back; calling it later is refused.
+    assert.ok(!def.refused, JSON.stringify(def));
     // DEFENDED: calling f later — the full path of a rerun after approval — must not send a wire call the inside run never made.
     const call = await cell(ns, "return await f()", false);
     assert.deepStrictEqual(call.wire, [], "an inside-defined function does not reach ml when ordinary code calls it");
@@ -131,7 +132,8 @@ test("P2-ungated: a function a cell defines inside does not run UNGATED when a l
     if (skip) return t.skip(skip);
     const ns = world();
     const def = await cell(ns, "def f():\n    import os\n    return os.listdir('/')");
-    assert.match(String(def.refused), /'f' holding a function or class, which/, JSON.stringify(def));
+    // The fork enters a cell's own code only inside a run (#895), so the function crosses back; calling it later is refused.
+    assert.ok(!def.refused, JSON.stringify(def));
     // DEFENDED: f's body carries the inside gate with it; a later call cannot `import os`.
     const call = await cell(ns, "return f()", false);
     assert.ok(call.error || call.threw, `f() must not run its body ungated: ${JSON.stringify(call)}`);
@@ -151,10 +153,9 @@ test("P2-capture: a builtin the gate refuses to CALL is not left behind as a cal
     ]) {
         const ns = world();
         const out = await cell(ns, code);
-        assert.ok(out.refused, `${label} puts the cell outside: ${JSON.stringify(out)}`);
         // DEFENDED: the callable is not copied back — the name may be bound to nothing the full path can call.
-        const leaked = await py.runPythonAsync(`repr(${name}) if '${name}' in globals() and callable(${name}) else 'CLEAR'`, { globals: ns });
-        assert.strictEqual(String(leaked), "CLEAR", `${label} must not leave a callable ${name} for later code`);
+        const leaked = await py.runPythonAsync(`import restricted\n_f = globals().get('${name}')\n'CLEAR' if not callable(_f) or (type(_f).__name__ == 'function' and _f.__code__.co_flags & restricted.CO_RESTRICTED) else repr(_f)`, { globals: ns });
+        assert.strictEqual(String(leaked), "CLEAR", `${label} must not leave a callable ${name} that runs outside a run`);
     }
     // positive control: a harmless binding does persist
     const ns = world();
@@ -168,7 +169,6 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "f = [lambda: open]");
-        assert.ok(out.refused, `f = [lambda: open] puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return f[0]()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `f[0]() must not return open: ${JSON.stringify(call)}`);
     }
@@ -176,7 +176,6 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "class C:\n    def run(self):\n        return open\nc = C()");
-        assert.ok(out.refused, `class C + c = C() puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return c.run()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `c.run() must not return open: ${JSON.stringify(call)}`);
     }
@@ -184,7 +183,6 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "f = {'g': lambda: open}");
-        assert.ok(out.refused, `f = {'g': lambda: open} puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return f['g']()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `f['g']() must not return open: ${JSON.stringify(call)}`);
     }
@@ -192,7 +190,6 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "f = [[lambda: open]]");
-        assert.ok(out.refused, `f = [[lambda: open]] puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return f[0][0]()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `f[0][0]() must not return open: ${JSON.stringify(call)}`);
     }

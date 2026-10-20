@@ -217,17 +217,13 @@ test("a cell's own function is never what the wrapper calls: one shadowing str s
 test("DATA ONLY: a binding that reaches code, at any depth, puts the cell outside and leaves nothing", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const cases = [
-        ["def f():\n    return 1", /'f' holding a function or class, which/],
-        ["f = lambda: 1", /'f' holding a function or class, which/],
         ["g = map(abs, [-1, 2])", /'g' holding a map/],
         ["f = open", /'f' holding a builtin it captured \(open\)/],
         ["xs = [1, [2, (3, open)]]", /'xs' holding a builtin it captured \(open\)/],
-        ["d = {'k': {'f': lambda: 1}}", /'d' holding a function or class, which/],
         ["d = {getattr: 1}", /'d' holding a builtin it captured \(getattr\)/],
         ["import pandas as pd\ndf = pd.DataFrame({'a': [1, open]})", /'df' holding a builtin it captured \(open\)/],
         ["import numpy as np\na = np.array([1, open], dtype=object)", /'a' holding a builtin it captured \(open\)/],
         ["return open", /the value it returns holding a builtin it captured \(open\)/],
-        ["return [lambda: 1]", /the value it returns holding a function/],
     ];
     const gateFirst = [];
     for (const [code, re] of cases) {
@@ -284,6 +280,26 @@ F.__module__, I.__module__ = "numpy", "pandas"   # forged: a module string is no
     assert.match(String(verdicts[0]), /'f' holding a F,/);
     assert.match(String(verdicts[1]), /'i' holding a I,/);
     assert.strictEqual(verdicts[2], undefined, "numpy scalars and pandas' own index classes are data");
+});
+
+test("CELL FUNCTIONS: a function the cell defined crosses back; it runs in a later inside cell and is refused outside a run (#895)", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const ns = world("none");
+    const def = await cell(ns, "def sq(x):\n    return x * x\npair = [lambda: 1, {'k': sq}]");
+    assert.strictEqual(def.refused, undefined, JSON.stringify(def));
+    assert.strictEqual((await cell(ns, "return sq(4) + pair[0]()")).value, 17, "a later inside cell calls it under the gate");
+    const full = await cell(ns, "return sq(4)", false);
+    assert.match(String(full.error), /NotInDialect: not in dialect: sq\(\) was defined in a cell that ran inside the read-only dialect, unasked, and runs only there; define it again in this cell to call it here/);
+    // What a function carries is walked like any other value: a builtin in a default or a closed-over cell stays out.
+    for (const [code, re] of [
+        ["def f(a=open):\n    return a", /'f' holding a builtin it captured \(open\)/],
+        ["def f(*, a=getattr):\n    return a", /'f' holding a builtin it captured \(getattr\)/],
+        ["def outer():\n    x = open\n    return lambda: x\ng = outer()", /'g' holding a builtin it captured \(open\)/],
+    ]) {
+        const out = await cell(world("none"), code);
+        if (out.refused && !/^it leaves /.test(out.refused)) { t.diagnostic(`${JSON.stringify(code)}: refused by the gate first (${out.refused})`); continue; }
+        assert.match(String(out.refused), re, code);
+    }
 });
 
 test("IMPORTS: what the cell's own import bound crosses back as itself, in every shape the gate admits", { timeout: 60000 }, async (t) => {

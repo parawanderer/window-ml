@@ -229,16 +229,18 @@ worker drives with `autoApprovePython` on:
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
    numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import
-   statement bound (`_ml_imported`: `import numpy as np`, `from numpy import sum as total`). A function, class, module,
-   iterator or captured builtin, at any depth, would run UNGATED in a later full-path cell (the red team's #880 pass),
-   so it makes the try a refusal: `it leaves 'f' holding …`. Nothing passes by identity: a value the namespace already
-   held, under a NEW name (`a = ml`, `h = helper`), would hide from the card what it is (#896). Until the fork carries
-   `CO_RESTRICTED` into every call (#893), a cell that defines a function asks. The try writes nothing to the live
-   stdout stream; its print reaches the call only when it finished.
+   statement bound (`_ml_imported`: `import numpy as np`, `from numpy import sum as total`), or a function the cell
+   defined (every code object `CO_RESTRICTED`). The fork enters such code only inside a run (#895): a later inside cell
+   calls it under the gate, and a full-path cell that calls it gets `NotInDialect: f() was defined in a cell that ran
+   inside the read-only dialect, unasked, …; define it again in this cell to call it here`. Its defaults and closed-over
+   cells are walked like any value. Anything else (a class, a module, an iterator, a captured builtin, an approved
+   function under a new name), at any depth, makes the try a refusal: `it leaves 'f' holding …`. Nothing passes by
+   identity: a value the namespace already held, under a NEW name (`a = ml`, `h = helper`), would hide from the card
+   what it is (#896). The try writes nothing to the live stdout stream; its print reaches the call only when it finished.
 5. If it is refused (`NotInDialect`, including the step budget and the memory cap, or a `SystemError` from an undo
    log that did not replay), the namespace is left as it was and the output and value are discarded. The worker
-   answers `notInDialect`, with the line from the cell's frame for a run-time refusal; the fork's check-time line is
-   one past the cell's, and is corrected. The try returns null. The gate then asks, with
+   answers `notInDialect`, with the fork's own line for a check-time refusal and the cell's frame's for a run-time one
+   (the fork numbers both by the cell's lines). The try returns null. The gate then asks, with
    `askWhy = pythonOutsideWhy(where)` keyed by the cell's exact source. An edited cell has no entry and is outside.
    Approved, the cell runs on the full path, and only that run's result is the cell's.
 

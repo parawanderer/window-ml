@@ -6,9 +6,10 @@
  * module, call or attribute outside the dialect, or the step budget or memory cap) sets `_ml_not_in_dialect` and leaves
  * the namespace as it was, and the host discards the run and asks the person. Only a finished run's bindings are copied
  * back, never one the wrapper itself reads (a builtin's name, or one starting with "_"), and only when each new binding
- * and the value are DATA (`_ml_not_inert`), or exactly what the cell's own import bound (`_ml_imported`): a function,
- * class, module or captured builtin, at any depth or under a new name, would run ungated or disguised in a later cell,
- * so it puts the cell outside instead (docs/spec/PYTHON_DIALECT.md, #892, #893, #896). The try
+ * and the value are DATA (`_ml_not_inert`), exactly what the cell's own import bound (`_ml_imported`), or a function
+ * the cell defined, whose code the fork enters only inside a run (#895). A class, module or captured builtin, at any
+ * depth or under a new name, would run ungated or disguised in a later cell, so it puts the cell outside instead
+ * (docs/spec/PYTHON_DIALECT.md, #892, #893, #895, #896). The try
  * streams nothing, and a refused one's output is dropped.
  */
 export const INSIDE_CELL = /* python */ `
@@ -74,6 +75,11 @@ def _ml_not_inert(_roots, _cap=2000000):
                 _stack.extend(_x.keys()); _stack.extend(_x.values())
             elif _ty is _co.defaultdict:
                 _stack.append(_x.default_factory); _stack.extend(_x.keys()); _stack.extend(_x.values())
+            elif _ty is _t.FunctionType and _ml_restricted_code(_x.__code__):
+                # The cell's own function: the fork enters its code only inside a run (#895), so it crosses back. What it
+                # carries is walked like any other value: a default, a keyword default, a closed-over cell.
+                _stack.extend(_x.__defaults__ or ()); _stack.extend((_x.__kwdefaults__ or {}).values())
+                _stack.extend(_c.cell_contents for _c in (_x.__closure__ or ()) if _ml_cell_full(_c))
             elif _np is not None and _ty is _np.ndarray:
                 if _x.dtype.hasobject:
                     _stack.extend(_x.ravel().tolist())
@@ -93,6 +99,22 @@ def _ml_not_inert(_roots, _cap=2000000):
                          else "a " + _ty.__name__)
                 return "it leaves " + _ml_what(_name) + " holding " + _kind + ", which the dialect cannot vouch for"
     return None
+def _ml_restricted_code(_co):
+    # Is this code, and every code object among its constants, the cell's own (CO_RESTRICTED)?
+    import types as _t, restricted as _rs
+    _todo = [_co]
+    while _todo:
+        _c = _todo.pop()
+        if not _c.co_flags & _rs.CO_RESTRICTED:
+            return False
+        _todo.extend(_k for _k in _c.co_consts if type(_k) is _t.CodeType)
+    return True
+def _ml_cell_full(_c):
+    try:
+        _c.cell_contents
+        return True
+    except ValueError:
+        return False
 def _ml_imported(_src):
     # What the cell's own import statements bind, by name: the binding the gate admitted when it let the import run, so it
     # crosses back as itself (import numpy as np; from math import sqrt). Read from sys.modules after the run.
@@ -125,18 +147,13 @@ def _ml_inside_run(_src, _g):
     except (_r.NotInDialect, SystemError) as _e:
         # SystemError: the undo log did not replay cleanly, so nothing about the run is trusted.
         _msg = str(_e) or type(_e).__name__
-        # Lines are one past the cell's for the "def _user():" the fork parses and compiles the cell under. A refusal AT
-        # CHECK time names that line (corrected here); one AT RUN TIME (a module, call or attribute) names none, and the
-        # cell's own frame knows it.
-        import re as _re
-        _m = _re.search(r"\\(line (\\d+)\\)", _msg)
-        if _m:
-            _msg = _msg[:_m.start()] + "(line " + str(max(1, int(_m.group(1)) - 1)) + ")" + _msg[_m.end():]
-        else:
+        # A refusal AT CHECK time names the cell's line itself; one AT RUN TIME (a module, call or attribute) names none,
+        # and the cell's own frame knows it.
+        if "(line " not in _msg:
             _t, _ln = _e.__traceback__, None
             while _t is not None:
                 if _t.tb_frame.f_code.co_filename == "<cell>":
-                    _ln = _t.tb_lineno - 1
+                    _ln = _t.tb_lineno
                 _t = _t.tb_next
             if _ln:
                 _msg += " (line " + str(_ln) + ")"
