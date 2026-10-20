@@ -225,6 +225,14 @@ function runMainsCopy(argv) {
 }
 
 /**
+ * Every path a `git diff --name-status` names, both sides of a rename or copy, so moving the tool away from its name
+ * still touches it. Pure, so the rule is testable.
+ */
+export function diffPaths(nameStatus) {
+    return nameStatus.split("\n").filter(Boolean).flatMap((l) => l.split("\t").slice(1));
+}
+
+/**
  * The files of the merge tool a PR's diff touches: `changed` (the diff's paths) that are in `tool` (this script and
  * its local imports). A PR that touches one is merged by hand ({@link judge}). Pure, so the rule is testable.
  */
@@ -315,7 +323,7 @@ function facts(pr, session, read = []) {
     const tool = plan.action === "pin" ? Object.keys(plan.files) : [SELF];
     return {
         head, sha, runId, runStatus, badJobs,
-        touchesTool: touchesTool(git("diff", "--name-only", range).split("\n").filter(Boolean), tool),
+        touchesTool: touchesTool(diffPaths(git("diff", "--name-status", range)), tool),
         tests: testLineCounts(git("diff", range, "--", "tests")),
         deletedTestFiles: deletedTests(git("diff", "--name-status", range, "--", "tests")).length,
         reviews: unread.filter((u) => u.kind !== "inline").length,

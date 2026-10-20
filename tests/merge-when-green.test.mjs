@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, localImports, pinPlan, PIN_SUPPORT, touchesTool } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -414,4 +414,11 @@ test("a PR that touches the tool is refused at once, green or not, naming the by
     }
     // A PR that touches none of it is judged as before.
     assert.equal(judge({ ...green, touchesTool: [] }).ok, true);
+});
+
+test("a rename or copy away from the tool names the tool too: both paths of every --name-status line count", () => {
+    const status = "M\tdocs/x.md\nR100\tscripts/merge-when-green.mjs\tscripts/mwg.mjs\nC75\tscripts/lib/h.mjs\tscripts/lib/h2.mjs\nD\tscripts/old.mjs\n";
+    assert.deepEqual(diffPaths(status), ["docs/x.md", "scripts/merge-when-green.mjs", "scripts/mwg.mjs", "scripts/lib/h.mjs", "scripts/lib/h2.mjs", "scripts/old.mjs"]);
+    assert.deepEqual(touchesTool(diffPaths(status), ["scripts/merge-when-green.mjs"]), ["scripts/merge-when-green.mjs"]);
+    assert.deepEqual(diffPaths(""), []);
 });
