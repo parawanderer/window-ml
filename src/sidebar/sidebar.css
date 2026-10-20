@@ -4335,7 +4335,9 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
     opacity: 0.35; transition: opacity 0.15s ease;
 }
 .mmd:hover .mmd-tools, .mmd-tools:focus-within { opacity: 1; }
-@media (hover: none) { .mmd-tools { opacity: 1; } }
+/* NO HOVER, NO QUIET TOOLBAR: always shown, it would sit on the drawing's top-right, where a narrow top-down
+   flowchart puts its first node. So it leaves the drawing and takes its own row above it. */
+@media (hover: none) { .mmd-tools { position: static; justify-content: flex-end; margin-bottom: 4px; opacity: 1; } }
 .mmd-btn {
     font: inherit; font-size: 11px; line-height: 1.5; padding: 0 6px; border-radius: 4px; cursor: pointer;
     border: 1px solid var(--border); background: var(--panel); color: var(--fg-dim);
