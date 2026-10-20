@@ -106,8 +106,8 @@ report-only tripwire below is what covers the gap's threat; the host never rever
 renamed name there, files included: Landlock cannot withhold an absent FILE either, lane 4's finding), and every
 call (sandboxed or not, host #13) reports `protectedChanged` in `done`, report-only (`SHELL.md`, the host's security list). The tripwire is
 **K3b**, lane 4's, DONE 2026-10-19: host side window-ml-host #13 (merged, the generalist reviewed), extension side window-ml
-#813 (merged 99b294d8, the janitor and the generalist reviewed; the run-log cut marker and the `run.json` ask outcome follow in
-#823). The envelope's extension side is the generalist's #807 (merged 1f79f663). K3b ships the
+#813 (merged 99b294d8, the janitor and the generalist reviewed; the run-log cut marker and the `run.json` ask outcome followed in
+#823, merged 2026-10-20, 4024f86b). The envelope's extension side is the generalist's #807 (merged 1f79f663). K3b ships the
 compare at `done` and at `status` for a live orphan; the compare at an orphan's DEADLINE kill (an `ended` record next to
 the ledger, returned by the next session's `status`) is an open item, unassigned, because it adds persistence and a
 consume-once semantic that need their own design (ruled 2026-10-19).
@@ -185,7 +185,8 @@ listed as remaining is DONE unless named below.
   whether the wrappers can be installed only for a restricted entry's extent, measured before it is claimed cheaper:
   natively no gain (2026-10-20, an ordering effect), so open for the wasm number only; the code sits on the fork's
   `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
-  under pymalloc), fixed in parawanderer/cpython#3, lane 4 reviews; no Pyodide rebuild.
+  under pymalloc), fixed in parawanderer/cpython#3, lane 4 verified it natively; no Pyodide rebuild. A hook on pymalloc before the first run brings the
+  double count back, listed as a known limit that errs toward refusing (`PYTHON_DIALECT.md`).
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
   (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
