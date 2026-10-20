@@ -5,7 +5,7 @@
 // grant is minted by the background loop's approval, and the frames cross SW → content → page. Every one of
 // those is the thing under test, so a mocked version would test a mock.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -139,7 +139,6 @@ test("a server tool's streamed output survives the step landing, beside its resu
     const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 20 });
     const site = await startPageServer({});
     const ext = await launchExtension();
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     try {
         await configureExtension(ext.sw, {
             chatUrl: fake.url, apiKey: "k", apiFormat: "openai", model: "fake-model", debugMode: "overlay",
@@ -166,27 +165,11 @@ test("a server tool's streamed output survives the step landing, beside its resu
         }));
 
         // Open the overlay and drop into the live session, so the step's rendered Out is on screen.
-        await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
-        await inShell(page, (roots) => {
-            const root = roots.sidebar;
-            const panel = root.getElementById("ml-sb-host");
-            panel.style.width = "700px";
-            panel.classList.add("open");
-            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
-        });
-        const frame = await (async () => {
-            for (let i = 0; i < 60; i++) {
-                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
-                if (f) return f;
-                await sleep(100);
-            }
-            throw new Error("sidebar iframe never appeared");
-        })();
-        for (let i = 0; i < 40; i++) {
-            const row = frame.locator("button.row").first();
-            if (await row.count()) { await row.click({ timeout: 2000 }).catch(() => {}); break; }
-            await sleep(200);
-        }
+        // `openRunInSidebar`, not a hand-rolled first-row click: the list re-renders as the run emits, so a
+        // single click can land on a row that is replaced before the handler runs and every later assertion
+        // then reads a transcript that is not this run (harness.mjs; the same mistake cost annotate-diff its
+        // 60x400ms approver). It clicks the session row BY TASK until the detail view renders.
+        const frame = await openRunInSidebar(page, { task: "search for ollama", width: 700 });
 
         await ext.sw.evaluate(async () => {
             for (let i = 0; i < 150; i++) {
