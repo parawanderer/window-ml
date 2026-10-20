@@ -223,7 +223,10 @@ inside run. The rule has two layers, and one is not the other's substitute:
    function and says it was defined in an unasked cell, to be redefined in the approved one. What such a function
    carries is walked like any other value: its defaults, keyword defaults and closure cells, so `def f(a=open)` and a
    lambda closing over `open` stay outside. Captured builtins, bound methods and anything not `CO_RESTRICTED` stay
-   refused; classes and `yield` stay outside.
+   refused; classes and `yield` stay outside. The edge (red team, 2026-10-20): a full-path cell can strip the flag,
+   `types.FunctionType(f.__code__.replace(co_flags=f.__code__.co_flags & ~CO_RESTRICTED), globals())()`, and the body
+   then runs ungated, since the frame is no longer `CO_RESTRICTED`. The strip is in an approved cell, so the person
+   approved it; inside the dialect it is unreachable (`__code__` is a dunder and `types` is not an allowed module).
 2. **The copy-back admits data only.** A binding an inside cell made persists only when its value carries no cell code
    and is no builtin: until layer 1 is in the pinned core, no function, lambda, class, bound method, generator,
    coroutine or `builtin_function_or_method` crosses back, and the check is RECURSIVE, since the container case is
