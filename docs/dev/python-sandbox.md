@@ -221,10 +221,10 @@ worker drives with `autoApprovePython` on:
 
 1. The host's read-only try (`tryPythonInside`, `sw-run-host.ts`) runs the cell before the gate, with the run's grant
    marked `inside` (`grantRunPython`). `runPython` passes `inside` to the worker only for a `runGated` caller.
-2. The worker loads the allow tables once (`dialectSetup`, from `dialect-data.ts`, which bundles
+2. The worker loads the allow tables once (`dialectSetup` in `python-dialect-run.ts`, from `dialect-data.ts`, which bundles
    `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
    `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
-3. `wrapUserScript(…, inside)` runs the cell through `run_cell` in a COPY of the namespace that holds no `_` name.
+3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`. A function a cell
    defines runs UNGATED when unrestricted code calls it later, so the wrapper must never call one.

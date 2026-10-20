@@ -16,7 +16,8 @@
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
 import { DIALECT_FILES, DIALECT_NODES } from "./dialect-data";
-import { wrapUserSetup, wrapUserScript, dialectSetup, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
+import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
+import { dialectSetup } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply

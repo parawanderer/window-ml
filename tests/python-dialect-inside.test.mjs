@@ -8,7 +8,8 @@ import { test, before } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
-import { wrapUserSetup, wrapUserScript, dialectSetup } from "../src/python/python-runtime.ts";
+import { wrapUserSetup, wrapUserScript } from "../src/python/python-runtime.ts";
+import { dialectSetup } from "../src/python/python-dialect-run.js";
 import { pythonCellInDialect, pythonOutsideWhy } from "../src/agent/python-dialect.ts";
 import { GENRES, loadVectors } from "./dialect-vectors.mjs";
 
