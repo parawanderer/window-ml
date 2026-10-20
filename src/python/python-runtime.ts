@@ -7,6 +7,7 @@
 import { PY_PRELUDE_IMPORTS } from "./python-env";
 import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
+import { insideDefs, INSIDE_CELL } from "./python-dialect-run";
 
 /**
  * Release a kept namespace (ROOT C's per-run dict) so no other cell in the interpreter can reach it. Emptied FIRST:
@@ -386,39 +387,8 @@ else:
     globals().pop("_ml_make", None)
 `;
 
-/**
- * The user's cell and the wrapper that captures its stdout, its `return`/trailing expression and its traceback.
- * Runs AFTER `wrapUserSetup` in the same namespace (the `_ml_*` refs and the prelude names it needs are already
- * bound). This is the only part the script's 15s and `runMs` are meant to cover.
- *
- * @param code the user's source
- * @param persist a KEEP-STATE mode (see `wrapUserSetup`)
- */
-export const wrapUserScript = (code: string, persist: boolean | "run" = false): string => /* python */ `
-result = None
-_ml_src = ${JSON.stringify(code)}
-_ml_persist = ${persist ? "True" : "False"}
-# stdout capture that tees each write to the REAL stdout (Pyodide's \`setStdout\` wraps it on the JS side for
-# live streaming) — no JS callback in the namespace, so the namespace holds no JsProxy at all.
-class _MlTee(_ml_stringio):
-    # Bounded (output-clip.ts OUTPUT_CEILING): past it a write is counted, not kept and not teed, so a print in a loop
-    # costs a counter, not the worker's memory.
-    _ml_kept = 0
-    _ml_dropped = 0
-    def write(self, _s):
-        if self._ml_dropped or self._ml_kept + len(_s) > ${OUTPUT_CEILING}:
-            self._ml_dropped += len(_s)
-            return len(_s)
-        self._ml_kept += len(_s)
-        _n = super().write(_s)
-        try: _ml_real_out.write(_s)
-        except Exception: pass
-        return _n
-_out = _MlTee()
-_err = None
-_ml_ret_latex = False
-with _ml_redir_out(_out), _ml_redir_err(_out):
-    try:
+/** The cell as full Python: parsed as an async `_user()`'s body, its trailing expression returned, and run. */
+const FULL_CELL = /* python */ `
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
@@ -495,12 +465,51 @@ with _ml_redir_out(_out), _ml_redir_err(_out):
                 _ret = await _ml_user_ret
         else:
             _ret = _ml_user_ret
-        if _ret is not None:
+`;
+
+/**
+ * The user's cell and the wrapper that captures its stdout, its `return`/trailing expression and its traceback.
+ * Runs AFTER `wrapUserSetup` in the same namespace (the `_ml_*` refs and the prelude names it needs are already
+ * bound). This is the only part the script's 15s and `runMs` are meant to cover.
+ *
+ * @param code the user's source
+ * @param persist a KEEP-STATE mode (see `wrapUserSetup`)
+ * @param inside run the cell INSIDE the dialect (`INSIDE_CELL`) with the whitelist's node list, else as full Python
+ */
+export const wrapUserScript = (code: string, persist: boolean | "run" = false, inside: { nodes: string[] } | null = null): string => /* python */ `
+result = None
+_ml_src = ${JSON.stringify(code)}${inside ? insideDefs(inside.nodes) : ""}
+_ml_persist = ${persist ? "True" : "False"}
+# stdout capture that tees each write to the REAL stdout (Pyodide's \`setStdout\` wraps it on the JS side for
+# live streaming) — no JS callback in the namespace, so the namespace holds no JsProxy at all.
+class _MlTee(_ml_stringio):
+    # Bounded (output-clip.ts OUTPUT_CEILING): past it a write is counted, not kept and not teed, so a print in a loop
+    # costs a counter, not the worker's memory.
+    _ml_kept = 0
+    _ml_dropped = 0
+    def write(self, _s):
+        if self._ml_dropped or self._ml_kept + len(_s) > ${OUTPUT_CEILING}:
+            self._ml_dropped += len(_s)
+            return len(_s)
+        self._ml_kept += len(_s)
+        _n = super().write(_s)
+        if ${inside ? "False" : "True"}:   # a try inside the dialect streams nothing: a refused one's output is dropped
+            try: _ml_real_out.write(_s)
+            except Exception: pass
+        return _n
+_out = _MlTee()
+_err = None
+_ml_ret_latex = False
+with _ml_redir_out(_out), _ml_redir_err(_out):
+    try:
+${inside ? INSIDE_CELL : FULL_CELL}        if _ret is not None:
             result = _ret
     except BaseException:
         _err = _ml_fmt_exc()
         result = None
-_stdout = _out.getvalue()
+_stdout = _out.getvalue()${inside ? `
+if _ml_not_in_dialect is not None:
+    _stdout = ""` : ""}
 _ml_stdout_dropped = _out._ml_dropped
 try:
     _json_result = _ml_dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))

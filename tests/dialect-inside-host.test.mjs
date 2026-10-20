@@ -1,0 +1,99 @@
+// dialect-inside-host.test.mjs — the worker's try of a python_exec cell INSIDE the read-only dialect, before its gate, in the built worker.
+//
+// docs/spec/PYTHON_DIALECT.md, "Membership replaces `mode`": a cell the sandbox runs inside is the call's result, with
+// no card; one it refuses asks, saying where it left the dialect, and only the approved full-path run's result is the
+// cell's; a sandbox with no predicate (the stock core) makes every cell ask and reads none of a call's inputs for a try.
+// The built worker in node:vm (tests/helpers.js `loadBackground`); `pyInside` plays the sandbox's inside runs.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { jsonResponse, loadBackground } = require("./helpers");
+
+const T = { timeout: 30000 };
+const plain = (x) => JSON.parse(JSON.stringify(x ?? null));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const SITE = { id: 3, windowId: 1, active: true, url: "https://site.example/report", title: "Report" };
+const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off", autoApprovePython: true };
+
+/**
+ * A worker-built run whose driver calls python_exec once with `code`, then answers. `pyInside(msg)` answers the inside
+ * runs (absent: the stock core). Every gate is approved. Returns the sandbox's runs, the step events and the model's view.
+ */
+async function run(code, { pyInside, cfg = {} } = {}) {
+    let turns = 0, last = null;
+    const full = [];
+    const bg = loadBackground({
+        config: { ...config, ...cfg }, siteGate: true, openTabs: [SITE], pyInside,
+        onFetch: (c) => {
+            if (!c.url.includes("/chat/completions")) return jsonResponse({});
+            last = c.body.messages;
+            return ++turns === 1
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code }) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onPyRun: async (msg) => {
+            if (msg.type !== "PY_RUN") return { ok: true, prewarm: "started" };
+            full.push(plain(msg));
+            return { ok: true, value: "FULL PATH", stdout: "" };
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            return msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined;
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(SITE.id, { task: "compute", surface: "hud" });
+    for (let i = 0; i < 3000 && turns < 2; i++) await tick();
+    await new Promise((r) => setTimeout(r, 20));
+    const events = bg.tabMessages.filter(([, m]) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.tool === "python_exec").map(([, m]) => plain(m.event));
+    return {
+        full, inside: bg.pyInsideRuns.map(plain), events,
+        asked: events.filter((e) => e.awaitingApproval),
+        done: events.find((e) => !e.pending),
+        result: (last ?? []).filter((m) => m.role === "tool").map((m) => String(m.content)).join("\n"),
+    };
+}
+
+// --- a cell the sandbox runs inside: no card, its result is the call's ---
+
+test("a cell the sandbox runs inside the dialect is the call's result with no card, approved as sandbox, and never runs on the full path", T, async () => {
+    const r = await run("return 1 + 1", { pyInside: (msg) => ({ ok: true, value: msg.code === "pass" ? null : "INSIDE 2", stdout: "" }) });
+    assert.deepEqual(r.inside.map((m) => m.code), ["pass", "return 1 + 1"], "the probe, then the cell, both inside");
+    assert.equal(r.asked.length, 0, "no card");
+    assert.equal(r.full.length, 0, "nothing ran on the full path");
+    assert.equal(r.done.approval, "sandbox");
+    assert.match(r.result, /INSIDE 2/);
+});
+
+// --- a cell the sandbox refuses: it asks, says where, and only the full-path run counts ---
+
+test("a cell the sandbox refuses asks with where it left the dialect, and only the approved full-path run's result reaches the model", T, async () => {
+    const r = await run("import os\nreturn os.getcwd()", { pyInside: (msg) => (msg.code === "pass"
+        ? { ok: true, value: null, stdout: "" }
+        : { ok: false, stdout: "", notInDialect: "not in dialect: import 'os' (line 1)" }) });
+    assert.equal(r.asked.length, 1, "the person is asked");
+    assert.equal(r.asked[0].askWhy?.line, "Outside the read-only Python dialect: import 'os' (line 1)");
+    assert.equal(r.full.length, 1, "approved, it ran on the full path");
+    assert.equal(r.full[0].inside, undefined, "the approved run is not an inside run");
+    assert.match(r.result, /FULL PATH/);
+    assert.match(r.result, /outside the read-only Python dialect \(import 'os' \(line 1\)\)/, "the model reads why it asked");
+});
+
+// --- no predicate: every cell asks, and no try reads anything ---
+
+test("FAIL CLOSED: a sandbox with no membership predicate (the stock core) makes the cell ask; the probe is the only inside run", T, async () => {
+    const r = await run("return 1 + 1");
+    assert.deepEqual(r.inside.map((m) => m.code), ["pass"], "one probe with no inputs, then no try");
+    assert.equal(r.asked.length, 1);
+    assert.match(r.asked[0].askWhy?.line ?? "", /no membership predicate/);
+    assert.equal(r.full.length, 1);
+});
+
+test("Python auto-approval off: nothing is tried inside, and the cell asks saying so", T, async () => {
+    const r = await run("return 1 + 1", { cfg: { autoApprovePython: false }, pyInside: () => ({ ok: true, value: "INSIDE", stdout: "" }) });
+    assert.equal(r.inside.length, 0);
+    assert.equal(r.asked.length, 1);
+    assert.match(r.asked[0].askWhy?.line ?? "", /auto-approval of Python is off/);
+});

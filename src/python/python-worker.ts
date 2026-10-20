@@ -15,7 +15,9 @@
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
+import { DIALECT_FILES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
+import { dialectSetup } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
@@ -28,12 +30,12 @@ const READONLY = self.name !== "full";
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, re-bound into every cell's namespace
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; run?: string | null; deleteRun?: string };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -182,11 +184,28 @@ function deleteRunNamespace(runId: string): void {
     runs.delete(runId);
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0): Promise<RunResult> {
+// state: cache — "" once this interpreter can run cells inside the dialect, else why it cannot; loaded on the first inside run
+let dialectReady: Promise<string> | null = null;
+
+/**
+ * Whether this interpreter can run a cell inside the dialect, loading the fork's allow tables on the first call.
+ * @param py the interpreter
+ * @returns "" when it can, else the reason (a stock or old core, or a load that failed), so the cell asks
+ */
+function dialectReason(py: any): Promise<string> {
+    return dialectReady ??= Promise.resolve().then(() => py.runPythonAsync(dialectSetup(DIALECT_FILES)))
+        .then((r: unknown) => String(r ?? ""), (e: any) => `the dialect's manifests could not be loaded (${String((e && e.message) || e).split("\n").filter(Boolean).pop()})`);
+}
+
+async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false): Promise<RunResult> {
     const wasLive = pyodideLive;
     const w0 = Date.now();
     const py = await getPyodide();
     const boot = wasLive ? null : Date.now() - w0;
+    // INSIDE THE DIALECT (docs/spec/PYTHON_DIALECT.md, "Membership replaces `mode`"): an interpreter that cannot judge
+    // membership runs nothing unasked; the cell is reported outside and goes to the person.
+    const unready = inside ? await dialectReason(py) : "";
+    if (unready) return { ok: false, stdout: "", notInDialect: unready };
     const prewarm = prewarmUnused ? (wasLive ? "warm" : "starting") : undefined;
     prewarmUnused = false;
     // `started` / `t0` fire when the USER'S CELL is about to run — after the namespace, the injected inputs,
@@ -244,7 +263,11 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         t0 = Date.now();
         // The cell itself, wrapped to capture stdout / a `return`-or-bare-`result=` value / a traceback.
         // Reads back _stdout/_err/_json_result.
-        await py.runPythonAsync(wrapUserScript(code, keep), { globals: ns });
+        await py.runPythonAsync(wrapUserScript(code, keep, inside ? { nodes: DIALECT_NODES } : null), { globals: ns });
+        // A refused inside run: its output and value are discarded (only the full-path run's result is the cell's), and the
+        // namespace is as it was. The host asks the person, saying where the cell left the dialect.
+        const refused = inside ? ns.get("_ml_not_in_dialect") : undefined;
+        if (refused) return timed({ ok: false, stdout: "", notInDialect: String(refused) });
         const stdout = String(ns.get("_stdout") ?? "");
         // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
         const dropped = Number(ns.get("_ml_stdout_dropped") ?? 0) || 0;
@@ -290,6 +313,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         try { ns.delete("_ipc_result"); } catch { /* not set */ }
         // The loaders' namespace pointer is per cell: a stale one must not keep a released run's dict reachable.
         try { py.globals.set("_ml_load_ns", undefined); } catch { /* the interpreter is gone */ }
+        if (inside) for (const name of ["_ml_not_in_dialect", "_ml_inside_run", "_ml_trailing_return"]) { try { ns.delete(name); } catch { /* not set */ } }
         // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and
         // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
         // `pd.read_csv("sales")` could have been handed the model's last table. Clear them now instead.
@@ -416,7 +440,7 @@ function onMessage(e: MessageEvent): void {
     const onStdout = msg.stream ? (chunk: string) => post({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
     const onStarted = () => post({ id: msg.id, started: true });
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true))
         .then(
             (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),

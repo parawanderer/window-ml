@@ -117,7 +117,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -128,6 +128,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
     const tabsRemoved = [];     // chrome.tabs.remove ids
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
+    // A run's try of a python_exec cell INSIDE the dialect (`inside: true`), kept apart from `pyRuns`. `pyInside(msg)`
+    // answers it; absent, it is answered as the stock Pyodide core answers (no membership predicate), so the cell asks.
+    const pyInsideRuns = [];
     const pyDeletes = [];       // PY_DELETE_RUN messages (a settled run's kept Python namespace is dropped)
     const htmlToMd = [];        // HTML the worker asked the offscreen document to convert to Markdown
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
@@ -314,6 +317,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // The PYTHON_EXEC handler relays PY_RUN to the offscreen doc via runtime.sendMessage —
                 // capture the payload (esp. `hardened`) so tests can assert what the sandbox is told to run.
                 sendMessage: async (msg) => {
+                    if (msg?.type === "PY_RUN" && msg.inside) { pyInsideRuns.push(msg); return pyInside ? pyInside(msg) : { ok: false, stdout: "", notInDialect: "this Pyodide build has no membership predicate (the stock core, not the restricted-mode fork)" }; }
                     if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
                     if (msg?.type === "PY_DELETE_RUN") { pyDeletes.push(msg); return { ok: true }; }
                     if (msg?.type === "PY_PREWARM") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, prewarm: "started" }; }
@@ -443,6 +447,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         tabsCreated,
         tabsRemoved,
         pyRuns,
+        pyInsideRuns,
         pyDeletes,
         htmlToMd,
         debuggerCalls,
