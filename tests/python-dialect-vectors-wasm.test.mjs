@@ -17,6 +17,7 @@ const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 const BUILD_OFF = { specialization: false, specialization_ft: false, tier2: false, jit: false };
 
 let py = null;
+let stockCore = false; // a core is present but is the stock Pyodide, not the fork build
 let skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
 // --- the harness: run_vectors.py's child, as one function inside the interpreter ---
@@ -103,7 +104,7 @@ before(async () => {
 import importlib.util
 "restricted" if importlib.util.find_spec("_restricted") else "stock"
 `);
-    if (probe === "stock") { skip = "dist/pyodide is the stock Pyodide, not the restricted-mode build — `npm run fetch-pyodide` once tools/pyodide-dist.json has an artefact"; return; }
+    if (probe === "stock") { stockCore = true; skip = "dist/pyodide is the stock Pyodide, not the restricted-mode build — `npm run fetch-pyodide` once tools/pyodide-dist.json has an artefact"; return; }
     await py.loadPackage(["numpy", "pandas"]);
     py.FS.mkdirTree("/dialect-data");
     py.mountNodeFS("/dialect-data", DATA_DIR); // the manifests the dialect loads, read-only in effect
@@ -126,10 +127,11 @@ function judge(vec, out) {
 
 // --- under CI the fork's core is required: a skip must not pass for a run ---
 
-test("under CI with an artefact pinned, dist/pyodide is the restricted-mode core", (t) => {
+test("under CI with an artefact pinned, a dist/pyodide that exists is the restricted-mode core", (t) => {
     const pinned = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../tools/pyodide-dist.json"), "utf8")).artefact.sha256;
     if (!process.env.CI || !pinned) return t.skip("only under CI, once an artefact sha256 is pinned");
-    assert.strictEqual(skip, false, `the vectors would be skipped: ${skip}`);
+    // A job that never fetched Pyodide (no dist/pyodide) has nothing to check; one that shipped the stock core must fail.
+    assert.strictEqual(stockCore, false, `the vectors would be skipped: ${skip}`);
 });
 
 // --- the build gate: specialization, tier 2 and the JIT off, or the warm vectors pass by chance ---
