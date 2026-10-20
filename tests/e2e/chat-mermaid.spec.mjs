@@ -168,8 +168,13 @@ test("on a phone, where nothing hovers, the source and copy buttons sit above th
     await expect(img).toBeVisible({ timeout: 15_000 });
     const tools = page.locator(".chat-transcript .mmd[data-mmd='done'] .mmd-tools");
     await expect(tools).toBeVisible();
-    const [t, i] = [await tools.boundingBox(), await img.boundingBox()];
-    expect(t.y + t.height, "the toolbar ends before the drawing starts").toBeLessThanOrEqual(i.y);
+    // Both boxes in ONE frame: the transcript is still scrolling to its end, so two separate `boundingBox()` calls
+    // measure the toolbar and the drawing at different scroll offsets and the gap between them is noise.
+    const gap = () => tools.evaluate((el) => {
+        const img = el.closest(".mmd").querySelector("img.mmd-img");
+        return img.getBoundingClientRect().top - el.getBoundingClientRect().bottom;
+    });
+    await expect.poll(gap, { message: "the toolbar ends before the drawing starts" }).toBeGreaterThanOrEqual(0);
     await context.close();
 });
 
