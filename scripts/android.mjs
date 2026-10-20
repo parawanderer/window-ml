@@ -123,7 +123,10 @@ function install() {
     const abi = out(bin.adb, ["shell", "getprop", "ro.product.cpu.abi"]).trim();
     // NOT `--quiet`: it hides the REASON a build failed. A resource clash printed nothing but "exited 1", and the
     // error ("Found item Style/AppTheme more than one time") only appeared on a second, verbose run by hand.
-    run("./gradlew", ["assembleRelease", ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
+    // No lint: a RELEASE build runs "lint vital" over every module (about 90 s in CI), and this APK is for a device
+    // under test, never published. The published one is `tests.yml`'s `mobile-android`, which keeps it.
+    const noLint = ["lintVitalRelease", "lintVitalAnalyzeRelease", "lintVitalReportRelease"].flatMap((t) => ["-x", t]);
+    run("./gradlew", ["assembleRelease", ...noLint, ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
     run(bin.adb, ["install", "-r", "mobile/android/app/build/outputs/apk/release/app-release.apk"]);
     console.log(`✓ installed ${APP}`);
 }
