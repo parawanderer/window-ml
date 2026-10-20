@@ -214,17 +214,21 @@ inside run. The rule has two layers, and one is not the other's substitute:
    outside a run would need ownership, a budget, an undo log and a frame-exit hook with no run to hold them, while
    refusing is a subset of that and loosens nothing if gating is ever wanted). The check sits where the interpreter
    resumes a frame, so it covers a direct call, a generator's or coroutine's resumption, `exec(f.__code__)` and a C
-   library calling a cell lambda from a full-path cell; inside a run nothing changes. The cost claimed is one flag test
-   per call, and the fork PR carries the native number. It lands with the check-time line fix and its re-pin (lane 3).
+   library calling a cell lambda from a full-path cell; inside a run nothing changes. Measured cost (cpython#5, native
+   arm64, the check present against absent, 9 interleaved runs): 2M calls ×1.013 (+0.6 ns a call), 2M generator
+   resumptions ×0.986, both inside the runs' spread. Landed in fork `77376876` with the line fix (a cell is parsed as
+   itself, so its lines, columns and multi-line strings are its own), pinned by lane 3's re-pin.
    After the re-pin: a `FunctionType` whose code and every nested code constant is `CO_RESTRICTED` may cross back,
    later inside cells call it unasked, and a full-path cell that calls it gets the refusal, whose text names the
-   function and says it was defined in an unasked cell, to be redefined in the approved one. Captured builtins, bound
-   methods and anything not `CO_RESTRICTED` stay refused; classes and `yield` stay outside. Stated residual (the red
-   team's post-merge read of cpython#5, 2026-10-20): APPROVED code on the full path can strip the flag,
-   `f.__code__.replace(co_flags=...)`, and run the body ungated (its probe listed the filesystem); a fresh
-   `types.CodeType` from the same bytes would do the same, so the flag cannot be made unstrippable without taking
-   code-object access from the full path, which the full path has by design. It is not an escape: the cell that does
-   it is on the card, and a cell that rewrites a function's flags reads as what it is.
+   function and says it was defined in an unasked cell, to be redefined in the approved one. What such a function
+   carries is walked like any other value: its defaults, keyword defaults and closure cells, so `def f(a=open)` and a
+   lambda closing over `open` stay outside. Captured builtins, bound methods and anything not `CO_RESTRICTED` stay
+   refused; classes and `yield` stay outside. Stated residual (the red team's post-merge read of cpython#5,
+   2026-10-20): APPROVED code on the full path can strip the flag, `f.__code__.replace(co_flags=...)`, and run the body
+   ungated (its probe listed the filesystem); a fresh `types.CodeType` from the same bytes would do the same, so the
+   flag cannot be made unstrippable without taking code-object access from the full path, which the full path has by
+   design. It is not an escape: the cell that does it is on the card, and a cell that rewrites a function's flags reads
+   as what it is.
 2. **The copy-back admits data only.** A binding an inside cell made persists only when its value carries no cell code
    and is no builtin: until layer 1 is in the pinned core, no function, lambda, class, bound method, generator,
    coroutine or `builtin_function_or_method` crosses back, and the check is RECURSIVE, since the container case is
