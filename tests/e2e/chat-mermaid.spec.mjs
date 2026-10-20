@@ -157,6 +157,22 @@ test("a 'finished drawing' posted by any window other than the frame is ignored"
 
 // --- the PDF: the drawing, in the light theme it prints in ---
 
+// --- on a touch screen ---
+
+test("on a phone, where nothing hovers, the source and copy buttons sit above the drawing instead of over it", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    const DIAGRAM = "laptop:d1a6a4a5";   // demo-world.ts: "How a step is chosen", a top-down flowchart
+    await page.goto(`${server.url}#/s/${DIAGRAM}`);   // at this width the route opens the session, with no list
+    const img = page.locator(".chat-transcript .mmd[data-mmd='done'] img.mmd-img");
+    await expect(img).toBeVisible({ timeout: 15_000 });
+    const tools = page.locator(".chat-transcript .mmd[data-mmd='done'] .mmd-tools");
+    await expect(tools).toBeVisible();
+    const [t, i] = [await tools.boundingBox(), await img.boundingBox()];
+    expect(t.y + t.height, "the toolbar ends before the drawing starts").toBeLessThanOrEqual(i.y);
+    await context.close();
+});
+
 test("the PDF carries each diagram as its light drawing, with nothing to click, though the page only ever drew it dark", async () => {
     const context = await browser.newContext({ viewport: DESKTOP, colorScheme: "dark" });
     const page = await context.newPage();
