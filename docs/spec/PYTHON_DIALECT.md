@@ -200,6 +200,29 @@ carried verdict is outside. The predicate absent (a stock or older Pyodide core)
 `NotInDialect`/`SyntaxError` is outside. The static alternative, resolving imports and attributes in the check, is
 rejected: an attribute of a runtime value cannot be resolved statically, so it would refuse most real cells or be unsound.
 
+**What an inside run may leave behind is data, never code** (ruling 2026-10-20, from the red team's #880 pass; lane 3
+builds, the red team gates). "Nothing behind but reads" covers the namespace's bindings too: a function, lambda, class,
+generator or coroutine defined inside had its body CHECKED for membership but never RUN under the gate, so copying it
+back hands a later cell unjudged code, and a builtin the gate never allowed (`f = open`) is a capability under a plain
+name. The red team showed both: `def f(): import os; return os.listdir('/')` admitted unasked, then an approved cell's
+`f()` listed the filesystem; `def f(): return ml.config()` the same way sent a wire call, a write reaching `ml` from an
+inside run. The rule has two layers, and one is not the other's substitute:
+
+1. **The fork honours `CO_RESTRICTED` wherever the code runs**, not only under `_restricted.run`: a code object compiled
+   under an inside try carries its gate into every later call, from any frame, a generator's resumption included. This
+   is the universal statement (where a value ends up is unobservable), and the fork change that makes it true lands
+   with the check-time line fix and its re-pin (lane 3).
+2. **The copy-back admits data only.** A binding an inside cell made persists only when its value carries no cell code
+   and is no builtin: until layer 1 is in the pinned core, no function, lambda, class, bound method, generator,
+   coroutine or `builtin_function_or_method` crosses back, and a container holding one is the named residual the red
+   team's tests cover (if it is real, the cut widens to "values the cell owns, with no callable reachable", never
+   narrows). Once layer 1 holds, a cell-defined function may cross back, since it stays gated; a captured builtin never
+   does, because it is not cell code and layer 1 never sees it.
+
+A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
+wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
+inferred. Each part is mutation-checked alone: revert it and the red team's test fails again.
+
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".

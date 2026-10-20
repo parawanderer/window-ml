@@ -217,6 +217,11 @@ listed as remaining is DONE unless named below.
   the cell's own line and is re-pinned; the same window-ml PR as the re-pin drops the wrapper's subtraction, or every
   check-time line comes out one too low (#880's inside test pins `(line 2)` on the real core). Lane 3 owns it after
   #880 merges (Shane, 2026-10-20), so the fork is no longer nobody's.
+  The red team's #880 pass (2026-10-20, 09:40Z mail): request changes. Lead: a function defined inside is copied back
+  and runs ungated on the full path (reaches `os` and `ml`); also captured builtins cross back, and a refused try's
+  stdout is not dropped. Ruled in [`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "What an inside run may leave
+  behind is data, never code": the fork honours `CO_RESTRICTED` on every call (with the line fix and re-pin), and the
+  copy-back admits data only, now, in #880. #880 is held until the red team gates the fix.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
