@@ -15,6 +15,7 @@ import { Worker } from "node:worker_threads";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
 import { mlPipe } from "../src/pointers/text-pipe.ts";
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
+import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const CONFIG = { model: "qwen3.8-flash-next:vision", ocrModel: "qwen3-vl:30b", apiFormat: "openai",
@@ -92,18 +93,18 @@ function ensureWorker() {
     return worker;
 }
 after(() => worker?.terminate());
-function inWorker(src, ms = 5000, stepBudget = 200_000) {
+function inWorker(src, stepBudget = 200_000) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
-        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
+        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, watchdogMs(stepBudget));
         pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
         w.postMessage({ id, src, stepBudget });
     });
 }
 /** The survey must END, and end OUT of dialect (the human gate), not with a value and not with a runtime error. */
 async function fallsBack(src, why, stepBudget) {
-    const r = await inWorker(src, 5000, stepBudget);
-    assert.ok(!r.hung, `${why}: still running after 5 s`);
+    const r = await inWorker(src, stepBudget);
+    assertNotHung(r, why, stepBudget);
     assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
     return r;
 }
@@ -125,7 +126,8 @@ test("ADVERSARIAL: a pattern that backtracks exponentially is refused before it 
 
 test("ADVERSARIAL: -F makes the same pattern a literal, which is safe and runs", async () => {
     const r = await inWorker(`ml.pipe(${EVIL_LINE}, "grep -F '(a+)+$'")`);
-    assert.ok(!r.hung && !r.threw, JSON.stringify(r));
+    assertNotHung(r, "the survey", 200_000);
+    assert.ok(!r.threw, JSON.stringify(r));
 });
 
 test("ADVERSARIAL: a getter on the source is never run — the source is read from own DATA properties only", async () => {

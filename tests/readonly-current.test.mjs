@@ -16,6 +16,7 @@ import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER, describeSw
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { mlPipe } from "../src/pointers/text-pipe.ts";
 import { toolToken } from "../src/util.ts";
+import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
 import { execCodeIn } from "../src/pointers/pointer-macro.ts";
 
 const outOfDialect = (e) => e instanceof NotInDialect || e instanceof Denied;
@@ -637,7 +638,7 @@ function ensureWorker() {
     return worker;
 }
 after(() => worker?.terminate());
-function inThread(src, n = 3, ms = 5000, bound = false, shared = false) {
+function inThread(src, n = 3, ms = watchdogMs(200_000), bound = false, shared = false) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
         const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
@@ -653,14 +654,14 @@ test("HALTING: a loop that tries to grow the messages it iterates ends at once, 
         `const all = ml.current.messages; for (const m of all) all[all.length] = m; 0`,
     ]) {
         const r = await inThread(src);
-        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assertNotHung(r, src, 200_000);
         assert.equal(r.threw, "TypeError", src);
     }
 });
 
 test("HALTING: a survey over a large context is bounded by the step budget, not by how big the context is", async () => {
     const r = await inThread(`ml.current.messages.map(a => ml.current.messages.map(b => a.content + b.content).length).length`, 2000);
-    assert.ok(!r.hung, "still running after 5 s");
+    assertNotHung(r, "the survey", 200_000);
     assert.equal(r.threw, "NotInDialect", "4 million pairs: over budget, so it goes to the human");
     assert.match(r.message, /too much work/);
 });
@@ -673,7 +674,7 @@ test("HALTING: a watch that loops, recurses or multiplies over caller-bound data
         "for (const x of inspector.big) inspector.big.push(x); 0",
     ]) {
         const r = await inThread(src, 3, 5000, true);
-        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assertNotHung(r, src, 200_000);
         assert.ok(r.threw, `${src}: should not complete`);
     }
     assert.equal((await inThread("inspector.big.length", 3, 5000, true)).value, 3000, "and a cheap read of the same data answers");
@@ -686,7 +687,7 @@ test("HALTING: a loop over ml.current.debug cannot grow it, and multiplying over
         ["ml.current.debug.userWatches.map(a => ml.current.debug.userWatches.map(b => a.value.i + b.value.i).length).length", "NotInDialect"],
     ]) {
         const r = await inThread(src, 3, 5000, false, true);
-        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assertNotHung(r, src, 200_000);
         assert.equal(r.threw, want, src);
     }
     assert.equal((await inThread("ml.current.debug.userWatches.length", 3, 5000, false, true)).value, 3000);
@@ -699,7 +700,7 @@ test("HALTING: dates, the clock and number formatting in a long map are stopped 
         "Array.from({ length: 10000000 }, () => +new Date()).length",
     ]) {
         const r = await inThread(src);
-        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assertNotHung(r, src, 200_000);
         assert.equal(r.threw, "NotInDialect", src);
     }
 });

@@ -4,6 +4,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
+import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
 
 const { evalPolicy, evalReadonly, POLICY_STEPS } = await import("../src/readonly-exec.ts");
 const { vectors } = await import("./dialect-vectors.mjs");
@@ -258,8 +259,8 @@ function ensureWorker() {
     return worker;
 }
 after(() => worker?.terminate());
-/** Evaluate in a worker; `{ hung: true }` when it is still running after `ms`. */
-function inWorker(src, facts, ms = 5000) {
+/** Evaluate in a worker; `{ hung: true }` if the halting watchdog fires first. */
+function inWorker(src, facts, ms = watchdogMs(50_000)) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
         const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
@@ -277,7 +278,7 @@ test("HALTING: a loop over c.argv is allowed and bounded by the argv", async () 
 
 test("HALTING: a loop the budget cannot afford is broken, not hung", async () => {
     const r = await inWorker("(c) => c.argv.every((a) => c.argv.every((b) => a !== b || a === b))", BIG);
-    assert.ok(!r.hung, "still running after 5 s");
+    assertNotHung(r, "the policy", 50_000);
     assert.equal(r.decision, undefined);
     assert.match(r.broken, /budget|steps|too much/i);
 });
@@ -285,7 +286,7 @@ test("HALTING: a loop the budget cannot afford is broken, not hung", async () =>
 test("HALTING: recursion past the call depth is refused, directly and mutually", async () => {
     for (const v of vectors("halting", "tests/readonly-policy.test.mjs halting")) {
         const r = await inWorker(v.js, FACTS);
-        assert.ok(!r.hung, `${v.name}: still running`);
+        assertNotHung(r, v.name, 50_000);
         assert.equal(r.decision, undefined, v.name);
         assert.match(r.broken, /nested more than|budget|steps|too much/i, v.name);
     }
@@ -298,7 +299,7 @@ test("HALTING: a string doubled in a loop and an exponential recursion are stopp
         '(c) => { const a = []; for (const x of c.argv) for (const y of c.argv) a.push(x + y); return a.length > 0; }',
     ]) {
         const r = await inWorker(src, BIG);
-        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assertNotHung(r, src, 50_000);
         assert.equal(r.decision, undefined, src);
         assert.ok(r.broken, src);
     }
@@ -306,7 +307,7 @@ test("HALTING: a string doubled in a loop and an exponential recursion are stopp
 
 test("HALTING: a backtracking regex never reaches the engine", async () => {
     const r = await inWorker("(c) => /(a+)+b/.test(c.url)", { ...FACTS, effects: undefined, url: "a".repeat(40) });
-    assert.ok(!r.hung);
+    assertNotHung(r, "the policy", 50_000);
     assert.match(r.broken, /backtrack/);
 });
 
