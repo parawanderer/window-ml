@@ -13,6 +13,7 @@ import xml from "highlight.js/lib/languages/xml";
 import cssLang from "highlight.js/lib/languages/css";
 import mdLang from "highlight.js/lib/languages/markdown";
 import { js_beautify } from "js-beautify/js/lib/beautify.js";
+import { mermaidBlock, mermaidStatic } from "../mermaid/mermaid-block";
 import katex from "katex";
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { Session, Status } from "./store";
@@ -123,8 +124,6 @@ export function htmlLines(html: string): string[] {
     return lines;
 }
 
-// `math: true` renders LaTeX ($…$, $$…$$, \(…\), \[…\]) with KaTeX. Off for the export (keeps raw
-// LaTeX source — no bundled fonts in the print doc); the live sidebar turns it on.
 /**
  * What a markdown link's tooltip says: WHERE it goes, because link text and destination are the two things markdown
  * lets disagree. The URL arrives HTML-escaped, so a cut never ends inside an entity (`&amp;`), and the scheme goes —
@@ -136,12 +135,21 @@ function linkTip(url: string): string {
     return `Opens ${where} in a new tab`;
 }
 
-export function markdown(src: string, opts: { math?: boolean } = {}): string {
+/**
+ * Model-written Markdown as escaped HTML: fenced code highlighted, tables, links with their destination as the tip.
+ * `math: true` renders LaTeX ($…$, $$…$$, \(…\), \[…\]) with KaTeX. A ```mermaid fence is a diagram block from the
+ * drawing cache (src/mermaid/); `diagrams` names a STATIC document's theme (the PDF), where a drawn fence is its image
+ * alone and an undrawn one stays code.
+ */
+export function markdown(src: string, opts: { math?: boolean; diagrams?: "light" | "dark" } = {}): string {
     const codeBlocks: string[] = [];
     // Pull fenced code from the RAW source first (highlighted, not double-escaped),
     // stashed behind an ASCII placeholder restored at the end.
     const stashed = src.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang: string, code: string) => {
-        codeBlocks.push(`<pre class="code"><code class="hljs">${highlight(code.replace(/\n$/, ""), lang || undefined)}</code></pre>`);
+        // A ```mermaid fence is a diagram: drawn already (the cache) or pending, for mermaid-client.ts to draw in place.
+        // `diagrams` names a static document's theme: the drawing alone, from the cache, and nothing pending.
+        codeBlocks.push(lang === "mermaid" ? (opts.diagrams ? mermaidStatic(code.replace(/\n$/, ""), opts.diagrams === "dark") : mermaidBlock(code.replace(/\n$/, "")))
+            : `<pre class="code"><code class="hljs">${highlight(code.replace(/\n$/, ""), lang || undefined)}</code></pre>`);
         return `\n@@CODE${codeBlocks.length - 1}@@\n`;
     });
     // Stash rendered math behind placeholders BEFORE escaping — KaTeX output is trusted HTML that must

@@ -115,5 +115,7 @@ export function StreamingMd({ content, live }: { content: string; live: boolean 
         const ms = cssDurationMs(el, "--word-fade-ms");
         if (ms) fadeWords(el, starts.current, performance.now(), ms, live);
     }, [html, live]);
-    return <div class="md" ref={ref} />;
+    // `md-live`: a ```mermaid fence that closes in here closes in front of the reader, so it is drawn with its states
+    // (mermaid-client.ts); anywhere else it simply appears drawn.
+    return <div class={live ? "md md-live" : "md"} ref={ref} />;
 }

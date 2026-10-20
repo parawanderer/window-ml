@@ -22,6 +22,7 @@ import { extensionPairing } from "./pairing/extension-pairing";
 import { SESSIONS_PORT } from "./session/session-server";
 import { installServices } from "./sidebar/services";
 import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
+import { installMermaid } from "./mermaid/mermaid-client";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { installPageTheme } from "./chat/page-theme";
@@ -160,6 +161,7 @@ installServices(hostServices(store, extensionPlatform, {
     findSetting: (query) => { searchSettings(query); settingsTab.value = "extension"; mainView.value = "settings"; },
 }));
 initThemeStyle();
+installMermaid(document);   // ```mermaid fences in model text become diagrams (mermaid-client.ts)
 applyCodePrefs();
 // This page reads its OWN view preference rather than the panel's `focusMode`: the two surfaces share an origin,
 // and a reading choice made in a tab must not quietly reconfigure the DevTools panel beside a page.

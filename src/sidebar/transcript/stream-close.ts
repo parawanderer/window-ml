@@ -27,9 +27,13 @@ export function closeStreaming(src: string): string {
     return closeProse(holdTail(lines).join("\n"));
 }
 
-/** An open fence and its code so far, closed. A fence line still being typed (` `` `) is not a fence yet. */
+/** An open fence and its code so far, closed. A fence line still being typed (` `` `) is not a fence yet. An open
+ *  ```mermaid fence is closed as plain code (`mermaid_open`): it is a diagram only once the model closed it, and a
+ *  half-written one would otherwise be sent to be drawn on every token, and fail on most. */
 function closeFenced(fenced: string[]): string {
-    return `${fenced.join("\n").replace(/\n$/, "")}\n\`\`\``;
+    const [head, ...rest] = fenced;
+    const opened = /^(\s*```)mermaid\s*$/.test(head) ? head.replace(/mermaid\s*$/, "mermaid_open") : head;
+    return `${[opened, ...rest].join("\n").replace(/\n$/, "")}\n\`\`\``;
 }
 
 /** Drop the trailing lines nothing can draw correctly yet. */

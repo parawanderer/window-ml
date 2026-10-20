@@ -744,7 +744,7 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     // Visible rows: a folded group stays mounted so it can slide, hidden once it has.
     const rows = page.locator(".chat-list .chat-row:visible");
-    await expect(rows).toHaveCount(7);
+    await expect(rows).toHaveCount(8);
 
     // Calm: the heading's chevron sits after the name and shows only while the pointer is on the heading.
     const head = page.locator(".chat-rt[data-runtime='laptop']");
@@ -770,7 +770,7 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     await page.reload();
     await expect(rows).toHaveCount(3);
     await page.locator(".chat-rt[data-runtime='laptop']").click();
-    await expect(rows).toHaveCount(7);
+    await expect(rows).toHaveCount(8);
 
     // A session that moves while another one is open is marked; reading it is catching up with it.
     await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
@@ -1406,9 +1406,9 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(search.locator(".chat-search-row").first().locator(".chat-search-date")).toHaveText(/\S/);
     const toEnd = () => search.locator(".chat-sheet-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
     await toEnd();
-    await expect(search.locator(".chat-search-row")).toHaveCount(55);
+    await expect(search.locator(".chat-search-row")).toHaveCount(56);
     // Past what the page holds, the runtime's ARCHIVE: asked for a page at a time, and each of its rows marked.
-    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(85); }).toPass();
+    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(86); }).toPass();
     await expect(search.locator(".chat-search-arch")).toHaveCount(30);
     // A runtime whose archive folder lost its permission says so at the foot: search still works, the copy is paused.
     await expect(search.locator(".chat-search-foot")).toContainText("Reconnect Work laptop's archive folder");
@@ -2543,10 +2543,21 @@ test("an edge fades only where the document continues past it", async () => {
         return cs.display === "none" ? 0 : parseFloat(cs.opacity);
     }, [sel, pseudo]);
 
-    // The list, at its top and short enough to need no scrolling: neither end continues, so neither end fades.
-    await page.locator(".chat-list-scroll").waitFor();
+    // The list, at its top: nothing continues above, so the top never fades; the bottom fades exactly when the list
+    // is longer than the screen. Measured, not assumed: whether the demo world's list fits depends on the viewport and
+    // on how many sessions it holds, and a test that assumed "fits" broke when one was added.
+    const list = page.locator(".chat-list-scroll");
+    await list.waitFor();
     await expect.poll(() => alpha(".chat-list-scroll", "::before")).toBe(0);
-    await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(0);
+    const overflows = await list.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+    await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(overflows ? 1 : 0);
+    if (overflows) {
+        // At its end, the bottom no longer continues, so it stops fading and the top starts.
+        await list.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+        await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(0);
+        await expect.poll(() => alpha(".chat-list-scroll", "::before")).toBe(1);
+        await list.evaluate((el) => { el.scrollTop = 0; });
+    }
 
     // A transcript long enough to scroll, which opens pinned to its newest turn: the end is reached, the start is
     // several screens up, so the top fades and the bottom does not.

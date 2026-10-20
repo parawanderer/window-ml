@@ -10,6 +10,7 @@ import { isBackendUnreachable } from "../../contract/contract-server";
 import { sessionMap, rev, view, config, backendError, cardShowWorkHash, surface } from "../store";
 import type { Session, AgentStep } from "../store";
 import { truncate, markdown } from "../format";
+import { closeStreaming } from "../transcript/stream-close";
 import { residentNow } from "../resource/panel-facts";
 import { orbStatus } from "../transcript/orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
 import { exportSession, printSession } from "../export/export";
@@ -566,7 +567,9 @@ export function CardApp() {
                                 // finished answer (it becomes run.summary when the run settles — no reflow). The
                                 // HUD is answer-first: no "Running JavaScript…" activity line and no model-chip /
                                 // reply-bubble chrome (that's DevTools/sidebar detail — the LiveStream component).
-                                ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.liveStream.content, { math: true }) }} />
+                                // Closed first, as the transcript closes it (stream-close.ts): a ```mermaid fence
+                                // still being written stays code and is never sent to be drawn half-written.
+                                ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(closeStreaming(run.liveStream.content), { math: true }) }} />
                                 : (() => { const o = orbStatus(run, nowTick.value || Date.now(), residentNow(run.model)); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}{o.suffix ? <span class="card-orb-live">{o.suffix}</span> : null}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
                           </>
                         : <>

@@ -41,6 +41,7 @@ import {
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export/export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
+import { installMermaid } from "../mermaid/mermaid-client";
 import { DEFAULT_CODE_THEME } from "../code-themes";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
@@ -517,6 +518,7 @@ function mount(): void {
     // extension frame that is the same messaging they used to call inline (services-ext.ts).
     installServices(extensionServices);
     initThemeStyle();
+    installMermaid(document);   // ```mermaid fences in model text become diagrams (mermaid-client.ts)
     const root = document.getElementById("root") || document.body;
     chrome.storage.sync.get(DEFAULT_CONFIG, (cfg: any) => { config.value = cfg as MlConfig; applyTheme(); });
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens

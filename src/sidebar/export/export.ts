@@ -14,6 +14,7 @@ import { ladderLines } from "./fetch-ladder";
 import { CALL_TITLE } from "../../tools/tool-params";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "../store";
+import { renderMermaid } from "../../mermaid/mermaid-client";
 import { serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "../store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown, truncate } from "../format";
@@ -233,7 +234,7 @@ function htmlSink() {
         meta: (pairs) => o.push(`<dl class="meta">${pairs.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl>`),
         head: (t) => o.push(`<h2>${escapeHtml(t)}</h2>`),
         sub: (t) => o.push(`<h3>${escapeHtml(t)}</h3>`),
-        prose: (t, muted) => o.push(muted ? `<p>${em(t, true)}</p>` : `<div class="md">${markdown(t, { math: true })}</div>`),
+        prose: (t, muted) => o.push(muted ? `<p>${em(t, true)}</p>` : `<div class="md">${markdown(t, { math: true, diagrams: "light" })}</div>`),
         note: (t, plain) => o.push(`<p class="note">${plain ? escapeHtml(t) : `<em>${escapeHtml(t)}</em>`}</p>`),
         code: (t, lang) => o.push(pre(t, lang)),
         block: (label, t, lang) => o.push(`<p class="lbl">${escapeHtml(label)}:</p>`, pre(t, lang)),
@@ -794,8 +795,19 @@ export const canPrintSession = (): boolean => services().printDoc !== null;
 
 /** Print a session to PDF, where {@link canPrintSession}. How the document reaches a print dialog is the host's
  *  business — an extension frame hands it to a real tab, a plain page prints it in an offscreen iframe. */
-export function printSession(hash: string): void {
+export async function printSession(hash: string): Promise<void> {
     const s = sessionMap.get(hash);
     if (!s) return;
+    await drawDiagrams(s);
     services().printDoc?.(sessionToHtml(s, baseName(s)));
+}
+
+/** Draw every ```mermaid fence in `s` in the light theme the PDF is printed in, so `sessionToHtml` finds each in the
+ *  cache: one never shown on screen, or shown only in the dark theme, would otherwise print as its code. The Markdown
+ *  export keeps the source, which is what a reader of a `.md` file wants. */
+async function drawDiagrams(s: Session): Promise<void> {
+    if (typeof document === "undefined") return;
+    const srcs = new Set([...serializeSession(s).md.matchAll(/```mermaid\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\n$/, "")));
+    if (!srcs.size) return;
+    await Promise.all([...srcs].map((src) => renderMermaid(src, document, false)));
 }

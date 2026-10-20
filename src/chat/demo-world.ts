@@ -19,6 +19,7 @@ export const DEMO = {
     watched: "lab-box:1d2e3f40",
     pointers: "laptop:5e6f7a80",
     offline: "old-mac:aa55aa55",
+    diagram: "laptop:d1a6a4a5",
 } as const;
 
 /** Build the demo host. `now` pins the clock, so a screenshot does not change between runs. */
@@ -273,6 +274,30 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number; streamMs?
         return { summary: summary(`laptop:${hash}`, { kind: "chat", status: "done", createdTs: ts, lastTs: ts + 4000, title: `${title} (again)`, model: "qwen3:32b" }), events };
     });
 
+    // A REPLY WITH A DIAGRAM: a ```mermaid fence, drawn in the sandboxed frame on every surface (src/mermaid/).
+    const d = DEMO.diagram.split(":")[1];
+    const diagramAsk = "How does an agent run decide what to do next?";
+    const diagram: MlDebugEvent[] = [
+        { ...chatStart(0, now - 52 * min, diagramAsk), id: `${d}-0`, session: { hash: d, turn: 0 } } as MlDebugEvent,
+        {
+            ...base(d, now - 51 * min, 0), kind: "chat-result", model: "qwen3:32b", extend: null, reasoning: null, sources: null, structured: false, usage: null,
+            content: [
+                "Each step is one model call, and the loop ends when the model answers instead of calling a tool:",
+                "",
+                "```mermaid",
+                "graph TD",
+                "  A[Read the page] --> B{Call a tool?}",
+                "  B -->|yes| C[Ask you, if it must]",
+                "  C --> D[Run it]",
+                "  D --> A",
+                "  B -->|no| E[Answer]",
+                "```",
+                "",
+                "A step cap stops it early, and you can continue from there.",
+            ].join("\n"),
+        } as MlDebugEvent,
+    ];
+
     return new FakeHost({
         runtimes,
         archived,
@@ -282,6 +307,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number; streamMs?
             ...history,
             { summary: summary(DEMO.waiting, { kind: "agent", status: "waiting", pendingApprovals: 1, createdTs: now - 6 * min, lastTs: now - 4 * min, task: "Find the cheapest flight on this page and summarise its fare rules", title: "Cheapest AMS → LIS fare", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", tabId: 41 } }), events: waiting },
             { summary: summary(DEMO.chat, { kind: "chat", status: "done", createdTs: now - 40 * min, lastTs: now - 39 * min, title: "KV cache size at 32k", model: "qwen3:32b" }), events: chat },
+            { summary: summary(DEMO.diagram, { kind: "chat", status: "done", createdTs: now - 52 * min, lastTs: now - 51 * min, title: "How a step is chosen", model: "qwen3:32b" }), events: diagram },
             // A page with no `tabId`: the tab it worked in has since closed, which is what makes it resumable and what the
             // header's page chip then reports — which page the run WAS on, rather than nothing at all.
             { summary: summary(DEMO.capped, { kind: "agent", status: "capped", createdTs: now - 180 * min, lastTs: now - 178 * min, title: "Plot the fare prices", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS" } }), events: capped },

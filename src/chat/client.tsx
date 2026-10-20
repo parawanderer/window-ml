@@ -18,6 +18,7 @@ import { AccountPanel } from "../pairing/pairing-ui";
 import { installServices } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
+import { installMermaid } from "../mermaid/mermaid-client";
 import { ChatApp } from "./chat-app";
 import type { ChatExtras } from "./extras";
 import { renewSelf, canSignRenewal } from "./renew";
@@ -40,6 +41,7 @@ function deviceLabel(): string {
 /** The page's settings that belong to the device, whichever screen is drawn. */
 function installDevice(): void {
     initThemeStyle();
+    installMermaid(document);   // ```mermaid fences in model text become diagrams (mermaid-client.ts)
     applyCodePrefs();
     installViewPrefs(webPlatform.prefs);
     installPageTheme();

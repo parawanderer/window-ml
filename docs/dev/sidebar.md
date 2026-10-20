@@ -216,6 +216,47 @@ draws nothing.
   missing included, take none (Q15, fails closed). A site's `agent-wait` puts its prompt, labelled "The site asks: ({origin})", over
   the reply box (`SiteWaitPrompt`); an `agent-note` is one dim line in the step list.
 
+## Mermaid diagrams in model text
+
+A ```mermaid fence in anything `markdown()` renders (a reply, an answer, prose between steps, the HUD card) is drawn as
+its diagram, on the sidebar, the DevTools panel, the chat page (extension and web) and the phone app, and in the PDF.
+The Markdown export keeps the source. Code: `src/mermaid/`.
+
+- **Drawn in a sandbox, shown as an image.** `mermaid-frame.ts` runs Mermaid in `mermaid.html`, a manifest
+  `sandbox.pages` entry with its own CSP (`script-src 'self'`, no eval) in the extension and an iframe with
+  `sandbox="allow-scripts"` everywhere: an opaque origin with no extension APIs and no access to the page. It answers
+  with SVG text (`securityLevel: "strict"`, `htmlLabels: false`, so no `foreignObject`), which the page shows as an
+  `<img>`, where nothing in it can run. `mermaid-frame.js` is ~5 MB and loads only with the first diagram.
+- **A cache, not a component** (`mermaid-block.ts`). A reply's HTML is replaced wholesale on every streamed token, so
+  `markdown()` asks the cache as it builds: a fence drawn before comes out as its `<img>`, one never drawn comes out
+  PENDING, and `installMermaid` (one `MutationObserver` per document) draws pending ones and upgrades them in place.
+- **The states.** A fence still open is code: `closeStreaming` closes it as `mermaid_open`, which `markdown()` treats
+  as plain code, so a half-written diagram is never sent to be drawn. Once closed inside a live reply (`.md-live` on
+  `StreamingMd`) it shows a "drawing the diagram" placeholder only after `PLACEHOLDER_MS`, grows from the code's height
+  to the diagram's, and fades in. Anywhere else (history, a reload) the code stays invisible until the diagram replaces
+  it. A parse error leaves the code with a one-line note. A theme change redraws every diagram in the new theme.
+- **Toggle and copy** are buttons in the injected HTML, handled by delegation on the document, with the panel's tooltip
+  routed to them the same way.
+- **The frame must be web-accessible** (`manifest.json`): the overlay is an extension frame inside a web page, and
+  Chrome refuses a nested extension frame there otherwise. So ANY page can frame it and is then its `parent`: the frame
+  answers only when `location.ancestorOrigins[0]` is its own origin (the extension, the web app's server, the phone's
+  `file:`), posts to that origin rather than `*`, and says nothing, not even "ready", to anyone else.
+- **Bounded work.** A source past `MAX_SRC` is never sent; the client and the frame each draw one diagram at a time; an
+  answer whose size is not finite and within `MAX_DIM`, or whose SVG is past `MAX_SVG`, becomes the error note, checked
+  where it is taken and again where the `<img>` is built (`undrawable`, mermaid-block.ts). On the installable web app the service worker passes
+  `mermaid.html` to the network rather than answering it with the app page, and does not precache the 5 MB script.
+- **On the phone the frame is one file with its script inline** (`buildNative` in `scripts/build-web.mjs`; the app
+  writes it beside the page, `mobile/src/embed.tsx`). A sandboxed frame has an opaque origin, and Android's WebView
+  refuses it any `file://` load, so a `<script src>` there never runs. Its CSP pins that one script by hash.
+- **The phone gives every frame the native bridge.** react-native-webview registers `ReactNativeWebView` for origin
+  `*`, the sandboxed frame and any frame nested in it included, and the app cannot tell their messages from the page's
+  (both come from origin "null"). So the phone's frame runs `no-bridge.ts` as its own script AHEAD of the library's (an
+  import would not do: esbuild placed it after Mermaid's body), deleting `ReactNativeWebView` and iOS's `webkit`, and
+  its CSP pins both scripts by hash, which is what stops injected script reaching a fresh bridge in a nested `srcdoc`
+  frame. The `webkit` half is unverified: nothing here runs iOS.
+- **The PDF** (`printSession`) draws every fence in the light theme first, then `markdown(…, { diagrams: "light" })`
+  writes each as its `<img>` alone: no buttons and no pending block, since nothing in a printed page runs.
+
 ## Traps
 
 - **The app talks to its host only through `parent-channel.ts`** (`toHost`, `onHostMessage`), never
@@ -226,6 +267,10 @@ draws nothing.
   DevTools panel, an extension page, keeps plain window messages. A run's events reach the shell over `chrome.runtime` (`ML_DEBUG_TO_PAGE`), never the page's window,
   and a page's events are admitted by `pageMayWrite` (`src/event-admission.ts`). A test opens the sidebar by clicking
   its tab and watches a background run with `watchRunEvents` (e2e harness), not by posting into the frame.
+- **The one other `message` listener is the diagram frame's** (`src/mermaid/mermaid-client.ts`), and it is not a
+  channel to the host: it posts only DOWN, to its own sandboxed child frame, and takes an answer only whose `source` is
+  that child's window, which a page cannot fake. A page posting a forged "finished drawing" into the overlay is
+  ignored (`tests/e2e/chat-mermaid-ext.spec.mjs`). Keep both halves of that if it changes.
 - **Our shadow roots are CLOSED.** Shell code uses its kept reference (`shellRoot`, `cardRoot`, `hlRoot`), never
   `host.shadowRoot`, which is null; a new host is attached `mode: "closed"` and added to `__wmlShellRoots`. Never post a
   root or a node in one to the page. A test reaches them with `inShell`/`waitInShell`/`clickInShell`, not a locator.

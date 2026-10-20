@@ -509,7 +509,9 @@ export class FakeHost implements SessionHost {
                     request: { model: "fake", extend: null, messages: [{ role: "user", content: c.text }], images: c.images ?? null, toolIds: null, schema: false, think: null, maxTokens: null },
                     config: { system: null, model: "fake", think: null, schema: false, toolIds: null, maxTokens: null, save: h.summary.saved },
                 } as MlDebugEvent);
-                if (this.streamMs > 0) { this.streamReply(key, t, STREAMED_REPLY); return ok({ mode: "turn" }); }
+                // A message carrying a ```mermaid fence is streamed back as written, so a spec can watch a diagram's fence
+                // close in front of the reader (mermaid-client.ts); anything else gets the demo reply.
+                if (this.streamMs > 0) { this.streamReply(key, t, /```mermaid/.test(c.text) ? c.text : STREAMED_REPLY); return ok({ mode: "turn" }); }
                 this.emit(key, { ...t, ts: now + 1, kind: "chat-result", content: `You said: ${c.text}`, sources: null, structured: false, model: "fake", extend: null, reasoning: null, usage: null });
                 return ok({ mode: "turn" });
             }

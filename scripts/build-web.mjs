@@ -27,7 +27,8 @@ export const webBuildOptions = (outdir) => ({
     absWorkingDir: ROOT,
     // `chat`: the demo (the fake host's world), what the specs and the screenshots drive. `client`: the standalone
     // client over a real hub (src/chat/client.tsx), what the phone app and a desktop wrapper run.
-    entryPoints: { chat: "src/chat/web.tsx", client: "src/chat/client.tsx" },
+    // `mermaid-frame`: the sandboxed page that draws a ```mermaid fence (src/mermaid/), fetched only on a first diagram.
+    entryPoints: { chat: "src/chat/web.tsx", client: "src/chat/client.tsx", "mermaid-frame": "src/mermaid/mermaid-frame.ts" },
     outdir,
     bundle: true,
     format: "iife",
@@ -57,6 +58,7 @@ export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-
         }
         cpSync(path.join(ROOT, "src/chat/chat.html"), path.join(stage, "index.html"));
         cpSync(path.join(ROOT, "src/chat/client.html"), path.join(stage, "client.html"));
+        cpSync(path.join(ROOT, "src/mermaid/mermaid.html"), path.join(stage, "mermaid.html"));
         cpSync(path.join(ROOT, "src/chat/chat.css"), path.join(stage, "chat.css"));
         cpSync(path.join(ROOT, "src/sidebar/sidebar.css"), path.join(stage, "sidebar.css"));
         const fonts = path.join(ROOT, "node_modules/katex/dist/fonts");
@@ -95,7 +97,8 @@ function singleFile(js, css) {
 
 /**
  * THE NATIVE SHELL'S PAGE (`dist-native/`): `embed.html` over this device's account and `embed-demo.html` over the demo
- * world, each self-contained, with the KaTeX fonts beside them (the stylesheet names them relatively). The phone app
+ * world, each self-contained, with the KaTeX fonts beside them (the stylesheet names them relatively) and the diagram frame
+ * (`mermaid.html`, its script inline), which the page loads from its own directory. The phone app
  * (mobile/) takes one of the two into its bundle with `mobile/scripts/sync-embed.mjs`.
  */
 async function buildNative(web, out) {
@@ -104,7 +107,7 @@ async function buildNative(web, out) {
     mkdirSync(stage, { recursive: true });
     let bundle = "dev";
     try { bundle = (await import("node:child_process")).execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(); } catch { /* not a checkout */ }
-    await esbuild.build({ ...webBuildOptions(stage), entryPoints: { app: "src/chat/native-embed-app.tsx", demo: "src/chat/native-embed-demo.tsx" }, define: { __BUNDLE__: JSON.stringify(bundle) } });
+    await esbuild.build({ ...webBuildOptions(stage), entryPoints: { app: "src/chat/native-embed-app.tsx", demo: "src/chat/native-embed-demo.tsx", "no-bridge": "src/mermaid/no-bridge.ts" }, define: { __BUNDLE__: JSON.stringify(bundle) } });
     const css = ["sidebar.css", "chat.css"].map((f) => readFileSync(path.join(web, f), "utf8")).join("\n");
     for (const [entry, name] of [["app", "embed.html"], ["demo", "embed-demo.html"]]) {
         const js = readFileSync(path.join(stage, `${entry}.js`), "utf8");
@@ -114,6 +117,23 @@ async function buildNative(web, out) {
         rmSync(path.join(stage, `${entry}.js`));
     }
     if (existsSync(path.join(web, "fonts"))) cpSync(path.join(web, "fonts"), path.join(stage, "fonts"), { recursive: true });
+    // The diagram frame, beside the page, with its script INLINE: the app writes it next to `index.html`
+    // (mobile/src/embed.tsx), and a sandboxed frame has an opaque origin, which Android's WebView refuses any file://
+    // load ("Not allowed to load local resource"), so a `<script src>` there never runs. The extension keeps the two
+    // files, since its sandbox CSP allows no inline script.
+    const frameJs = readFileSync(path.join(web, "mermaid-frame.js"), "utf8").replace(/<\/script/gi, "<\\/script");
+    // The phone's bridges removed by a script of its own, AHEAD of the library's (src/mermaid/no-bridge.ts).
+    const noBridgeJs = readFileSync(path.join(stage, "no-bridge.js"), "utf8").replace(/<\/script/gi, "<\\/script");
+    rmSync(path.join(stage, "no-bridge.js"));
+    const frameHtml = readFileSync(path.join(web, "mermaid.html"), "utf8");
+    if (!frameHtml.includes('<script src="mermaid-frame.js"></script>')) throw new Error("mermaid.html no longer loads mermaid-frame.js as this expects");
+    // The extension's sandbox CSP, with the script pinned by HASH instead of 'self': nothing else may run here, not an
+    // injected handler and not a nested frame's inline script, since the phone gives every frame its own native bridge
+    // (src/mermaid/no-bridge.ts). Two hashes: the bridge removal and the library. `frame-src 'none'` refuses a nested
+    // frame that loads a URL; a `srcdoc` one inherits this policy, so the hashes refuse its script.
+    const pin = (js) => `'sha256-${createHash("sha256").update(js).digest("base64")}'`;
+    const csp = `<meta http-equiv="Content-Security-Policy" content="script-src ${pin(noBridgeJs)} ${pin(frameJs)}; object-src 'none'; connect-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">`;
+    writeFileSync(path.join(stage, "mermaid.html"), frameHtml.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">${csp}`).replace('<script src="mermaid-frame.js"></script>', () => `<script>${noBridgeJs}</script><script>${frameJs}</script>`));
     rmSync(out, { recursive: true, force: true });
     renameSync(stage, out);
     console.log(`built ${path.relative(ROOT, out)}/ (the phone app's page: embed.html, embed-demo.html)`);
@@ -127,7 +147,9 @@ async function buildNative(web, out) {
 function buildApp(web, app) {
     rmSync(app, { recursive: true, force: true });
     mkdirSync(app, { recursive: true });
-    for (const f of ["client.js", "sidebar.css", "chat.css"]) cpSync(path.join(web, f), path.join(app, f));
+    // The diagram frame (mermaid.html + its 5 MB script) is served, not precached in SHELL: an installed copy offline
+    // shows a diagram as its code with a note, rather than every install downloading the renderer up front.
+    for (const f of ["client.js", "sidebar.css", "chat.css", "mermaid.html", "mermaid-frame.js"]) cpSync(path.join(web, f), path.join(app, f));
     cpSync(path.join(web, "client.html"), path.join(app, "index.html"));
     // THE AGENT START PAGE (`AGENT_START_PAGE`, contract-config.ts). A run that asked for a new tab has to open some
     // real http(s) page — a browser extension cannot run on the browser's own new-tab page, nor on `about:blank` —
