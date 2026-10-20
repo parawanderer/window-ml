@@ -420,6 +420,19 @@ Runtimes today declare neither `lineage` nor `headless` and answer both with `un
   browser. So the coordinator's runtime enforces locally that only the session named in a child's `lineage` (or a
   person's surface) can steer, cancel or read that child. Nothing on the wire changes; a runtime that acts as a client
   must do this before it holds a key.
+- **A session may ask to cancel a peer; it may never delete one** (ruled 2026-10-20, Shane's proposal, the coordinator's
+  refinement; not built). One wire member, `ml.sessions.cancel(id)`, reachable from both languages like every `ml`
+  member, whose effect is `cancel` on the resource `session:<id>`. A target in the caller's lineage is inside the free
+  tier (the rule above); any other target ASKS, as `ml.fetch` on a new URL does, and a run policy may remember the
+  answer. The worker decides from the SENDER's session and the target's lineage, never from anything in the message:
+  the id is data, the authority is the sender's. The card is the worker's, built from the target's own record (its
+  label, who started it, what it is doing, how many steps it has), never from the caller's text, or a model writes
+  "idle test session" to get a yes. The target is told why it stopped: status `cancelled` with a cause naming the
+  asking session and that the person approved, in both run logs. `session.delete` stays a person's act on their own
+  surface, with no proxy for a model (archive is move-not-delete for the same reason). A peer on another runtime is a
+  `session.cancel` under a `drive` grant the caller does not hold for peers, so over the hub it resolves to the
+  existing approval on the person's surface; nothing new on the wire. Built when an orchestrator runs as an agent
+  client (above, "later"), not before.
 - **Open enumerations, idempotency keys and sender attribution** (above): an orchestrator retries, meets runtime kinds
   newer than itself, and sends messages that must not read as the person's.
 
