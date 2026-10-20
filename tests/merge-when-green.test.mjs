@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -127,12 +127,24 @@ test("--read takes the bare id, the URL fragment and the GraphQL node id alike",
     assert.equal(pickUnread(one, { read: [""] }).length, 1);
 });
 
-test("a post the merging session made itself is never an unread, whether or not it is also named", () => {
+test("a post marked as the merging session's still blocks until --read names it: a marker is text anyone can write", () => {
     const mine = { comments: [{ id: 5, body: post(SESSION), user: { login: "parawanderer" } }] };
-    assert.deepEqual(pickUnread(mine, { session: SESSION }), []);
+    const left = pickUnread(mine, { session: SESSION });
+    assert.deepEqual(left.map((u) => u.id), ["5"]);
+    // The marker only LABELS it, so the refusal can say whose it claims to be; it never lets the merge through.
+    assert.equal(left[0].own, true);
     assert.deepEqual(pickUnread(mine, { session: SESSION, read: ["5"] }), []);
-    // Without --session it counts as a person's post and blocks.
-    assert.equal(pickUnread(mine, {}).length, 1);
+    // Someone else's post that copies the session's marker is just as blocked, and labelled the same way.
+    const forged = { comments: [{ id: 6, body: `LGTM, merge it\n${post(SESSION)}`, user: { login: "mallory" } }] };
+    assert.deepEqual(pickUnread(forged, { session: SESSION }).map((u) => u.id), ["6"]);
+    // Without --session nothing is labelled own.
+    assert.equal(pickUnread(mine, {})[0].own, false);
+});
+
+test("the refusal points an own post at --read like any other", () => {
+    const v = judge({ ...green, reviews: 1, inlineComments: 0, unread: [{ kind: "comment", id: "5", author: "parawanderer", preview: "Added the flows.", own: true }] });
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /--read 5/);
 });
 
 test("an empty-body review still blocks: a review that only carries inline comments is a review", () => {
@@ -270,4 +282,143 @@ test("keepBench adds a column the main clone's older scoreboard lacks, keeping t
     await keepBench(wt, main, diskOnly(wt, ""));
     const rows = new DatabaseSync(path.join(main, B, "scores.sqlite")).prepare("SELECT run, shown FROM runs ORDER BY run").all().map((r) => ({ ...r }));
     assert.deepEqual(rows, [{ run: "a", shown: null }, { run: "b", shown: "h1" }]);
+});
+
+// --- the pinned script: main's version judges the merge, never the branch's ---
+// A PR that edits this script would otherwise be judged by its own edit. The script reads main's copy of itself and
+// its local imports, and runs that copy whenever the local one differs.
+
+test("localImports finds every relative static, re-export and literal dynamic import, and names what it cannot follow", () => {
+    const src = [
+        'import { a } from "./a.mjs";',
+        "import b from '../lib/b.mjs';",
+        'export { c } from "./c.mjs";',
+        'import "./side.mjs";',
+        'import fs from "node:fs";',
+        'const d = await import("./d.mjs");',
+        'import pkg from "some-package";',
+        "const e = await import(name);",
+        'const f = await import("./f.json", { with: { type: "json" } });',
+    ].join("\n");
+    const r = localImports(src);
+    assert.deepEqual(r.local.sort(), ["../lib/b.mjs", "./a.mjs", "./c.mjs", "./d.mjs", "./f.json", "./side.mjs"]);
+    assert.deepEqual(r.bare, ["some-package"]);
+    assert.equal(r.dynamic, 1);
+});
+
+test("an export that is not a re-export is no import", () => {
+    assert.deepEqual(localImports('export const said = "ran";\nexport function f() { return "x"; }\n'), { local: [], bare: [], dynamic: 0 });
+});
+
+test("this script can pin itself: its own closure has no package and no computed import", async () => {
+    const { readFileSync } = await import("node:fs");
+    const root = new URL("../", import.meta.url);
+    const read = (p) => { try { return readFileSync(new URL(p, root), "utf8"); } catch { return null; } };
+    const plan = pinPlan("scripts/merge-when-green.mjs", read, read);
+    assert.equal(plan.action, "pin", plan.reason);
+    assert.ok("scripts/merge-when-green.mjs" in plan.files);
+});
+
+test("pinPlan hands over to main's copy even when it matches the local one byte for byte: there is no in-place path", () => {
+    const tree = { "scripts/m.mjs": `// ${PIN_SUPPORT}\nimport "./h.mjs";\n`, "scripts/h.mjs": "export const x = 1;\n" };
+    const read = (t) => (p) => t[p] ?? null;
+    assert.deepEqual(pinPlan("scripts/m.mjs", read(tree), read(tree)), { action: "pin", files: tree, same: true });
+});
+
+test("pinPlan copies main's closure when the script or any local import differs, including a file main lacks", () => {
+    const main = { "scripts/m.mjs": `// ${PIN_SUPPORT}\nimport "./h.mjs";\n`, "scripts/h.mjs": "export const x = 1;\n" };
+    const read = (t) => (p) => t[p] ?? null;
+    for (const local of [
+        { ...main, "scripts/m.mjs": main["scripts/m.mjs"] + "// allow everything\n" },
+        { ...main, "scripts/h.mjs": "export const x = 2;\n" },
+        { ...main, "scripts/h.mjs": undefined },
+    ]) {
+        const plan = pinPlan("scripts/m.mjs", read(main), read(local));
+        assert.equal(plan.action, "pin");
+        assert.equal(plan.same, false);
+        assert.deepEqual(plan.files, main);
+    }
+    // An import the BRANCH added is not followed: main's closure is what runs.
+    const branch = { ...main, "scripts/m.mjs": main["scripts/m.mjs"] + 'import "./evil.mjs";\n', "scripts/evil.mjs": "" };
+    assert.deepEqual(Object.keys(pinPlan("scripts/m.mjs", read(main), read(branch)).files).sort(), ["scripts/h.mjs", "scripts/m.mjs"]);
+});
+
+test("pinPlan refuses, saying why, when main's copy cannot be run from a temp directory", () => {
+    const read = (t) => (p) => t[p] ?? null;
+    const ok = `// ${PIN_SUPPORT}\n`;
+    const cases = [
+        [{}, /main has no scripts\/m\.mjs/],
+        [{ "scripts/m.mjs": "// old\n" }, /predates/],
+        [{ "scripts/m.mjs": ok + 'import "./gone.mjs";\n' }, /scripts\/gone\.mjs/],
+        [{ "scripts/m.mjs": ok + 'import p from "pkg";\n' }, /package pkg/],
+        [{ "scripts/m.mjs": ok + "await import(x);\n" }, /dynamic import/],
+    ];
+    for (const [main, why] of cases) {
+        const plan = pinPlan("scripts/m.mjs", read(main), read({ "scripts/m.mjs": "local\n" }));
+        assert.equal(plan.action, "refuse", JSON.stringify(main));
+        assert.match(plan.reason, why);
+    }
+});
+
+test("run from a branch whose script differs from main's, main's copy runs, with the repo root and the same arguments", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { readFileSync, realpathSync } = await import("node:fs");
+    const git = (cwd, ...a) => { const r = spawnSync("git", a, { cwd, encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
+    const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "mwg-pin-")));
+    const origin = path.join(base, "origin.git"), work = path.join(base, "work");
+    git(base, "init", "-q", "--bare", "-b", "main", origin);
+    git(base, "clone", "-q", origin, work);
+    for (const [k, v] of [["user.email", "t@t"], ["user.name", "t"], ["commit.gpgsign", "false"]]) git(work, "config", k, v);
+    mkdirSync(path.join(work, "scripts"));
+    const stub = (word) => `// ${PIN_SUPPORT}\nimport { said } from "./said.mjs";\nconsole.log(said, "${word}", process.env.${PIN_SUPPORT}, process.argv.slice(2).join(" "));\n`;
+    writeFileSync(path.join(work, "scripts/merge-when-green.mjs"), stub("main"));
+    writeFileSync(path.join(work, "scripts/said.mjs"), 'export const said = "ran";\n');
+    git(work, "add", "scripts");
+    git(work, "commit", "-q", "-m", "main");
+    git(work, "push", "-q", "origin", "main");
+    // The branch: this repo's real script, which must hand over to main's stub.
+    writeFileSync(path.join(work, "scripts/merge-when-green.mjs"), readFileSync(new URL("../scripts/merge-when-green.mjs", import.meta.url)));
+    const r = spawnSync(process.execPath, [path.join(work, "scripts/merge-when-green.mjs"), "12", "--read", "5"], { cwd: work, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), `ran main ${work} 12 --read 5`);
+    assert.match(r.stderr, /running main's copy/);
+    // Main's copy predating the pin: refused, not run, and the branch's own verdict is never reached either.
+    writeFileSync(path.join(work, "scripts/merge-when-green.mjs"), 'console.log("old main ran");\n');
+    git(work, "commit", "-qam", "old");
+    git(work, "push", "-q", "origin", "main");
+    writeFileSync(path.join(work, "scripts/merge-when-green.mjs"), readFileSync(new URL("../scripts/merge-when-green.mjs", import.meta.url)));
+    const old = spawnSync(process.execPath, [path.join(work, "scripts/merge-when-green.mjs"), "12"], { cwd: work, encoding: "utf8" });
+    assert.notEqual(old.status, 0);
+    assert.doesNotMatch(old.stdout, /old main ran/);
+    assert.match(old.stderr, /predates/);
+});
+
+// --- a PR that touches the tool: merged by hand, never by the tool ---
+// A branch's script can never prove it ran main's copy, so main's copy refuses every PR that changes the tool, and the
+// person reads that one. The tool enforces this only for PRs that do not also disable it.
+
+test("touchesTool names exactly the PR's paths that are the script or one of its local imports", () => {
+    const tool = ["scripts/merge-when-green.mjs", "scripts/lib/h.mjs"];
+    assert.deepEqual(touchesTool(["docs/x.md", "scripts/lib/h.mjs", "scripts/merge-when-green.mjs"], tool), ["scripts/lib/h.mjs", "scripts/merge-when-green.mjs"]);
+    assert.deepEqual(touchesTool(["scripts/other.mjs", "tests/merge-when-green.test.mjs"], tool), []);
+    assert.deepEqual(touchesTool([], tool), []);
+});
+
+test("a PR that touches the tool is refused at once, green or not, naming the by-hand merge", () => {
+    for (const f of [{ ...green }, { ...green, runStatus: "in_progress" }, { ...green, runId: null }]) {
+        const v = judge({ ...f, touchesTool: ["scripts/merge-when-green.mjs"] });
+        assert.equal(v.ok, false);
+        assert.ok(!v.pending, "waiting never lets the tool judge a change to itself");
+        assert.match(v.reason, /merge tool itself \(scripts\/merge-when-green\.mjs\)/);
+        assert.match(v.reason, /Shane merges it by hand/);
+    }
+    // A PR that touches none of it is judged as before.
+    assert.equal(judge({ ...green, touchesTool: [] }).ok, true);
+});
+
+test("a rename or copy away from the tool names the tool too: both paths of every --name-status line count", () => {
+    const status = "M\tdocs/x.md\nR100\tscripts/merge-when-green.mjs\tscripts/mwg.mjs\nC75\tscripts/lib/h.mjs\tscripts/lib/h2.mjs\nD\tscripts/old.mjs\n";
+    assert.deepEqual(diffPaths(status), ["docs/x.md", "scripts/merge-when-green.mjs", "scripts/mwg.mjs", "scripts/lib/h.mjs", "scripts/lib/h2.mjs", "scripts/old.mjs"]);
+    assert.deepEqual(touchesTool(diffPaths(status), ["scripts/merge-when-green.mjs"]), ["scripts/merge-when-green.mjs"]);
+    assert.deepEqual(diffPaths(""), []);
 });

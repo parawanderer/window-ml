@@ -64,10 +64,22 @@ together.
 
 ## Your own comments
 
-Pass `--session <id>` (your harness's session id) so a comment YOU posted on the PR does not count as unread: the script
-recognises it by the `<!-- agent-post: … session=<id> … -->` marker every agent post ends with (AGENTS.md, "every GitHub
-post an agent makes says WHICH SESSION made it"; `docs/dev/working-in-the-repo.md`). Without the flag, or on a post with
-no marker or another session's marker, it stops and says "read them", as before.
+Your own comment blocks like anyone's: name it with `--read <id>` once it asks nothing further. A marker is text anyone
+can post, so letting the `<!-- agent-post: … session=<id> … -->` marker clear a post would let a comment copying it
+clear itself. Text can only block a merge. `--session <id>` still helps: the refusal labels a post whose marker names
+that session "marked yours", so you can tell which of the listed ids are your own notes.
+
+## Main's copy judges, and a PR that touches the tool is Shane's to merge
+
+The script first fetches `origin/main`, writes main's copy of itself and its local imports to a temp directory, and runs
+that with the same arguments (`running main's copy` on stderr). It always does, even when your copy is identical: the
+local file is a trampoline with no verdict of its own. It refuses, saying why, when main's copy cannot run that way:
+main's version predates this, or imports a package or a computed name. Then run it from a checkout of main.
+
+A script on a branch can never prove it ran main's copy, since a PR can replace the trampoline. So main's copy refuses
+any PR whose diff touches `scripts/merge-when-green.mjs` or a file it imports: **a PR that touches the tool is Shane's
+merge, by hand, after he reads it.** The tool enforces that rule only for PRs that do not also disable it. Ask him; do
+not look for another way to merge it.
 
 ## A post that asks nothing further
 
