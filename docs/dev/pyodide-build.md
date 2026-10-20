@@ -30,5 +30,6 @@ window-ml pins and verifies, as `scripts/fetch-hub.mjs` does for the hub binary.
   and `cpython/build/hiwire` before retrying from a failure.
 - **The stdlib zip drops `test/`**, so `Lib/test/test_restricted.py` is not in the core; `restricted.py` is.
 - **The vectors under wasm** (`tests/python-dialect-vectors-wasm.test.mjs`) self-skip on the stock core (no `_restricted`).
-  Two halting vectors are pinned as `WASM32_GAPS`: wasm32 cannot make the allocation, so the cell ends in
-  `MemoryError`/`OverflowError` and not `NotInDialect`. The test fails when the fork refuses them; delete the entry then.
+  Under CI they FAIL instead of skipping once an artefact sha256 is pinned. All 87 pass on the wasm32 build: with
+  `--without-pymalloc` the memory cap wraps the MEM and OBJ allocator domains (fork #2), and a repeat's size is judged
+  before CPython's overflow guards, so "a" * 10**11 ends in `NotInDialect`, not `OverflowError`.
