@@ -219,7 +219,12 @@ inside run. The rule has two layers, and one is not the other's substitute:
    After the re-pin: a `FunctionType` whose code and every nested code constant is `CO_RESTRICTED` may cross back,
    later inside cells call it unasked, and a full-path cell that calls it gets the refusal, whose text names the
    function and says it was defined in an unasked cell, to be redefined in the approved one. Captured builtins, bound
-   methods and anything not `CO_RESTRICTED` stay refused; classes and `yield` stay outside.
+   methods and anything not `CO_RESTRICTED` stay refused; classes and `yield` stay outside. Stated residual (the red
+   team's post-merge read of cpython#5, 2026-10-20): APPROVED code on the full path can strip the flag,
+   `f.__code__.replace(co_flags=...)`, and run the body ungated (its probe listed the filesystem); a fresh
+   `types.CodeType` from the same bytes would do the same, so the flag cannot be made unstrippable without taking
+   code-object access from the full path, which the full path has by design. It is not an escape: the cell that does
+   it is on the card, and a cell that rewrites a function's flags reads as what it is.
 2. **The copy-back admits data only.** A binding an inside cell made persists only when its value carries no cell code
    and is no builtin: until layer 1 is in the pinned core, no function, lambda, class, bound method, generator,
    coroutine or `builtin_function_or_method` crosses back, and the check is RECURSIVE, since the container case is
