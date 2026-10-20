@@ -1020,6 +1020,10 @@
             "$ref": "#/$defs/PersistGrant"
           }
         },
+        "askWhy": {
+          "description": "Why the call asked when a policy that used to allow it was gone; `detail` is the sentence the model read.",
+          "$ref": "#/$defs/AskWhy"
+        },
         "reused": {
           "type": "array",
           "items": {
@@ -2222,6 +2226,33 @@
       ],
       "additionalProperties": true
     },
+    "AskWhy": {
+      "type": "object",
+      "description": "Why a call asks when a policy that used to cover it is gone: `line` for the approval card, `detail` the sentence the model read in the tool result (so the tooltip and the export show what the model saw).",
+      "properties": {
+        "line": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "cause": {
+          "description": "Why the policy is gone (`archived`, `removed`, `narrowed`), for the run log, whose `reason` is a slug.",
+          "type": "string"
+        },
+        "policy": {
+          "description": "The gone policy's label.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "line",
+        "detail",
+        "cause",
+        "policy"
+      ],
+      "additionalProperties": true
+    },
     "ReusedGrant": {
       "type": "object",
       "description": "A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL, the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch.",
@@ -2273,6 +2304,10 @@
             "ended",
             "limit"
           ]
+        },
+        "why": {
+          "description": "Why the call asks when a policy that used to allow it is gone; text only, as on a gate's step.",
+          "$ref": "#/$defs/AskWhy"
         },
         "raisedAt": {
           "type": "number"

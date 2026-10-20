@@ -310,7 +310,7 @@ test("a step's ▶ bench hands over the script and opens the DRAWER, keeping the
         });
         fake.setSide(() => null);
         fake.setScript([
-            { tool: "python_exec", args: { code: "rows=[{'a':1},{'a':2}]\nreturn len(rows)", mode: "readonly" } },
+            { tool: "python_exec", args: { code: "rows=[{'a':1},{'a':2}]\nreturn len(rows)" } },
             { content: "two" },
         ]);
         const page = await ext.context.newPage();
@@ -898,7 +898,7 @@ test("the bench header fits at every panel width down to the 280px minimum, and 
                 vw: document.documentElement.clientWidth,
                 right: Math.max(...shown.map((e) => e.getBoundingClientRect().right)),
                 run: at(".bench-play").right,
-                select: at(".bench-mode select").width,
+                env: at(".bench-env-btn").width,
                 send: getComputedStyle(document.querySelector(".bench-send")).display !== "none",
             };
         });
@@ -913,15 +913,15 @@ test("the bench header fits at every panel width down to the 280px minimum, and 
             expect(m.run, `${w}px: ▶ Run is on screen`).toBeLessThanOrEqual(m.vw);
             if (w === 400) {
                 // At the DEFAULT width nothing is squeezed: the last stage is reserved for a panel someone dragged
-                // narrower, so the width almost everyone sees keeps the full mode picker and every control.
-                expect(m.select, "the mode picker is not clipped at the default width").toBeCloseTo(wide.select, 0);
+                // narrower, so the width almost everyone sees keeps every control.
+                expect(m.env, "the environment button is not clipped at the default width").toBeCloseTo(wide.env, 0);
                 expect(m.send, "and no control is hidden").toBe(true);
             }
         }
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
-test("the bench KEEPS its variables between runs — per mode, listed, completable, and resettable", async () => {
+test("the bench KEEPS its variables between runs — listed, completable, and resettable", async () => {
     const { fake, ext, frame } = await setup();
     try {
         await frame.locator('[aria-label="Python bench"]').click();
@@ -947,17 +947,6 @@ test("the bench KEEPS its variables between runs — per mode, listed, completab
             return frame.locator(".cm-tooltip-autocomplete li").allTextContents();
         }, { timeout: 30000, intervals: [500] }).toEqual(expect.arrayContaining([expect.stringContaining("sum")]));
         await content.press("Escape");
-
-        // FULL mode keeps its own variables: nothing crosses the sandbox boundary.
-        // The WHITELIST is needed because `senderTrust` keys on `sender.tab`, which the overlay bench HAS (it
-        // is an extension iframe inside the page's tab), so the bench's full mode is refused on any page not
-        // whitelisted. A known, separate issue — not what this test is about — so the page is whitelisted
-        // rather than the gate changed in passing.
-        await configureExtension(ext.sw, { pageApprovalDomains: [new URL(fake.url).origin] });
-        await frame.locator(".bench-mode select").selectOption("full");
-        await runInBench(frame, "grid");
-        await expect(frame.locator(".bench-outbody")).toContainText("NameError");
-        await frame.locator(".bench-mode select").selectOption("readonly");
 
         // Reset forgets them; the next run starts empty and says nothing about a restart (it was asked for).
         await frame.locator(".bench-env-btn").click();

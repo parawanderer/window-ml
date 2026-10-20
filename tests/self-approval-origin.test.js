@@ -61,8 +61,8 @@ const READERS = [
         const res = await bg.send({ type: "FETCH_SHEET", payload: { url: "https://docs.google.com/spreadsheets/d/A/export?format=csv&gid=0" } }, s);
         return !refused(res);
     }],
-    ["PYTHON_EXEC full mode without a grant (network-enabled Python)", async (bg, s) => {
-        const res = await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1", hardened: false } }, s);
+    ["PYTHON_EXEC outside the dialect without a grant", async (bg, s) => {
+        const res = await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1" } }, s);
         return !refused(res);
     }],
     ["FETCH_URL credentialed, cross-origin, without a grant", async (bg, s) => {
@@ -81,9 +81,12 @@ const onFetch = (call) => /chat\/completions/.test(call.url)
 
 test("every reader of the self-approval whitelist trusts the https origin only, for every sender shape", async () => {
     const wrong = [];
-    for (const [reader, run] of READERS) for (const [shape, sender, want] of SENDERS) {
+    for (const [reader, run] of READERS) for (const [shape, sender, wantBase] of SENDERS) {
         const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: WHITELIST }), onFetch, onPyRun: async () => ({ ok: true, value: 2, stdout: "" }) });
         const got = await run(bg, structuredClone(sender));
+        // Python has no unhardened mode any more, so the extension's own frame (the bench) needs no whitelist to run a cell:
+        // the network power that rule guarded is gone.
+        const want = reader.startsWith("PYTHON_EXEC") && /extension's frame/.test(shape) ? true : wantBase;
         if (got !== want) wrong.push(`${reader} x ${shape}: ${got ? "trusted" : "refused"}, want ${want ? "trusted" : "refused"}`);
     }
     assert.deepEqual(wrong, []);

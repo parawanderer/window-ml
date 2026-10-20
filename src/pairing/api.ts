@@ -228,6 +228,32 @@ export function removalWarning(d: { label?: string; mayRevoke?: boolean }): stri
     return `“${d.label || "That device"}” stops reaching everything on this account at once. Adding it back takes a new code, confirmed on the root device.`;
 }
 
+/**
+ * The grant the PHONE starts a found offer from. A runtime offer is narrowed: `mayPair` is OFF whatever the library's
+ * default says, because a runtime that may pair can add devices to the account on its own, and the wire has one role
+ * for a browser and for a desktop host (docs/spec/RUNTIME_HUB.md, the lane 8 ruling). A person pairing a browser
+ * runtime turns it on, knowingly. Every other role keeps the library's default.
+ */
+export function phoneGrant(found: { role: string; grant: Grant }): Grant {
+    return found.role === "runtime" ? { ...found.grant, mayPair: false } : { ...found.grant };
+}
+
+/**
+ * What a RUNTIME receives, as the lines the card shows, derived from the grant that will be sent and never typed
+ * beside it. `mayRevoke` is told, not offered: exactly one device signs removals and placing it is not a switch.
+ */
+export function receivesLines(found: Pick<FoundOffer, "signer">, grant: Pick<Grant, "scopes" | "mayPair" | "mayRevoke">): string[] {
+    const lines: string[] = [];
+    lines.push(grant.scopes.length ? `It can pass on: ${grant.scopes.map((s) => SCOPES.find((x) => x.id === s)?.label ?? s).join(", ")}.` : "It receives no scopes to pass on.");
+    lines.push(grant.mayPair
+        ? "It can add devices to this account by itself, without asking here."
+        : "It cannot add devices. A browser runtime without this cannot re-sign other devices' certificates when they renew.");
+    // `mayRevoke` with a known signer is never offered (the hub refuses a second holder), so only the first-runtime case is told.
+    if (grant.mayRevoke) lines.push("It will be the device that signs removals for this account. Exactly one does, and without it a removal reaches nothing.");
+    else if (found.signer) lines.push(`“${found.signer}” (the name that device gave itself, unchecked) signs removals for this account, and only one device can, so this one will not.`);
+    return lines;
+}
+
 /** What a role is called on screen. */
 export function roleName(role: PairRole | string): string {
     return role === "runtime" ? "a browser runtime" : role === "client" ? "a device" : role === "box-connector" ? "a box" : "a device";
@@ -236,6 +262,7 @@ export function roleName(role: PairRole | string): string {
 /**
  * Why a pairing did not complete, as a sentence with what to do next. Reads `.reason` off the library's
  * `PairingError`; anything else says its own message, which for a refused grant is the library's sentence.
+ * RULE: an error that can carry text a hub relayed MUST carry a `reason`, or its message reaches the screen as if it were fact.
  */
 export function pairingProblem(err: unknown): string {
     const reason = (err as { reason?: unknown } | null)?.reason;
@@ -243,11 +270,10 @@ export function pairingProblem(err: unknown): string {
         case "timed-out": return "Nobody answered the code in time. Start again for a new code.";
         case "hub": return "The hub refused it or could not be reached. Check its address and try again.";
         case "malformed": return "What came back was not a pairing answer. Start again for a new code.";
-        case "chain":
-        case "not-mine":
-        case "not-my-agreement-key":
-        case "wrong-role":
-            return "The answer did not check out, so nothing was paired. Start again, and compare the fingerprints closely.";
+        case "chain": return "The certificate in the answer does not lead back to this account's root, so nothing was paired. Cancel on the new device and start again; if it repeats, the hub is not one to trust.";
+        case "not-mine": return "The answer named a different device than the one waiting under the code, so nothing was paired. Cancel on the new device and start again; if it repeats, the hub is not one to trust.";
+        case "not-my-agreement-key": return "The answer was sealed to other keys than the ones that were offered, so nothing was paired. Cancel on the new device and start again; if it repeats, the hub is not one to trust.";
+        case "wrong-role": return "The answer gave the device another role than the one it asked for, so nothing was paired. Cancel on the new device and start again; if it repeats, the hub is not one to trust.";
         case "bad-offer": return "That is not a pairing code. On the new device, choose Join an account for one.";
         case "mismatch": return "The QR code named other keys than the ones waiting under it: something between the two devices swapped them. Nothing was paired. On the new device, cancel and start again; if it happens again, the hub is not one to trust.";
         case "no-offer": return "No device is waiting under that code. Check it, or ask for a new one: a code lasts ten minutes.";

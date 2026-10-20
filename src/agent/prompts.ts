@@ -226,8 +226,8 @@ export const PYTHON_CLAUSE =
 export const UNATTENDED_CLAUSE =
     "\n\nThis run is UNATTENDED: no human is available to approve actions. Use ONLY read-only " +
     "operations — inspect and query the DOM, and (where available) read-only `exec` surveys / " +
-    "readonly-mode `python_exec`. Any call that needs approval — clicking, typing, mutating exec, " +
-    "network, full-mode python — will be REFUSED, so don't attempt it; find a read-only path or " +
+    "`python_exec` inside the read-only dialect. Any call that needs approval — clicking, typing, mutating exec, " +
+    "network, any other python — will be REFUSED, so don't attempt it; find a read-only path or " +
     "report what you could and couldn't do.";
 
 // The tool-result a refused (approval-gated) call gets in an unattended run — steers to read-only.
@@ -241,7 +241,7 @@ export const UNATTENDED_EXEC_NOTE =
     " NOTE: this run is UNATTENDED — only READ-ONLY surveys run (querySelectorAll → filter → map, no " +
     "mutation). A mutating call is refused.";
 export const UNATTENDED_PY_NOTE =
-    " NOTE: this run is UNATTENDED — only readonly-mode runs here; full mode (network) is refused.";
+    " NOTE: this run is UNATTENDED — only Python inside the read-only dialect runs here; any other cell is refused.";
 
 /** Frame a right-click "ask about this" run: the resolved element's clean content as CONTEXT + the scope
  *  selector the agent can keep interacting through, wrapped around the user's question. The shell resolves the

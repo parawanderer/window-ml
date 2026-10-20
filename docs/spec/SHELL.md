@@ -222,6 +222,16 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
   running code. A call's `env` ADDS to the session's; in the Python shim, `env={**os.environ, …}` would carry the
   sandbox's environment to the host, so it is refused with a steer. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
+- **`&&` is the calling language's control flow** (ruled 2026-10-20, Shane's question): a chain of calls is judged one
+  call at a time as each arrives, suspending on an ask, and nothing new is needed to express it. In Python a result's
+  truth value IS `ok` (`okCodes` applied, never `code == 0`, or grep's 1 breaks the chain), so
+  `sh.git(["checkout", "main"]) and sh.npm(["install"]) and sh.npm(["test"])` is `&&` exactly: eager, short-circuiting,
+  the first failing result or the last; the API doc says `if r:` means ok, since `CompletedProcess` is always truthy.
+  In JavaScript the `await` makes that clumsy, so a session option `check: true` that throws on a non-ok result is the
+  form there, opt-in only (the default stays the value, above). A chain of LITERAL argv judged as one card before the
+  first spawn, the pipe's card without the pipe, is a possible later sugar, not planned: a later argv that depends on
+  an earlier result cannot be shown before it exists, and with policies covering the free tier a chain of read-only
+  calls asks nothing today. Build it only once a measured case shows the per-call asks are the annoying part.
 
 ## The API's shape: borrowed, not invented
 
@@ -402,7 +412,16 @@ What follows from it:
   envelope's two keys are both required, a runner starts programs no manifest describes, and `find . -exec rm` claims
   no write of its own, so `exec: "any"` with a derived `write: "none"` would fail the approved call as `ok: false`. The
   rule generalises: the worker sends an envelope only when BOTH keys derive from the approved claims; when either does
-  not, it sends none and the floor applies, never a guess. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
+  not, it sends none and the floor applies, never a guess. "The approved claims" are the JUDGE's facts (ruled 2026-10-19, the red
+  team's K3 audit, window-ml #827): the worker's own version probe is judged with no effects and so derives
+  `{ write: "none", exec: "program-only" }` for every program, `git --version` included; an option a manifest does not
+  list never widens a call the judge approved as doing nothing. In the host, every layer that acts on the protected
+  names (the bubblewrap re-bind, the Landlock enumeration, the tripwire's snapshot) reads the ONE list of them, never
+  a copy, and a test enumerates that list against each layer (ruled the same day, after the audit found the re-bind
+  short of four names while `done` reported `write: "roots"`). Seatbelt reads the same list, as whole subtrees: on
+  macOS a protected directory (`.claude/`, `.vscode/`, `.git/hooks/`) is unwritable at every depth under every scope,
+  today's included, as under the Linux rule, where before it denied only the files it listed by hand (ruled
+  2026-10-19, lane 4's gap, window-ml-host #16). A narrowing, so the coordinator's to rule; widening is Shane's. An ABSENT envelope keeps today's floor, bubblewrap with its documented gap: the
   gap is not closed for absent envelopes (Shane, 2026-10-19), because a sandbox that breaks the build gets turned off and
   then protects nothing; the tripwire above is what covers the gap's threat. `done` reports the envelope the host
   APPLIED, and for an absent one that is the floor, which is neither `none` nor `roots`: the reported `write` takes a

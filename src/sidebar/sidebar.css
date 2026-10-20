@@ -1063,9 +1063,6 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
 .ced-ta:focus { outline: none; }
 .bench-bar { display: flex; align-items: center; gap: 8px; }
-.bench-mode { display: flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 0.85em; }
-.bench-mode select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font: inherit; font-size: 0.92em; cursor: pointer; }
-.bench-mode select:focus { outline: none; border-color: var(--accent); }
 .bench-kbd { font-size: 0.78em; font-variant-numeric: tabular-nums; }
 .bench-run { font-size: 0.86em; font-weight: 700; padding: 4px 16px; border-radius: 6px; border: 1px solid var(--accent-strong);
     color: var(--accent-fg); background: var(--accent); cursor: pointer; }
@@ -1372,9 +1369,9 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
     color: var(--fg-dim); font-size: 0.86em; line-height: 1.4; }
-.astep-approve .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
+.astep-approve .appr-note, .card-foot .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
+.astep-approve .appr-note svg, .card-foot .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
 .astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
@@ -3736,14 +3733,10 @@ pre.code.dlines > code.hljs { display: block; }
    the mode picker gives up width, clipping its option text rather than pushing ▶ Run off the edge. */
 @container bench (max-width: 355px) {
     .bench-top .bench-send, .bench-top .bench-grip-pill { display: none; }
-    .bench-top .bench-mode, .bench-top .bench-mode select { min-width: 0; }
-    .bench-top .bench-mode { flex: 0 1 auto; overflow: hidden; }
-    .bench-top .bench-mode select { max-width: 100%; text-overflow: ellipsis; }
 }
 /* The controls in the strip are CONTROLS, not part of the drag target. Without this they inherit the
    resize cursor and read as somewhere to grab. */
-.bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn,
-.bench-top .bench-mode, .bench-top .bench-mode select { cursor: pointer; }
+.bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn { cursor: pointer; }
 /* THE GRAB PILL, centred on the ROW — the only place a drawer handle reads as one. Centring it in the
    leftover space instead (a flex child in the spacer) put it visibly off to one side, because the name and
    its controls are far wider than the two icons opposite. What forced that was the pill landing on the mode

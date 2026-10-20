@@ -185,7 +185,7 @@ export function liveCutoff(st: AgentStep): number | undefined {
 // also the slot a future interactive-approval control will resolve into.
 export const APPROVAL = {
     readonly: { label: "auto-approved", tip: "Auto-approved by the read-only exec setting." },
-    sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — a readonly-mode run is isolated by construction (no network / JS scope / DOM / filesystem)." },
+    sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — the cell is inside the read-only Python dialect, in a sandbox with no network / JS scope / DOM / filesystem." },
     "same-origin": { label: "auto-approved", tip: "Same-site action — a navigation or an uncredentialed fetch to this origin (or one you already allowed this run). The page could do it itself, so no prompt." },
     consented: { label: "auto-approved", tip: "A URL you already approved fetching this session — no re-prompt." },
     "self-source": { label: "auto-approved", tip: "An uncredentialed read of the agent's OWN repo source (code / structural API, not issues or other user-generated prose) — free via the Self-source setting." },
@@ -280,6 +280,13 @@ export function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!gr
 // Shared by the sidebar step and the HUD card. (The "Keep" button does approve + persist.)
 // Deliberate two-key combo for Keep (⌘K on mac, Ctrl+K elsewhere) — NOT Enter-adjacent, on purpose.
 export const KEEP_HINT = (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")) ? "⌘K" : "Ctrl K";
+/** WHY A CALL IS ASKING when a policy that used to allow it is gone (archived, removed, edited): one line on the approval
+ *  card, the sentence the model read in the tooltip. Text only: it never changed the decision.
+ * @gallery {"why":{"line":"Asking because the policy \"fetch https://example.com/a\" was removed when this session was archived.","detail":"This call needed approval because the policy was removed when this session was archived; the call itself did not change.","cause":"archived","policy":"fetch https://example.com/a"}}
+ * @group card */
+export function AskWhyLine({ why }: { why: import("../../contract").AskWhy }) {
+    return <div class="appr-note appr-askwhy" {...cursorTipOn(why.detail)}><IconWarn /><span>{why.line}</span></div>;
+}
 /** What approving this call also GRANTS for the rest of the session — a host you will not be asked
  *  about again. Shown before you decide, because a one-shot approval and a session grant are different
  *  decisions and the button looks the same. */
@@ -587,6 +594,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                     {sheetGrants.length
                         ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
+                    {st.askWhy ? <AskWhyLine why={st.askWhy} /> : null}
                     <HostAccessNote st={st} />
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {showGrants ? <GrantCard grants={st.grants!} /> : null}

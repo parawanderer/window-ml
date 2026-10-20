@@ -389,3 +389,12 @@ test("a step's nested asks export with their facts, how each ended and when", ()
     assert.equal(doc.session.steps[0].asks, undefined, "a step that asked nothing carries no field");
 });
 
+test("an allowed ask's outcome exports verbatim: the sandbox the host applied and the protected names that changed", () => {
+    const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
+        protectedChanged: [{ root: "/w", name: ".envrc", change: "created" }], protectedChangedTruncated: true };
+    const asks = [{ id: "a0123456789abcdef01234567", kind: "sh", facts: { argv: ["npm", "install"] }, state: "allowed", raisedAt: 1, answeredAt: 2, outcome }];
+    const s = agentSession();
+    s.steps[1] = { ...s.steps[1], asks };
+    assert.deepEqual(sessionToJson(s).session.steps[1].asks[0].outcome, outcome);
+});
+

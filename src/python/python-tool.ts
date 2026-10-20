@@ -108,8 +108,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             "(returned, or just left open) → an image, a DataFrame " +
             "→ a table — so just `return sympy.diff(...)` / `return img` and cite `![…](@tool:…:out)` (no cast; add " +
             "`| raw` to force the literal text). " + stateClause + " In scope: " +
-            PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…). `mode` 'readonly' (default) is a pure " +
-            "function over the inputs (may be auto-approved); 'full' enables network but ALWAYS asks the user." +
+            PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…)." +
+            " A cell the read-only dialect covers runs without asking; any other asks the user first. No network or filesystem here: use fetch_url for that." +
             currentHint,
         parameters: {
             type: "object",
@@ -118,7 +118,6 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
                 cast: { type: "string", enum: ["pt", "box"], description: PYTHON.cast },
                 verify: { type: "boolean", description: PYTHON.verify },
-                mode: { type: "string", enum: ["readonly", "full"], description: PYTHON.mode },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
                 tables: {
                     oneOf: [
@@ -145,7 +144,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, verify = false, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, verify = false, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
             // Effective per-slot output cap (default: OUTPUT_CAP.python_exec). A raise past it is only reachable AFTER the human
             // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
             const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);
@@ -165,7 +164,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — loaded the FIRST as \`${name}\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ }
             }
             if (tableNote) tableNote += "\n";
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, onStdout: ctx?.stream });
+            const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, onStdout: ctx?.stream });
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
             // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
@@ -220,7 +219,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 const loaded = [dfNames, r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
                 const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
                 const hint = loaded && looksLikeReload
-                    ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network in readonly mode).`
+                    ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network).`
                     : "";
                 return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
             }

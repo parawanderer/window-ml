@@ -121,9 +121,12 @@ with the selector/name they passed — `Image.open('canvas#stage')`, `pd.read_cs
 patches `Image.open`/`pd.read_csv`/`pd.read_html` to return the pre-loaded `img`/`df` **when it's
 actually loaded** (never for a real file-like or a URL — except the exact URL a table was loaded FROM, which is that
 table: re-reading what `tables` already fetched is the commonest first try — a genuine http `read_csv` /
-`Image.open(BytesIO)` passes through). Patched once (module attrs + `_`-prefixed originals survive
-RESET; funcs resolve `img`/`tables` from `globals()` each call → current-run data, no stale
-closure). And when that CAN'T resolve it — data preloaded but the code still errors trying to
+`Image.open(BytesIO)` passes through). ONE patch per interpreter (the module attrs survive RESET;
+the originals live in the install function's closure, so no namespace holds an `_ml_orig_*` name and a later
+prelude run in any namespace installs nothing, never a chain). The wrappers resolve `img`/`tables` from the
+namespace the running cell's prelude named (`__main__._ml_load_ns`), never from the dict that defined them: a
+run with no image of its own is not handed another run's, and `from PIL import Image` in a cell neither loses
+the redirect nor leaks one. The bench names none (`None`), so for it the real loader runs. And when that CAN'T resolve it — data preloaded but the code still errors trying to
 (re)load it (`read_excel`/`read_json`/`open`/`requests`, an ambiguous name across many tables, a
 URL in readonly), the tool **appends a redirect hint** ("use `df`/`img` directly") as the
 fallback, catching any hallucinated load pattern on the failure. The tool
@@ -206,11 +209,15 @@ before a cell's result is returned. The strip, the harness capture and the wrapp
 **escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
-cell the import fallback, and `loadPackage` of a wheel still works after the strip. `full` mode
-leaves the bridges intact (outbound network) and **always** requires manual approval.
+cell the import fallback, and `loadPackage` of a wheel still works after the strip. There is **no `mode`**
+(removed 2026-10-19, lane 7): every cell runs in a hardened worker, and `pythonCellInDialect` (`agent/python-dialect.ts`)
+decides whether it is inside the read-only dialect (no card, the read-only slice of `ml`) or outside it (asks, the full
+gated `ml`). It returns false for every cell until the Pyodide build carries a membership predicate, so **no cell
+auto-approves yet**; the plug-in point is that one function. A grant keeps the old prefixes (`full:` outside,
+`readonly:` inside), so a stored `full:` grant still covers its code and a stored `readonly:` one no longer does.
 Config `autoApprovePython`
-(ON by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
-`sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
+(ON by default, Advanced settings) auto-approves calls **inside the dialect** (badge provenance
+`sandbox`) — but code outside it, or containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
 retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
 exist"). The sandbox's third-party packages are a **single source of truth** in
@@ -315,10 +322,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
 - **Cells of the same worker-hosted run**, by run id: `wire.run` on `PY_RUN`, set only from `wireRun` (`worker-tools.ts`).
   The worker keeps `runs: Map<runId, { ns, id }>` (`python-worker.ts`), so the key is the run and nothing else.
 - **Not** a page's `ml.pythonExec` or a page-hosted agent's `python_exec`: no run id, so the main namespace and the reset
-  as before. **Not** the bench (`persist`): its own `benchNs`, per mode.
-- **Both modes, and no crossing.** A `readonly` cell runs on the worker of principal `run:<id>`, a `full` cell on the
-  `full` worker. Each keeps its own dict for the run, so a name defined in a `full` cell is not visible to a `readonly`
-  cell of the same run.
+  as before. **Not** the bench (`persist`): its own `benchNs`.
 - **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
   wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
 - **Ends** with the run: `settle()` (`sw-run-host.ts`) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
@@ -332,9 +336,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   cell's scope manifest (`bench.vars`: names and type names).
 - **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
   `offscreen.ts`), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
-- **Known residual:** two full-mode runs ALIVE at once share the `full` interpreter and can read each other's dicts
-  (`gc.get_objects()`); the approval card says so. Pinned by a test that asserts it exists
-  (`docs/plan/repl/LANE_1_RESULT_C.md`, "Known residual").
+- **The `full` worker is unreachable from the service worker** since `mode` went (`runPython` always sends `hardened: true`); its branch in `offscreen.ts` and `python-worker.ts` stays for the Pyodide-build lanes to delete. The residual it carried (two full-mode runs sharing one interpreter) is gone with it.
 - **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only).
 
 Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) and `tests/python-run-namespace-py.test.mjs`
@@ -351,8 +353,9 @@ Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) an
   list of statement shapes. Without it `x = 1` is a local of `_user` and vanishes at the end of the run. A name
   a nested function declares `nonlocal` stays local, or the script would not compile.
 - **Only `PRELUDE_BASE`** (imports + helpers). The injected-data part resets `img`/`df`/`tables` every run — it
-  would wipe a bench user's `df` — and the loader redirects are defined in, and read, the namespace that runs
-  them, so a second namespace would patch on top of the first and read the other's data.
+  would wipe a bench user's `df` — and it keeps no loader redirect: it names no
+  namespace for the shared patch (`__main__._ml_load_ns = None`), so a patch a run cell installed falls
+  through to the real `Image.open`/`pd.read_*` for the bench rather than serving another namespace's names.
 - **After a `python_exec`, main is reset** (worker `finally`): its injected screenshot and tables otherwise
   linger until the next run, where a bench script's `pd.read_csv("sales")` could reach them through the
   redirect.

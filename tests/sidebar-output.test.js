@@ -1060,20 +1060,18 @@ test("python bench: a cell the SANDBOX marked names its Python type, and blames 
         "the dict cell is untouched — the marker is only for what would otherwise be LOST");
 });
 
-test("python bench: full mode sends hardened:false", async () => {
+test("python bench: there is no sandbox-mode picker, and a run is hardened", async () => {
     const w = await loadSidebarWorld();
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const sel = w.shadow.querySelector(".bench-mode select");
-    sel.value = "full";
-    sel.dispatchEvent(new w.window.Event("change"));
+    assert.equal(w.shadow.querySelector(".bench-mode"), null, "mode was removed: one sandbox");
     const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return 1";
     ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
-    assert.equal(w.pyCalls[0].hardened, false, "full mode → not hardened");
+    assert.equal(w.pyCalls[0].hardened, true, "hardened");
 });
 
 // The environment panel opens OVER the editor, so "click off it" is the first thing anyone tries to dismiss

@@ -1,0 +1,41 @@
+# pair-runtime.yaml — the React Native app's DEMO build (`install --demo`): pairing a RUNTIME, as the desktop host is.
+# Settings → Devices → Pair a device, find the "Office desktop" the demo keeps waiting under a code, and check what the
+# card says it receives: "Can add devices" starts OFF whatever the library defaults to (lane 8), the lines follow the
+# switch, and the revocation signer is told, never offered. The same on both platforms: `node scripts/ios.mjs flows
+# tests/mobile/pair-runtime.yaml` (or android.mjs).
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- tapOn: "Devices"
+- tapOn: "Pair a device"
+- tapOn:
+    id: "code-field"
+- inputText: "RT4D 9HWP"
+- hideKeyboard
+- tapOn: "Find it"
+- extendedWaitUntil:
+    visible: "Office desktop"
+    timeout: 20000
+- assertVisible: "It receives"
+# A runtime is not given the client's six switches or its named grants.
+- assertNotVisible: "Watch only"
+- assertVisible: "It cannot add devices.*"
+- assertVisible: "“Work laptop” \\(the name that device gave itself, unchecked\\) signs removals.*"
+- assertVisible: "A runtime, a browser or a desktop host, waiting to join. The name above is its own word, not checked."
+# Turning the switch on changes the card's own line, because both are read from the one grant.
+- tapOn:
+    id: "mayPair"
+- assertVisible: "It can add devices to this account by itself.*"
+- tapOn:
+    id: "mayPair"
+- assertVisible: "It cannot add devices.*"
+- tapOn: "They match: pair it"
+- extendedWaitUntil:
+    visible: "Paired"
+    timeout: 20000
+- assertVisible: "Office desktop is in the account now."

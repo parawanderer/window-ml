@@ -8,6 +8,8 @@
 //   node scripts/merge-when-green.mjs 501 --wait      # poll every 30 s while CI runs (up to an hour), then check
 //   node scripts/merge-when-green.mjs 501 --wait --merge   # …and squash-merge when it says OK
 //   … --session <id>  # your harness's session id: comments YOU posted (their agent-post marker) do not count as unread
+//   … --read <id>     # a post you have read that asks nothing further (repeatable): it stops blocking, and the refusal
+//                     # prints the ids to name. The tool never parses a body: YOU are saying it asks nothing.
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
 //   … --discard       # merge even though a worktree holds work in no commit: it stays there, and goes with the worktree
 //
@@ -89,6 +91,52 @@ export function isOwnPost(body, session) {
     return session.startsWith(theirs) || theirs.startsWith(session);
 }
 
+/**
+ * The id form `--read` and a post's id are compared in: GitHub's URL fragments (`pullrequestreview-12`,
+ * `issuecomment-34`, `discussion_r56`) collapse to the bare number a REST list returns, and anything else (a GraphQL
+ * node id) stays as written. So one flag value names a post however it was written down.
+ */
+export function postKey(id) {
+    const s = String(id ?? "").trim();
+    const m = /^(?:pullrequestreview-|issuecomment-|discussion_r)?(\d+)$/.exec(s);
+    return m ? m[1] : s;
+}
+
+/**
+ * The posts a merge still has to wait for: everything that is not the merging session's own (its agent-post marker),
+ * not the conflicts workflow's notice (`<!-- pr-conflicts -->`, about CI, which the run settles), and not one `--read`
+ * named as read and asking nothing further. A post answers to its numeric id and its GraphQL node id alike. Returns
+ * `{ kind, id, author, preview }` for each, in review, comment, inline order. Pure, so the rule is testable. The tool
+ * never parses a body to decide whether it asks: only `--read` does that, and only for what it names.
+ */
+export function pickUnread({ reviews = [], comments = [], inline = [] }, { session = null, read = [] } = {}) {
+    const said = new Set(read.flatMap((r) => {
+        const s = String(r ?? "").trim();
+        return s ? [s, postKey(s)] : [];
+    }));
+    const out = [];
+    const take = (kind, xs, who) => {
+        for (const x of xs) {
+            const body = String(x.body ?? "");
+            if (body.includes("<!-- pr-conflicts -->")) continue;
+            if (isOwnPost(body, session)) continue;
+            const keys = new Set([x.id, x.node_id].filter((v) => v != null).flatMap((v) => [String(v), postKey(v)]));
+            if ([...keys].some((k) => said.has(k))) continue;
+            out.push({
+                kind,
+                id: String(x.id ?? x.node_id ?? "?"),
+                author: who(x),
+                preview: body.replace(/\s+/g, " ").trim().slice(0, 60) || "(no body)",
+            });
+        }
+    };
+    const who = (x) => x.user?.login ?? x.author?.login ?? x.author?.name ?? "?";
+    take("review", reviews, who);
+    take("comment", comments, who);
+    take("inline", inline, who);
+    return out;
+}
+
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
 export function judge(f) {
     if (!f.runId) return { ok: false, pending: true, reason: `no tests run for ${f.sha.slice(0, 8)} yet (or the PR conflicts with main: a conflicting PR runs no checks)` };
@@ -96,7 +144,11 @@ export function judge(f) {
     if (f.badJobs.length) return { ok: false, reason: `not green: ${f.badJobs.join(" ")} (a cancelled job prints as failed: check before blaming the change)` };
     if (f.deletedTestFiles) return { ok: false, reason: "deletes a test file" };
     if (f.tests.removed > f.tests.added) return { ok: false, reason: `removes tests (${f.tests.removed} removed, ${f.tests.added} added lines)` };
-    if (f.reviews || f.inlineComments) return { ok: false, reason: `has ${f.reviews} reviews/comments and ${f.inlineComments} inline comments: read them` };
+    if (f.reviews || f.inlineComments) {
+        // The ids to name once they have been read and found to ask nothing: `--read` is the only way past one.
+        const flags = (f.unread || []).map((u) => `--read ${u.id}`).join(" ");
+        return { ok: false, reason: `has ${f.reviews} reviews/comments and ${f.inlineComments} inline comments: read them${flags ? ` (${flags})` : ""}` };
+    }
     if (f.stacked) return { ok: false, reason: "has PRs stacked on it: retarget them first" };
     if (f.mergeable === "UNKNOWN") return { ok: false, pending: true, reason: "GitHub has not computed mergeability yet" };
     if (f.mergeable !== "MERGEABLE") return { ok: false, reason: `not mergeable (${f.mergeable})` };
@@ -127,9 +179,18 @@ async function spareTheBudget() {
     await new Promise((r) => setTimeout(r, ms));
 }
 
-function facts(pr, session) {
+/** Every page of a REST list endpoint, flattened: `gh api --paginate --slurp` wraps the pages in an outer array. */
+function restList(path) {
+    try {
+        return JSON.parse(gh("api", "--paginate", "--slurp", path) || "[]").flat();
+    } catch {
+        return [];
+    }
+}
+
+function facts(pr, session, read = []) {
     git("fetch", "-q", "origin");
-    const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable,reviews,comments") || "{}");
+    const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable") || "{}");
     const head = view.headRefName;
     if (!head) throw new Error(`PR #${pr} not found`);
     const sha = git("rev-parse", `origin/${head}`);
@@ -141,17 +202,20 @@ function facts(pr, session) {
             '.jobs[] | select(.conclusion!="success" and .conclusion!="skipped") | "\\(.name)=\\(.conclusion)"').split("\n").filter(Boolean)
         : [];
     const range = `origin/main...origin/${head}`;
-    // The conflicts workflow's own notice is about CI, which the run settles; it is not a review.
-    // A post the merging session made itself (its agent-post marker) is not something it has to read.
-    const comments = (view.comments || []).filter((c) => !String(c.body).includes("<!-- pr-conflicts -->") && !isOwnPost(c.body, session));
-    const reviews = (view.reviews || []).filter((r) => !isOwnPost(r.body, session));
-    const inline = JSON.parse(gh("api", `repos/${REPO}/pulls/${pr}/comments`) || "[]").filter((c) => !isOwnPost(c.body, session));
+    // REST, so every post carries the numeric id its URL fragment names and `--read` can take either form. The
+    // conflicts notice, a session's own post and a post `--read` named are all filtered in pickUnread.
+    const unread = pickUnread({
+        reviews: restList(`repos/${REPO}/pulls/${pr}/reviews`),
+        comments: restList(`repos/${REPO}/issues/${pr}/comments`),
+        inline: restList(`repos/${REPO}/pulls/${pr}/comments`),
+    }, { session, read });
     return {
         head, sha, runId, runStatus, badJobs,
         tests: testLineCounts(git("diff", range, "--", "tests")),
         deletedTestFiles: deletedTests(git("diff", "--name-status", range, "--", "tests")).length,
-        reviews: reviews.length + comments.length,
-        inlineComments: inline.length,
+        reviews: unread.filter((u) => u.kind !== "inline").length,
+        inlineComments: unread.filter((u) => u.kind === "inline").length,
+        unread,
         stacked: Number(gh("pr", "list", "--base", head, "--json", "number", "-q", "length")) || 0,
         mergeable: view.mergeable,
     };
@@ -311,14 +375,30 @@ function releaseHeld(runs) {
 
 async function main() {
     const argv = process.argv.slice(2);
-    const pr = argv.find((a) => /^\d+$/.test(a));
-    if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>]"); process.exit(2); }
+    // The PR number is the first bare number that is not a valued flag's argument: `--read 123` names a comment, not a PR.
     const wait = argv.includes("--wait"), merge = argv.includes("--merge");
     const keep = argv.includes("--keep-bench"), discard = argv.includes("--discard");
-    const si = argv.indexOf("--session"), session = si >= 0 ? argv[si + 1] : null;
+    const read = [];
+    let pr = null, session = null;
+    const take = (flag, value) => {
+        if (value == null || value === "" || value.startsWith("--")) { console.error(`${flag} needs a value`); process.exit(2); }
+        return value;
+    };
+    for (let i = 0; i < argv.length; i++) {
+        const a = argv[i];
+        if (a === "--read") read.push(...take(a, argv[++i]).split(",").map((s) => s.trim()).filter(Boolean));
+        else if (a.startsWith("--read=")) read.push(...take("--read", a.slice(7)).split(",").map((s) => s.trim()).filter(Boolean));
+        else if (a === "--session") session = take(a, argv[++i]);
+        else if (a.startsWith("--session=")) session = take("--session", a.slice(10));
+        else if (/^\d+$/.test(a)) {
+            if (pr) { console.error("one PR number only"); process.exit(2); }
+            pr = a;
+        }
+    }
+    if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>] [--read <comment id>]"); process.exit(2); }
     let f, v;
     for (let i = 0; ; i++) {
-        f = facts(pr, session);
+        f = facts(pr, session, read);
         v = judge(f);
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         // While the run is still going, one call a minute says so; the full facts wait until it is done.
@@ -331,6 +411,7 @@ async function main() {
     }
     const { blocked, held, servers, heldRuns } = await leftovers(f.head, { keep, discard });
     console.log(`${pr}: ${v.reason}`);
+    for (const u of f.unread || []) console.log(`  ${u.kind} ${u.id} ${u.author}: ${u.preview}`);
     if (!v.ok) process.exit(1);
     if (blocked) { console.log(`${pr}: ${merge ? "NOT MERGED" : "would not merge"}: a worktree holds work that is in no commit (above)`); process.exit(1); }
     if (!merge) return;

@@ -35,6 +35,7 @@ async function pageRun(extra, calls, { approve = true, cfg = {} } = {}) {
     let turns = 0, bg;
     const gates = [];
     bg = loadBackground({
+        dialectInside: "print(",   // no real membership predicate yet: stands in for a cell inside the dialect
         config: { ...config, ...cfg }, openTabs: [{ id: 7, url: SITE, title: "Site" }],
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => "<h1>OTHER</h1>", arrayBuffer: async () => new TextEncoder().encode("<h1>OTHER</h1>").buffer, body: null };

@@ -463,7 +463,9 @@ posted itself (#591, 2026-10-12), because it could only see the account name.
 
 **What reads it.** `merge-when-green --session <id>` skips posts whose marker names that session. A post marked by
 ANOTHER session still blocks: an agent's review is a review. An unmarked post counts as a person's, so a forgotten
-marker fails safe (the merge waits) rather than open (a review goes unread).
+marker fails safe (the merge waits) rather than open (a review goes unread). A post that is not yours and asks nothing
+further is named with `--read <id>` (the refusal prints the ids), which is the only way past one; the tool never parses
+a body to decide that, so an unread review still refuses.
 
 **Not in commits.** `Co-Authored-By` already names the model, and a session knows its own branch.
 

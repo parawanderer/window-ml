@@ -230,7 +230,7 @@ export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): v
         }
         // `ts` is kept because a step is a point on the machine's TIMELINE as well as a row in a transcript: the
         // resource panel's event lane places it against what memory was doing at that moment.
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, toolMs: ev.toolMs, approveMs: ev.approveMs, remoteMs: ev.remoteMs, shCalls: ev.shCalls, ts: ev.ts, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, streamMarks: ev.streamMarks, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused, asks: ev.asks };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, toolMs: ev.toolMs, approveMs: ev.approveMs, remoteMs: ev.remoteMs, shCalls: ev.shCalls, ts: ev.ts, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, streamMarks: ev.streamMarks, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, askWhy: ev.askWhy, reused: ev.reused, asks: ev.asks };
         const steps = s.steps || [];
         // A step with no `seq` (a thought) cannot be patched, so the same one delivered twice (a replay into an app that
         // already has it, which a page can trigger at will) would show twice. It is the same row if it is the same step at
@@ -252,7 +252,9 @@ export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): v
                 streamMarks: step.streamMarks ?? steps[i].streamMarks,
                 // A step's nested asks only grow: an event that does not carry them (one from before the first ask, or
                 // from a surface that does not know them) keeps what the row has.
-                asks: step.asks ?? steps[i].asks }
+                asks: step.asks ?? steps[i].asks,
+                // Why the call asked is said once, on the pending START; the DONE keeps it.
+                askWhy: step.askWhy ?? steps[i].askWhy }
             : step;
         if (batching) {
             // Into the batch's own copy, so the array a reader is holding is never the one being grown.

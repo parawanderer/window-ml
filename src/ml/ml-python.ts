@@ -34,10 +34,6 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
  *   image via `to_base64(...)`. `print()` output is captured as `stdout`.
  * @param {Object} [opts]
  * @param {string|Element} [opts.image] What to screenshot into the sandbox (omit for none).
- * @param {"readonly"|"full"} [opts.mode] `"readonly"` (default) hardens the sandbox — no
- *   network, no JS/extension scope — so it's a pure function over the injected data;
- *   `"full"` leaves those bridges intact (network etc.), and the agent tool always asks
- *   for approval before a full-mode run.
  * @param {number} [opts.margin] For an `@pt` image: the crop radius (px) around the point.
  *   Defaults to the look-radius. Ignored for `@box`/selectors.
  * @param {string|Element|Object} [opts.tables] Spreadsheet/table data to load as pandas
@@ -48,7 +44,7 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
  * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTables? }>}
  *   `inputImage`/`inputTables` are what the sandbox saw (for the debug render).
  */
-export const pythonExec = async function(this: MlApi, code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null, onStdout = undefined }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; bootMs?: number; runMs?: number }> {
+export const pythonExec = async function(this: MlApi, code: string, { image = null, margin = 0, tableRaw = false, tables = null, onStdout = undefined }: { image?: string | Element | null; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; bootMs?: number; runMs?: number }> {
     // raw: the sandbox must see the container's/point's actual pixels — NOT the
     // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
     // `margin` sets the crop radius around an @pt (default: the look-radius).
@@ -67,7 +63,7 @@ export const pythonExec = async function(this: MlApi, code: string, { image = nu
     // bootMs/runMs come back from the WORKER (the executor): a cold start is charged to the call
     // that paid for it, so a first run does not report the runtime download as its own script time.
     const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
-        { code, image: img, hardened: mode !== "full", stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i].alias ?? (typeof specs[i].src === "string" ? specs[i].src as string : null) })) },
+        { code, image: img, stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i].alias ?? (typeof specs[i].src === "string" ? specs[i].src as string : null) })) },
         undefined, null,
         // LIVE stdout (opt-in): each PYTHON_STREAM chunk for this run → onStdout (the tool's ctx.stream).
         onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; table?: { columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number }; valueKey?: string; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number };

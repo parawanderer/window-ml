@@ -3,12 +3,12 @@
 // choice before the first frame, and tells the page the theme whenever it changes.
 
 import { useEffect, useMemo, useState } from "react";
-import { StatusBar, View } from "react-native";
+import { BackHandler, StatusBar, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
-import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import { BottomSheetModalProvider, useBottomSheetModal } from "@gorhom/bottom-sheet";
 import { DarkTheme, DefaultTheme, NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { loadDrafts } from "./src/drafts";
@@ -30,7 +30,7 @@ import { DevicesScreen, PairScreen } from "./src/screens/DeviceScreens";
 import { RuntimeScreen } from "./src/screens/RuntimeScreen";
 import { UpdateScreen } from "./src/screens/UpdateScreen";
 import { ThemeChoiceContext, usePalette, type ThemeChoice } from "./src/theme";
-import { Toast } from "./src/ui";
+import { Toast, useSheetOpen } from "./src/ui";
 import { ImageViewer } from "./src/viewer";
 
 const Stack = createNativeStackNavigator<Routes>();
@@ -80,31 +80,45 @@ function Shell() {
     }, [p.scheme, insets.left, insets.right, codeSize]);
     const nav = p.scheme === "dark" ? DarkTheme : DefaultTheme;
     const firstRun = e.account === null && !e.demo;
+    const behindSheet = useSheetOpen();
+    const sheets = useBottomSheetModal();
+    // Android's back closes the open sheet first. Without this it went to the session layer behind, which closed
+    // under a sheet that stayed presented, and the list it uncovered stayed hidden from a screen reader. Added when a
+    // sheet opens, so after the layer's own handler, and the later one is asked first.
+    useEffect(() => {
+        if (!behindSheet) return;
+        const sub = BackHandler.addEventListener("hardwareBackPress", () => { sheets.dismiss(); return true; });
+        return () => sub.remove();
+    }, [behindSheet, sheets]);
     return (
         <View style={{ flex: 1, backgroundColor: p.bg }}>
             <StatusBar barStyle={p.scheme === "dark" ? "light-content" : "dark-content"} />
-            <NavigationContainer theme={{ ...nav, colors: { ...nav.colors, background: p.bg, card: p.bg, text: p.fg, border: p.border, primary: p.accent } }}>
-                {/* Before an account, only the ways into one; once the page reports an account, the app. Switching the set
-                    of screens (not navigating) is what makes a join land on the list with no way back to "Join". */}
-                <Stack.Navigator screenOptions={{ headerShown: false, animation: "default" }}>
-                    {firstRun ? <>
-                        <Stack.Screen name="Welcome" component={WelcomeScreen} />
-                        <Stack.Screen name="Join" component={JoinScreen} />
-                        <Stack.Screen name="Create" component={CreateScreen} />
-                    </> : <>
-                        <Stack.Screen name="List" component={ListScreen} />
-                        <Stack.Screen name="NewChat" component={NewChatScreen} />
-                        <Stack.Screen name="Search" component={SearchScreen} />
-                        <Stack.Screen name="Attention" component={AttentionScreen} />
-                        <Stack.Screen name="Settings" component={SettingsScreen} />
-                        <Stack.Screen name="Devices" component={DevicesScreen} />
-                        <Stack.Screen name="Runtime" component={RuntimeScreen} />
-                        <Stack.Screen name="Pair" component={PairScreen} />
-                        <Stack.Screen name="Update" component={UpdateScreen} />
-                    </>}
-                </Stack.Navigator>
-            </NavigationContainer>
-            <SessionLayer />
+            {/* Out of the accessibility tree while a sheet is open: the sheets render in the provider's portal, after
+                this, so they stay reachable and nothing behind them does (ui.tsx, `useSheetOpen`). */}
+            <View style={{ flex: 1 }} importantForAccessibility={behindSheet ? "no-hide-descendants" : "auto"} accessibilityElementsHidden={behindSheet}>
+                <NavigationContainer theme={{ ...nav, colors: { ...nav.colors, background: p.bg, card: p.bg, text: p.fg, border: p.border, primary: p.accent } }}>
+                    {/* Before an account, only the ways into one; once the page reports an account, the app. Switching the set
+                        of screens (not navigating) is what makes a join land on the list with no way back to "Join". */}
+                    <Stack.Navigator screenOptions={{ headerShown: false, animation: "default" }}>
+                        {firstRun ? <>
+                            <Stack.Screen name="Welcome" component={WelcomeScreen} />
+                            <Stack.Screen name="Join" component={JoinScreen} />
+                            <Stack.Screen name="Create" component={CreateScreen} />
+                        </> : <>
+                            <Stack.Screen name="List" component={ListScreen} />
+                            <Stack.Screen name="NewChat" component={NewChatScreen} />
+                            <Stack.Screen name="Search" component={SearchScreen} />
+                            <Stack.Screen name="Attention" component={AttentionScreen} />
+                            <Stack.Screen name="Settings" component={SettingsScreen} />
+                            <Stack.Screen name="Devices" component={DevicesScreen} />
+                            <Stack.Screen name="Runtime" component={RuntimeScreen} />
+                            <Stack.Screen name="Pair" component={PairScreen} />
+                            <Stack.Screen name="Update" component={UpdateScreen} />
+                        </>}
+                    </Stack.Navigator>
+                </NavigationContainer>
+                <SessionLayer />
+            </View>
             <Toast notice={e.notice} bottom={insets.bottom + 90} />
             <ImageViewer src={e.image} onClose={e.closeImage} />
         </View>

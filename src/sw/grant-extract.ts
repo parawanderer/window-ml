@@ -17,6 +17,7 @@
 import { parse } from "acorn";
 import type { PersistGrant } from "../contract/contract-agent";
 import { externalSheetIds } from "../dom/dom";
+import { pythonCellInDialect } from "../agent/python-dialect";
 
 /** Minimal acorn-node shape — we only read `type`, member/call fields, and literal values. */
 type Node = { type: string; [k: string]: unknown };
@@ -97,38 +98,38 @@ function staticString(node: Node | undefined): string | null {
 }
 
 /**
- * The key a python_exec cell's grant is held under on its tab: its mode and its exact code. A `full` grant also covers
- * the same code in `readonly` (`pyCodeGranted`, sw-python.ts); a `readonly` one never covers `full`.
- * @param mode the mode the person approved
+ * The key a python_exec cell's grant is held under on its tab: its verdict and its exact code. An OUTSIDE grant also
+ * covers the same code inside (`pyCodeGranted`, sw-python.ts); an inside one never covers outside. The prefixes are the
+ * ones the old `mode` wrote (`full:` outside, `readonly:` inside), so a grant stored before `mode` went keeps its meaning.
+ * @param outside whether the person approved the cell as outside the dialect
  * @param code the exact code
  * @returns the key
  */
-export const pyCodeGrant = (mode: "readonly" | "full", code: string): string => `${mode}:${code}`;
+export const pyCodeGrant = (outside: boolean, code: string): string => `${outside ? "full" : "readonly"}:${code}`;
 
 /**
- * Whether a set of granted keys covers this code in this mode. A `full` approval also covers the same code
- * in `readonly`; a `readonly` one never covers `full`. A key from BEFORE the mode qualification (bare code, no
- * `mode:` prefix) matches nothing: it is not a `full` grant and not a `readonly` one, so the cell asks again.
+ * Whether a set of granted keys covers this code with this verdict. An outside approval also covers the same code
+ * inside; an inside one never covers outside. A key from BEFORE the prefix (bare code) matches nothing, so the cell asks again.
  * @param granted the keys a person approved on the tab
- * @param mode the mode the cell runs in
+ * @param outside whether the cell is outside the dialect
  * @param code the exact code
  * @returns true when granted
  */
-export const pyCodeCovers = (granted: ReadonlySet<string>, mode: "readonly" | "full", code: string): boolean =>
-    granted.has(pyCodeGrant("full", code)) || (mode === "readonly" && granted.has(pyCodeGrant("readonly", code)));
+export const pyCodeCovers = (granted: ReadonlySet<string>, outside: boolean, code: string): boolean =>
+    granted.has(pyCodeGrant(true, code)) || (!outside && granted.has(pyCodeGrant(false, code)));
 
 /** What one approved call puts on its TAB for its own sub-operations (`grantsFor`, sw-consent.ts): what any script on
  *  that page could also spend while the call runs, so only what the call cannot do without. */
 export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sheets: string[]; pyCode: string[] }
 
 /**
- * Decide the grants an approved call mints on its tab. Pure, so each rule is tested on its own.
+ * Decide the grants an approved call mints on its tab. Pure but for the dialect verdict (`pythonCellInDialect`, replaceable in tests), so each rule is tested on its own.
  *
  * - An `exec`: the URLs its code spells out (its inline `ml.fetch`), and no others.
  * - A server tool: the exact call the person saw (`remoteKey`, `serverToolKey`).
  * - A `python_exec` the worker runs (`pyInWorker`): nothing on the tab; its grants are the run's (worker-tools.ts).
- * - A `python_exec` that runs on the page: its code, keyed by its MODE (`pyCodeGrant`), since the worker runs a page's
- *   cell in either mode only for code a person approved in that mode or `full`. Its external sheets only for a run the PAGE built,
+ * - A `python_exec` that runs on the page: its code, keyed by its verdict (`pyCodeGrant`), since the worker runs a page's
+ *   cell only for code a person approved with that verdict or as outside. Its external sheets only for a run the PAGE built,
  *   whose loop is the page's own. A worker-built run's sheet never goes on the tab, whatever the call's shape: the
  *   minted id is a credentialed read any script on the page could spend while the call runs (clause B, #442). Since
  *   site access part 5 every python_exec of a run the worker drives runs in the worker, so only a page-built run's,
@@ -142,7 +143,8 @@ export function tabGrantsForCall(c: { name: string; args: Record<string, unknown
     if (c.remoteKey) out.serverTools.push(c.remoteKey);
     if (c.name === "python_exec" && !c.pyInWorker) {
         if (!c.builtByWorker) out.sheets.push(...externalSheetIds(c.args));
-        out.pyCode.push(pyCodeGrant(c.args.mode === "full" ? "full" : "readonly", String(c.args.code ?? "")));
+        const code = String(c.args.code ?? "");
+        out.pyCode.push(pyCodeGrant(!pythonCellInDialect(code), code));
     }
     return out;
 }

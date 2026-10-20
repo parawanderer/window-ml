@@ -89,7 +89,7 @@ const GENRES = {
     // property is a test with a positive control, and the suite is the one to run after any security-relevant change.
     redteam: {
         about: "what a hostile page must NOT get: every tool, member and page-started message, each property a test",
-        files: ["redteam.test.js", "redteam-agent-level-3.test.mjs", "redteam-agent-level-2.test.mjs", "redteam-agent-level.test.mjs", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-current-client.test.mjs",
+        files: ["redteam.test.js", "lapsed-ask-redteam.test.mjs", "redteam-agent-level-3.test.mjs", "redteam-agent-level-2.test.mjs", "redteam-agent-level.test.mjs", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-current-client.test.mjs",
             "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-exec-console.test.mjs",
             "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs",
             "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-mermaid.test.mjs", "redteam-isolated.test.mjs",

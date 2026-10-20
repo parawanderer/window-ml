@@ -34,6 +34,15 @@ export function pageMayWrite(kind: unknown, claim: WorkerClaim): boolean {
     return true;
 }
 
+/** A PAGE's event with the fields only the worker may say removed: why a call asks (`askWhy`, a nested ask's `why`) is
+ *  the extension's voice, so a page cannot write it onto its own run's card either. A copy; the event is untouched. */
+export function withoutPageWhy<T>(ev: T): T {
+    const e = ev as { askWhy?: unknown; asks?: unknown } | null;
+    if (!e || typeof e !== "object" || (!("askWhy" in e) && !Array.isArray(e.asks))) return ev;
+    const { askWhy: _w, ...rest } = e;
+    return { ...rest, ...(Array.isArray(rest.asks) ? { asks: rest.asks.map((a) => { if (!a || typeof a !== "object") return a; const { why: _y, ...r } = a as { why?: unknown }; return r; }) } : {}) } as T;
+}
+
 /** The session an event belongs to: its `session.hash`, or its `id` for an event that carries no session. */
 export function eventSession(ev: unknown): string | undefined {
     const e = ev as { id?: unknown; session?: { hash?: unknown } } | null;

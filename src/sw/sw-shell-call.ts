@@ -18,9 +18,10 @@ import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, p
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
-import { judgeCall } from "./sw-policies";
+import { judgeCall, lapsedLine, lapsedSentence } from "./sw-policies";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
+import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
@@ -184,7 +185,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             if (result.protectedChanged?.length) {
                 // Its own record, at warn: what someone reading the log after a surprise looks for.
                 recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "protected-changed", reason: f.placement,
-                    detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated),
+                    detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated, MAX_DETAIL_STRING),
                         ...(result.protectedChangedTruncated ? { truncated: true } : {}) } });
             }
             if (verdict.askId) noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
@@ -216,8 +217,10 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; wai
     if (j.decision === "deny") return { refused: `ml.sh: ${denyText(j.by)}` };
     if (j.decision === "allow") return { by: j.by === "builtin" ? "builtin" : `policy "${(j.by as { label?: string } | undefined)?.label ?? "?"}"` };
     // No policy answers (or the store is not loaded yet): the person does, on a card inside the running step.
-    const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement });
-    if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}` };
+    const why = j.lapsed ? { line: lapsedLine(j.lapsed), detail: lapsedSentence(j.lapsed), cause: j.lapsed.cause, policy: j.lapsed.label } : undefined;
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy } });
+    const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
+    if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };
 }
 
@@ -264,13 +267,18 @@ async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Pr
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }
-    const j = judgeCall(ctx.runId, "sh", { ...asPolicyFacts(shFacts(probe)), effects: [] }, "host-sandbox");
+    // Judged with no effects, and that same judged object derives its envelope below (ruled 2026-10-19: the approved
+    // claims are the judge's facts, so `git --version` gets write none like any other probe).
+    const judged: ShFacts = { ...shFacts(probe), effects: [] };
+    const j = judgeCall(ctx.runId, "sh", asPolicyFacts(judged), "host-sandbox");
     // Only an allow starts it: a store not loaded yet ("ask") or no answer would need a card, which a probe never raises.
     if (j.decision !== "allow") { await drop(); log(j.decision === "deny" ? "denied" : "would-ask"); return null; }
     if (ctx.signal.aborted) { await drop(); return null; }
     let version: string | null = null;
     try {
-        await h.client.start(probe.id);
+        // The probe's envelope derives from what was judged, as every start's does: a probe never runs under the floor
+        // while its claims permit narrower (K3 audit, red team #827).
+        await h.client.start(probe.id, hostTakesEnvelope(h.hello) ? envelopeFor(judged) : undefined);
         const done = await h.client.waitDone(probe.id);
         for (const s of [done.stdout, done.stderr]) {
             if ("error" in s) continue;

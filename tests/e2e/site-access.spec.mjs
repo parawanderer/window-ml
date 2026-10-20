@@ -403,7 +403,7 @@ test.describe("@security approval", () => {
             fake.setScript([{ content: "allowed" }]);
             expect(await page.evaluate(() => window.ml.chat("hello"))).toBe("allowed");
             const refused = await page.evaluate(() => window.ml.pythonExec("1 + 1").then((r) => ({ ok: r.ok }), (e) => ({ err: String(e?.message || e) })));
-            expect(refused.err, JSON.stringify(refused)).toMatch(/Refused: Python from a page needs approval on this page/);
+            expect(refused.err, JSON.stringify(refused)).toMatch(/Refused: Python outside the read-only dialect needs approval on this page/);
             // The refusal names DevTools Settings → Permissions: that edit is what restores it.
             const settings = await ext.context.newPage();
             await settings.goto(`chrome-extension://${ext.extensionId}/popup.html`);
