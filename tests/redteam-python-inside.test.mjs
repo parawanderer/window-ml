@@ -161,6 +161,46 @@ test("P2-capture: a builtin the gate refuses to CALL is not left behind as a cal
     assert.strictEqual(String(await py.runPythonAsync("repr(f)", { globals: ns })), "1");
 });
 
+test("P2-container: a DATA binding does not smuggle code past the copy-back (a list of lambdas, an instance of an inside-defined class)", { timeout: 60000, todo: "copy-back admits data only must be recursive: f = [lambda: open] and c = C() (class C: def run: return open) are 'data' to a callable(v) check but carry code; the full path's f[0]() / c.run() returns open" }, async (t) => {
+    if (skip) return t.skip(skip);
+    // 1. a list whose element is a lambda — the list is data, the element is code
+    {
+        const ns = world();
+        const out = await cell(ns, "f = [lambda: open]");
+        assert.ok(!out.refused, `f = [lambda: open] is admitted inside: ${JSON.stringify(out)}`);
+        const call = await cell(ns, "return f[0]()", false);
+        assert.ok(!/built-in function open/.test(String(call.value)), `f[0]() must not return open: ${JSON.stringify(call)}`);
+    }
+    // 2. an instance of a class the cell defined — the instance is data, its method carries code
+    {
+        const ns = world();
+        const out = await cell(ns, "class C:\n    def run(self):\n        return open\nc = C()");
+        assert.ok(!out.refused, `class C + c = C() is admitted inside: ${JSON.stringify(out)}`);
+        const call = await cell(ns, "return c.run()", false);
+        assert.ok(!/built-in function open/.test(String(call.value)), `c.run() must not return open: ${JSON.stringify(call)}`);
+    }
+    // 3. a dict whose value is a lambda
+    {
+        const ns = world();
+        const out = await cell(ns, "f = {'g': lambda: open}");
+        assert.ok(!out.refused, `f = {'g': lambda: open} is admitted inside: ${JSON.stringify(out)}`);
+        const call = await cell(ns, "return f['g']()", false);
+        assert.ok(!/built-in function open/.test(String(call.value)), `f['g']() must not return open: ${JSON.stringify(call)}`);
+    }
+    // 4. nested containers
+    {
+        const ns = world();
+        const out = await cell(ns, "f = [[lambda: open]]");
+        assert.ok(!out.refused, `f = [[lambda: open]] is admitted inside: ${JSON.stringify(out)}`);
+        const call = await cell(ns, "return f[0][0]()", false);
+        assert.ok(!/built-in function open/.test(String(call.value)), `f[0][0]() must not return open: ${JSON.stringify(call)}`);
+    }
+    // positive control: a data binding with no code inside persists and reads back
+    const ns = world();
+    await cell(ns, "f = [1, 2, 3]");
+    assert.strictEqual(String(await py.runPythonAsync("repr(f)", { globals: ns })), "[1, 2, 3]");
+});
+
 // --- property 3: fail closed ---
 
 test("P3-fail-closed: the seam answers outside for every cell (no source-only positive verdict)", () => {
