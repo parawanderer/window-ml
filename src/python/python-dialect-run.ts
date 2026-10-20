@@ -50,6 +50,11 @@ def _ml_not_inert(_roots, _cap=2000000):
     _np, _pd = _sys.modules.get("numpy"), _sys.modules.get("pandas")
     _pdscalar = {_pd.Timestamp, _pd.Timedelta, type(_pd.NaT), type(_pd.NA), _pd.Period} if _pd else set()
     _pdobj = (_pd.DataFrame, _pd.Series) if _pd else ()
+    # Exact types, from the modules' own attributes: numpy's scalar types but object_ and void (either can hold an object),
+    # and pandas' public index classes.
+    _npscalar = {_k for _k in set(_np.sctypeDict.values()) if _k not in (_np.object_, _np.void)} if _np else set()
+    _pdindex = {_k for _k in (getattr(_pd, _n, None) for _n in ("Index", "RangeIndex", "MultiIndex", "DatetimeIndex",
+                "TimedeltaIndex", "PeriodIndex", "CategoricalIndex", "IntervalIndex")) if isinstance(_k, type)} if _pd else set()
     for _name, _root in _roots:
         _stack, _seen, _n = [_root], set(), 0
         while _stack:
@@ -61,7 +66,7 @@ def _ml_not_inert(_roots, _cap=2000000):
             if _n > _cap:
                 return "it leaves " + _ml_what(_name) + " too large to check for anything but data"
             _ty = type(_x)
-            if _ty in _scalar or _ty in _pdscalar:
+            if _ty in _scalar or _ty in _pdscalar or _ty in _npscalar:
                 continue
             if _ty in _seq:
                 _stack.extend(_x)
@@ -72,9 +77,7 @@ def _ml_not_inert(_roots, _cap=2000000):
             elif _np is not None and _ty is _np.ndarray:
                 if _x.dtype.hasobject:
                     _stack.extend(_x.ravel().tolist())
-            elif _np is not None and isinstance(_x, _np.generic) and _ty.__module__ == "numpy" and not _x.dtype.hasobject:
-                continue
-            elif _pd is not None and (_ty in _pdobj or (isinstance(_x, _pd.Index) and _ty.__module__ == "pandas")):
+            elif _ty in _pdobj or _ty in _pdindex:
                 if _ty in _pdobj:
                     _stack.append(dict(_x.attrs))
                 if _ty is _pd.DataFrame:

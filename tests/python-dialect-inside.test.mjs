@@ -265,6 +265,27 @@ test("DATA ONLY: plain data of every kind crosses back", { timeout: 60000 }, asy
     for (const k of ["df", "s", "a", "x"]) assert.strictEqual(ns.has(k), true, `${k} crossed back`);
 });
 
+test("DATA ONLY: past the walk's cap, a binding is outside; numpy scalars and pandas indexes are matched on the exact type", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const ns = world("none");
+    await cell(ns, "x = 1");
+    const walk = ns.get("_ml_not_inert");
+    const roots = py.runPython("[('xs', list(range(10)))]");
+    assert.strictEqual(walk(roots, 100), undefined, "under the cap: data");
+    assert.match(String(walk(roots, 5)), /^it leaves 'xs' too large to check for anything but data$/);
+    // Exact types: a numpy or pandas subclass, even one claiming the module's name (the dialect cannot make one today: no
+    // ClassDef, no three-argument type()), is not data.
+    const sub = py.runPython(`import numpy as np, pandas as pd
+class F(np.float64): pass
+class I(pd.Index): pass
+F.__module__, I.__module__ = "numpy", "pandas"   # forged: a module string is not the exact type
+[("f", F(1.0)), ("i", I._simple_new(pd.Index([1, 2])._values)), ("ok", (np.float64(1.0), np.int32(2), np.datetime64("2026-01-01"), pd.RangeIndex(3), pd.Index(["a"])))]`);
+    const verdicts = [0, 1, 2].map((i) => walk(py.runPython("lambda r, i: [r[i]]")(sub, i), 100));
+    assert.match(String(verdicts[0]), /'f' holding a F,/);
+    assert.match(String(verdicts[1]), /'i' holding a I,/);
+    assert.strictEqual(verdicts[2], undefined, "numpy scalars and pandas' own index classes are data");
+});
+
 test("IMPORTS: what the cell's own import bound crosses back as itself, in every shape the gate admits", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     for (const [code, names] of [
