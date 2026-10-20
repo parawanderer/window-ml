@@ -97,6 +97,29 @@ card shows the call's resolved facts, not the script.
 - It never reaches the refused tier: a call from a page, or one made from the page's world, is refused before any policy
   runs.
 
+## A condition about the outside world is a pinned script
+
+(Ruled 2026-10-20: Shane's suggestion after the classifier refused a merge of parawanderer/cpython#4; lane 3's
+analysis; #853, #859.)
+
+A policy cannot ask whether CI is green or whether anyone has commented: it sees only the call's resolved facts and
+queries nothing. Such a condition moves into a program that checks it and then acts, and the policy allows that program.
+Three properties make the allow mean what it says:
+
+1. **The check is bound to the act.** Whatever the script checked is what it acts on: `merge-when-green` merges with
+   `--match-head-commit <the sha it judged>`, so a push during the wait is never merged untested.
+2. **Text only blocks.** Anything the script reads that anyone can write (a comment, a marker, a commit message) may
+   stop it and never let it through. Each post is cleared by the operator naming it, never by its content.
+3. **The pinned code is what runs.** The policy allows an `(program, entrypoint)` pinned by `sha256` over its local
+   import closure ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Interpreted script tools", mode 3). For a script that
+   decides on changes to its own repo, the copy on main judges, never the branch's: `merge-when-green` always runs main's
+   copy of itself (#859). **The pin is enforced by the person's merge of changes to the pinned script, never by the
+   script:** a script on a branch cannot prove which copy ran, so the tool refuses any PR that touches it, and the
+   person reads and merges that one by hand.
+
+`merge-when-green` is the worked example: "merge my own PR when the pipeline is green, no test was removed and nothing
+is unread" is a policy allowing that one script, with no condition of its own.
+
 ## Describing and deciding: manifests and policies
 
 Two specs carry a consumer such as `ml.sh`, and they are separate on purpose:
@@ -250,6 +273,12 @@ own grants stops asking for what it already has, and can say which grant it reli
 - **Where a policy is evaluated when no browser is attached.** The decision lives in the browser's worker first
   ([`SHELL.md`](SHELL.md), "The host's language"); a desktop runtime driven over the hub with no browser needs the
   dialect at the host, and the person's policies with it.
+- **A condition no script can check: "reviewed by another agent"** (2026-10-20, same provenance as "A condition about
+  the outside world is a pinned script"). Every session posts through the owner's GitHub
+  account, so GitHub cannot tell one agent's approval from the author's own, and a marker is text (property 2 above).
+  It is no resolved fact today. The answer is a reviewer identity the reviewed agent cannot produce, such as an
+  approval signed with the reviewing session's key, in the way the hub acts only on a signature. No recipe yet. A test
+  of the merge-when-reviewed case waits for a `gh` program manifest and a host-side fact probe.
 
 Resolved on 2026-10-15 and moved into the text above: `==`/`!=` are refused in the policy realm; the effect vocabularies
 are projections of one algebra ([`EFFECTS.md`](EFFECTS.md)).
