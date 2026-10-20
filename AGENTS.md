@@ -277,6 +277,9 @@ scripts/move-symbols.mjs`, never by copy and paste** (`--dry-run --diff` first).
 **Vitals.** `node scripts/vitals.mjs` about once a month, commit the result; keep `feat:`/`fix:` subject prefixes,
 which it classifies. `.claude/skills/vitals/SKILL.md`.
 
+**Ecosystem totals.** `node scripts/ecosystem.mjs` (`--blame` for survival): lines, commits, PRs, test cases, Claude-trailer share and
+churn across window-ml, the hub, the host and the forks, for any claim about how much is agent-written. `.claude/skills/ecosystem/SKILL.md`.
+
 **RULE — AGENTS.md holds working rules and traps; implementation notes go to `docs/dev/`.** Before adding a
 paragraph here, ask whether someone NOT touching that code needs it. A trap is ONE line plus a pointer; a new
 subsystem gets a doc and a row in the table above.

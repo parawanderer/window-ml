@@ -98,9 +98,9 @@ exploring what becomes possible once that cost is close to zero is part of the p
 
 Whether agents can keep a codebase this size working with no person reading or reviewing it is itself one of the
 experiments, and the most interesting one. Until recently it could not have been tried at all: no model could keep
-even a small codebase working on its own. In its first three months this repository reached about 240,000 lines
-over 1,800 commits, and about 285,000 counting the relay and what the modified tools add to their upstreams
-(October 2026). So far they have, by the only measure I have: the parts I use daily keep working. That is a weak
+even a small codebase working on its own. In its first three months this repository reached about 317,000 lines of code, tests and
+docs over 2,020 commits, and about 378,000 counting the relay, the host and what the modified tools add to their
+upstreams (October 20, 2026, from `node scripts/ecosystem.mjs`). 97% of the commits carry a Claude co-author trailer. So far they have, by the only measure I have: the parts I use daily keep working. That is a weak
 measure. A proper one (regressions I notice, whether adding a piece gets more expensive as the code grows) is not
 defined yet.
 
