@@ -107,7 +107,7 @@ async function buildNative(web, out) {
     mkdirSync(stage, { recursive: true });
     let bundle = "dev";
     try { bundle = (await import("node:child_process")).execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(); } catch { /* not a checkout */ }
-    await esbuild.build({ ...webBuildOptions(stage), entryPoints: { app: "src/chat/native-embed-app.tsx", demo: "src/chat/native-embed-demo.tsx" }, define: { __BUNDLE__: JSON.stringify(bundle) } });
+    await esbuild.build({ ...webBuildOptions(stage), entryPoints: { app: "src/chat/native-embed-app.tsx", demo: "src/chat/native-embed-demo.tsx", "no-bridge": "src/mermaid/no-bridge.ts" }, define: { __BUNDLE__: JSON.stringify(bundle) } });
     const css = ["sidebar.css", "chat.css"].map((f) => readFileSync(path.join(web, f), "utf8")).join("\n");
     for (const [entry, name] of [["app", "embed.html"], ["demo", "embed-demo.html"]]) {
         const js = readFileSync(path.join(stage, `${entry}.js`), "utf8");
@@ -122,15 +122,18 @@ async function buildNative(web, out) {
     // load ("Not allowed to load local resource"), so a `<script src>` there never runs. The extension keeps the two
     // files, since its sandbox CSP allows no inline script.
     const frameJs = readFileSync(path.join(web, "mermaid-frame.js"), "utf8").replace(/<\/script/gi, "<\\/script");
+    // The phone's bridges removed by a script of its own, AHEAD of the library's (src/mermaid/no-bridge.ts).
+    const noBridgeJs = readFileSync(path.join(stage, "no-bridge.js"), "utf8").replace(/<\/script/gi, "<\\/script");
+    rmSync(path.join(stage, "no-bridge.js"));
     const frameHtml = readFileSync(path.join(web, "mermaid.html"), "utf8");
     if (!frameHtml.includes('<script src="mermaid-frame.js"></script>')) throw new Error("mermaid.html no longer loads mermaid-frame.js as this expects");
     // The extension's sandbox CSP, with the script pinned by HASH instead of 'self': nothing else may run here, not an
     // injected handler and not a nested frame's inline script, since the phone gives every frame its own native bridge
-    // (src/mermaid/no-bridge.ts). `frame-src 'none'` refuses a nested frame that loads a URL; a `srcdoc` one
-    // inherits this policy, so the hash refuses its script.
-    const hash = createHash("sha256").update(frameJs).digest("base64");
-    const csp = `<meta http-equiv="Content-Security-Policy" content="script-src 'sha256-${hash}'; object-src 'none'; connect-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">`;
-    writeFileSync(path.join(stage, "mermaid.html"), frameHtml.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">${csp}`).replace('<script src="mermaid-frame.js"></script>', () => `<script>${frameJs}</script>`));
+    // (src/mermaid/no-bridge.ts). Two hashes: the bridge removal and the library. `frame-src 'none'` refuses a nested
+    // frame that loads a URL; a `srcdoc` one inherits this policy, so the hashes refuse its script.
+    const pin = (js) => `'sha256-${createHash("sha256").update(js).digest("base64")}'`;
+    const csp = `<meta http-equiv="Content-Security-Policy" content="script-src ${pin(noBridgeJs)} ${pin(frameJs)}; object-src 'none'; connect-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">`;
+    writeFileSync(path.join(stage, "mermaid.html"), frameHtml.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">${csp}`).replace('<script src="mermaid-frame.js"></script>', () => `<script>${noBridgeJs}</script><script>${frameJs}</script>`));
     rmSync(out, { recursive: true, force: true });
     renameSync(stage, out);
     console.log(`built ${path.relative(ROOT, out)}/ (the phone app's page: embed.html, embed-demo.html)`);

@@ -9,6 +9,24 @@ const escapeHtml = (t: string): string => t.replace(/&/g, "&amp;").replace(/</g,
 /** A finished drawing, or why there is none. */
 export type MermaidResult = { svg: string; w: number; h: number } | { error: string };
 
+/** The longest diagram source sent to be drawn: a fence past it stays code with a note. Mermaid's parse is the cost a
+ *  model's text (or anything that reaches the frame) could otherwise make unbounded. */
+export const MAX_SRC = 20_000;
+/** The largest SVG shown, in characters: it goes into the page as a `data:` URL and the cache keeps 200 of them. */
+export const MAX_SVG = 500_000;
+/** The largest width or height an `<img>` is given, in CSS pixels. */
+export const MAX_DIM = 20_000;
+
+/** Why a drawing cannot be shown as it came back, or null when it can: positive, finite dimensions within `MAX_DIM`,
+ *  an SVG body within `MAX_SVG`. Checked where an answer is taken (mermaid-client.ts) and again where the `<img>` is
+ *  built, since the cache is shared. */
+export function undrawable(r: { svg: string; w: number; h: number }): string | null {
+    const dim = (v: number) => Number.isFinite(v) && v > 0 && v <= MAX_DIM;
+    if (!dim(r.w) || !dim(r.h)) return "the drawing came back without a usable size";
+    if (r.svg.length > MAX_SVG) return "the drawing is too large to show";
+    return null;
+}
+
 // state: cache (finished drawings by theme + source; rebuilt by asking the frame again, and lost with the page)
 export const done = new Map<string, MermaidResult>();
 // state: ui (the sources a person switched to their text with the toggle; a re-rendering keeps their choice)
@@ -29,7 +47,7 @@ export function mermaidCached(src: string, dark = pageIsDark()): MermaidResult |
 /** The source of a ```mermaid fence as `markdown()` should draw it: finished if the cache has it, pending if not. */
 export function mermaidBlock(src: string): string {
     const code = `<pre class="code mmd-src"${showingSource.has(src) ? "" : " data-mmd-hide"}><code class="hljs">${escapeHtml(src)}</code></pre>`;
-    const r = mermaidCached(src);
+    const r = shown(mermaidCached(src));
     if (!r) return `<div class="mmd" data-mmd="pending">${code.replace(" data-mmd-hide", "")}</div>`;
     if ("error" in r) return `<div class="mmd" data-mmd="error">${code.replace(" data-mmd-hide", "")}${noteHtml(r.error)}</div>`;
     return `<div class="mmd" data-mmd="done"${showingSource.has(src) ? " data-mmd-source" : ""}>${toolsHtml(showingSource.has(src))}${imgHtml(r)}${code}</div>`;
@@ -40,10 +58,17 @@ export function mermaidBlock(src: string): string {
  *  the drawing made in that theme, which the caller asks for first (`renderMermaid`). */
 export function mermaidStatic(src: string, dark: boolean): string {
     const code = `<pre class="code mmd-src"><code class="hljs">${escapeHtml(src)}</code></pre>`;
-    const r = mermaidCached(src, dark);
+    const r = shown(mermaidCached(src, dark));
     if (!r) return code;
     if ("error" in r) return `<div class="mmd" data-mmd="error">${code}${noteHtml(r.error)}</div>`;
     return `<div class="mmd" data-mmd="done">${imgHtml(r)}</div>`;
+}
+
+/** A cached result as it may be shown: a drawing `undrawable` refuses becomes its error. */
+function shown(r: MermaidResult | undefined): MermaidResult | undefined {
+    if (!r || "error" in r) return r;
+    const why = undrawable(r);
+    return why ? { error: why } : r;
 }
 
 const noteHtml = (error: string): string => `<div class="mmd-note">Couldn't draw this diagram: ${escapeHtml(error)}</div>`;

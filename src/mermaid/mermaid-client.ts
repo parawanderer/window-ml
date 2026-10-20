@@ -16,7 +16,7 @@
 // and the box grows from the code's height to the diagram's; (3) the diagram fades in. A parse error leaves the code
 // with a one-line note. A reply that is not streaming (history, a reload) shows the finished diagram with no states.
 import { cursorTipOn } from "../sidebar/ui-kit";
-import { type MermaidResult, done, keyOf, mermaidBlock, pageIsDark, showingSource } from "./mermaid-block";
+import { type MermaidResult, MAX_SRC, done, keyOf, mermaidBlock, pageIsDark, showingSource, undrawable } from "./mermaid-block";
 
 /** How long a closed fence may take before the placeholder shows: a quick drawing should not flash one. */
 export const PLACEHOLDER_MS = 150;
@@ -33,6 +33,9 @@ const inFlight = new Map<string, Promise<MermaidResult>>();
 let frame: HTMLIFrameElement | null = null;   // state: plumbing (the one sandboxed frame; made again if it fails)
 let ready: Promise<HTMLIFrameElement> | null = null;   // state: plumbing
 let seq = 0;   // state: plumbing (request ids to the frame)
+// ONE DRAWING AT A TIME: N fences in a reply are N Mermaid parses either way, and in sequence they cost one parse's
+// memory and leave the page responsive between them. Each asks the frame only once the one before has settled.
+let sending: Promise<unknown> = Promise.resolve();   // state: plumbing (the drawing before this one)
 const waiting = new Map<number, (r: MermaidResult) => void>();   // state: plumbing (requests the frame has not answered)
 
 /** The hidden sandboxed frame, created on the first diagram. Off screen rather than `display: none`, since Mermaid
@@ -58,8 +61,11 @@ function frameReady(doc: Document): Promise<HTMLIFrameElement> {
             const settle = waiting.get(d.id);
             if (!settle) return;
             waiting.delete(d.id);
-            if (typeof d.svg === "string" && /^<svg[\s>]/.test(d.svg) && typeof d.w === "number" && typeof d.h === "number") settle({ svg: d.svg, w: d.w, h: d.h });
-            else settle({ error: typeof d.error === "string" ? d.error : "not a diagram Mermaid can draw" });
+            if (typeof d.svg === "string" && /^<svg[\s>]/.test(d.svg) && typeof d.w === "number" && typeof d.h === "number") {
+                const r = { svg: d.svg, w: d.w, h: d.h };
+                const why = undrawable(r);
+                settle(why ? { error: why } : r);
+            } else settle({ error: typeof d.error === "string" ? d.error.slice(0, 200) : "not a diagram Mermaid can draw" });
         });
         frame = f;
         doc.body.append(f);
@@ -75,7 +81,9 @@ export function renderMermaid(src: string, doc: Document = document, dark = page
     if (have) return Promise.resolve(have);
     const flying = inFlight.get(key);
     if (flying) return flying;
-    const p = frameReady(doc).then((f) => new Promise<MermaidResult>((resolve) => {
+    if (src.length > MAX_SRC) return Promise.resolve({ error: `it is longer than ${MAX_SRC.toLocaleString("en")} characters` });
+    const turn = sending;
+    const p = turn.then(() => frameReady(doc)).then((f) => new Promise<MermaidResult>((resolve) => {
         const id = ++seq;
         const timer = setTimeout(() => { waiting.delete(id); resolve({ error: "drawing it took too long" }); }, RENDER_TIMEOUT_MS);
         waiting.set(id, (r) => { clearTimeout(timer); resolve(r); });
@@ -86,6 +94,7 @@ export function renderMermaid(src: string, doc: Document = document, dark = page
         if (done.size > CACHE_MAX) done.delete(done.keys().next().value!);
         return r;
     });
+    sending = p.catch(() => {});
     inFlight.set(key, p);
     return p;
 }

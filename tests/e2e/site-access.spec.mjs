@@ -27,7 +27,7 @@ import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/serv
  *  that slice is listed here, the test asserts the attack works. Flip an entry in the change that lands the slice.
  *  `slice2stream` is slice 2's first part (attacks 15 and 16: the run's events and the extension's own iframe), which
  *  landed before the rest. */
-const OPEN = { slice0: false, slice1: false, slice2stream: false, slice2: false, slice4: true, mmdFrame: true };
+const OPEN = { slice0: false, slice1: false, slice2stream: false, slice2: false, slice4: true, mmdFrame: false };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {
@@ -1386,18 +1386,23 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
                 return { ready, heard, rendered };
             }, ext.extensionId);
 
-            // Positive control: the frame loaded from the page and announced itself TO THE PAGE, so the page is its
-            // parent and the channel works. Without this the test would pass on a broken fixture.
-            expect(out.ready, JSON.stringify(out)).toBe("ready");
-            expect(out.heard.some((h) => h.data?.mmd === "ready" && h.sourceIsFrame), "the frame answered the page that framed it").toBe(true);
+            // Positive control: the frame really loaded inside the hostile page, as the extension's sandbox page with
+            // its script running, so the silence below is the frame refusing, not a broken fixture. (The defended
+            // frame says nothing to a foreign framer, not even "ready", so "ready" cannot be the control.)
+            const frame = page.frames().find((f) => f.url() === `chrome-extension://${ext.extensionId}/mermaid.html`);
+            expect(frame, "the WAR page loaded in the hostile page's frame").toBeTruthy();
+            expect(await frame.evaluate(() => ({ origin, framer: location.ancestorOrigins[0], scripts: document.scripts.length })))
+                .toEqual({ origin: "null", framer: new URL(site.url("evil.test", "/")).origin, scripts: 1 });
 
             // Defended: a drawing must not come back to a window that merely framed the WAR page.
             if (holeOpen("mmdFrame", "any page may frame mermaid.html and render diagrams through the extension")) {
+                expect(out.ready, JSON.stringify(out)).toBe("ready");
                 expect(out.rendered, JSON.stringify(out.rendered)).toHaveProperty("svg");
                 expect(String(out.rendered.svg)).toContain("<svg");
                 return;
             }
-            expect(out.rendered, JSON.stringify(out.rendered)).toBe("no-answer");
+            expect(out.ready, JSON.stringify(out)).toBe("timeout");
+            expect(out.heard.filter((h) => h.sourceIsFrame), "nothing at all from the frame").toEqual([]);
         } finally { await close(); }
     });
 
@@ -1431,8 +1436,9 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
                 return { asked: N, got: answers.length };
             }, ext.extensionId);
 
-            // Positive control: the asks are real (the frame is alive and listening).
+            // Positive control: the asks are real, sent to the extension's frame loaded in this page.
             expect(out.asked).toBe(40);
+            expect(page.frames().some((f) => f.url() === `chrome-extension://${ext.extensionId}/mermaid.html`), "the WAR page loaded").toBe(true);
             if (holeOpen("mmdFrame", "unbounded distinct renders through the framed sandbox")) {
                 expect(out.got, `only ${out.got}/${out.asked} answered — a bound, not the open flood`).toBe(40);
                 return;

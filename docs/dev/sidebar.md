@@ -238,15 +238,22 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
 - **Toggle and copy** are buttons in the injected HTML, handled by delegation on the document, with the panel's tooltip
   routed to them the same way.
 - **The frame must be web-accessible** (`manifest.json`): the overlay is an extension frame inside a web page, and
-  Chrome refuses a nested extension frame there otherwise. On the installable web app the service worker passes
+  Chrome refuses a nested extension frame there otherwise. So ANY page can frame it and is then its `parent`: the frame
+  answers only when `location.ancestorOrigins[0]` is its own origin (the extension, the web app's server, the phone's
+  `file:`), posts to that origin rather than `*`, and says nothing, not even "ready", to anyone else.
+- **Bounded work.** A source past `MAX_SRC` is never sent; the client and the frame each draw one diagram at a time; an
+  answer whose size is not finite and within `MAX_DIM`, or whose SVG is past `MAX_SVG`, becomes the error note, checked
+  where it is taken and again where the `<img>` is built (`undrawable`, mermaid-block.ts). On the installable web app the service worker passes
   `mermaid.html` to the network rather than answering it with the app page, and does not precache the 5 MB script.
 - **On the phone the frame is one file with its script inline** (`buildNative` in `scripts/build-web.mjs`; the app
   writes it beside the page, `mobile/src/embed.tsx`). A sandboxed frame has an opaque origin, and Android's WebView
   refuses it any `file://` load, so a `<script src>` there never runs. Its CSP pins that one script by hash.
 - **The phone gives every frame the native bridge.** react-native-webview registers `ReactNativeWebView` for origin
   `*`, the sandboxed frame and any frame nested in it included, and the app cannot tell their messages from the page's
-  (both come from origin "null"). So the frame deletes it before Mermaid evaluates (`no-bridge.ts`), and the hash CSP
-  is what stops injected script, which could otherwise reach a fresh bridge in a nested `srcdoc` frame.
+  (both come from origin "null"). So the phone's frame runs `no-bridge.ts` as its own script AHEAD of the library's (an
+  import would not do: esbuild placed it after Mermaid's body), deleting `ReactNativeWebView` and iOS's `webkit`, and
+  its CSP pins both scripts by hash, which is what stops injected script reaching a fresh bridge in a nested `srcdoc`
+  frame. The `webkit` half is unverified: nothing here runs iOS.
 - **The PDF** (`printSession`) draws every fence in the light theme first, then `markdown(…, { diagrams: "light" })`
   writes each as its `<img>` alone: no buttons and no pending block, since nothing in a printed page runs.
 
