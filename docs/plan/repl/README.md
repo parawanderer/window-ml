@@ -210,7 +210,12 @@ listed as remaining is DONE unless named below.
   name defers to the startup choice; no wasm32 change. Re-pinned to b0bbaa5 the same day: window-ml #873 (merged
   fecd6abe; release `pyodide-314.0.3-ml-b0bbaa52`, `pyodide` pinned exactly), the pin lane 3's predicate wiring lands on.
   **Lane 5: CLOSED 2026-10-20**: [`LANE_5_RESULT.md`](LANE_5_RESULT.md) (#874, bcbb6543); build trees and clone removed.
-  Left, nobody's: per-run wrapping (the wasm number), and the dist manifest's mismatch throw, tested locally only.
+  Left, nobody's: per-run wrapping (the wasm number); the dist manifest's mismatch throw, tested locally only; and the
+  check-time line number (lane 3, 2026-10-20): a `NotInDialect` from `restricted.run_cell`'s check reports the line under
+  `def _user():`, one past the cell's, so #880's wrapper subtracts one (`python-dialect-run.ts`, `INSIDE_CELL`), which
+  is correct against the pinned core and blocks nothing. The fork fix lands in two steps in this order: the fork reports
+  the cell's own line and is re-pinned; the same window-ml PR as the re-pin drops the wrapper's subtraction, or every
+  check-time line comes out one too low (#880's inside test pins `(line 2)` on the real core).
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
   (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
