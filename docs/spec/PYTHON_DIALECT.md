@@ -218,7 +218,12 @@ inside run. The rule has two layers, and one is not the other's substitute:
    real (the red team, 2026-10-20, four shapes: a list, a dict, a nested list of lambdas, and an instance of an
    inside-defined class, each admitted inside and each reaching `open` from the full path): a value crosses back only
    if no callable is reachable through list, tuple, set, dict or an instance's `__dict__`; an instance of a class
-   defined inside is refused outright, since its methods are cell code. Once layer 1 holds, a cell-defined function may cross back, since it stays gated; a captured builtin never
+   defined inside is refused outright, since its methods are cell code. As built (#880, d4574ebe) it is stricter than
+   "the binding does not persist": the admitted set is an allowlist on the exact type, walking the builtin containers
+   and numpy/pandas object values, and a cell whose binding or returned value falls outside it is OUTSIDE the dialect
+   and asks, so the model sees why on the card instead of finding a name silently missing. An inside try no longer
+   writes to the live stdout stream at all (a test holds the real stdout to nothing from an inside try), and a refused
+   try's captured stdout is dropped. Once layer 1 holds, a cell-defined function may cross back, since it stays gated; a captured builtin never
    does, because it is not cell code and layer 1 never sees it.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
