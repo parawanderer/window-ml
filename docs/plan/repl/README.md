@@ -210,26 +210,27 @@ listed as remaining is DONE unless named below.
   name defers to the startup choice; no wasm32 change. Re-pinned to b0bbaa5 the same day: window-ml #873 (merged
   fecd6abe; release `pyodide-314.0.3-ml-b0bbaa52`, `pyodide` pinned exactly), the pin lane 3's predicate wiring lands on.
   **Lane 5: CLOSED 2026-10-20**: [`LANE_5_RESULT.md`](LANE_5_RESULT.md) (#874, bcbb6543); build trees and clone removed.
-  Left, nobody's: per-run wrapping (the wasm number); the dist manifest's mismatch throw, tested locally only; and the
-  check-time line number (lane 3, 2026-10-20): a `NotInDialect` from `restricted.run_cell`'s check reports the line under
-  `def _user():`, one past the cell's, so #880's wrapper subtracts one (`python-dialect-run.ts`, `INSIDE_CELL`), which
-  is correct against the pinned core and blocks nothing. The fork fix lands in two steps in this order: the fork reports
-  the cell's own line and is re-pinned; the same window-ml PR as the re-pin drops the wrapper's subtraction, or every
-  check-time line comes out one too low (#880's inside test pins `(line 2)` on the real core). Lane 3 owns it after
-  #880 merges (Shane, 2026-10-20), so the fork is no longer nobody's.
-  The red team's #880 pass (2026-10-20, 09:40Z mail): request changes. Lead: a function defined inside is copied back
-  and runs ungated on the full path (reaches `os` and `ml`); also captured builtins cross back, and a refused try's
-  stdout is not dropped. Ruled in [`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "What an inside run may leave
-  behind is data, never code": the fork honours `CO_RESTRICTED` on every call (with the line fix and re-pin), and the
-  copy-back admits data only, now, in #880. The red team's second pass cleared it (11/11); the alias gap (#896) is
-  closed at ddc35ea9; #880 (head 97b3f2f7) waits on the janitor's build review. Fork parawanderer/cpython#5 (layer 1
-  as refuse, plus the line fix) waits on the janitor's review and Shane's by-hand merge.
+  Left, nobody's: per-run wrapping (the wasm number) and the dist manifest's mismatch throw, tested locally only.
+  **The membership wiring landed 2026-10-20**: window-ml #880 (lane 3, merged b791311d) runs a `python_exec` cell unasked
+  only inside the dialect, under the fork's gate. Its red-team pass (09:40Z mail) requested changes: a function defined
+  inside was copied back and ran ungated on the full path (reached `os` and `ml`), captured builtins crossed back, and a
+  refused try's stdout was not dropped. Ruled in [`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "What an inside
+  run may leave behind is data, never code", in two layers. Layer 2, the copy-back, is in #880: data only, checked
+  recursively (the container residual was real), not-data makes the cell outside, no aliasing of a non-data value under
+  a new name (#896), the return value data only (#898), imports admitted as themselves. The red team's second pass
+  cleared it (12/12 alias shapes); the janitor's build review found the numpy/pandas branches were `isinstance`, not
+  exact type, fixed at 249ccad5. Layer 1 is fork parawanderer/cpython#5 (lane 3, merged 77376876, Shane's by-hand
+  merge at the janitor-reviewed head): a `CO_RESTRICTED` frame entered outside a run refuses (R over G), the check-time
+  line fix, and, found by fixing it, the check now parses the cell as itself (the wrapper's indent had been adding four
+  spaces to multi-line strings). Re-pinned by #901 (merged 1334d623; release `pyodide-314.0.3-ml-77376876`, sha
+  3273be76…): line corrections gone, the copy-back admits a cell function whose every code object is `CO_RESTRICTED`,
+  walking defaults and closures. Red team's post-merge read holds on every route; stated residual: approved code can
+  strip the flag, and every shape that does names `__code__`/`co_flags` on the card (#903). Lane 3's #906 (177dde76)
+  adds the red-team rule that every probed shape ends as a committed test or a stated reason. Lane 3's extra pin clone
+  removed; lane 3 is free.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
   reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
-  (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
-  Pyodide worker's `_restricted` predicate at compile time, every dialect vector through the seam, fail closed without the
-  predicate, the per-cell cost measured in the Python bench first, a red-team pass before merge; lands after #835, lane 5
-  reviews the build side. Lane 3's #865 (merged 2026-10-20, a96b1e3d) wrote the pinned-script section into `POLICIES.md`,
+  (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wired by lane 3 in #880 (above, merged 2026-10-20). Lane 3's #865 (merged 2026-10-20, a96b1e3d) wrote the pinned-script section into `POLICIES.md`,
   and #859 (merged bb460720, Shane's by-hand merge) made merge-when-green run main's copy of itself. Lane 8 is
   closed: the phone pairs a desktop runtime, #814 and #816 (merged 2026-10-19), [`LANE_8_RESULT.md`](LANE_8_RESULT.md) (#840);
   its host-kind flag is DEFERRED (ruled 2026-10-20, `RUNTIME_HUB.md`): the design note
