@@ -499,7 +499,7 @@ follow from it, both the host's and both defaults a policy may change:
 - **Ownership.** Each spawn runs in its own process group. The port closing is the signal that the owner is gone: the
   default kills the group; the alternative a policy can choose parks it on an ORPHAN list the status and the resource
   panel show, with a timeout after which it is killed anyway. A process outliving its owner silently is impossible by
-  construction, and "whose is this" is a read of the table, never of `ps`.
+  construction, up to the two residuals below, and "whose is this" is a read of the table, never of `ps`.
   (2026-10-20, [window-ml-host #18](https://github.com/parawanderer/window-ml-host/pull/18).) The group alone did not
   hold that: a child that called `setsid` left the group, and once its parent exited it was reparented out of every
   descendant walk, so a call whose leader exited by itself (`sh -c 'setsid x &'`) left `x` running, and so did an
