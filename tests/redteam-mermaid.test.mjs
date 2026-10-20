@@ -151,10 +151,11 @@ test("the answer channel refuses a dimension or a body that is not a drawn SVG",
 
 // --- unbounded drawing cost, from a page or from a model ---
 
-test("drawing one diagram is bounded work: source length, in-flight count, and distinct draws per document", () => {
-    // A page that frames mermaid.html (above) and a model that writes N fences both currently get N full Mermaid
-    // parses. CACHE_MAX bounds only the CACHE, not how many draws happen; inFlight is keyed by source, so N distinct
-    // sources are N parallel renders; there is no cap on the source string the frame is asked to parse.
+test("drawing is bounded work: a source-length cap, and one draw at a time in the client and the frame", () => {
+    // N fences from a model are still N Mermaid parses: that is what drawing them costs, and it is proportional to what
+    // the model wrote. What is bounded is each parse (a source-length cap, in the client and again in the frame) and
+    // how many run at once (one: the client waits for each answer before asking again, and the frame queues). A page
+    // that frames mermaid.html gets no parses at all (attack 20). CACHE_MAX bounds only the cache.
     const client = read("src/mermaid/mermaid-client.ts");
     const frame = read("src/mermaid/mermaid-frame.ts");
     assert.ok(/CACHE_MAX/.test(client), "positive control: the cache is bounded (by count)");
