@@ -202,7 +202,7 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     assert.strictEqual(String(await py.runPythonAsync("repr(f)", { globals: ns })), "[1, 2, 3]");
 });
 
-test("P2-alias: a non-data value crosses back only under a name it already had (a = ml and f = [ml] put the cell outside)", { timeout: 60000, todo: "the identity pass admits pre-existing callables under new names; #896 rules the alias shapes outside" }, async (t) => {
+test("P2-alias: a non-data value crosses back only under a name it already had (a = ml and f = [ml] put the cell outside)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     // 1. a new name for a pre-existing instance — the ruling's first example
     {
@@ -254,10 +254,12 @@ test("P2-alias: a non-data value crosses back only under a name it already had (
         const out = await cell(ns, "return ml");
         assert.ok(out.refused, `return ml puts the cell outside: ${JSON.stringify(out)}`);
     }
-    // positive controls: a data alias and an admitted import's target cross
+    // positive controls: a data alias and an admitted import's own binding cross (z = math would be a NEW name for a
+    // module, outside under #896 like m = math, so the control binds the import itself)
     {
         const ns = world();
-        await cell(ns, "x = 42\ny = x\nimport math\nz = math");
+        const ok = await cell(ns, "x = 42\ny = x\nimport math as z");
+        assert.ok(!ok.refused, JSON.stringify(ok));
         assert.strictEqual(String(await py.runPythonAsync("repr(y)", { globals: ns })), "42");
         assert.strictEqual(String(await py.runPythonAsync("'z' in globals()", { globals: ns })), "true");
     }
