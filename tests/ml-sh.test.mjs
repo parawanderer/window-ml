@@ -225,10 +225,52 @@ test("the finished step carries its ml.sh calls with peak and bound; a killed on
         await runOn("userScripts", [runs(["/usr/bin/ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: (bg, ev) => { if (ev.shCalls) seen.push(ev); } });
         assert.equal(seen.length, 1, JSON.stringify(done));
         assert.equal(seen[0].shCalls.length, 1);
-        const { durationMs, ...rest } = seen[0].shCalls[0];
+        const { durationMs, unasked, ...rest } = seen[0].shCalls[0];
         assert.equal(typeof durationMs, "number");
         assert.deepEqual(rest, { program: "ls", ...expect }, "the basename, and only the fields the host sent");
+        assert.equal(unasked?.by, "default", "the built-in default let it run");
     }
+});
+
+// --- a call that ran without asking is visible under its step ---
+
+/** The spans of every finished step's ml.sh calls in a run of `scripts`. */
+async function spansOf(scripts, opts) {
+    const spans = [];
+    const r = await runOn("userScripts", scripts, { ...NO_FETCH, configExtra: ON, ...opts, onStep: async (bg, ev) => { await opts.onStep?.(bg, ev); if (ev.shCalls) spans.push(...ev.shCalls); } });
+    return { spans, ...r };
+}
+
+test("a call the built-in default allowed carries who allowed it, the argv the host got and the sandbox it applied", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0 }) });
+    const { spans } = await spansOf([runs(["ls", "-la"])], { onNative: host.onNative });
+    assert.equal(spans.length, 1);
+    const u = spans[0].unasked;
+    assert.equal(u.by, "default");
+    assert.equal(u.policy, undefined);
+    assert.equal(JSON.stringify(u.argv), JSON.stringify(host.calls.find((c) => c.call === "spawn").args.argv), "the argv the host got");
+    assert.match(u.outcome.ran, /-sandbox$/);
+    assert.ok("envelope" in u.outcome && "protectedChanged" in u.outcome, "the same outcome an ask records");
+});
+
+test("a call a policy allowed names the policy by its label; the default does not take the credit", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0 }) });
+    const allow = { id: "p-unasked", scope: "global", consumer: "sh", effect: "allow", source: "(c) => c.argv[0] === \"ls\"", label: "always ls" };
+    const { spans, results } = await spansOf([runs(["ls"])], { onNative: host.onNative, localExtra: { ml_policies_global: [allow] } });
+    // The person's policy answers before the default (sw-policies.ts), so `ls` is credited to it.
+    assert.equal(valueOf(results[0]).approvedBy, 'policy "always ls"');
+    assert.equal(spans.length, 1);
+    assert.equal(JSON.stringify([spans[0].unasked.by, spans[0].unasked.policy]), JSON.stringify(["policy", "always ls"]), "the result and the line agree on who allowed it");
+});
+
+test("a call the person approved carries no unasked record: its ask already shows what ran", T, async () => {
+    const host = fakeNativeHost({ sandbox: false, done: () => ({ out: "", err: "", code: 0 }) });
+    const ask = answering(true);
+    const { spans, results } = await spansOf([runs(["git", "status"])], { onNative: host.onNative, onStep: ask.onStep });
+    assert.equal(ask.asked.length, 1);
+    assert.equal(valueOf(results[0]).approvedBy, "person");
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].unasked, undefined);
 });
 
 // --- a pinned script that changed after its facts were read (root K, rulings of 2026-10-19) ---

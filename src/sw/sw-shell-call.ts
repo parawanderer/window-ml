@@ -11,7 +11,7 @@
 // channel, iso-channel.ts): no page-started message reaches here (tests/redteam.test.js).
 
 import type { EffectsData } from "../effects";
-import type { ShCallSpan } from "../contract";
+import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
 import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
@@ -56,13 +56,15 @@ const SPAN_STEPS_MAX = 256;
  * A field the host did not send is left out, so an older host draws nothing extra.
  * @param program `argv[0]` as the script wrote it
  * @param r the call's result
+ * @param unasked what let it run without asking, for a call no one was asked about
  * @returns the span
  */
-export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed">): ShCallSpan {
+export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed">, unasked?: ShUnasked): ShCallSpan {
     return { program: program.split("/").pop() || program, durationMs: r.durationMs,
         ...(r.peakFootprint !== undefined ? { peakFootprint: r.peakFootprint } : {}),
         ...(r.memoryBound !== undefined ? { memoryBound: r.memoryBound } : {}),
-        ...(r.killed ? { killed: r.killed } : {}) };
+        ...(r.killed ? { killed: r.killed } : {}),
+        ...(unasked ? { unasked } : {}) };
 }
 
 /**
@@ -129,7 +131,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
             let facts = await spawn();
             let f: ShFacts;
-            let verdict: { by: string; waitedMs?: number; askId?: string };
+            let verdict: { by: string; policy?: string; waitedMs?: number; askId?: string };
             let done;
             let asked: HostEnvelope | undefined;
             for (let attempt = 0; ; attempt++) {
@@ -190,7 +192,12 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             }
             if (verdict.askId) noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
             const k = `${ctx.runId}:${ctx.seq}`;
-            spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result)]);
+            // A call no one was asked about is drawn under its step from this, in the card's words: what ran without
+            // asking is never only in the run log.
+            const unasked: ShUnasked | undefined = verdict.by === "person" ? undefined
+                : { by: verdict.policy !== undefined ? "policy" : "default", ...(verdict.policy !== undefined ? { policy: verdict.policy } : {}),
+                    argv: [...f.argv], outcome: shOutcome(result) as unknown as Record<string, unknown> };
+            spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result, unasked)]);
             if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
             return { ok: result };
         });
@@ -212,10 +219,14 @@ const denyText = (by: unknown): string => `the policy "${(by as { label?: string
  * @param ctx the step
  * @param f the call's facts
  */
-async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; waitedMs?: number; askId?: string } | { refused: string }> {
+async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; policy?: string; waitedMs?: number; askId?: string } | { refused: string }> {
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(f), f.placement);
     if (j.decision === "deny") return { refused: `ml.sh: ${denyText(j.by)}` };
-    if (j.decision === "allow") return { by: j.by === "builtin" ? "builtin" : `policy "${(j.by as { label?: string } | undefined)?.label ?? "?"}"` };
+    if (j.decision === "allow") {
+        if (j.by === "builtin") return { by: "builtin" };
+        const policy = (j.by as { label?: string } | undefined)?.label ?? "?";
+        return { by: `policy "${policy}"`, policy };
+    }
     // No policy answers (or the store is not loaded yet): the person does, on a card inside the running step.
     const why = j.lapsed ? { line: lapsedLine(j.lapsed), detail: lapsedSentence(j.lapsed), cause: j.lapsed.cause, policy: j.lapsed.label } : undefined;
     if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy } });

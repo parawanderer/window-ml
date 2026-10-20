@@ -37,7 +37,7 @@
  */
 
 import type { TokenUsage } from "./contract/contract-chat";
-import type { PersistGrant, ReusedGrant } from "./contract/contract-agent";
+import type { PersistGrant, ReusedGrant, ShCallSpan } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
 import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig, StepAsk, AskWhy } from "./contract/contract-debug";
 import type { PromptDisplay } from "./contract/contract-run";
@@ -379,6 +379,9 @@ export interface ExportStep {
     /** Nested asks: calls made from inside this step while it ran that needed the person, each with the facts it was
      *  judged on, how it was answered and when (docs/spec/ML_WIRE.md, "Per-call asking"). */
     asks?: StepAsk[];
+    /** The `ml.sh` calls this step made, in the order they finished: what the host measured of each, and for a call no
+     *  one was asked about, what allowed it, the argv the host got and what it reported (`unasked`). */
+    shCalls?: ShCallSpan[];
 
     /** A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus. */
     elements?: number;

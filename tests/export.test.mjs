@@ -286,6 +286,19 @@ test("an allowed shell ask that ran exports the card's outcome lines: the sandbo
     assert.doesNotMatch(denied, /Protected names/, "a call that never ran reports nothing");
 });
 
+test("an ml.sh call that ran without asking exports a note with the argv the host got, who allowed it and the card's outcome lines", () => {
+    const outcome = { ran: "host-sandbox", envelope: { write: "none", exec: "program-only" }, asked: { write: "none", exec: "program-only" }, protectedChanged: [] };
+    const shCalls = [{ program: "ls", durationMs: 4 }, { program: "rg", durationMs: 9, unasked: { by: "policy", policy: "search freely", argv: ["rg", "-n", "a b"], outcome } }];
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "user", shCalls }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /ran without asking \(sh\): \["rg","-n","a b"\]/, "the raw argv, its quoting intact");
+    assert.match(md, /Allowed by: the policy "search freely"/);
+    assert.match(md, /Sandbox applied: write none, exec program-only/);
+    assert.match(md, /Protected names: none changed during this call/);
+    assert.equal(md.match(/ran without asking/g).length, 1, "a span with no unasked record is not a line");
+});
+
 test("a cited table, a returned frame and a loaded frame held as a prefix say the source's row count in both sinks", async () => {
     const { toolToken } = await import("../src/util.ts");
     const hash = "prefix01";

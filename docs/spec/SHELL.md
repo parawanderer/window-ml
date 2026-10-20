@@ -308,6 +308,11 @@ Three tiers, decided per CALL, on the final argv:
 widening is a policy, written deliberately, and a card may link to "make a rule from this" (Shane, 2026-10-13). The
 design and the reasons: [`POLICIES.md`](POLICIES.md), "Widening is a policy, never a button on a card".
 
+**A call no one was asked about is still shown to the person.** A call a policy or the built-in default allowed has no
+card, so it is drawn as a line under its step, in the sidebar and both exports: the argv the host got, as it is, who
+allowed it (the policy by its label, or the built-in default) and what it reported once it ran, in the card's own words
+(the sandbox applied, the protected names). What ran without asking is never only in the run log.
+
 So the manifest blocks only the free tier. A first build where every call asks is useful, and correct, without it.
 
 ## Policies: what a shell call gives one

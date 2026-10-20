@@ -1037,6 +1037,13 @@
             "$ref": "#/$defs/StepAsk"
           }
         },
+        "shCalls": {
+          "description": "The `ml.sh` calls this step made, in the order they finished: what the host measured of each, and for a call no one was asked about, what allowed it, the argv the host got and what it reported (`unasked`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ShCallSpan"
+          }
+        },
         "elements": {
           "description": "A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus.",
           "type": "number"
@@ -2336,6 +2343,73 @@
         "facts",
         "state",
         "raisedAt"
+      ],
+      "additionalProperties": true
+    },
+    "ShCallSpan": {
+      "type": "object",
+      "description": "One `ml.sh` call a step made, as the event lane draws it: the program, how long it ran and what the host measured of its memory. `peakFootprint` and `memoryBound` are bytes and ABSENT from a host older than 0.3.0 (absent is not zero); `killed` is set when the host killed the call past its bound. Rides to the timeline and the transcript, never to the model.",
+      "properties": {
+        "program": {
+          "type": "string"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "peakFootprint": {
+          "type": "number"
+        },
+        "memoryBound": {
+          "type": "number"
+        },
+        "killed": {
+          "type": "string",
+          "const": "oom"
+        },
+        "unasked": {
+          "description": "Set when the call ran with no one asked (a policy or the built-in default allowed it); a call the person approved is recorded on its ask instead (`StepAsk.outcome`).",
+          "$ref": "#/$defs/ShUnasked"
+        }
+      },
+      "required": [
+        "program",
+        "durationMs"
+      ],
+      "additionalProperties": true
+    },
+    "ShUnasked": {
+      "type": "object",
+      "description": "What let an `ml.sh` call run without asking, and what it reported: drawn as a line under the step in the sidebar and both exports, in the words the ask card uses (docs/spec/SHELL.md, \"Approval\").",
+      "properties": {
+        "by": {
+          "description": "The built-in default (effects inside the placement's bound) or one of the person's policies.",
+          "type": "string",
+          "enum": [
+            "default",
+            "policy"
+          ]
+        },
+        "policy": {
+          "description": "The policy's label, when `by` is `policy`.",
+          "type": "string"
+        },
+        "argv": {
+          "description": "The argv the host got (after hardening), as its facts carried it: what was judged and what ran.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outcome": {
+          "description": "What the call reported once it ran (`ShOutcome`: where it ran, the sandbox applied, the protected names).",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "by",
+        "argv",
+        "outcome"
       ],
       "additionalProperties": true
     },

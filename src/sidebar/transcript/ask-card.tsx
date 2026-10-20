@@ -12,7 +12,7 @@ import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
-import { askOutcomeLines, shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { askOutcomeLines, shCardLines, unaskedCalls, unaskedLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
 
 /** What each kind of ask is, said as the card's question. A kind this build does not know is asked about plainly. */
 const ASK_TITLE: Readonly<Record<string, string>> = {
@@ -95,6 +95,28 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                     </div>
                 );
             })}
+        </>
+    );
+}
+
+/**
+ * A step's `ml.sh` calls that ran without asking (a policy or the built-in default allowed them): a line each, with the
+ * argv the host got as it is (the raw view) and the ask card's words for who allowed it and what it reported.
+ * @gallery {"st":{"step":3,"seq":3,"tool":"exec","shCalls":[{"program":"ls","durationMs":12,"unasked":{"by":"default","argv":["ls","-la"],"outcome":{"ran":"host-sandbox","envelope":{"write":"none","exec":"program-only"},"asked":{"write":"none","exec":"program-only"},"protectedChanged":[]}}},{"program":"find","durationMs":40,"unasked":{"by":"policy","policy":"tidy build dir","argv":["find","build","-name","*.o","-delete"],"outcome":{"ran":"host-sandbox","envelope":{"write":"today","exec":"any"},"asked":{"write":"roots","exec":"program-only"},"protectedChanged":null}}}]}}
+ * @group approval
+ * @param st the step
+ */
+export function UnaskedList({ st }: { st: AgentStep }) {
+    const calls = unaskedCalls(st.shCalls);
+    if (!calls.length) return null;
+    return (
+        <>
+            {calls.map((u, i) => (
+                <div key={i} class="astep-ask-done ok unasked">
+                    Ran without asking: <code>{JSON.stringify(u.argv)}</code>
+                    <FactList lines={unaskedLines(u)} />
+                </div>
+            ))}
         </>
     );
 }

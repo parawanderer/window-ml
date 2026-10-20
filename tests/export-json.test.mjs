@@ -398,3 +398,12 @@ test("an allowed ask's outcome exports verbatim: the sandbox the host applied an
     assert.deepEqual(sessionToJson(s).session.steps[1].asks[0].outcome, outcome);
 });
 
+test("a step's ml.sh calls export verbatim, a call no one was asked about with what allowed it and the argv the host got", () => {
+    const shCalls = [{ program: "ls", durationMs: 4, unasked: { by: "default", argv: ["ls", "-la"], outcome: { ran: "host-sandbox", envelope: null, protectedChanged: null } } }];
+    const s = agentSession();
+    s.steps[1] = { ...s.steps[1], shCalls };
+    const doc = sessionToJson(s);
+    assert.deepEqual(doc.session.steps[1].shCalls, shCalls);
+    assert.equal(doc.session.steps[0].shCalls, undefined, "a step that made no call carries no field");
+});
+
