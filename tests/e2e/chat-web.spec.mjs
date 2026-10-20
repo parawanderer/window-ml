@@ -2543,10 +2543,21 @@ test("an edge fades only where the document continues past it", async () => {
         return cs.display === "none" ? 0 : parseFloat(cs.opacity);
     }, [sel, pseudo]);
 
-    // The list, at its top and short enough to need no scrolling: neither end continues, so neither end fades.
-    await page.locator(".chat-list-scroll").waitFor();
+    // The list, at its top: nothing continues above, so the top never fades; the bottom fades exactly when the list
+    // is longer than the screen. Measured, not assumed: whether the demo world's list fits depends on the viewport and
+    // on how many sessions it holds, and a test that assumed "fits" broke when one was added.
+    const list = page.locator(".chat-list-scroll");
+    await list.waitFor();
     await expect.poll(() => alpha(".chat-list-scroll", "::before")).toBe(0);
-    await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(0);
+    const overflows = await list.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+    await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(overflows ? 1 : 0);
+    if (overflows) {
+        // At its end, the bottom no longer continues, so it stops fading and the top starts.
+        await list.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+        await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(0);
+        await expect.poll(() => alpha(".chat-list-scroll", "::before")).toBe(1);
+        await list.evaluate((el) => { el.scrollTop = 0; });
+    }
 
     // A transcript long enough to scroll, which opens pinned to its newest turn: the end is reached, the start is
     // several screens up, so the top fades and the bottom does not.
