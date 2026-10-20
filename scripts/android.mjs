@@ -10,7 +10,8 @@
 //                                            (`--demo` carries the fake-host demo page instead of this device's account)
 //   node scripts/android.mjs launch          start the app (cold: it is stopped first)
 //   node scripts/android.mjs shot [file]     a screenshot of the device (default test-results/android.png)
-//   node scripts/android.mjs flows [file…]   run Maestro flows (default: every tests/mobile/*.yaml) against the device
+//   node scripts/android.mjs flows [--report f] [file…]  run Maestro flows (default: every tests/mobile/*.yaml) against
+//                                            the device; `--report` also writes a JUnit report to f
 //   node scripts/android.mjs drag <from> <to> [--record file.mp4]
 //                                            long-press the element showing <from>, drag it onto <to>, release: the
 //                                            gesture Maestro has no step for (a list row put in a new place)
@@ -21,7 +22,7 @@
 // unnecessary. The SDK is the command-line one (`brew install --cask android-commandlinetools`), not Android Studio.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensurePrebuild } from "./mobile-prebuild.mjs";
 
@@ -31,7 +32,9 @@ const API = 35;
  *  and cannot update it (no Play Store), and API 35's is Chrome 124, which has no Ed25519 or X25519 in WebCrypto. The
  *  hub's crypto needs both (Chrome 137+); a real phone updates its WebView from the Play Store. */
 const IMAGE_API = "37.0";
-const IMAGE = `system-images;android-${IMAGE_API};google_apis;arm64-v8a`;
+/** The image's ABI is the HOST's: an arm64 image runs only on Apple silicon, and a Linux CI runner needs x86_64 (KVM). */
+const IMAGE_ABI = process.arch === "arm64" ? "arm64-v8a" : "x86_64";
+const IMAGE = `system-images;android-${IMAGE_API};google_apis;${IMAGE_ABI}`;
 const PACKAGES = ["platform-tools", "emulator", `platforms;android-${API}`, "build-tools;35.0.0", IMAGE];
 const AVD = "wml-phone";
 const APP = "dev.wander.windowml";
@@ -66,7 +69,7 @@ function doctor() {
         ["sdkmanager", !!out("which", ["sdkmanager"]), "brew install --cask android-commandlinetools"],
         ["adb (platform-tools)", existsSync(bin.adb), "node scripts/android.mjs setup"],
         ["emulator", existsSync(bin.emulator), "node scripts/android.mjs setup"],
-        [`system image (API ${IMAGE_API}, arm64)`, existsSync(path.join(HOME, "system-images", `android-${IMAGE_API}`)), "node scripts/android.mjs setup"],
+        [`system image (API ${IMAGE_API}, ${IMAGE_ABI})`, existsSync(path.join(HOME, "system-images", `android-${IMAGE_API}`)), "node scripts/android.mjs setup"],
         [`emulator "${AVD}"`, out(bin.emulator, ["-list-avds"]).split("\n").includes(AVD), "node scripts/android.mjs setup"],
         ["Maestro (mobile.dev)", !!maestro(), "the release zip into ~/.maestro (CONTRIBUTING.md); NOT the `maestro` cask, a different app"],
     ];
@@ -89,15 +92,19 @@ function setup() {
 
 async function boot(window) {
     if (out(bin.adb, ["devices"]).includes("emulator-")) { console.log("an emulator is already running"); return; }
-    const args = ["-avd", AVD, "-no-snapshot-save", "-no-boot-anim", ...(window ? [] : ["-no-window", "-no-audio"])];
+    // Linux without a display (a CI runner) has no GPU to hand the emulator: render in software, or it never boots.
+    const gpu = !window && process.platform === "linux" ? ["-gpu", "swiftshader_indirect"] : [];
+    const args = ["-avd", AVD, "-no-snapshot-save", "-no-boot-anim", ...(window ? [] : ["-no-window", "-no-audio"]), ...gpu];
     const child = spawn(bin.emulator, args, { env, detached: true, stdio: "ignore" });
     child.unref();
     run(bin.adb, ["wait-for-device"]);
-    for (let i = 0; i < 120; i++) {
+    // A cold boot on a CI runner takes several minutes, so the wait is longer there (`BOOT_TIMEOUT_S`).
+    const limit = Number(process.env.BOOT_TIMEOUT_S ?? 120);
+    for (let i = 0; i < limit; i++) {
         if (out(bin.adb, ["shell", "getprop", "sys.boot_completed"]) === "1") { console.log("✓ booted"); return; }
         await sleep(1000);
     }
-    console.error("✗ the emulator did not finish booting in two minutes");
+    console.error(`✗ the emulator did not finish booting in ${limit} s`);
     process.exit(1);
 }
 
@@ -116,7 +123,10 @@ function install() {
     const abi = out(bin.adb, ["shell", "getprop", "ro.product.cpu.abi"]).trim();
     // NOT `--quiet`: it hides the REASON a build failed. A resource clash printed nothing but "exited 1", and the
     // error ("Found item Style/AppTheme more than one time") only appeared on a second, verbose run by hand.
-    run("./gradlew", ["assembleRelease", ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
+    // No lint: a RELEASE build runs "lint vital" over every module (about 90 s in CI), and this APK is for a device
+    // under test, never published. The published one is `tests.yml`'s `mobile-android`, which keeps it.
+    const noLint = ["lintVitalRelease", "lintVitalAnalyzeRelease", "lintVitalReportRelease"].flatMap((t) => ["-x", t]);
+    run("./gradlew", ["assembleRelease", ...noLint, ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
     run(bin.adb, ["install", "-r", "mobile/android/app/build/outputs/apk/release/app-release.apk"]);
     console.log(`✓ installed ${APP}`);
 }
@@ -136,13 +146,27 @@ function shot(file = "test-results/android.png") {
     console.log(`✓ ${file}`);
 }
 
-/** Maestro against the connected device: the given flows, or every one in tests/mobile/. */
-function flows(files) {
+/**
+ * Maestro against the connected device: the given flows, or every one in tests/mobile/. `--report <file>` also writes
+ * a JUnit report, which is how CI checks that every flow it named actually ran.
+ */
+function flows(argv) {
+    const at = argv.indexOf("--report");
+    const report = at >= 0 ? ["--format", "junit", "--output", argv[at + 1]] : [];
+    const files = at >= 0 ? argv.filter((_, i) => i !== at && i !== at + 1) : argv;
+    // Maestro will not create the report's folder, and fails the whole run on it after every flow passed.
+    if (at >= 0) mkdirSync(path.dirname(argv[at + 1]), { recursive: true });
     const m = maestro();
     if (!m) { console.error("✗ Maestro is not installed (node scripts/android.mjs doctor)"); process.exit(1); }
     const targets = files.length ? files : ["tests/mobile"];
+    // A fresh emulator's library is empty and demo-attach.yaml picks two photos from it. Maestro's `addMedia` cannot
+    // reach a fixture when several flows run at once ("not found in workspace"), so they are pushed here and scanned.
+    for (const f of readdirSync("tests/mobile").filter((n) => /^photo-.*\.png$/.test(n))) {
+        run(bin.adb, ["push", path.join("tests/mobile", f), `/sdcard/Pictures/${f}`]);
+        run(bin.adb, ["shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", `file:///sdcard/Pictures/${f}`]);
+    }
     // No analytics prompt: its first-run banner made the first invocation exit 1 with every flow unrun.
-    run(m, ["test", ...targets], { env: { ...env, PATH: `${path.dirname(bin.adb)}:${process.env.PATH}`, MAESTRO_CLI_NO_ANALYTICS: "1", MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true" } });
+    run(m, ["test", ...report, ...targets], { env: { ...env, PATH: `${path.dirname(bin.adb)}:${process.env.PATH}`, MAESTRO_CLI_NO_ANALYTICS: "1", MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true" } });
 }
 
 /** Every element on screen that shows text, with its box, from the device's accessibility dump. */
@@ -217,6 +241,6 @@ switch (cmd) {
     case "order": order(process.argv.slice(3)); break;
     case "stop": run(bin.adb, ["emu", "kill"]); break;
     default:
-        console.error("usage: node scripts/android.mjs <doctor|setup|boot [--window]|install|launch|shot [file]|flows [file…]|drag <from> <to> [--record f]|order <text…>|stop>");
+        console.error("usage: node scripts/android.mjs <doctor|setup|boot [--window]|install|launch|shot [file]|flows [--report file] [file…]|drag <from> <to> [--record f]|order <text…>|stop>");
         process.exit(2);
 }

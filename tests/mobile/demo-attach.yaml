@@ -1,7 +1,10 @@
 # demo-attach.yaml — the React Native app's DEMO build (`install --demo`): attach two photos from the library
-# to a message, see them as thumbnails above the box, and send them with text: the box empties and the runtime answers. The photo picker
-# is the system's, driven by position, so the simulator's library needs photos (iOS ships its sample set). Needs the
-# demo world's sessions, so it fails on a real build: name it when you run `flows`.
+# to a message, see them as thumbnails above the box, and send them with text: the box empties and the runtime
+# answers. The photo picker is the system's, so its text and layout depend on the OS image. `flows` pushes
+# tests/mobile/photo-*.png into the library first (a fresh emulator has none, and Maestro's `addMedia` cannot reach a
+# fixture when several flows run). On Android the picker is driven by its photos' accessible names (`Photo taken on …`)
+# and its confirm button (`Done`, `Add` on older images), never by the picker's own title; on iOS, by position.
+# Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
 appId: dev.wander.windowml
 ---
 - launchApp:
@@ -15,15 +18,35 @@ appId: dev.wander.windowml
     timeout: 30000
 - tapOn: "Attach an image"
 - tapOn: "Photo library"
-- extendedWaitUntil:
-    visible: "Select up to 4 photos."
-    timeout: 15000
-- tapOn:
-    point: "50%,27%"
-- tapOn:
-    point: "83%,27%"
-- tapOn:
-    point: "90%,15%"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: "Photo taken on.*"
+          timeout: 15000
+      # Index 0 both times: a selected photo's accessible name no longer starts "Photo taken on", so the first
+      # UNSELECTED photo is always index 0 (with only the two seeded photos, index 1 does not exist after one tap).
+      - tapOn:
+          text: "Photo taken on.*"
+          index: 0
+      - tapOn:
+          text: "Photo taken on.*"
+          index: 0
+      - tapOn: "Done|Add"
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: "Select up to 4 photos."
+          timeout: 15000
+      - tapOn:
+          point: "50%,27%"
+      - tapOn:
+          point: "83%,27%"
+      - tapOn:
+          point: "90%,15%"
 - extendedWaitUntil:
     visible: "Attached image 2"
     timeout: 20000
