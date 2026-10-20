@@ -37,7 +37,7 @@ const OUT = join(ROOT, "docs", "vitals", "history.json");
 const BIG_FILE = 800;
 
 /** The repositories measured from a local checkout. `dir` may be missing; the git half is then skipped. */
-const REPOS = [
+export const REPOS = [
     { name: "window-ml", dir: ROOT, ref: "origin/main", gh: "parawanderer/window-ml" },
     {
         name: "window-ml-hub",
@@ -45,16 +45,22 @@ const REPOS = [
         ref: "origin/main",
         gh: "parawanderer/window-ml-hub",
     },
+    {
+        name: "window-ml-host",
+        dir: process.env.VITALS_HOST_DIR || join(ROOT, "..", "window-ml-host"),
+        ref: "origin/main",
+        gh: "parawanderer/window-ml-host",
+    },
 ];
 
 /** The forks, measured through GitHub's compare API against the upstream branch each one diverged from. */
-const FORKS = [
+export const FORKS = [
     { name: "ollama", repo: "parawanderer/ollama", branch: "slop", upstream: "ollama:main" },
     { name: "llama.cpp", repo: "parawanderer/llama.cpp", branch: "slop", upstream: "ggml-org:master" },
     { name: "open-webui", repo: "parawanderer/open-webui", branch: "ml/tool-execute-api", upstream: "open-webui:main" },
 ];
 
-const LOCKFILES = new Set(["package-lock.json", "Cargo.lock", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock"]);
+export const LOCKFILES = new Set(["package-lock.json", "Cargo.lock", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock"]);
 const TEST_DIR = /(^|\/)(tests?|__tests__|e2e|fuzz)\//;
 const TEST_NAME = /\.(test|spec)\.[cm]?[jt]sx?$|_test\.(rs|go|py)$/;
 const CODE_EXT = /\.([cm]?[jt]sx?|rs|go|py|css|html|proto|sh|kt|swift|java|c|cc|cpp|h|hpp|cu|metal)$/;
@@ -173,7 +179,7 @@ export function mergeHistory(old, fresh) {
 // --- git ---
 
 /** Run git in a directory and return stdout as a string. */
-function git(dir, args) {
+export function git(dir, args) {
     return execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", maxBuffer: 1 << 30 });
 }
 
@@ -203,7 +209,7 @@ function blobLines(dir, ids, cache) {
 }
 
 /** Lines at one commit, split by `pathKind`, and how many code files are over `BIG_FILE` lines. */
-function linesAt(dir, sha, cache) {
+export function linesAt(dir, sha, cache) {
     const entries = git(dir, ["ls-tree", "-r", "-z", "--full-tree", sha]).split("\0").filter(Boolean).map((row) => {
         const [meta, path] = row.split("\t");
         const [mode, type, id] = meta.split(" ");
@@ -258,7 +264,7 @@ function ciRuns(gh) {
 }
 
 /** A fork's commits ahead of upstream by month, and today's diff against upstream in the current month. */
-function forkVitals(fork, nowIso) {
+export function forkVitals(fork, nowIso) {
     const owner = fork.repo.split("/")[0];
     const res = JSON.parse(execFileSync("gh", ["api", `repos/${fork.repo}/compare/${fork.upstream}...${owner}:${fork.branch}`,
         "--jq", "{ahead: .ahead_by, behind: .behind_by, files: (.files | length), additions: ([.files[].additions] | add), deletions: ([.files[].deletions] | add), commits: [.commits[] | {date: .commit.committer.date, subject: (.commit.message | split(\"\\n\")[0])}]}"],

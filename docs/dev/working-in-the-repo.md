@@ -210,6 +210,8 @@ figures in `docs/vitals/history.json`: lines by kind, big files, commits by conv
 on PRs, for this repo, the hub and the forks. Run it about once a month and commit the result; CI history ages out
 of GitHub, so a month nobody recorded is lost. Commit subjects are what it classifies, so keep using the
 `feat:`/`fix:` prefixes. Skill: `.claude/skills/vitals/SKILL.md`.
+
+`node scripts/ecosystem.mjs` is the point-in-time total across every repository and fork (authorship by Claude trailer, churn, with `--blame` survival); it reuses vitals' counters and writes nothing. Skill: `.claude/skills/ecosystem/SKILL.md`.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
 
 ## Imports, extract-function, move-symbols
