@@ -600,7 +600,7 @@ export function askOutcomeLines(a: StepAsk): ShCardLine[] {
  * @returns the lines, in reading order
  */
 export function unaskedLines(u: ShUnasked): ShCardLine[] {
-    const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by === "policy" ? `the policy "${u.policy ?? "?"}"` : "the built-in default" }];
+    const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by !== "policy" ? "the built-in default" : u.policy ? `the policy "${u.policy}"` : "a policy (no label recorded)" }];
     try { lines.push(...shOutcomeLines(u.outcome as unknown as ShOutcome)); } catch { /* an outcome of another shape: the line says who allowed it */ }
     return lines;
 }

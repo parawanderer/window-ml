@@ -643,7 +643,7 @@ test("a call that ran without asking says who allowed it, then exactly the lines
     for (const [u, by] of [
         [{ by: "default", argv: ["ls"], outcome }, "the built-in default"],
         [{ by: "policy", policy: "tidy build", argv: ["find", "build", "-delete"], outcome }, 'the policy "tidy build"'],
-        [{ by: "policy", argv: ["ls"], outcome }, 'the policy "?"'],
+        [{ by: "policy", argv: ["ls"], outcome }, "a policy (no label recorded)"],
     ]) {
         const lines = unaskedLines(u);
         assert.deepEqual(lines[0], { label: "Allowed by", value: by });
