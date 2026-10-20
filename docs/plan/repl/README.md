@@ -139,7 +139,8 @@ a group signal only while the group is still the call's own, the red team's over
 same hole and is fixed with it), with window-ml #868 (merged 94fb146a: `SHELL.md`'s Ownership bullet, its claim
 softened to "up to the residuals", three named: a child that leaves the group within one sample, a host killed outright
 with calls running, and the owner-lost and final kills signalling the group without the ownership check inside the
-5 s drain). Lane 4 stood down 2026-10-20, clones removed.
+5 s drain). **Lane 4: CLOSED 2026-10-20** (Shane): result [`LANE_4_RESULT_HOST_ROUND3.md`](LANE_4_RESULT_HOST_ROUND3.md)
+(#878, dae6278e); its clones are clean with nothing unpushed and their removal is Shane's (the lane's classifier refused it).
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
