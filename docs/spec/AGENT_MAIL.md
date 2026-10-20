@@ -137,6 +137,34 @@ it's not needed."*
 Cross-device is the hub: an account already has runtimes, sealed commands and encrypted streams. Mail is another
 sealed command stream, and `remoteDescription` already exists for deciding what a remote reader may see.
 
+## From the 2026-10-20 coordination day: five things the primitives above must also carry
+
+Added 2026-10-20 by the REPL coordinator session (`repl-specs`), after a day with nine lanes, a janitor, a red team and
+direct session messages instead of files. Direct messages removed the human as transport (two relays all day, against
+every message on 2026-10-04). What remained is below, each with the incident, so the primitive is sized by evidence.
+
+- **Identity is the work slug, and a session has one for its life.** Lane 3's session was titled "generalist", so a
+  message to "lane 3" found nobody and the session had to relay its own mail. The identity primitive (step 1 below) is
+  the slug; a title is display only, and a session that changes jobs changes its slug by a message, never silently.
+- **Push at a turn boundary comes earlier than step 4 says.** Four mails to the coordinator sat two hours unread until
+  their author nudged it, with one reader who was looking. Pull-only failed with the most attentive reader there is;
+  the cursor is necessary and not sufficient.
+- **A result is a message carrying a value, never a file in another session's tree.** Lane 9 wrote its result file
+  untracked into the coordinator's clone. A session writes only inside what it holds a lease on (next), and a result
+  travels as the session contract's remote tool result: a preview plus a pointer.
+- **Claims extend to disk: a clone, a build tree and scratch are leased resources.** Lane 5's four Pyodide build trees
+  took the machine to 8.7 GB free and the janitor could not touch another session's clone. A session declares its
+  scratch roots as a claim with a lease; the resource panel shows disk per session; an expired lease is reapable by
+  the janitor with the "nothing unpushed" check COMPUTED by git, the way a claim is verified above, never trusted.
+- **Closing a session is releasing its leases.** Closing lane 4 took a message, a result file, a clone check its
+  harness refused, and the person's hand. With a work order (session contract, "what makes delegation work") and
+  leases, "closed" is a computed state: result delivered, every lease released or reaped. The work order gains a field
+  for what the session leaves behind.
+
+Two things deliberately not added from that day: peer messaging as a general facility (every message had one owner and
+one obligation, and point-to-point was enough), and any tool that merges for a peer (each time, the person's hand was
+the right answer; see "the human is an editor" above).
+
 ## What to build first
 
 1. **Identity + the table + the read** — an agent declares a name, a session hash it already has, and one line of

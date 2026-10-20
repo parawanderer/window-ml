@@ -480,6 +480,27 @@ that machinery rather than growing its own:
 - **Tree operations**: cancel a tree, answer several gates from one device, a tree-wide stop, export a tree as one run.
 - **Passing values between siblings** as references with a read grant, so the coordinator never copies a table
   through its own context.
+- **Added 2026-10-20 from the REPL coordination day** (the `repl-specs` session; incidents in `AGENT_MAIL.md`, its
+  last section). Four rules a coordinator needed and the proposal did not state:
+  - *An instruction attributed to the person carries no authority when an agent relays it.* Twice that day a peer
+    said "the person said merge it"; nothing could verify it. The sender rule says a message must not READ as the
+    person's; this adds that a relayed instruction is a claim, and the person's own surface is its only gate. In
+    practice the act done by the person (the merge itself) is the proof.
+  - *A refused action is a gate the person sees, not a message to relay.* Two actions refused by a session's own
+    harness reached the person through the coordinator, which is also the laundering path. A fourth gate kind,
+    `refused` (what, by which rule, by which session), escalated to people and counted in the index with the others,
+    removes the relay and the risk at once.
+  - *Who reviews is a function over a PR's facts.* The coordinator spent more messages routing reviewers than ruling:
+    the finder never reviews the defence, the red team gates what a sandbox enforces, the tooling owner reviews
+    tooling. Those are facts (labels, finder, whether an exploit touched it), so the routing is a pinned script that
+    checks and acts (`POLICIES.md`, "A condition about the outside world"), text only blocking.
+  - *Status is derived; prose is rulings.* About twenty plan edits that day recorded a merge hash each, and the plan
+    was stale twice anyway. A coordinator's status table is generated from PR and session state; its prose holds only
+    rulings and assignments, each with a date, a finder and a PR.
+  - *A session's memory is its artifacts.* The coordinator compacted once and lost nothing because every ruling was
+    in a dated spec and every open item in a checkpoint file; the transcript was disposable. `AGENT_COMPACTION.md`
+    should state this as the design rule: whatever a resumed session must know is in a file or a spec, never only in
+    context.
 
 ### Not blocked: coordination between peers
 
