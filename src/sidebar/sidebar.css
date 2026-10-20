@@ -1063,9 +1063,6 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
 .ced-ta:focus { outline: none; }
 .bench-bar { display: flex; align-items: center; gap: 8px; }
-.bench-mode { display: flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 0.85em; }
-.bench-mode select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font: inherit; font-size: 0.92em; cursor: pointer; }
-.bench-mode select:focus { outline: none; border-color: var(--accent); }
 .bench-kbd { font-size: 0.78em; font-variant-numeric: tabular-nums; }
 .bench-run { font-size: 0.86em; font-weight: 700; padding: 4px 16px; border-radius: 6px; border: 1px solid var(--accent-strong);
     color: var(--accent-fg); background: var(--accent); cursor: pointer; }
@@ -1389,14 +1386,16 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .astep-approve .appr-ask b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* A NESTED ASK's facts (ask-card.tsx): what the call will run, where and under what sandbox, as the worker resolved it.
    One row per fact, the label in a narrow column; a fact worth a second look carries the warning icon. */
-.astep-approve .ask-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; font-size: 0.82em; }
-.astep-approve .ask-facts > div { display: contents; }
-.astep-approve .ask-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
-.astep-approve .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
-.astep-approve .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-.astep-approve .ask-facts .warn dd { color: var(--notice); }
-/* An answered nested ask: one line under its step. */
+.astep-approve .ask-facts, .astep-ask-done .ask-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; font-size: 0.82em; }
+.astep-approve .ask-facts > div, .astep-ask-done .ask-facts > div { display: contents; }
+.astep-approve .ask-facts dt, .astep-ask-done .ask-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
+.astep-approve .ask-facts dt svg, .astep-ask-done .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
+.astep-approve .ask-facts dd, .astep-ask-done .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.astep-approve .ask-facts .warn dd, .astep-ask-done .ask-facts .warn dd { color: var(--notice); }
+/* An answered nested ask: one line under its step, and once an allowed call ran, what it reported (its own size: the
+   line is already small). */
 .astep-ask-done { font-size: 0.8em; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
+.astep-ask-done .ask-facts { font-size: 1em; margin: 2px 0 0 12px; }
 .astep-ask-done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
 .astep-ask-done.no { color: var(--err); }
 .appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }
@@ -3734,14 +3733,10 @@ pre.code.dlines > code.hljs { display: block; }
    the mode picker gives up width, clipping its option text rather than pushing ▶ Run off the edge. */
 @container bench (max-width: 355px) {
     .bench-top .bench-send, .bench-top .bench-grip-pill { display: none; }
-    .bench-top .bench-mode, .bench-top .bench-mode select { min-width: 0; }
-    .bench-top .bench-mode { flex: 0 1 auto; overflow: hidden; }
-    .bench-top .bench-mode select { max-width: 100%; text-overflow: ellipsis; }
 }
 /* The controls in the strip are CONTROLS, not part of the drag target. Without this they inherit the
    resize cursor and read as somewhere to grab. */
-.bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn,
-.bench-top .bench-mode, .bench-top .bench-mode select { cursor: pointer; }
+.bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn { cursor: pointer; }
 /* THE GRAB PILL, centred on the ROW — the only place a drawer handle reads as one. Centring it in the
    leftover space instead (a flex child in the spacer) put it visibly off to one side, because the name and
    its controls are far wider than the two icons opposite. What forced that was the pill landing on the mode

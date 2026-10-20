@@ -10,7 +10,8 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, orderPins, pinned, pinnedModels, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readMarks, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { READ_MARKS_MAX, UNTIL_READ, markSeen, readMarksFrom, seenEnding } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
@@ -941,6 +942,59 @@ test("revokerItems: only a hub that KEEPS the record and holds none warns, and i
     assert.deepEqual(revokerItems("none", new Set(["this-account:no-revoker"])), [], "and it stays dismissed");
 });
 
+// --- renewing through a runtime paired without permission to pair devices (#815, #817) ---
+
+test("canSignRenewal: online and not known to lack may_pair; absent counts as able, the UPGRADE of a list that never carried it", async () => {
+    const { canSignRenewal, renewalSigners } = await import("../src/chat/renew.ts");
+    const rt = (name, online, mayPair) => ({ id: name, name, online, ...(mayPair === undefined ? {} : { mayPair }) });
+    // Every combination, the default included: a runtime list from before this was read has no `mayPair` at all.
+    for (const online of [true, false]) for (const mayPair of [true, false, undefined]) {
+        assert.equal(canSignRenewal(rt("x", online, mayPair)), online && mayPair !== false, `online=${online} mayPair=${mayPair}`);
+    }
+    assert.deepEqual(renewalSigners([rt("Work laptop", false, true), rt("Home desktop", true, false), rt("Old", true, undefined)]),
+        { signers: ["Work laptop"], cannot: ["Home desktop"] }, "only a definite yes names a signer, only a definite no rules one out");
+});
+
+test("certItems: a browser that is awake but may not pair is named, with who can, instead of 'open one of your browsers'", async () => {
+    const { certItems } = await import("../src/chat/attention.ts");
+    const now = 1_000_000_000_000;
+    const soon = now + 5 * 86_400_000;
+    const [named] = certItems({ notAfterMs: soon, renewable: true, issuerOnline: false, canRenew: true, signers: { signers: ["Work laptop"], cannot: ["Home desktop"] } }, now);
+    assert.match(named.detail, /Home desktop was paired without permission to pair devices, so it cannot renew this one\. Work laptop can: open it and try again\./);
+    assert.equal(named.fix, undefined, "no button: pressing it would ask the browser that cannot");
+    assert.doesNotMatch(named.detail, /root device/, "nothing on the root device renews another device");
+    const [nobody] = certItems({ notAfterMs: soon, renewable: true, issuerOnline: false, signers: { signers: [], cannot: ["Home desktop", "Den"] } }, now);
+    assert.match(nobody.detail, /Home desktop and Den were paired without permission to pair devices, so they cannot renew this one\. None of your browsers that can is known here, so pair this device again/);
+    // Control: with nobody awake at all, the old sentence stands.
+    const [asleep] = certItems({ notAfterMs: soon, renewable: true, issuerOnline: false, signers: { signers: ["Work laptop"], cannot: [] } }, now);
+    assert.match(asleep.detail, /None is right now/);
+});
+
+test("renewSelf: never asks a runtime that may not pair, and turns either refusal into a sentence naming who can", async () => {
+    const { renewSelf } = await import("../src/chat/renew.ts");
+    const rt = (name, online, mayPair) => ({ id: name, name, online, ...(mayPair === undefined ? {} : { mayPair }) });
+    const world = (answer) => { const asked = []; return { asked, host: { async send(c) { asked.push(c.runtime); return answer(c); } }, pairing: { install: async () => {} } }; };
+    // Known not to be able: not asked at all.
+    let w = world(() => ({ ok: true, data: { notAfterMs: 1 } }));
+    let r = await renewSelf(w.host, w.pairing, [rt("Home desktop", true, false), rt("Work laptop", false, true)], "p");
+    assert.deepEqual(w.asked, []);
+    assert.match(r.problem, /^Home desktop was paired without permission to pair devices.*Work laptop can: open it and try again\.$/);
+    // Not known (an older client list, or a runtime seen before this was read): asked, and BOTH refusals map, #817's and
+    // the pre-#817 chain checker's, since a runtime on the old code still answers with the latter.
+    for (const message of ["an intermediate may not pair",
+        "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from the root device, or from a browser paired with that permission",
+        "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from a browser paired with that permission, or pair the device again"]) {
+        w = world(() => ({ ok: false, error: { code: "conflict", message } }));
+        r = await renewSelf(w.host, w.pairing, [rt("Den", true, undefined), rt("Work laptop", false, true)], "p");
+        assert.deepEqual(w.asked, ["Den"]);
+        assert.equal(r.problem, "Den was paired without permission to pair devices, so it cannot renew this one. Work laptop can: open it and try again.", message);
+    }
+    // Control: any other refusal is passed through as it was.
+    w = world(() => ({ ok: false, error: { code: "conflict", message: "its own certificate is expiring" } }));
+    r = await renewSelf(w.host, w.pairing, [rt("Den", true, true)], "p");
+    assert.equal(r.problem, "its own certificate is expiring");
+});
+
 // --- renewing this device's own certificate: asking a runtime, and keeping only what checks out ---
 
 test("renewSelf: tries each browser that is awake, installs what comes back, and stops dead on a chain that does not check out", async () => {
@@ -1032,4 +1086,59 @@ test("a nested ask inside a running step: the page (and the phone, which embeds 
     const st = sessionMap.get("laptop:ask00001").steps.find((s) => s.seq === 1);
     assert.deepEqual(st.asks.map((a) => [a.state, a.note]), [["denied", "not that"]], "closed by the runtime's event, not optimistically");
     assert.equal(st.pending, true, "the step itself keeps running");
+});
+
+// --- a bad ending's list dot: shown until this device has shown you the session, and back if it ends badly again ---
+
+const ALL_STATUSES = ["running", "waiting", "done", "error", "cancelled", "capped", "interrupted"];
+
+test("read marks: only a run that ended badly waits to be read; one still working, or done, never does", () => {
+    // Enumerated, not sampled: the set is the rule, and a status added to the index must be decided here on purpose.
+    assert.deepEqual([...UNTIL_READ].sort(), ["cancelled", "capped", "error", "interrupted"]);
+    const marks = { "laptop:aaaa0001": 500 };
+    for (const st of ALL_STATUSES) assert.equal(seenEnding(st, 100, marks, "laptop:aaaa0001"), UNTIL_READ.has(st), st);
+});
+
+test("read marks: the UPGRADE: a device that never stored a mark draws every dot it drew before", () => {
+    // What the old code stored is nothing at all under this key; a junk value is the same as nothing.
+    for (const raw of [undefined, null, "x", 7, [], [1, 2]]) {
+        installViewPrefs(fakePrefs(raw === undefined ? {} : { [READ_KEY]: raw }));
+        assert.deepEqual(readMarks.value, {});
+        for (const st of ALL_STATUSES) assert.equal(seenEnding(st, 100, readMarks.value, "laptop:aaaa0001"), false, st);
+    }
+});
+
+test("read marks: seen up to the newest event; a later event that ends badly again brings the dot back", () => {
+    const k = "laptop:aaaa0001";
+    let m = markSeen({}, k, 100);
+    assert.equal(seenEnding("capped", 100, m, k), true);
+    assert.equal(seenEnding("error", 160, m, k), false, "resumed and failed again: news again");
+    assert.equal(seenEnding("capped", 100, m, "laptop:bbbb0002"), false, "another session is not read by this one");
+    // Never moves back, and an unchanged mark is the SAME object, so the caller skips the write.
+    assert.equal(markSeen(m, k, 90), m);
+    assert.equal(markSeen(m, k, 100), m);
+    assert.equal(markSeen(m, k, NaN), m);
+    m = markSeen(m, k, 160);
+    assert.equal(m[k], 160);
+});
+
+test("read marks: a device keeps the newest marks only, and drops anything stored that is not a stamp", () => {
+    let m = {};
+    for (let i = 0; i < READ_MARKS_MAX + 20; i++) m = markSeen(m, `laptop:${i}`, 1000 + i);
+    assert.equal(Object.keys(m).length, READ_MARKS_MAX);
+    assert.equal(m["laptop:0"], undefined, "the oldest went");
+    assert.equal(m[`laptop:${READ_MARKS_MAX + 19}`], 1000 + READ_MARKS_MAX + 19, "the newest stayed");
+    assert.deepEqual(readMarksFrom({ a: 1, b: "2", c: null, d: Infinity, e: 3 }), { a: 1, e: 3 });
+});
+
+test("view prefs: a read mark is this device's, written once, and survives a reload", () => {
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    markRead("laptop:aaaa0001", 100);
+    assert.deepEqual(prefs.all.get(READ_KEY), { "laptop:aaaa0001": 100 });
+    const before = prefs.all.get(READ_KEY);
+    markRead("laptop:aaaa0001", 100);   // seen again, nothing new: no write
+    assert.equal(prefs.all.get(READ_KEY), before);
+    installViewPrefs(fakePrefs({ [READ_KEY]: prefs.all.get(READ_KEY) }));
+    assert.equal(seenEnding("capped", 100, readMarks.value, "laptop:aaaa0001"), true);
 });

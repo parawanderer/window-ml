@@ -706,6 +706,13 @@ retention and eviction, and it reaches every device as an upsert, so a pin made 
 back rather than left claiming a pin the runtime refused. A runtime with no `session.pin` keeps the device's pin
 alone.
 
+**A bad ending's dot lasts until it has been read** (`read-marks.ts`, `readMarks`, `view.read`). A capped, failed,
+cancelled or interrupted session's list dot hides in calm view once this device has shown you its newest event:
+on the page, the open pane is at the end of the transcript in a visible tab; on the phone, the session is open over
+the list (`mobile/src/read-marks.ts`). The mark is that event's `lastTs`, so a run resumed that ends badly again
+gets its dot back. The status words stay. A running or waiting dot never hides: that is work, not news. Per device,
+like a pin; a device with no marks draws every dot, as before.
+
 **Earlier events** (`EarlierEdge`, chat-app.tsx) draw the store's `earlier` state at the top of a transcript that does
 not reach its start: an older page is fetched as the edge scrolls into view, with the reading position held from the
 bottom so the text does not jump; a failed page says the runtime's reason there with "Try again"; and TRUNCATED (the
@@ -1002,6 +1009,14 @@ resume and reset already are the reconciliation.
   scheduled for next month must still be true when it arrives. Nothing about a session, a task or a page ever goes on
   a lock screen. `expo-notifications` is installed but deliberately NOT in `app.json`'s plugins: its iOS plugin writes
   a push entitlement a free signing certificate cannot grant.
+- **Who can renew this device is a runtime that MAY PAIR, not any runtime online** (`canSignRenewal`, `renew.ts`). A
+  runtime paired with `may_pair` off (the phone's default since #815) cannot sign another device's renewal, so the
+  inbox, both auto-renew starters and `renewSelf` all read it from `RuntimeInfo.mayPair`, which comes off the runtime's
+  VERIFIED presence leaf like `mayRevoke`. Absent is "not known" and counts as able, which keeps an older list working.
+  With a browser awake that cannot sign, the inbox names it and names the ones that can (`noSignerOnline`), instead of
+  "open one of your browsers". A runtime's refusal for this reason, #817's `unsupported` or the older "an intermediate
+  may not pair", becomes that same sentence, because it can name the browsers that can sign and the runtime's cannot.
+  Nothing on the root device renews another device: `device.renew` is answered by runtimes only.
 - **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
   `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
   runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools

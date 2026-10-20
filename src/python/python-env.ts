@@ -22,6 +22,14 @@ import unix_timezones as _ml_utz
 _ml_utz.__dict__.pop('js', None)
 del _ml_utz`;
 
+/** matplotlib's one-time preparation: the headless Agg backend, chosen before anything imports pyplot (a sandbox has
+ *  no window to show a figure in), and `plt.show()` made quiet, since a script written for a notebook calls it and Agg
+ *  would answer with a warning that it cannot show. The figure is drawn from what is left open (python-runtime.ts). */
+const MATPLOTLIB_PREPARE = `import os as _ml_os, warnings as _ml_w
+_ml_os.environ['MPLBACKEND'] = 'Agg'
+_ml_w.filterwarnings('ignore', message='.*non-interactive.*cannot be shown')
+del _ml_os, _ml_w`;
+
 export const PY_PACKAGES: PyPackage[] = [
     { load: "numpy", prelude: "import numpy as np", label: "numpy (np)" },
     { load: "pillow", prelude: "from PIL import Image", label: "PIL (Image)" },
@@ -49,6 +57,11 @@ export const PY_PACKAGES: PyPackage[] = [
     // half-switched (`to_parquet` failing in `unregister_extension_type`, then `NameError: pa`). The pre-warm
     // absorbs most cold starts. Not pre-imported by the prelude beyond what pandas does itself.
     { load: "pyarrow", prelude: "", label: "pyarrow (pd.read_parquet / to_parquet / read_feather; Arrow IPC via pyarrow.ipc)", prepare: PYARROW_PREPARE },
+    // matplotlib: loaded at START, NOT pre-imported. Loading the wheels is ~0.3 s; `import matplotlib.pyplot` is ~2.4 s
+    // (it builds its font list), paid only by a script that plots. Loaded at start rather than on import because a
+    // readonly worker has no `fetch` after its lockdown, and Pyodide's loader needs it. A figure left open, or a
+    // returned Figure, comes back as an image (python-runtime.ts, the epilogue).
+    { load: "matplotlib", prelude: "", label: "matplotlib (`import matplotlib.pyplot as plt`)", prepare: MATPLOTLIB_PREPARE },
 ];
 
 /** Loaded when the sandbox STARTS. Lazy tooling is excluded: see `PY_LAZY_LOADS`. */

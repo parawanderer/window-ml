@@ -3,7 +3,7 @@
 // drawn as a native list: a large title, round buttons for a new chat and settings, a section per runtime, rows you tap
 // (and long-press for a session's actions, session-actions.tsx).
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -18,6 +18,8 @@ import { useUpdateRow } from "../app-update";
 import { ago, approvalsPending, keyOf, needsYou, pinnedOf, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { PinnedRows } from "../pinned-rows";
 import { setPinnedOrder, usePinnedOrder } from "../pinned-order";
+import { markRead, useReadMarks } from "../read-marks";
+import { seenEnding, UNTIL_READ } from "../../../src/chat/read-marks";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
@@ -44,6 +46,14 @@ export function ListScreen() {
     // While a pinned row is up under the thumb, the list holds still: the thumb is moving the row.
     const [lifted, setLifted] = useState(false);
     const pinOrder = usePinnedOrder();
+    const marks = useReadMarks();
+    // THE SESSION OPEN OVER THE LIST IS BEING READ, and so is each event that lands while it is: its bad ending, if it
+    // has one, stops being news for this list (read-marks.ts). The page asks for the end of the transcript on screen;
+    // here the session opens at its end, which is as near as the list can tell.
+    const open = layer.key ? e.sessions.find((x) => keyOf(x) === layer.key) : undefined;
+    useEffect(() => {
+        if (open && UNTIL_READ.has(open.status)) markRead(keyOf(open), open.lastTs);
+    }, [open?.id.runtime, open?.id.hash, open?.status, open?.lastTs]);
     // What waits on you is pinned above the runtimes, and LEAVES its own section while it is up there: the same row
     // twice within a screen reads as a bug, and the pinned row names the machine it is on. Then what the runtimes
     // hold a pin on, in this phone's order (the page's Pinned group), each out of its runtime's section.
@@ -159,14 +169,14 @@ export function ListScreen() {
                         onOrder={(keys) => setPinnedOrder(keys, unpinned())}
                         onActions={(key) => void actOn(key, false)}
                         row={(x, moveBy) => (
-                            <Row s={x} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
+                            <Row s={x} read={seenEnding(x.status, x.lastTs, marks, keyOf(x))} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
                                 onPress={() => layer.open(keyOf(x), false)}
                                 onLongPress={() => void actOn(keyOf(x), false)} />
                         )} />
                 ) : (
                     // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
                     // since up here it is out of its machine's section.
-                    <Row s={item} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
+                    <Row s={item} read={seenEnding(item.status, item.lastTs, marks, keyOf(item))} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
                         onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)}
                         onLongPress={() => void actOn(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)} />
                 )}
@@ -179,7 +189,9 @@ export function ListScreen() {
 
 /** One session in the list: its title, where it stands, and when it last moved. `runtimeName` for a row out of its
  *  runtime's section (the pinned "needs you" group). */
-function Row({ s: x, runtimeName, onPress, onLongPress, moveBy }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void;
+function Row({ s: x, read, runtimeName, onPress, onLongPress, moveBy }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void;
+    /** its bad ending has been shown on this phone: the words stay, the dot goes (read-marks.ts) */
+    read?: boolean;
     /** a pinned row: move it one place up or down, which a screen reader offers since it cannot drag */
     moveBy?: (d: -1 | 1) => void }) {
     const p = usePalette();
@@ -191,7 +203,7 @@ function Row({ s: x, runtimeName, onPress, onLongPress, moveBy }: { s: SessionSu
             accessibilityActions={[{ name: "longpress", label: "Session actions" }, ...(moveBy ? [{ name: "up", label: "Move up" }, { name: "down", label: "Move down" }] : [])]}
             onAccessibilityAction={(ev) => { const a = ev.nativeEvent.actionName; if (a === "longpress") onLongPress(); else if (a === "up") moveBy?.(-1); else if (a === "down") moveBy?.(1); }}
             style={({ pressed }) => [s.row, pressed && { backgroundColor: p.panel }]}>
-            <View style={[s.rowDot, { backgroundColor: tone === "busy" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : "transparent" }]} />
+            <View style={[s.rowDot, { backgroundColor: read ? "transparent" : tone === "busy" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : "transparent" }]} />
             <View style={s.rowBody}>
                 <Text numberOfLines={1} style={[s.rowTitle, { color: p.fg }]}>{title}</Text>
                 {/* WHERE IT STANDS COMES FIRST on this line, so it is in the same place on every row: a status that

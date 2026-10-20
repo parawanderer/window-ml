@@ -6,7 +6,7 @@
 import { test, expect } from "@playwright/test";
 import http from "node:http";
 import zlib from "node:zlib";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, approveGates } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 test.describe.configure({ mode: "default" });
@@ -121,8 +121,10 @@ async function workerRun(r, tabId, script, watchFn) {
     const events = [];
     const watch = await watchFn((ev) => events.push(ev));
     r.fake.setScript(script);
+    const stopGates = approveGates(r.ext);   // no cell is known to be inside the dialect yet, so python_exec asks
     await r.ext.sw.evaluate((id) => globalThis.__mlStartUserRunForTest(id, { task: "hand me the tiles", hud: "quiet", surface: "hud" }, { approvalRouting: "both", answer: true }), tabId);
     const result = await untilResult(events);
+    stopGates();
     await watch.close();
     return result;
 }

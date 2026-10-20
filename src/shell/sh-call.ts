@@ -9,7 +9,7 @@
 import type { CallDescription, ProgramManifest } from "./program-manifest";
 import { describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
-import type { HostDone, HostFacts, HostPathArg, HostPlacement, HostSpawn, HostStream } from "./host-protocol";
+import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
 import cat from "./manifests/cat.json";
 import find from "./manifests/find.json";
@@ -20,6 +20,7 @@ import ls from "./manifests/ls.json";
 import rg from "./manifests/rg.json";
 import tail from "./manifests/tail.json";
 import wc from "./manifests/wc.json";
+import type { StepAsk } from "../contract";
 
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
@@ -287,16 +288,139 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     };
 }
 
+/**
+ * The narrowest sandbox envelope the approved claims permit, or absent when they permit none (today's floor).
+ * Pure over the facts the person or a policy approved: the script's word is never an input (SHELL.md, "The narrow
+ * write envelope"). A claim that needs a right the envelope would withhold sends no envelope, rather than running
+ * under one that would fail the call as `ok: false`. A call whose claims carry `exec(process)` (or that is a runner,
+ * which starts programs no manifest describes) gets none at all: `find -exec rm` claims no write of its own, and an
+ * envelope over only the described writes would fail rm as `ok: false`. Every envelope this returns is therefore
+ * `exec: "program-only"`; `"any"` is unreachable, because the floor is no envelope at all.
+ * @param f the call's facts
+ * @returns the envelope to send on `start`, or undefined for today's floor
+ */
+export function envelopeFor(f: ShFacts): HostEnvelope | undefined {
+    if (f.effects === "unknown" || f.runner) return undefined;
+    if (f.effects.some((e) => e.op === "exec" && e.res.kind === "process")) return undefined;
+    // The write set is every write or alloc effect (alloc on fs counts: a package install writes where it allocates).
+    // A net or heap write is in it too and has no path to vouch for, so it withholds the envelope.
+    const writes = f.effects.filter((e) => e.op === "write" || e.op === "alloc");
+    let write: "roots" | "none";
+    if (writes.length === 0) write = "none";
+    else {
+        const ok = writes.every((e) => e.res.kind === "fs" && e.res.inRoot === true && e.res.secret !== true
+            && e.res.isRoot !== true && !claimsTopLevelName(e));
+        if (!ok) return undefined;
+        write = "roots";
+    }
+    return { write, exec: "program-only" };
+}
+
 /** One line of the approval card: a label, its value, and whether it is something to look at twice. */
 export interface ShCardLine { label: string; value: string; warn?: boolean }
+
+/** The floor's report name: what an absent envelope on `start` means, and what `done` calls it. */
+const FLOOR: HostDoneEnvelope = { write: "today", exec: "any" };
+
+/**
+ * The "Sandbox applied" line: what the host reported, never what the worker asked for. An older host reports
+ * nothing (`null`), which is unknown, never narrow; a report that is not what was asked for says so.
+ * @param applied what `done.envelope` carried, or null when it carried nothing
+ * @param asked what was sent on `start`, or undefined when nothing was (today's floor)
+ */
+function sandboxAppliedLine(applied: HostDoneEnvelope | null, asked: HostEnvelope | undefined): ShCardLine {
+    if (applied === null) return { label: "Sandbox applied", value: "unknown (the host did not report it)" };
+    const value = envelopeText(applied);
+    return envelopeMismatch(applied, asked)
+        ? { label: "Sandbox applied", value: `${value} (not the ${envelopeText(asked ?? FLOOR)} that was asked for)`, warn: true }
+        : { label: "Sandbox applied", value };
+}
+
+/** An envelope in words, as the card and the run log print it. */
+export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, exec ${e.exec}`;
+
+/**
+ * Whether the host applied something other than what was asked for, an absent ask being the floor. An unreported
+ * envelope (`null`) is not a mismatch: it is unknown, and says so in its own words.
+ * @param applied what `done.envelope` carried, or null
+ * @param asked what was sent on `start`, or undefined for the floor
+ */
+export function envelopeMismatch(applied: HostDoneEnvelope | null, asked: HostEnvelope | undefined): boolean {
+    if (applied === null) return false;
+    const want = asked ?? FLOOR;
+    return applied.write !== want.write || applied.exec !== want.exec;
+}
+
+/**
+ * The protected names that changed during a call, in words: each `name change`, with the root once when they share
+ * one and on each when they do not. During, never "by": two calls in one root both see either's change (SHELL.md).
+ * Past `maxLen` it names as many as fit and says how many it left out, so a cut text never reads as the whole list.
+ * @param changes the host's list, non-empty
+ * @param more whether more changed than the list names (the host cut it)
+ * @param maxLen the most characters the text may take (the run log's detail cap); unbounded by default. At least 60, or
+ *   even the count alone is cut
+ */
+export function protectedChangesText(changes: readonly HostProtectedChange[], more: boolean, maxLen = Infinity): string {
+    const one = new Set(changes.map((c) => c.root)).size === 1;
+    const head = `changed during this call${one ? ` in ${changes[0]!.root}` : ""}: `;
+    const items = changes.map((c) => `${one ? c.name : `${c.root}/${c.name}`} ${c.change}`);
+    const whole = head + items.join(", ") + (more ? ", and more (the list was cut)" : "");
+    if (whole.length <= maxLen) return whole;
+    // The longest prefix of the items that fits with its own count of the rest after it.
+    for (let k = items.length - 1; k >= 1; k--) {
+        const cut = `${head}${items.slice(0, k).join(", ")}, and ${items.length - k}${more ? "+" : ""} more (the list was cut)`;
+        if (cut.length <= maxLen) return cut;
+    }
+    // Not even one fits (a root path can be 4096 bytes): the count alone, which never reads as a list.
+    return `changed during this call: ${items.length}${more ? "+" : ""} protected names, unlisted`.slice(0, maxLen);
+}
+
+/** How many protected changes a step's ask keeps for its card. The script's result carries the host's whole list. */
+export const SH_CHANGES_SHOWN = 16;
+
+/** What a finished call reports beside its exit, kept on the person's ask so the card can say it once the call ran.
+ *  `protectedChanged` is cut at {@link SH_CHANGES_SHOWN}, with `protectedChangedTruncated` set when it was. */
+export type ShOutcome = Pick<ShResult, "ran" | "envelope" | "asked" | "protectedChanged" | "protectedChangedTruncated">;
+
+/**
+ * A result's outcome, small enough to ride the step's event.
+ * @param r the call's result
+ */
+export function shOutcome(r: ShResult): ShOutcome {
+    const list = r.protectedChanged;
+    const cut = list !== null && list.length > SH_CHANGES_SHOWN;
+    return {
+        ran: r.ran, envelope: r.envelope, ...(r.asked !== undefined ? { asked: r.asked } : {}),
+        protectedChanged: cut ? list.slice(0, SH_CHANGES_SHOWN) : list,
+        ...(cut || r.protectedChangedTruncated ? { protectedChangedTruncated: true as const } : {}),
+    };
+}
+
+/**
+ * The card's lines for a call that has run: the sandbox the host applied (a sandboxed call only: an unsandboxed one's
+ * card already says it ran as the person), and what changed among the protected names during it. Human-facing text.
+ * @param o the call's outcome
+ * @returns the lines, in reading order
+ */
+export function shOutcomeLines(o: ShOutcome): ShCardLine[] {
+    const lines: ShCardLine[] = o.ran === "host-sandbox" ? [sandboxAppliedLine(o.envelope, o.asked)] : [];
+    const ch = o.protectedChanged;
+    lines.push(ch === null ? { label: "Protected names", value: "unknown (the host did not report them)" }
+        : !ch.length ? { label: "Protected names", value: "none changed during this call" }
+        : { label: "Protected names", value: protectedChangesText(ch, !!o.protectedChangedTruncated), warn: true });
+    return lines;
+}
 
 /**
  * The approval card's lines for one call: what will run, where, with what, as the host resolved it. Never the script
  * that computed the call (SHELL.md, "Approval": what was approved is exactly what runs). Human-facing text.
  * @param f the call's facts
+ * @param applied what the host reported it applied, or null when an older host reported nothing; omit on the approval
+ *   card, which is shown before anything has been applied
+ * @param asked what was sent on `start`, or undefined when nothing was (today's floor)
  * @returns the lines, in reading order
  */
-export function shCardLines(f: ShFacts): ShCardLine[] {
+export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked?: HostEnvelope): ShCardLine[] {
     const lines: ShCardLine[] = [
         { label: "Runs", value: f.argv.map(quoteArg).join(" ") },
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
@@ -305,6 +429,7 @@ export function shCardLines(f: ShFacts): ShCardLine[] {
             ? { label: "Sandbox", value: "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
     ];
+    if (applied !== undefined) lines.push(sandboxAppliedLine(applied, asked));
     if (f.env.set.length) lines.push({ label: "Sets", value: f.env.set.join(", "), ...(f.env.free ? {} : { warn: true }) });
     for (const p of f.paths) {
         const notes = [!p.inRoot && "outside the roots", p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
@@ -367,6 +492,29 @@ export interface ShResult {
     /** The highest physical footprint the host measured, in bytes (absent from a host older than 0.3.0). */
     peakFootprint?: number;
     memoryBound?: number;
+    /** What was asked of the host on `start`, after the host-version gate; absent = nothing was sent (today's floor). */
+    asked?: HostEnvelope;
+    /** What the host reported it applied. `null` = an older host reported nothing: unknown, never narrow. */
+    envelope: HostDoneEnvelope | null;
+    /** What changed among the roots' protected names DURING the call, `[]` when nothing. `null` = the host reported
+     *  nothing (an older host, or a `done` cut to fit): unknown, never "nothing". */
+    protectedChanged: HostProtectedChange[] | null;
+    /** The host cut `protectedChanged` at its bound; absent = the list is complete. */
+    protectedChangedTruncated?: true;
+}
+
+const CHANGE_KINDS: ReadonlySet<unknown> = new Set(["created", "modified", "removed"]);
+
+/**
+ * `done.protectedChanged` as the result carries it. A list with any entry of another shape is unknown (`null`),
+ * never a shorter list that would read as complete.
+ * @param v what `done` carried
+ */
+function protectedChangedOf(v: unknown): HostProtectedChange[] | null {
+    if (!Array.isArray(v)) return null;
+    const ok = (c: unknown): c is HostProtectedChange => typeof c === "object" && c !== null
+        && typeof (c as HostProtectedChange).root === "string" && typeof (c as HostProtectedChange).name === "string" && CHANGE_KINDS.has((c as HostProtectedChange).change);
+    return v.every(ok) ? v.map((c) => ({ root: c.root, name: c.name, change: c.change })) : null;
 }
 
 /**
@@ -403,13 +551,18 @@ export function shOut(s: HostStream, token: string | null, head: Uint8Array): Sh
  * @param facts the call's facts (its placement)
  * @param description the manifest's description, or null
  * @param out the two streams, already shaped
+ * @param asked the envelope sent on `start`, or undefined when none was (today's floor)
  */
-export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }): ShResult {
+export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
     const okCodes = description?.okCodes ?? [0];
     const ok = !done.error && !done.killed && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
+    const changed = protectedChangedOf(done.protectedChanged);
     return {
         code: done.code, signal: done.signal, ok, timedOut: done.timedOut, cancelled: done.cancelled, durationMs: done.durationMs,
         ran: facts.placement, stdout: out.stdout, stderr: out.stderr,
+        envelope: done.envelope ?? null,
+        ...(asked !== undefined ? { asked } : {}),
+        protectedChanged: changed, ...(changed !== null && done.protectedChangedTruncated === true ? { protectedChangedTruncated: true as const } : {}),
         ...(done.error ? { error: `${done.error.code}: ${done.error.message}` } : {}),
         ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
         ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),
@@ -427,4 +580,15 @@ export function wireCodeOf(hostCode: string): "Refused" | "BadRequest" | "TooLar
         case "TooLarge": return "TooLarge";
         default: return "Failed";
     }
+}
+
+/**
+ * The lines for what an allowed ask's call reported once it ran (a shell call's sandbox and protected names), or none
+ * when it has not reported, or reported in a shape this build does not draw.
+ * @param a the ask
+ * @returns the lines
+ */
+export function askOutcomeLines(a: StepAsk): ShCardLine[] {
+    if (a.kind !== "sh" || a.state !== "allowed" || !a.outcome) return [];
+    try { return shOutcomeLines(a.outcome as unknown as ShOutcome); } catch { return []; }
 }

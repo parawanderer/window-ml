@@ -185,7 +185,7 @@ export function liveCutoff(st: AgentStep): number | undefined {
 // also the slot a future interactive-approval control will resolve into.
 export const APPROVAL = {
     readonly: { label: "auto-approved", tip: "Auto-approved by the read-only exec setting." },
-    sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — a readonly-mode run is isolated by construction (no network / JS scope / DOM / filesystem)." },
+    sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — the cell is inside the read-only Python dialect, in a sandbox with no network / JS scope / DOM / filesystem." },
     "same-origin": { label: "auto-approved", tip: "Same-site action — a navigation or an uncredentialed fetch to this origin (or one you already allowed this run). The page could do it itself, so no prompt." },
     consented: { label: "auto-approved", tip: "A URL you already approved fetching this session — no re-prompt." },
     "self-source": { label: "auto-approved", tip: "An uncredentialed read of the agent's OWN repo source (code / structural API, not issues or other user-generated prose) — free via the Self-source setting." },

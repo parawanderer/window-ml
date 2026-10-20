@@ -26,7 +26,7 @@ export type PyValueParts = Pick<Extract<RenderDescriptor, { type: "python-out" }
  */
 export function pyValueParts(
     v: unknown,
-    hints: { render?: "latex" | "img"; table?: { columns: string[]; rows: (string | number | null)[][] } },
+    hints: { render?: "latex" | "img" | "figure"; table?: { columns: string[]; rows: (string | number | null)[][] } },
     text: (v: unknown) => string | undefined,
 ): PyValueParts {
     // An image return is unambiguous, whatever else is set.

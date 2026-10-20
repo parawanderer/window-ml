@@ -20,13 +20,13 @@ import { CodeEditor } from "./code/code-editor";
 import type { RemoteCompletion, CodeEditorHandle } from "./code/code-editor-api";
 import { IconExpand, IconClose, IconChevron, IconTimer, IconPlay, IconSendToModel } from "./icons";
 import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./transcript/render-panel";
-import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchMode, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
+import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
 import { cursorTipOn, TipText } from "./ui-kit";
 import { followDrag } from "./drag";
 import { PanelHead, useDocked } from "./panel-head";
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
-export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" }): Extract<RenderDescriptor, { type: "python-out" }> {
+export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure" }): Extract<RenderDescriptor, { type: "python-out" }> {
     const stdout = r.stdout || undefined;
     if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
     // The SAME decision the model's python_exec step makes (py-render.ts), so a return draws identically on
@@ -85,18 +85,16 @@ export function BenchVer() {
     return <span class="bench-ver" {...cursorTipOn(`Python ${env.python} on Pyodide ${env.pyodide}. Open **environment** for the packages.`)}>py {env.python}</span>;
 }
 
-/** The variables the bench is KEEPING between runs, for the mode it is in, and the one control that clears
- *  them. Beside the packages because both answer "what is in this sandbox", and a person who reaches for a
- *  name that is not there looks here first. Reset clears BOTH modes; it is offered only when there is
+/** The variables the bench is KEEPING between runs, and the one control that clears them. Beside the packages because both answer "what is in this sandbox", and a person who reaches for a
+ *  name that is not there looks here first. It is offered only when there is
  *  something to clear, because a button that visibly does nothing reads as broken. */
 function BenchVars() {
-    const mode = benchMode.value;
-    const vars = benchKept.value[mode]?.vars ?? [];
-    const any = Object.values(benchKept.value).some((k) => k?.vars.length);
+    const vars = benchKept.value?.vars ?? [];
+    const any = vars.length > 0;
     return (
         <div class="bench-env-vars">
             <div class="bench-env-vars-head">
-                <span>Variables <span class="dim">· {mode}, kept between runs</span></span>
+                <span>Variables <span class="dim">· kept between runs</span></span>
                 <button class="tt bench-env-reset" disabled={!any} onClick={resetBenchState} aria-label="Reset the variables">
                     Reset
                     <span class="tt-pop wrap left" role="tooltip"><TipText md="Forget every variable the bench is keeping, in **both** modes. Your script is untouched; the next run starts from an empty namespace." /></span>
@@ -130,7 +128,7 @@ function completeInSandbox(code: string, line: number, column: number): Promise<
     if (!benchEnv.value) return Promise.resolve(null);
     return new Promise((resolve) => {
         try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: true, complete: { line, column, bench: benchMode.value } } }, (resp: any) => {
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: true, complete: { line, column } } }, (resp: any) => {
                 void chrome.runtime.lastError;   // a torn-down sandbox is a fallback, not a console error
                 const r = resp?.data;
                 resolve(r?.ok && Array.isArray(r.completions) ? r.completions : null);
@@ -145,7 +143,7 @@ function resetBenchState() {
     try {
         chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code: "", benchReset: true } }, (resp: any) => {
             void chrome.runtime.lastError;
-            if (resp?.data?.ok) { benchKept.value = {}; benchLost.value = false; }
+            if (resp?.data?.ok) { benchKept.value = null; benchLost.value = false; }
         });
     } catch { /* no live channel: nothing kept to reset */ }
 }
@@ -284,7 +282,6 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     // SHAPE also a way to lose your work in it.
     const docked = useDocked();
     const code = benchCode.value, setCode = (v: string) => { benchCode.value = v; lsSet(BENCH_CODE_KEY, v); };
-    const mode = benchMode.value, setMode = (v: "readonly" | "full") => { benchMode.value = v; lsSet("ml_bench_mode", v); };
     const running = benchRunning.value, setRunning = (v: boolean) => { benchRunning.value = v; };
     const result = benchResult.value, setResult = (v: BenchRun | null) => { benchResult.value = v; };
     // LIVE stdout, and the produced-at marks that go with it — the same tee the model-invoked tool gets, just
@@ -323,14 +320,14 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         try { chrome.runtime.onMessage.addListener(onChunk); streaming = true; } catch { /* no live channel */ }
         const stop = () => { if (streaming) try { chrome.runtime.onMessage.removeListener(onChunk); } catch { /* torn down */ } };
                 try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming, persist: true, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: true, image: null, tables: null, stream: streaming, persist: true, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
                 (resp: any) => {
                     stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.
                     const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
                     setResult({ ...(r || { ok: false, stdout: "", error: "No response from the sandbox." }), code });
                     setRunning(false);
-                    if (r?.bench) noteBenchKept(mode, r.bench);
+                    if (r?.bench) noteBenchKept(r.bench);
                     // The sandbox is up NOW, so the version chip is free. Doing this on mount instead would
                     // make every glance at the bench pay the cold start the env panel exists to defer.
                     loadBenchEnv();
@@ -423,15 +420,6 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     the middle of the header as a handle for nothing — and it is the one control in the row
                     that says "grab me", which makes an inert one worse than absent. */}
                 {drag ? <i class="bench-grip-pill" aria-hidden="true" /> : null}
-                {/* No visible "mode" word: the options already say what they are ("readonly (sandboxed)",
-                    "full (network)"), and the word cost 40px of a row that runs out of room. It stays the
-                    control's accessible NAME, which is what a label is for. */}
-                <label class="bench-mode">
-                    <select aria-label="Sandbox mode" value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
-                        <option value="readonly">readonly (sandboxed)</option>
-                        <option value="full">full (network)</option>
-                    </select>
-                </label>
                 {/* The one ACTION in the row, so it is filled and coloured where everything else is a quiet
                     outline. Its tooltip carries the shortcut, which is where the bottom bar's hint went. */}
                 {/* THE WATCHDOG, as a state you can see rather than a surprise you hit. A run is killed at 15s

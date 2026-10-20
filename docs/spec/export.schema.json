@@ -2288,6 +2288,11 @@
           "description": "The run routes approvals to the external channel only: surfaces show the ask without buttons.",
           "type": "boolean",
           "const": true
+        },
+        "outcome": {
+          "description": "What an allowed call reported once it ran, as its consumer recorded it (`sh`: the sandbox applied and the protected names that changed during it, `ShOutcome`); absent until it ran, or when it reported nothing.",
+          "type": "object",
+          "additionalProperties": true
         }
       },
       "required": [

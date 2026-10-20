@@ -7,10 +7,13 @@ import assert from "node:assert/strict";
 import { wireRun, wireCall } from "./ml-wire-harness.mjs";
 import { fakeNativeHost } from "./fake-native-host.mjs";
 
+// A cell marked `# inside` is INSIDE the dialect (no real predicate yet); every other cell is outside.
+const INSIDE = "# inside";
+
 const T = { timeout: 60000 };
 const ON = { shellEnabled: true, shellRoots: ["/w/proj"] };
 /** The model's calls: python_exec alone, in `mode`. */
-const py = (mode) => [{ name: "python_exec", args: { code: "await ml.sh.run(['ls'])", mode } }];
+const py = (mode) => [{ name: "python_exec", args: { code: "await ml.sh.run(['ls'])" + (mode === "readonly" ? " " + INSIDE : "") } }];
 
 /** Answer every nested ask with `decision`, recording each ask and the step event it arrived on. */
 function answering(decision) {
@@ -36,7 +39,7 @@ test("a full-mode cell's sh.run runs through the host, and its output is read by
     await wireRun(async (wire, bg) => {
         r = await wireCall(bg, wire, "sh.run", [["ls"]]);
         part = await wireCall(bg, wire, "sh.read", [r.value?.stdout?.token, { offset: 70000, length: 10 }]);
-    }, { calls: py("full"), configExtra: ON, onNative: host.onNative });
+    }, { calls: py("full"), configExtra: ON, onNative: host.onNative, dialectInside: INSIDE });
     assert.equal(r.value?.ok, true, JSON.stringify(r));
     assert.equal(r.value.approvedBy, "builtin", "a read inside the roots is free");
     assert.equal(r.value.stdout.complete, false);
@@ -76,7 +79,7 @@ test("a read-only cell has no sh: Absent, and the host is never reached", T, asy
     const host = fakeNativeHost();
     let r;
     await wireRun(async (wire, bg) => { r = await wireCall(bg, wire, "sh.run", [["ls"]]); },
-        { calls: py("readonly"), configExtra: ON, onNative: host.onNative });
+        { calls: py("readonly"), configExtra: ON, onNative: host.onNative, dialectInside: INSIDE });
     assert.equal(r.error?.code, "Absent");
     // hello and configure are the worker measuring its capabilities at start (ml.sh is on); nothing was resolved or run.
     assert.deepEqual(host.calls.filter((c) => !["hello", "configure"].includes(c.call)), []);

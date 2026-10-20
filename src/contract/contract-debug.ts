@@ -176,6 +176,9 @@ export interface StepAsk {
     note?: string;
     /** The run routes approvals to the external channel only: surfaces show the ask without buttons. */
     external?: true;
+    /** What an allowed call reported once it ran, as its consumer recorded it (`sh`: the sandbox applied and the
+     *  protected names that changed during it, `ShOutcome`); absent until it ran, or when it reported nothing. */
+    outcome?: Record<string, unknown>;
 }
 
 /** ONE step of an agent run: a thought, or a tool call together with its result. One event, not three -- the

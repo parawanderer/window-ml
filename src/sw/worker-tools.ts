@@ -16,6 +16,7 @@ import { storeText } from "./sw-values";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
+import { workerVisionChat } from "./worker-vision";
 import { fetchSheetCsv } from "./sw-fetch";
 import { tableFromDelimited } from "../table/table-data";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "../ml/fetch-result";
@@ -60,7 +61,7 @@ interface RunCtx {
     consented: Set<string>;
     /** As-you (credentialed) fetches the person approved, each spent by the one call it was approved for. */
     credOnce: Set<string>;
-    /** What the python_exec call now running was approved for: external sheet ids, and full-mode code. Set around the
+    /** What the python_exec call now running was approved for: external sheet ids, and the code of a cell outside the dialect. Set around the
      *  one call (`grantRunPython`), never on the tab. */
     pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } } };
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
@@ -224,13 +225,16 @@ function runMl(ctx: RunCtx): MlApi {
         _queryAll: () => [],
         // fetch_url's whole body past its preview, kept in the value store for the pointer the step mints.
         _keepText: storeText satisfies KeepText,
-        pythonExec: (code: string, opts: { image?: unknown; margin?: number; mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
+        pythonExec: (code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
         // A cast's token goes into the page's registry, where a click resolves it (python-tool.ts `MintToken`).
         _mintToken: ((q, documentId) => {
             if (!ctx.media) return Promise.reject(new Error("no page to mint the token in."));
             return ctx.media.mint(q, documentId);
         }) satisfies MintToken,
-        chat: (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null } = {}): Promise<string> => meteredChat(ctx, {
+        // With `images` (python_exec's verify, asking a vision reader about a chart) it is the vision chat look uses.
+        chat: (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null; images?: string[]; maxTokens?: number | null } = {}): Promise<string> => opts.images?.length
+            ? workerVisionChat(ctx.runId, prompt, { images: opts.images, model: opts.model ?? null, maxTokens: opts.maxTokens ?? null, numCtx: opts.numCtx ?? null })
+            : meteredChat(ctx, {
             messages: [{ role: "user", content: prompt }], model: opts.model ?? null, extend: opts.extend ?? null,
             numCtx: opts.numCtx ?? null, think: false, hint: { use: "agent", session: hintSession(ctx.runId) },
         }),
@@ -276,8 +280,8 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
 }
 
 /** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
- *  caller (full mode only for the code this call was approved for), live stdout straight to the call's output. */
-async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
+ *  caller (a cell outside the dialect only for the code this call was approved for), live stdout straight to the call's output. */
+async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
     // The image first, as the page's pythonExec shoots it before loading its tables: from the worker's own capture.
     let shot: { image: string; imageBox: ShotBox | null; documentId: string } | null = null;
     if (opts.image != null && opts.image !== "") {
@@ -292,7 +296,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
     const requestId = `wpy-${crypto.randomUUID()}`;
     const r = await runPython({
-        code, image: shot?.image ?? null, hardened: opts.mode !== "full", stream: !!opts.onStdout,
+        code, image: shot?.image ?? null, stream: !!opts.onStdout,
         tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i][2] ?? (typeof specs[i][1] === "string" ? specs[i][1] : null) })),
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,

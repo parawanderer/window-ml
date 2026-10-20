@@ -52,6 +52,8 @@ const pairing = fakePairing({
     ],
 });
 pairing.addOffer("7K3M Q9XD", { label: "Living-room tablet", role: "client", fingerprint: "a41c9e07d3b2" });
+// A desktop host waits too: a runtime offer, with the demo's laptop as the device that already signs removals.
+pairing.addOffer("RT4D 9HWP", { label: "Office desktop", role: "runtime", fingerprint: "b7d20c5e91aa", signer: "Work laptop" });
 (globalThis as { __pairFake?: unknown }).__pairFake = pairing;
 // The same cache the real app keeps, over the same bridge: the demo exercises it end to end on a device. Its fake runtime
 // starts a new history on every launch, so a reopened session is also the RESET path, which is worth seeing work.

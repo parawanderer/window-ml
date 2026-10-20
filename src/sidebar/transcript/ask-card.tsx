@@ -12,7 +12,7 @@ import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
-import { shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { askOutcomeLines, shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
 
 /** What each kind of ask is, said as the card's question. A kind this build does not know is asked about plainly. */
 const ASK_TITLE: Readonly<Record<string, string>> = {
@@ -38,9 +38,22 @@ export function askLines(a: StepAsk): ShCardLine[] {
     return Object.entries(a.facts ?? {}).map(([label, v]) => ({ label, value: typeof v === "string" ? v : JSON.stringify(v) }));
 }
 
+/** An ask's lines as the card's definition list. */
+function FactList({ lines }: { lines: ShCardLine[] }) {
+    return (
+        <dl class="ask-facts">
+            {lines.map((l, i) => (
+                <div key={i} class={l.warn ? "warn" : undefined}>
+                    <dt>{l.warn ? <IconWarn /> : null}{l.label}</dt><dd>{l.value}</dd>
+                </div>
+            ))}
+        </dl>
+    );
+}
+
 /**
  * A step's nested asks, in the order they were raised.
- * @gallery {"st":{"step":3,"seq":3,"tool":"exec","pending":true,"asks":[{"id":"a0123456789abcdef01234567","kind":"sh","state":"pending","raisedAt":0,"facts":{"argv":["git","--no-pager","status"],"program":{"path":"/usr/bin/git","inRoot":false},"cwd":{"path":"/Users/me/src/proj","inRoot":true},"env":{"set":[],"free":true},"secrets":[],"paths":[],"repo":{"root":"/Users/me/src/proj","reasons":[]},"repoConfigRunsCode":false,"effects":"unknown","described":false,"why":["the program's version was not reported"],"runner":false,"mode":"host","sandboxed":true,"placement":"host-sandbox"}},{"id":"a0123456789abcdef01234568","kind":"sh","state":"denied","raisedAt":0,"answeredAt":4000,"note":"not that branch","facts":{"argv":["git","checkout","main"]}}]},"hash":"r1","live":true}
+ * @gallery {"st":{"step":3,"seq":3,"tool":"exec","pending":true,"asks":[{"id":"a0123456789abcdef01234567","kind":"sh","state":"pending","raisedAt":0,"facts":{"argv":["git","--no-pager","status"],"program":{"path":"/usr/bin/git","inRoot":false},"cwd":{"path":"/Users/me/src/proj","inRoot":true},"env":{"set":[],"free":true},"secrets":[],"paths":[],"repo":{"root":"/Users/me/src/proj","reasons":[]},"repoConfigRunsCode":false,"effects":"unknown","described":false,"why":["the program's version was not reported"],"runner":false,"mode":"host","sandboxed":true,"placement":"host-sandbox"}},{"id":"a0123456789abcdef01234568","kind":"sh","state":"denied","raisedAt":0,"answeredAt":4000,"note":"not that branch","facts":{"argv":["git","checkout","main"]}},{"id":"a0123456789abcdef01234569","kind":"sh","state":"allowed","raisedAt":0,"answeredAt":2000,"facts":{"argv":["npm","install"]},"outcome":{"ran":"host-sandbox","envelope":{"write":"today","exec":"any"},"protectedChanged":[{"root":"/Users/me/src/proj","name":".git/hooks","change":"modified"},{"root":"/Users/me/src/proj","name":".git/hooks/pre-commit","change":"created"}]}}]},"hash":"r1","live":true}
  * @group approval
  * @param st the step
  * @param hash the run, for answering; absent where the run cannot be answered from here
@@ -59,13 +72,7 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                 return (
                     <div key={a.id} class="astep-approve ask">
                         <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : <>While it runs, this step asks for <b>{String(a.kind)}</b>:</>}</span>
-                        <dl class="ask-facts">
-                            {askLines(a).map((l, i) => (
-                                <div key={i} class={l.warn ? "warn" : undefined}>
-                                    <dt>{l.warn ? <IconWarn /> : null}{l.label}</dt><dd>{l.value}</dd>
-                                </div>
-                            ))}
-                        </dl>
+                        <FactList lines={askLines(a)} />
                         {!live
                             ? <span class="appr-dead">This run ended before anyone answered, so there is nothing left to approve.</span>
                             // An ask without a well-formed id has nothing to answer: its answer would name no ask,
@@ -89,9 +96,11 @@ function AskDone({ a }: { a: StepAsk }) {
     const argv = Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : a.kind;
     const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
     const outcome = a.state === "pending" ? "answered, waiting for the run" : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);
+    const ran = askOutcomeLines(a);
     return (
         <div class={`astep-ask-done ${a.state === "allowed" ? "ok" : "no"}`}>
             Asked to run <code>{argv}</code>: {outcome}{waited}{a.note ? <> — “{a.note}”</> : null}
+            {ran.length ? <FactList lines={ran} /> : null}
         </div>
     );
 }

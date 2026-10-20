@@ -363,7 +363,7 @@ export const noteAside = (hash: string, a: Aside): void => {
    full-page mode for a long script, and returning from full lands back on the view you left rather than on
    the sessions list. */
 export const BENCH_OPEN_KEY = "ml_bench_open";
-export const BENCH_DOCK_KEY = "ml_bench_dock";     // "drawer" | "full"  (NOT ml_bench_mode — that is the sandbox's readonly/full)
+export const BENCH_DOCK_KEY = "ml_bench_dock";     // "drawer" | "full"
 export const BENCH_H_KEY = "ml_bench_h";   // storage.local: the bench drawer's height
 export const BENCH_SPLIT_KEY = "ml_bench_split";   // storage.local: the editor's share of the bench, 0..1
 export const benchOpen = signal(false);   // is the bench showing (as a drawer, or as the full-page view)?
@@ -403,8 +403,9 @@ export const markReturn = (): void => {
 /** What a bench run came back with — the offscreen sandbox's result, plus the timings the worker measured. */
 export interface BenchRun {
     ok: boolean; value?: unknown; stdout: string; error?: string; bootMs?: number; runMs?: number; table?: { columns: string[]; rows: (string | number | null)[][] };
-    /** The sandbox's render hint from the return TYPE: `latex` for a sympy expression, `img` for a PIL image. */
-    render?: "latex" | "img";
+    /** The sandbox's render hint from the return TYPE: `latex` for a sympy expression, `img` for a PIL image or a matplotlib
+     *  Figure, `figure` for the matplotlib figures a script left open (drawn as the value). */
+    render?: "latex" | "img" | "figure";
     /** The script as it was when it RAN. A traceback's line numbers are about this text, and the editor may
      *  have moved on since; the bench maps between the two rather than trusting them to agree. */
     code?: string;
@@ -417,8 +418,6 @@ export interface BenchRun {
 // `mode` are additionally mirrored to localStorage, which is what carries them across a reload.
 /** The script in the Python bench's editor — the workbench's own draft, not any step's code. */
 export const benchCode = signal<string>(lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
-/** Which sandbox the bench runs in: `readonly` (hardened, no network) or `full`. Mirrors `python_exec`'s. */
-export const benchMode = signal<"readonly" | "full">(lsGet("ml_bench_mode") === "full" ? "full" : "readonly");
 /** Does the workbench enforce the 15s run watchdog? ON by default — a runaway script otherwise holds the one
  *  Pyodide instance until the panel is closed. Turned off from the bench header for a script you KNOW is
  *  long; the model's own `python_exec` keeps the cap regardless, and the background only honours the flag
@@ -432,19 +431,18 @@ export const benchTimes = signal<boolean>(lsGet("ml_bench_times") !== "off");
 /** A kept-state bench namespace as the worker last reported it: its `id` (new whenever it is created afresh)
  *  and the variables the user has in it. */
 export interface BenchKept { id: string; vars: { name: string; type: string }[] }
-/** The bench's KEPT STATE, per sandbox mode — readonly and full each keep their own variables, and nothing
- *  crosses between them. Session-only: the namespace lives in the sandbox's worker, so this is a report of it,
+/** The bench's KEPT STATE. Session-only: the namespace lives in the sandbox's worker, so this is a report of it,
  *  never a copy that could outlive it. */
-export const benchKept = signal<Partial<Record<"readonly" | "full", BenchKept>>>({});
+export const benchKept = signal<BenchKept | null>(null);
 /** Set when a run comes back in a namespace the bench did not reset — the worker restarted underneath it (a
  *  runaway run was stopped, the extension reloaded), so the variables from earlier runs are gone. Said once,
  *  where the result lands, rather than discovered as a NameError. Cleared when the next run starts. */
 export const benchLost = signal<boolean>(false);
 /** Record what a kept-state run reported, noticing when its namespace is not the one we last saw. */
-export function noteBenchKept(mode: "readonly" | "full", kept: BenchKept): void {
-    const prev = benchKept.value[mode];
+export function noteBenchKept(kept: BenchKept): void {
+    const prev = benchKept.value;
     if (prev && prev.id !== kept.id) benchLost.value = true;
-    benchKept.value = { ...benchKept.value, [mode]: kept };
+    benchKept.value = kept;
 }
 
 /** Is a bench script in flight right now — what the header's ▶ spinner and the disabled Run button read. */

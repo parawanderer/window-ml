@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, approveGates } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -26,12 +26,12 @@ test("python_exec streams print() output live (worker → page ctx.stream → st
             // surface works — so this exercises the full reverse channel: worker stdout → offscreen → SW →
             // page (ml.pythonExec progress) → the tool's ctx.stream → PAGE_TOOL_STREAM → SW → the loop's fan.
             debugMode: "overlay",
-            autoApprovePython: true,    // readonly python auto-approves, so no gate blocks the run
+            autoApprovePython: true,
         });
         // Turn 1: run python that PRINTS two lines then sleeps briefly (so the deltas propagate before the
         // final result). Turn 2: answer. The prints must reach the page as live streamOutput deltas.
         fake.setScript([
-            { tool: "python_exec", args: { code: "print('LIVE-ALPHA'); print('LIVE-BETA'); import time; time.sleep(1)", mode: "readonly" } },
+            { tool: "python_exec", args: { code: "print('LIVE-ALPHA'); print('LIVE-BETA'); import time; time.sleep(1)" } },
             { content: "Done." },
         ]);
 
@@ -41,7 +41,8 @@ test("python_exec streams print() output live (worker → page ctx.stream → st
         // Collect every agent-step debug event carrying a live streamOutput, from the worker (they never reach the page).
         const seen = [];
         await watchRunEvents(ext, page, (d) => { if (d && d.kind === "agent-step" && d.streamOutput != null) seen.push(d.streamOutput); });
-        await page.evaluate(() => window.ml.agent("run the code", { stream: true, extraTools: [window.ml.pythonTool()] }));
+        approveGates(ext);   // no cell is known to be inside the dialect yet, so the run asks
+        await page.evaluate(() => window.ml.agent("run the code", { stream: true, approvalRouting: "both", extraTools: [window.ml.pythonTool()] }));
 
         // Poll until a delta carries the printed text (the whole chain worked), bounded well past the ~1s run.
         await expect.poll(() => seen.some((d) => /LIVE-ALPHA/.test(d)), { timeout: 15000 }).toBe(true);

@@ -16,7 +16,7 @@ so a compute-bound run on the main thread froze the sidebar's clicks (scroll —
 — still worked); off-main-thread keeps the UI responsive. The worker is chrome-free (resolves
 Pyodide URLs via `self.location`), owns the run-serialization invariant, and `offscreen.ts` is a
 thin id-matched relay. Pyodide is
-(numpy/Pillow/**pandas**/**scipy**, bundled offline in `dist/pyodide/`, lazy-loaded — the
+(numpy/Pillow/**pandas**/**scipy**/**matplotlib**, bundled offline in `dist/pyodide/`, lazy-loaded — the
 package set is single-sourced in `python-env.ts` `PY_PACKAGES`, which drives `loadPackage`, the
 prelude imports, the tool-description labels, AND the wheel-fetch script; scipy is loaded but
 not pre-imported, so a quick coord/table run doesn't pay its import cost). A call
@@ -154,6 +154,34 @@ the Python bench (`pyBenchDescriptor`). The bench had its own copy and it drifte
 return showed as raw LaTeX source there while the log typeset it. What stays in each caller is what differs — the
 tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printed JSON.
 
+**matplotlib: a figure comes back as an image** (the `FIGURES` block of the epilogue, `python-runtime.ts`):
+
+- **Loaded at start, never pre-imported.** The wheels cost ~0.3 s of cold start; `import matplotlib.pyplot` costs
+  ~2.4 s (it builds its font list) and is paid only by a script that plots. Not loaded on import, because a readonly
+  worker has no `fetch` after its lockdown and Pyodide's loader needs it.
+- **Its `prepare`** picks the headless Agg backend before anything imports pyplot, and silences the warning Agg gives
+  for `plt.show()`, which a script written for a notebook calls.
+- **What draws.** A returned `Figure`, or an `Axes` (its figure), draws like a returned PIL image (`render: "img"`).
+  A cell that returns nothing and did not fail, but left figures open, draws them as a notebook would (`render:
+  "figure"`): several stack into one image, at most six. A trailing `plt.plot(...)` returns its artists, and a value
+  made only of artists counts as nothing returned, so the figure shows rather than a `Line2D` repr.
+- **At most ~4 megapixels a figure**: the dpi drops for a huge `figsize`, so the image in the panel and the exports
+  stays bounded. It is measured on the TIGHT box the image is cut to (at the figsize's capped dpi, or measuring
+  allocates the gigapixels), since an artist far outside the figure grows that box; the padding is fixed at 0.1 in.
+- **Every figure is closed after every cell**, a failed one included, so a run's next cell does not draw it again.
+  Not against the cell itself: one that patches `plt.close` keeps its figures open for the next cell of its PRINCIPAL
+  (a readonly worker is one principal's; the `full` one is everyone's, the shared-interpreter residual below).
+- **The epilogue catches `BaseException`**: it runs the cell's own objects outside the cell's try, and an escape would
+  skip the cancel of what the cell scheduled.
+- **No module it brings in holds the JavaScript bridge**: `tests/python-matplotlib.test.mjs` walks everything those
+  modules reach under the lockdown, after a cell tried every backend, the check a new package with a `prepare` owes.
+
+**`verify: true` hands an image result to the model**, never automatically (`verifyPyImage`, `python-tool.ts`). It is
+the `verify` of `click`/`type` (`docs/dev/agent-tools.md`): a driver that sees gets the image on its next turn, a
+text-only driver gets the vision reader's description through `ml.chat` with `images`, and with no reader the model is
+told so. Without it, an image costs the model nothing, and it is still drawn for the person. In a worker-hosted run,
+the run's `ml.chat` with `images` is the vision chat `look` uses (`workerVisionChat`).
+
 **Two capability modes (agent-declared) + auto-approve.** The tool takes `mode`:
 `"readonly"` (default) runs in a **locked-down** worker — one Worker (one realm) per PRINCIPAL:
 a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`).
@@ -178,11 +206,15 @@ before a cell's result is returned. The strip, the harness capture and the wrapp
 **escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
-cell the import fallback, and `loadPackage` of a wheel still works after the strip. `full` mode
-leaves the bridges intact (outbound network) and **always** requires manual approval.
+cell the import fallback, and `loadPackage` of a wheel still works after the strip. There is **no `mode`**
+(removed 2026-10-19, lane 7): every cell runs in a hardened worker, and `pythonCellInDialect` (`agent/python-dialect.ts`)
+decides whether it is inside the read-only dialect (no card, the read-only slice of `ml`) or outside it (asks, the full
+gated `ml`). It returns false for every cell until the Pyodide build carries a membership predicate, so **no cell
+auto-approves yet**; the plug-in point is that one function. A grant keeps the old prefixes (`full:` outside,
+`readonly:` inside), so a stored `full:` grant still covers its code and a stored `readonly:` one no longer does.
 Config `autoApprovePython`
-(ON by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
-`sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
+(ON by default, Advanced settings) auto-approves calls **inside the dialect** (badge provenance
+`sandbox`) — but code outside it, or containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
 retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
 exist"). The sandbox's third-party packages are a **single source of truth** in
@@ -287,10 +319,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
 - **Cells of the same worker-hosted run**, by run id: `wire.run` on `PY_RUN`, set only from `wireRun` (`worker-tools.ts`).
   The worker keeps `runs: Map<runId, { ns, id }>` (`python-worker.ts`), so the key is the run and nothing else.
 - **Not** a page's `ml.pythonExec` or a page-hosted agent's `python_exec`: no run id, so the main namespace and the reset
-  as before. **Not** the bench (`persist`): its own `benchNs`, per mode.
-- **Both modes, and no crossing.** A `readonly` cell runs on the worker of principal `run:<id>`, a `full` cell on the
-  `full` worker. Each keeps its own dict for the run, so a name defined in a `full` cell is not visible to a `readonly`
-  cell of the same run.
+  as before. **Not** the bench (`persist`): its own `benchNs`.
 - **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
   wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
 - **Ends** with the run: `settle()` (`sw-run-host.ts`) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
@@ -304,9 +333,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   cell's scope manifest (`bench.vars`: names and type names).
 - **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
   `offscreen.ts`), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
-- **Known residual:** two full-mode runs ALIVE at once share the `full` interpreter and can read each other's dicts
-  (`gc.get_objects()`); the approval card says so. Pinned by a test that asserts it exists
-  (`docs/plan/repl/LANE_1_RESULT_C.md`, "Known residual").
+- **The `full` worker is unreachable from the service worker** since `mode` went (`runPython` always sends `hardened: true`); its branch in `offscreen.ts` and `python-worker.ts` stays for the Pyodide-build lanes to delete. The residual it carried (two full-mode runs sharing one interpreter) is gone with it.
 - **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only).
 
 Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) and `tests/python-run-namespace-py.test.mjs`

@@ -105,10 +105,23 @@ envelope at the price of top-level `mkdir` was Shane's decision: **no** (2026-10
 report-only tripwire below is what covers the gap's threat; the host never reverts what the tripwire finds. **Later the same day:** under `write: "roots"` the top level of a root is name-immutable (no new, removed or
 renamed name there, files included: Landlock cannot withhold an absent FILE either, lane 4's finding), and every
 call (sandboxed or not, host #13) reports `protectedChanged` in `done`, report-only (`SHELL.md`, the host's security list). The tripwire is
-**K3b**, lane 4's, host side then extension side, branched after host #12 merges; the generalist reviews. K3b ships the
+**K3b**, lane 4's, DONE 2026-10-19: host side window-ml-host #13 (merged, the generalist reviewed), extension side window-ml
+#813 (merged 99b294d8, the janitor and the generalist reviewed; the run-log cut marker and the `run.json` ask outcome followed in
+#823, merged 2026-10-20, 4024f86b). The envelope's extension side is the generalist's #807 (merged 1f79f663). K3b ships the
 compare at `done` and at `status` for a live orphan; the compare at an orphan's DEADLINE kill (an `ended` record next to
 the ledger, returned by the next session's `status`) is an open item, unassigned, because it adds persistence and a
 consume-once semantic that need their own design (ruled 2026-10-19).
+**K3d** (the red team's #827 audit, 2026-10-19): bwrap re-bound only part of the protected names, so the host now reads one
+list per layer (bwrap re-bind, Landlock enumeration, tripwire snapshot) from `PROTECTED_TOP` (+ `PROTECTED_GIT`), with an
+enumerating test per layer and a real-kernel read-only proof: window-ml-host #15 (merged 2026-10-19, cd56124, lane 4's; the
+generalist reviewed; the red team verified after merge, rule 10). Lane 4's next host PR, window-ml-host #16 (merged 2026-10-19, 816113a,
+the generalist reviewed): macOS denies the whole `.claude` directory, as the Linux rule does, not only the files it lists.
+The red team verified both on 2026-10-20 at 816113a, statically on both OSes: one list of fifteen names, read by the bwrap
+re-bind and by the Seatbelt regexes, with enumerating tests; a real-kernel Landlock run is not checked (no Linux box). The
+audit's extension half, the version probe's start carrying the envelope its judged facts derive (ruling A, one derivation
+path), is window-ml #834 (the generalist's, merged 2026-10-20, 274b8a6a; the janitor reviewed; the red team's two probe
+tests un-todo'd plus a git control: a pre-K3 host is sent no envelope). The red team's #827 is closed as superseded; its
+done-mismatch test already held on main through #813. K3's audit is closed.
 **K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
 `git diff --output=.envrc` ran free) is window-ml #788 (merged 2026-10-19, a6826b0), lane 4's, ahead of K3b: the top-level names of a root are
 outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
@@ -156,6 +169,32 @@ listed as remaining is DONE unless named below.
   routing (#759, #762), the host's session events over the hub (#768).
 - **Open decisions for Shane**: none. A desktop host's call events reach the caller only; `view` follows runtimes, never
   hosts (decided 2026-10-19, `SHELL.md`, revisable). #647 (site access, agent level) merged 2026-10-15 as ac417a98 and no longer waits on anyone.
+- **Round 3 (opened 2026-10-19, [`ROUND_3.md`](ROUND_3.md))**: five lanes on this list: 5 the Pyodide build, 6 lane 1's four
+  follow-ups, 7 `mode` removal, 8 the phone's pairing UX, 9 telling a run why its next call asks.
+  Lane 5's build is window-ml #835 (2026-10-19): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
+  tag `pyodide-314.0.3-ml-8f6a50ab` (Shane's decision, 2026-10-19, after the fetch-hub precedent), pinned by tag, URL and
+  sha256 in the consumer's dist manifest (#835) and checked before unpack. Measured: tarball 6.4 MB; an incremental
+  `make all-but-packages` 47 s on an M4, a full build from a clean tree 448 s. The build is NOT reproducible (lane 5,
+  2026-10-19: a clean rebuild matches the release's sizes, not its bytes), so the pinned sha256 proves the artefact is the
+  one uploaded, never that it is what the fork's source builds; trust in it is trust in the uploader's machine, which is
+  the fetch-hub precedent's standing too; 85 of 87 dialect vectors pass under wasm32, the two memory vectors end in
+  `MemoryError`/`OverflowError` instead of `NotInDialect` because the per-cell byte count never fires for an
+  allocation wasm32 cannot make (pinned as `WASM32_GAPS`; the fork's, lane 3's). Lane 3's diagnosis (2026-10-19) is
+  larger than the two vectors: Pyodide builds CPython without pymalloc, so the cap, hooked on the RAW domain and the
+  arenas, counted almost nothing under wasm32; the fix wraps the MEM and OBJ domains whenever the allocator is not
+  pymalloc and judges a repeat's size before the overflow guards (`PYTHON_DIALECT.md`, the memory row; fork PR against
+  `ml/restricted-mode`, merged 2026-10-20 as de165bb7, lane 5 verified it under wasm32 first). Re-pinned the same day:
+  release `pyodide-314.0.3-ml-de165bb7`, 87 of 87 vectors under wasm32, `WASM32_GAPS` deleted, so the per-cell memory
+  bound holds under Pyodide from #835 on. Its cost, measured by lane 5 on a noisy laptop (a million small tuples,
+  minimum of four alternating rounds): a metered cell 0.31 s → 0.46 s, an UNMETERED one 0.15 s → 0.20 s, about 1.3 to
+  1.5x either way, because the MEM/OBJ wrappers stay installed outside restricted cells. Open, the fork's (lane 3):
+  whether the wrappers can be installed only for a restricted entry's extent, measured before it is claimed cheaper:
+  natively no gain (2026-10-20, an ordering effect), so open for the wasm number only; the code sits on the fork's
+  `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
+  under pymalloc), fixed in parawanderer/cpython#3 (merged 2026-10-20, 7e400fbc), lane 4 verified it natively; no Pyodide rebuild. A hook on pymalloc before the first run brings the
+  double count back, listed as a known limit that errs toward refusing (`PYTHON_DIALECT.md`).
+  Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
+  (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
 - **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
   telling a run that relied on a removed policy why its next call asks, lane 1's four follow-ups above, and the phone's
   UX for pairing a desktop runtime (chat-hub topic).

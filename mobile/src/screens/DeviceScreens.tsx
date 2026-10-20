@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Plus } from "lucide-react-native";
-import { groupFour, profileOf, profilesFor, removalWarning, roleName, SCOPES, type Grant, type Membership } from "../../../src/pairing/api";
+import { groupFour, phoneGrant, profileOf, profilesFor, receivesLines, removalWarning, roleName, SCOPES, type Grant, type Membership } from "../../../src/pairing/api";
 import type { DeviceInfo } from "../../../src/session/session-host";
 import { useEmbed } from "../embed";
 import { seen } from "../format";
@@ -101,7 +101,7 @@ export function DevicesScreen() {
 }
 
 /** A device waiting under a code, as the page found it: what it is, the fingerprint to compare, the grant to give. */
-interface Found { token: string; label: string; role: string; fingerprint: string; grant: Grant; grantable: string[] | null; checked?: boolean }
+interface Found { token: string; label: string; role: string; fingerprint: string; grant: Grant; grantable: string[] | null; checked?: boolean; signer?: string }
 
 /** Pairing a new device: its code, then the comparison and the grant, then confirm. */
 export function PairScreen() {
@@ -112,6 +112,8 @@ export function PairScreen() {
     const [code, setCode] = useState("");
     const [found, setFound] = useState<Found | null>(null);
     const [scopes, setScopes] = useState<string[]>([]);
+    // A runtime's `mayPair`: OFF unless the person turns it on here (`phoneGrant`).
+    const [mayPair, setMayPair] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [paired, setPaired] = useState<string | null>(null);
@@ -127,6 +129,7 @@ export function PairScreen() {
         if (!r.ok) { setError(r.error); return; }
         setFound(r.value);
         setScopes(r.value.grant.scopes);
+        setMayPair(phoneGrant(r.value).mayPair);
     };
     const lookup = async () => {
         setError(null);
@@ -136,12 +139,13 @@ export function PairScreen() {
         if (!r.ok) { setError(r.error); return; }
         setFound(r.value);
         setScopes(r.value.grant.scopes);
+        setMayPair(phoneGrant(r.value).mayPair);
     };
     const confirm = async () => {
         if (!found) return;
         setError(null);
         setBusy(true);
-        const r = await e.pairing("confirmOffer", { token: found.token, grant: { ...found.grant, scopes } });
+        const r = await e.pairing("confirmOffer", { token: found.token, grant: { ...phoneGrant(found), scopes, ...(found.role === "runtime" ? { mayPair } : {}) } });
         setBusy(false);
         if (r.ok) setPaired(found.label); else setError(r.error);
     };
@@ -160,7 +164,7 @@ export function PairScreen() {
                 ) : found ? (
                     <Card>
                         <Text style={[s.title, { color: p.fg }]}>{found.label}</Text>
-                        <Text style={[s.body, { color: p.fgDim }]}>{roleName(found.role)[0].toUpperCase() + roleName(found.role).slice(1)} waiting to join.</Text>
+                        <Text style={[s.body, { color: p.fgDim }]}>{found.role === "runtime" ? "A runtime, a browser or a desktop host, waiting to join. The name above is its own word, not checked." : roleName(found.role)[0].toUpperCase() + roleName(found.role).slice(1) + " waiting to join. The name above is its own word, not checked."}</Text>
                         {found.checked ? (
                             <Text style={[s.body, { color: p.ok }]}>Scanned: the QR code named this device's keys, and they match.</Text>
                         ) : (
@@ -170,6 +174,22 @@ export function PairScreen() {
                                 <Text style={[s.hint, { color: p.fgDim }]}>The new device shows its own. Pair only if the two match exactly.</Text>
                             </View>
                         )}
+                        {found.role === "runtime" ? (
+                            <>
+                                <Text style={[s.small, { color: p.fgDim }]}>It receives</Text>
+                                {/* The lines are DERIVED from the grant about to be sent (`receivesLines`), so the card cannot
+                                    say one thing and send another. Its name above is the runtime's own word, not verified. */}
+                                {receivesLines(found, { ...found.grant, scopes, mayPair }).map((l) => <Text key={l} style={[s.body, { color: p.fg }]}>{l}</Text>)}
+                                <View style={s.scopeRow}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[s.body, { color: p.fg }]}>Can add devices</Text>
+                                        <Text style={[s.hint, { color: p.fgFaint }]}>Off keeps a desktop host from growing the account. A browser runtime needs it on to re-sign certificates.</Text>
+                                    </View>
+                                    <Switch testID="mayPair" value={mayPair} onValueChange={setMayPair}
+                                        trackColor={{ true: p.accent, false: p.panel2 }} thumbColor="#ffffff" ios_backgroundColor={p.panel2} accessibilityLabel="Can add devices" />
+                                </View>
+                            </>
+                        ) : (<>
                         <Text style={[s.small, { color: p.fgDim }]}>What it may do</Text>
                         {/* THE NAMED GRANTS, the same ones and the same words as the page's (src/pairing/api.ts): one
                             tap for the answer a person can actually give while holding the phone up to a QR code. The
@@ -205,6 +225,7 @@ export function PairScreen() {
                                     trackColor={{ true: p.accent, false: p.panel2 }} thumbColor="#ffffff" ios_backgroundColor={p.panel2} accessibilityLabel={sc.label} />
                             </View>
                         ))}
+                        </>)}
                         {error ? <Text style={[s.error, { color: p.err }]}>{error}</Text> : null}
                         <Button primary title={found.checked ? "Pair it" : "They match: pair it"} busy={busy} onPress={confirm} />
                         <Button title="Cancel" onPress={() => { setFound(null); setCode(""); }} />
