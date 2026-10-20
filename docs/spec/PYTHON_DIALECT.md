@@ -182,6 +182,24 @@ reading, keep auto-approving what ran as `readonly`, would need a predicate that
 old `full` cell arriving without `mode` run unasked. Stored grants keep their prefixes: an old `readonly:` grant no longer
 covers a cell, so it asks again; an old `full:` grant still covers the same code.
 
+**Membership is the check AND the gated run, never the check alone** (ruled 2026-10-20, lane 3's finding while wiring the
+seam): `restricted.check` is the node whitelist, and it admits `Import`, `Call` and `Attribute` because which modules,
+calls and attributes are allowed is decided at run time by the allow tables under `_restricted.run`. So a cell that
+passes the check is not yet inside; `import os; os.listdir("/")` passes it. The seam therefore answers "inside" only to
+run the cell through `restricted.run_cell` with the manifests loaded, never through the ordinary hardened path, and a
+runtime `NotInDialect` (a refused module, call or attribute) is not an error to the model: the cell becomes outside, the
+person is asked, and the card says where the cell left the dialect; on approval the cell runs again on the full path and
+only that run's result is the cell's. The rerun is sound because an inside run can leave nothing behind but reads: the
+dialect is read-only, the namespace is restored by `run_cell`'s undo log, and a lifted `ml` call inside it is a read or
+an ask, so the rerun repeats a read; a grant consumed by the partial run covered a read that happened, and the rerun's
+ask covers the whole cell. That property is the red team's to test, as the JS dialect's FAILURE tests do: after a
+runtime refusal the namespace is as before, nothing is held, and no write reached `ml`. The verdict is computed once,
+at the gate, keyed by the cell's source (an edited cell gets a fresh verdict), and carried on the step for the five
+synchronous readers (the auto-approver, grant extraction, the worker, the run host, the card's render); a step with no
+carried verdict is outside. The predicate absent (a stock or older Pyodide core) or throwing anything but
+`NotInDialect`/`SyntaxError` is outside. The static alternative, resolving imports and attributes in the check, is
+rejected: an attribute of a runtime value cannot be resolved statically, so it would refuse most real cells or be unsound.
+
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
