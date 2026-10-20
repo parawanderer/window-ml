@@ -109,8 +109,10 @@ Three properties make the allow mean what it says:
    stop it and never let it through. Each post is cleared by the operator naming it, never by its content.
 3. **The pinned code is what runs.** The policy allows an `(program, entrypoint)` pinned by `sha256` over its local
    import closure ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Interpreted script tools", mode 3). For a script that
-   decides on changes to its own repo, that also means the copy on main judges, never the branch's: `merge-when-green`
-   runs main's copy of itself when its own differs (#859).
+   decides on changes to its own repo, the copy on main judges, never the branch's: `merge-when-green` always runs main's
+   copy of itself (#859). **The pin is enforced by the person's merge of changes to the pinned script, never by the
+   script:** a script on a branch cannot prove which copy ran, so the tool refuses any PR that touches it, and the
+   person reads and merges that one by hand.
 
 `merge-when-green` is the worked example: "merge my own PR when the pipeline is green, no test was removed and nothing
 is unread" is a policy allowing that one script, with no condition of its own.
