@@ -521,3 +521,18 @@ and then blocking on its output file anyway (`until [ -s "$OUT" ]; do sleep 20; 
 foreground wait wearing a disguise and happened four times in one session. It also holds the
 `dist/`-rebuild hazard — never build while an e2e suite is running, since the suite loads the bundle
 you are replacing.
+
+## Traps
+
+The incidents behind the rules above, one line each; the full story is in the section named.
+
+- **`core.hooksPath` does not clone, and its absence is silent.** (Builds, bundles and tests)
+- **Four absences are silent:** `node_modules`, `pyodide-wheels/` (`No module named 'numpy'` at run time), `.env`
+  (`USE_ENV=1` dies on ENOENT) and the `wmlhub` binary (thirty hub tests SKIP; `npm run fetch-hub`). (Builds,
+  bundles and tests)
+- **A FAILED build leaves `dist/` alone**, so a silenced failed build looks like a working one. (Builds, bundles and
+  tests)
+- **Never `git add -A` in a shared tree**: another session's files ride along. (Builds, bundles and tests)
+- **A PR that conflicts with its base has NO checks at all.** (Branches, PRs and CI)
+- **A CANCELLED check prints as `fail`**; poll a run by ID. (Branches, PRs and CI)
+- **Backgrounding a command and then blocking on its output file** is a foreground wait. (Branches, PRs and CI)

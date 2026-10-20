@@ -62,6 +62,12 @@ why neither belongs in the router.
 
 ## Message types beyond the three-file pattern
 
+The three-file types (AGENTS.md, "The message contract") include `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`,
+`GET_CONFIG`, `SET_MODEL`, `MODEL_CAPS`, `LIST_SERVER_TOOLS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
+`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`, `PYTHON_EXEC` and `FETCH_SHEET`; `HANDLE_MAP` (`page-relay.ts`) is the
+live list. `GET_CONFIG` returns the NON-SECRET subset only: the URL and API key never reach the page. `MODEL_CAPS`
+returns `null` when it cannot tell: "unknown", never "no".
+
 **`ABORT_TASK`** (cancel an in-flight task by requestId; the page posts `ABORT_REQUEST`,
 `content.js` relays it) and the streaming `LLM_STREAM_*` port — both handled outside HANDLE_MAP.
 
@@ -178,7 +184,14 @@ cancel — no waiting on a slow local generation.
   Google Sheets access"** requests just the Google origins at runtime
   (`chrome.permissions.request`), a narrower grant than "On all sites".
 
-## Backend gotchas
+## API formats
+
+`API_FORMATS` (`sw-llm.ts`) maps each backend to `{ buildMessage, extractContent, extractToolCalls, expectedShape,
+applyFormat, streamChunk }`. `openai` uses `choices[0].message.*` + `response_format`; `ollama` uses `message.*` +
+`format`. Messages travel in a neutral `{ role, content, images?, tool_calls?, tool_call_id? }` shape; each format
+converts to its wire form.
+
+## Traps: backend gotchas
 
 Learned against real servers.
 

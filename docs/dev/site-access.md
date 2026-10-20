@@ -684,6 +684,16 @@ extension's shadow HOSTS (their roots are closed since attack 17), and knows eve
 - **A blocked case.** If a safety classifier stops a test, stop on that case and hand it to the owner, whose other
   model writes the test; this side writes the defence.
 
+## Credentialed background fetches
+
+**A privileged or credentialed background fetch MUST validate its target host: the client-side approval gate does
+NOT protect it.** The agent approval lives in `injected.ts`, but raw messages (`FETCH_SHEET`, …) are reachable by any
+page through the content-script relay, so a hostile page can call the handler directly. `FETCH_SHEET` fetches
+`credentials:"include"` (the user's cookies), so it is hard-locked to the `docs.google.com/.../export?` shape
+(`SHEET_URL_OK`); without it, it is a cookie-authenticated "read any URL" exfiltration primitive. `FETCH_IMAGE_B64`
+names `credentials:"omit"`, because a worker fetch's default sends the cookies of every host the extension reaches,
+and it reads only a public host's raster image (`sw-image-fetch.ts`).
+
 ## Tests
 
 - `tests/site-access.test.mjs`: the pure rules, `levelsFor` and `applyEdit` over every (use x agents x selfApprove)
