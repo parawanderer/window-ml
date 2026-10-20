@@ -312,6 +312,9 @@ assert no run of two spaces (`tests/token-pipe.test.mjs`). Human-facing surfaces
 - **Several sessions at once? Each gets its own CLONE** as a sibling directory, with `.env` and `pyodide-wheels`
   symlinked, `git config core.hooksPath .githooks` (it does not clone, and its absence is silent), and `npm ci`.
   Never `git add -A` in a shared tree. The commands: `docs/dev/working-in-the-repo.md`.
+- **Talking to another session: `~/git/session-mail/README.md`.** If your harness can message a live session directly
+  (Claude Code: `ListAgents` + `SendMessage`), use it: the message alone for a short note, the mail file plus a message
+  naming it for anything longer. The file is the record; the message is the doorbell.
 - **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
   nothing unpushed. One you did not create (or are unsure of) is never removed without asking; `~/git/window-ml` and
   `~/git/window-ml-hub` never. The checks: `docs/dev/working-in-the-repo.md`, "Cleaning up a clone".
