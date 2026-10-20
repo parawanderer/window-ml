@@ -214,9 +214,11 @@ inside run. The rule has two layers, and one is not the other's substitute:
    with the check-time line fix and its re-pin (lane 3).
 2. **The copy-back admits data only.** A binding an inside cell made persists only when its value carries no cell code
    and is no builtin: until layer 1 is in the pinned core, no function, lambda, class, bound method, generator,
-   coroutine or `builtin_function_or_method` crosses back, and a container holding one is the named residual the red
-   team's tests cover (if it is real, the cut widens to "values the cell owns, with no callable reachable", never
-   narrows). Once layer 1 holds, a cell-defined function may cross back, since it stays gated; a captured builtin never
+   coroutine or `builtin_function_or_method` crosses back, and the check is RECURSIVE, since the container case is
+   real (the red team, 2026-10-20, four shapes: a list, a dict, a nested list of lambdas, and an instance of an
+   inside-defined class, each admitted inside and each reaching `open` from the full path): a value crosses back only
+   if no callable is reachable through list, tuple, set, dict or an instance's `__dict__`; an instance of a class
+   defined inside is refused outright, since its methods are cell code. Once layer 1 holds, a cell-defined function may cross back, since it stays gated; a captured builtin never
    does, because it is not cell code and layer 1 never sees it.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
