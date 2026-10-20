@@ -9,7 +9,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { JSDOM } from "jsdom";
-import { buildLookTool, buildLocateTool, captureVerify } from "../src/tools/builtin-tools.ts";
+import { buildLookTool, buildLocateTool, captureVerify, captureVerifyElement } from "../src/tools/builtin-tools.ts";
+import { READER_MAX_TOKENS } from "../src/contract/contract-render.ts";
 import { pageVisionHost } from "../src/dom/page-geometry.ts";
 import { defineTool } from "../src/ml/ml-tool-factories.ts";
 import { oneShotRequest } from "../src/ml/ml-chat.ts";
@@ -166,8 +167,28 @@ test("click verify for a text-only driver: a point minted through geo.mint, its 
     assert.deepEqual(fake.calls[0][1], { pt: { x: 360, y: 220 } });
     assert.deepEqual(fake.calls[1].slice(1), ["@pt:abc", { margin: 150, noOverlay: true }]);
     assert.deepEqual(fake.calls[2][1], { box: { left: 210, top: 70, right: 510, bottom: 370 } });
-    assert.deepEqual(fake.calls[3][2], { images: [SHOT], model: "reader-vl", maxTokens: 256, numCtx: VISION_NUM_CTX });
+    assert.deepEqual(fake.calls[3][2], { images: [SHOT], model: "reader-vl", maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX });
     assert.match(v.content, /^\n\n👁 Here's the area where you clicked\. You can't see images, so this is reader-vl's description:\nA menu opened\. The target you clicked is at the CENTRE of this crop; to see the exact click point, look\(\{ selector: "@pt:abc" \}\)\.$/);
+});
+
+// --- a reader that answers nothing: said, not quoted as nothing ---
+
+test("verify gives its reader look's budget, and a click or type verify whose reader answered nothing says so", async () => {
+    // A thinking reader (qwen3-vl) spent all 256 tokens reasoning and answered "" on the 2026-10-19 panel.
+    assert.equal(READER_MAX_TOKENS, 512);
+    const LEGEND = { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 };
+    noDom();
+    const area = fakeHost({ mint: { token: "@pt:abc" }, legend: LEGEND }, "  ");
+    const a = await captureVerify(area, { driverSees: false, visionModel: "reader-vl" }, { x: 360, y: 220 }, "clicked");
+    assert.equal(area.calls.find((c) => c[0] === "chat")[2].maxTokens, READER_MAX_TOKENS);
+    assert.match(a.content, /^\n\n\(verify was requested, but reader-vl returned an empty description\. Read the result with look\(\{ selector: "@pt:abc" \}\) next\.\)/);
+    assert.doesNotMatch(a.content, /description:\n|👁|CENTRE of this crop/, "no empty quote, and no pointer into a crop nobody described");
+    assert.equal(a.feedback.text, "");
+
+    const field = fakeHost({}, "");
+    const e = await captureVerifyElement(field, { driverSees: false, visionModel: "reader-vl" }, "#q", "typed into");
+    assert.equal(field.calls.find((c) => c[0] === "chat")[2].maxTokens, READER_MAX_TOKENS);
+    assert.equal(e.content, '\n\n(verify was requested, but reader-vl returned an empty description. Read the result with look({ selector: "#q" }) next.)');
 });
 
 // --- oneShotRequest: the request a host builds is the one ml.chat sends ---
@@ -183,7 +204,7 @@ async function pageChatPayload(prompt, o) {
 for (const [what, prompt, o] of [
     ["look's delegated reader", "Describe the current page concisely — what is shown and what stands out.", { images: [SHOT], model: "reader-vl", maxTokens: 512, numCtx: VISION_NUM_CTX }],
     ["locate's grounding call", 'Locate "a blue button" in this image. Reply with ONLY its bounding box as four numbers x1,y1,x2,y2.', { images: [SHOT], model: "qwen-ground", maxTokens: 64, numCtx: VISION_NUM_CTX }],
-    ["verify's 256-token reader", "The image is a crop of the page just AFTER a \"clicked\" action.", { images: [SHOT], model: null, maxTokens: 256, numCtx: VISION_NUM_CTX }],
+    ["verify's reader", "The image is a crop of the page just AFTER a \"clicked\" action.", { images: [SHOT], model: null, maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX }],
 ]) {
     test(`oneShotRequest is byte for byte what ml.chat sends for ${what}`, async () => {
         const sent = await pageChatPayload(prompt, o);

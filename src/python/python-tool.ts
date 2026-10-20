@@ -7,7 +7,7 @@ import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointe
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import { type MlTool, type ToolResult } from "../contract/contract-agent";
-import { type RenderDescriptor, VISION_NUM_CTX } from "../contract/contract-render";
+import { type RenderDescriptor, READER_MAX_TOKENS, VISION_NUM_CTX } from "../contract/contract-render";
 import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue, tablesMapFromJson } from "../dom/dom";
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
@@ -68,9 +68,7 @@ export async function verifyPyImage(ml: MlApi, ctx: import("../contract").ToolCo
     const reader = ctx?.visionModel || null;
     if (!reader) return { content: "\n\n(verify was requested, but no vision model is available to look at the image.)" };
     let desc: string;
-    // `look`'s budget, not the 256 of click's verify: a reader that thinks (qwen3-vl) spent all 256 reasoning about a chart
-    // and answered with nothing (measured on the 2026-10-19 panel; at 512 it describes it).
-    try { desc = String(await ml.chat(PY_VERIFY_QUESTION, { images: [png], model: reader, maxTokens: 512, numCtx: VISION_NUM_CTX })).trim(); }
+    try { desc = String(await ml.chat(PY_VERIFY_QUESTION, { images: [png], model: reader, maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX })).trim(); }
     catch (e) { return { content: `\n\n(verify was requested, but the vision model could not describe the image: ${(e as Error)?.message || e})` }; }
     if (!desc) return { content: `\n\n(verify was requested, but ${reader} returned an empty description. Ask it a narrower question with look({ selector: "@tool:python_exec", question: "…" }).)`, feedback: { reason, via: "text", text: "", prompt: PY_VERIFY_QUESTION, image: png } };
     return { content: `\n\n👁 You can't see images, so this is ${reader}'s description of it:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: PY_VERIFY_QUESTION, image: png } };
