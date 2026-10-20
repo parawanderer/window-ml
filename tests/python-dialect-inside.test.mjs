@@ -212,6 +212,76 @@ test("a cell's own function is never what the wrapper calls: one shadowing str s
     assert.strictEqual(ns.has("str"), false);
 });
 
+// --- what an inside run leaves behind is data, never code (PYTHON_DIALECT.md, #892) ---
+
+test("DATA ONLY: a binding that reaches code, at any depth, puts the cell outside and leaves nothing", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const cases = [
+        ["def f():\n    return 1", /'f' holding a function or class it defined/],
+        ["f = lambda: 1", /'f' holding a function or class it defined/],
+        ["g = map(abs, [-1, 2])", /'g' holding a map/],
+        ["f = open", /'f' holding a builtin it captured \(open\)/],
+        ["xs = [1, [2, (3, open)]]", /'xs' holding a builtin it captured \(open\)/],
+        ["d = {'k': {'f': lambda: 1}}", /'d' holding a function or class it defined/],
+        ["d = {getattr: 1}", /'d' holding a builtin it captured \(getattr\)/],
+        ["import pandas as pd\ndf = pd.DataFrame({'a': [1, open]})", /'df' holding a builtin it captured \(open\)/],
+        ["import numpy as np\na = np.array([1, open], dtype=object)", /'a' holding a builtin it captured \(open\)/],
+        ["return open", /the value it returns holding a builtin it captured \(open\)/],
+        ["return [lambda: 1]", /the value it returns holding a function/],
+    ];
+    const gateFirst = [];
+    for (const [code, re] of cases) {
+        const ns = world("none");
+        await cell(ns, "keep = 1");
+        const out = await cell(ns, code);
+        // A construct the dialect refuses on its own never reaches the copy-back; that is outside all the same.
+        if (out.refused && !/^it leaves /.test(out.refused)) { gateFirst.push(`${code} -> ${out.refused}`); continue; }
+        assert.match(String(out.refused), re, code);
+        assert.match(pythonOutsideWhy(out.refused).line, /^Outside the read-only Python dialect: it leaves /, code);
+        assert.strictEqual(snapshot(ns), out.before, `${code}: the namespace holds what it held`);
+    }
+    assert.deepStrictEqual(gateFirst, [], "every case reaches the copy-back");
+    // Shapes the gate refuses before any copy-back (a class, `yield` or a bare generator expression, defaultdict, DataFrame.attrs):
+    // outside all the same. If the dialect admits one later, it belongs in the list above.
+    for (const code of ["class C:\n    pass", "g = (i for i in range(3))", "def _gen():\n    yield 1\ng = _gen()", "import collections\nd = collections.defaultdict(lambda: 0)",
+                        "import pandas as pd\ndf = pd.DataFrame({'a': [1]})\ndf.attrs['f'] = open"]) {
+        const out = await cell(world("none"), code);
+        assert.ok(out.refused && !/^it leaves /.test(out.refused), `${code}: refused by the gate (${JSON.stringify(out)})`);
+    }
+});
+
+test("DATA ONLY: plain data of every kind crosses back, and a value approved code bound passes by identity", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const ns = world("none");
+    await cell(ns, "def helper(x):\n    return x + 1\nimport math", false);
+    const out = await cell(ns, [
+        "import pandas as pd, numpy as np",
+        "df = pd.DataFrame({'name': ['a', 'b'], 'n': [1, 2], 't': [None, 1.5]})",
+        "s = df['name']",
+        "a = np.array([1.0, 2.0]) * 1.5",
+        "x = (np.sum(a), None, b'z', {1, 2}, 2.5, 'k')",
+        "h = helper",
+        "m = math",
+        "return [len(df), s.tolist()]",
+    ].join("\n"));
+    assert.deepStrictEqual(out.value, [2, ["a", "b"]], JSON.stringify(out));
+    for (const k of ["df", "s", "a", "x", "h", "m"]) assert.strictEqual(ns.has(k), true, `${k} crossed back`);
+});
+
+test("a try inside the dialect writes nothing to the real stdout; its print reaches the call only when it finished", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const seen = [];
+    py.setStdout({ batched: (s) => seen.push(s) });
+    try {
+        const ns = world("none");
+        assert.ok((await cell(ns, "print('TRY')\nimport os")).refused);
+        assert.strictEqual(String(ns.get("_stdout")), "", "a refused try's captured output is dropped");
+        assert.strictEqual((await cell(world("none"), "print('DONE')\nreturn 1")).stdout, "DONE\n");
+        assert.strictEqual((await cell(world("none"), "print('FULL')", false)).stdout, "FULL\n");
+        assert.deepStrictEqual(seen, ["FULL"], "only the full path streams live");
+    } finally { py.setStdout(); }
+});
+
 // --- the cost: one inside run against the same cell on the full path ---
 
 test("COST: an inside cell against the full path, measured (reported, not asserted)", { timeout: 120000 }, async (t) => {

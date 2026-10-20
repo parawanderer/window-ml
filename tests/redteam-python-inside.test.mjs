@@ -2,7 +2,7 @@
 //
 // Threat: a cell the host runs INSIDE the dialect (unasked) plants a binding or a function whose body never ran under the
 // gate; a later cell — a full-path rerun after approval, or the wrapper's own code — then reaches what the gate refused.
-// Each test names the property the boundary must keep and carries a positive control. Written failing-first (`{ todo: … }`)
+// Each test names the property the boundary must keep and carries a positive control. Written failing-first (`{ todo: … }`, since removed)
 // against `pr-880` / `3a7b09b5`; the fixer removes the `todo` when the property holds.
 //
 // Real fork core: `npm run fetch-pyodide` then `node build.mjs`; `dist/pyodide/python_stdlib.zip` must hold `restricted.py`.
@@ -90,7 +90,7 @@ test("P1-namespace: a refused inside run leaves shared values as it found them (
     assert.strictEqual(String(await py.runPythonAsync("repr(x)", { globals: ns })), "42");
 });
 
-test("P1-output: a refused inside run's output is discarded (the try's stdout never reaches the call's result)", { timeout: 60000, todo: "the stdout tee writes to real stdout before the fork's refusal; _stdout still holds the print when the try is dropped (python-dialect-run.ts run_cell docstring says the host drops it)" }, async (t) => {
+test("P1-output: a refused inside run's output is discarded (the try's stdout never reaches the call's result)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ns = world();
     const out = await cell(ns, "print('LEAKED')\nimport os");
@@ -101,11 +101,12 @@ test("P1-output: a refused inside run's output is discarded (the try's stdout ne
     assert.strictEqual(ok.stdout, "KEPT\n", "positive control: a finished inside cell keeps its print");
 });
 
-test("P1-ml: a function a cell defines inside cannot reach `ml` when later code calls it (no write reaches the wire from an inside run)", { timeout: 60000, todo: "def f(): return ml.config() is admitted inside (its body never runs under the gate); await f() on the full path sends the wire call — a write reaches ml from an inside-defined function" }, async (t) => {
+test("P1-ml: a function a cell defines inside cannot reach `ml` when later code calls it (no write reaches the wire from an inside run)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ns = world();
     const def = await cell(ns, "def f():\n    return ml.config()");
-    assert.ok(!def.refused, `defining f is admitted inside: ${JSON.stringify(def)}`);
+    // A function made inside carries a body the gate never ran: the try is outside and leaves nothing (#892).
+    assert.match(String(def.refused), /'f' holding a function or class it defined/, JSON.stringify(def));
     // DEFENDED: calling f later — the full path of a rerun after approval — must not send a wire call the inside run never made.
     const call = await cell(ns, "return await f()", false);
     assert.deepStrictEqual(call.wire, [], "an inside-defined function does not reach ml when ordinary code calls it");
@@ -126,11 +127,11 @@ test("P2-shadow: `_` names and builtin names are not copied back (positive contr
     assert.strictEqual(await py.runPythonAsync("repr(y)", { globals: ns }), "3");
 });
 
-test("P2-ungated: a function a cell defines inside does not run UNGATED when a later full-path cell calls it", { timeout: 60000, todo: "def f(): import os; return os.listdir('/') is admitted inside; f() on the full path runs the body with no gate and lists the fs" }, async (t) => {
+test("P2-ungated: a function a cell defines inside does not run UNGATED when a later full-path cell calls it", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ns = world();
     const def = await cell(ns, "def f():\n    import os\n    return os.listdir('/')");
-    assert.ok(!def.refused, `defining f is admitted inside (its body never ran): ${JSON.stringify(def)}`);
+    assert.match(String(def.refused), /'f' holding a function or class it defined/, JSON.stringify(def));
     // DEFENDED: f's body carries the inside gate with it; a later call cannot `import os`.
     const call = await cell(ns, "return f()", false);
     assert.ok(call.error || call.threw, `f() must not run its body ungated: ${JSON.stringify(call)}`);
@@ -139,7 +140,7 @@ test("P2-ungated: a function a cell defines inside does not run UNGATED when a l
     assert.ok(!direct.error && !direct.threw, `positive control: the full path is full Python: ${JSON.stringify(direct)}`);
 });
 
-test("P2-capture: a builtin the gate refuses to CALL is not left behind as a callable binding", { timeout: 60000, todo: "f = open / f = getattr / f = setattr / def f(): return open / f = lambda: open each copy the live builtin back under a non-underscore name; _keep does not filter callables the gate refused to call" }, async (t) => {
+test("P2-capture: a builtin the gate refuses to CALL is not left behind as a callable binding", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     for (const [label, code, name] of [
         ["f = open", "f = open", "f"],
@@ -150,7 +151,7 @@ test("P2-capture: a builtin the gate refuses to CALL is not left behind as a cal
     ]) {
         const ns = world();
         const out = await cell(ns, code);
-        assert.ok(!out.refused, `${label} is admitted inside: ${JSON.stringify(out)}`);
+        assert.ok(out.refused, `${label} puts the cell outside: ${JSON.stringify(out)}`);
         // DEFENDED: the callable is not copied back — the name may be bound to nothing the full path can call.
         const leaked = await py.runPythonAsync(`repr(${name}) if '${name}' in globals() and callable(${name}) else 'CLEAR'`, { globals: ns });
         assert.strictEqual(String(leaked), "CLEAR", `${label} must not leave a callable ${name} for later code`);
@@ -161,13 +162,13 @@ test("P2-capture: a builtin the gate refuses to CALL is not left behind as a cal
     assert.strictEqual(String(await py.runPythonAsync("repr(f)", { globals: ns })), "1");
 });
 
-test("P2-container: a DATA binding does not smuggle code past the copy-back (a list of lambdas, an instance of an inside-defined class)", { timeout: 60000, todo: "copy-back admits data only must be recursive: f = [lambda: open] and c = C() (class C: def run: return open) are 'data' to a callable(v) check but carry code; the full path's f[0]() / c.run() returns open" }, async (t) => {
+test("P2-container: a DATA binding does not smuggle code past the copy-back (a list of lambdas, an instance of an inside-defined class)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     // 1. a list whose element is a lambda — the list is data, the element is code
     {
         const ns = world();
         const out = await cell(ns, "f = [lambda: open]");
-        assert.ok(!out.refused, `f = [lambda: open] is admitted inside: ${JSON.stringify(out)}`);
+        assert.ok(out.refused, `f = [lambda: open] puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return f[0]()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `f[0]() must not return open: ${JSON.stringify(call)}`);
     }
@@ -175,7 +176,7 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "class C:\n    def run(self):\n        return open\nc = C()");
-        assert.ok(!out.refused, `class C + c = C() is admitted inside: ${JSON.stringify(out)}`);
+        assert.ok(out.refused, `class C + c = C() puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return c.run()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `c.run() must not return open: ${JSON.stringify(call)}`);
     }
@@ -183,7 +184,7 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "f = {'g': lambda: open}");
-        assert.ok(!out.refused, `f = {'g': lambda: open} is admitted inside: ${JSON.stringify(out)}`);
+        assert.ok(out.refused, `f = {'g': lambda: open} puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return f['g']()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `f['g']() must not return open: ${JSON.stringify(call)}`);
     }
@@ -191,7 +192,7 @@ test("P2-container: a DATA binding does not smuggle code past the copy-back (a l
     {
         const ns = world();
         const out = await cell(ns, "f = [[lambda: open]]");
-        assert.ok(!out.refused, `f = [[lambda: open]] is admitted inside: ${JSON.stringify(out)}`);
+        assert.ok(out.refused, `f = [[lambda: open]] puts the cell outside (data only, #892/#893): ${JSON.stringify(out)}`);
         const call = await cell(ns, "return f[0][0]()", false);
         assert.ok(!/built-in function open/.test(String(call.value)), `f[0][0]() must not return open: ${JSON.stringify(call)}`);
     }
@@ -238,7 +239,7 @@ test("P5-calls: run-time refusals for modules, open, js and dunder paths (each r
     }
 });
 
-test("P5-nameload: a name load of a refused builtin does not hand back the callable", { timeout: 60000, todo: "return open / return getattr / return setattr each return the live builtin — the gate restricts calls, not name loads, so check() admits the load and run time does not refuse it" }, async (t) => {
+test("P5-nameload: a name load of a refused builtin does not hand back the callable", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     for (const code of ["return open", "return getattr", "return setattr", "return __import__"]) {
         const out = await cell(world(), code);
@@ -247,6 +248,6 @@ test("P5-nameload: a name load of a refused builtin does not hand back the calla
         assert.ok(!/built-in function/.test(String(out.value)), `${code} must not return the live builtin: ${JSON.stringify(out)}`);
     }
     // positive control: a name the dialect does allow returns its value
-    const ok = await cell(world(), "return abs");
-    assert.match(String(ok.value), /built-in function abs/, "positive control: an allowed builtin's name load works");
+    const ok = await cell(world(), "return [abs][0](-2)");
+    assert.strictEqual(ok.value, "2", "positive control: an allowed builtin's name load works inside the cell");
 });

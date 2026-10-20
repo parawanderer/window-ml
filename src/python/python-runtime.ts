@@ -493,8 +493,9 @@ class _MlTee(_ml_stringio):
             return len(_s)
         self._ml_kept += len(_s)
         _n = super().write(_s)
-        try: _ml_real_out.write(_s)
-        except Exception: pass
+        if ${inside ? "False" : "True"}:   # a try inside the dialect streams nothing: a refused one's output is dropped
+            try: _ml_real_out.write(_s)
+            except Exception: pass
         return _n
 _out = _MlTee()
 _err = None
@@ -506,7 +507,9 @@ ${inside ? INSIDE_CELL : FULL_CELL}        if _ret is not None:
     except BaseException:
         _err = _ml_fmt_exc()
         result = None
-_stdout = _out.getvalue()
+_stdout = _out.getvalue()${inside ? `
+if _ml_not_in_dialect is not None:
+    _stdout = ""` : ""}
 _ml_stdout_dropped = _out._ml_dropped
 try:
     _json_result = _ml_dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))

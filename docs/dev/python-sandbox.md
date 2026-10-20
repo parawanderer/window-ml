@@ -226,8 +226,13 @@ worker drives with `autoApprovePython` on:
    `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
-4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`. A function a cell
-   defines runs UNGATED when unrestricted code calls it later, so the wrapper must never call one.
+4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
+   new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
+   numpy arrays, pandas frames, series and indexes, object values walked; a value the namespace already held passes by
+   identity). A function, class, iterator or captured builtin, at any depth, would run UNGATED in a later full-path
+   cell (the red team's #880 pass), so it makes the try a refusal: `it leaves 'f' holding …`. Until the fork carries
+   `CO_RESTRICTED` into every call (#893), a cell that defines a function asks. The try writes nothing to the live
+   stdout stream; its print reaches the call only when it finished.
 5. If it is refused (`NotInDialect`, including the step budget and the memory cap, or a `SystemError` from an undo
    log that did not replay), the namespace is left as it was and the output and value are discarded. The worker
    answers `notInDialect`, with the line from the cell's frame for a run-time refusal; the fork's check-time line is
