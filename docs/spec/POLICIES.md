@@ -99,6 +99,9 @@ card shows the call's resolved facts, not the script.
 
 ## A condition about the outside world is a pinned script
 
+(Ruled 2026-10-20: Shane's suggestion after the classifier refused a merge of parawanderer/cpython#4; lane 3's
+analysis; #853, #859.)
+
 A policy cannot ask whether CI is green or whether anyone has commented: it sees only the call's resolved facts and
 queries nothing. Such a condition moves into a program that checks it and then acts, and the policy allows that program.
 Three properties make the allow mean what it says:
@@ -270,7 +273,8 @@ own grants stops asking for what it already has, and can say which grant it reli
 - **Where a policy is evaluated when no browser is attached.** The decision lives in the browser's worker first
   ([`SHELL.md`](SHELL.md), "The host's language"); a desktop runtime driven over the hub with no browser needs the
   dialect at the host, and the person's policies with it.
-- **A condition no script can check: "reviewed by another agent".** Every session posts through the owner's GitHub
+- **A condition no script can check: "reviewed by another agent"** (2026-10-20, same provenance as "A condition about
+  the outside world is a pinned script"). Every session posts through the owner's GitHub
   account, so GitHub cannot tell one agent's approval from the author's own, and a marker is text (property 2 above).
   It is no resolved fact today. The answer is a reviewer identity the reviewed agent cannot produce, such as an
   approval signed with the reviewing session's key, in the way the hub acts only on a signature. No recipe yet. A test
