@@ -500,6 +500,16 @@ follow from it, both the host's and both defaults a policy may change:
   default kills the group; the alternative a policy can choose parks it on an ORPHAN list the status and the resource
   panel show, with a timeout after which it is killed anyway. A process outliving its owner silently is impossible by
   construction, and "whose is this" is a read of the table, never of `ps`.
+  (2026-10-20, [window-ml-host #18](https://github.com/parawanderer/window-ml-host/pull/18).) The group alone did not
+  hold that: a child that called `setsid` left the group, and once its parent exited it was reparented out of every
+  descendant walk, so a call whose leader exited by itself (`sh -c 'setsid x &'`) left `x` running, and so did an
+  orphan whose leader had died. The kill set is now the group plus every member recorded earlier that is still the same
+  process (by start time) and their descendants, re-sampled every watchdog tick while the call runs and every warden
+  pass while it waits as an orphan, whose ledger entry carries the record. Two residuals remain. A child that leaves the
+  group and loses its parent within one sample (100 ms; 200 ms for an orphan) is never recorded: closing that takes a
+  kernel container, a pid namespace (bwrap `--unshare-pid`) or a child subreaper on Linux, and macOS has neither. And a
+  host killed outright with calls still running leaves ledger entries written at start, without the record, so the
+  warden's kill misses a child already moved.
 - **The memory bound** is not a new concept: it is the enforcer's bound for `alloc` at the process placement
   ([`EFFECTS.md`](EFFECTS.md)), judged like any other effect, with a default per placement a policy may lower or raise
   within what the person set. It is enforced on PHYSICAL FOOTPRINT, never on address space: an `RLIMIT_AS` fails JITs,
