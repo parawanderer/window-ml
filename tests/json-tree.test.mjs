@@ -146,3 +146,35 @@ test("a labelled root with nothing to open keeps the chevron's width, so its nam
     const plain = show({ v: { a: 7 }, allOpen: true });
     assert.equal(plain.querySelector(".jt-tri-space"), null, "only for a caller's labelled root");
 });
+
+// --- commas: every member another follows ends in `,`, as the JSON would ---
+
+test("a comma after every member but the last, in arrays and objects, after a closing brace and a folded preview", () => {
+    const host = show({ v: { total: 3, groups: { a: ["x", "y"], b: [1] }, last: null }, defaultOpen: true });
+    const text = (re) => [...host.querySelectorAll(".jt-row")].find((r) => re.test(r.textContent)).textContent.replace(/\s+/g, "");
+    assert.equal(text(/total/), '"total":3,');
+    assert.equal(text(/last/), '"last":null');
+    // `groups` is folded (depth 1): its preview takes the comma.
+    assert.match(text(/groups/), /,$/);
+    const open = show({ v: { a: ["x", "y"], b: [1] }, allOpen: true });
+    const rows = [...open.querySelectorAll(".jt-row")].map((r) => r.textContent.replace(/\s+/g, ""));
+    assert.deepEqual(rows, ["{", '"a":[', '"x",', '"y"', "],", '"b":[', "1", "]", "}"]);
+});
+
+test("a marker row takes no comma, and the member before it takes one only if a real member follows", () => {
+    const rows = (v) => { const host = show({ v, allOpen: true }); return [...host.querySelectorAll(".jt-row")].map((r) => r.textContent.replace(/\s+/g, "")); };
+    const [, a, cut] = rows([1, T.JT_CUT]);
+    assert.equal(a, "1");
+    assert.doesNotMatch(cut, /,$/);
+    const seen = rows([1, T.JT_SEEN, 2]);
+    assert.equal(seen[1], "1,");
+    assert.doesNotMatch(seen[2], /,$/);
+    assert.equal(seen[3], "2");
+});
+
+test("the last member drawn before \"show more\" still takes a comma: more follow it", () => {
+    const host = show({ v: Array.from({ length: T.JT_PAGE + 5 }, (_, i) => i), defaultOpen: true });
+    const vals = [...host.querySelectorAll(".jt-row")].filter((r) => /^\d+,?$/.test(r.textContent.replace(/\s+/g, "")));
+    assert.equal(vals.length, T.JT_PAGE);
+    assert.equal(vals.at(-1).textContent.replace(/\s+/g, ""), `${T.JT_PAGE - 1},`);
+});

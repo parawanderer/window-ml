@@ -91,7 +91,8 @@ const copyMenu = (v: unknown, path: string): CtxItem[] => [
  *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
  *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
  *  flagged as a likely hallucinated argument. */
-export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail, times, menuExtra }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
+export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail, times, menuExtra, comma }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
+    /** Another member follows this one in its container: the row ends in a `,`, as the JSON would. */ comma?: boolean;
     /** Container → index of its first member the model was NOT sent (see JT_SEEN). */ unsent?: WeakMap<object, number>;
     /** This member was not sent to the model: drawn dimmed. */ dim?: boolean;
     /** This node's JSONPath. Given, every row offers a right-click menu: copy its value, copy its path. */ path?: string;
@@ -109,6 +110,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
     // Where the text was cut. Its own row, in the container that was still open, so the reader sees exactly
     // which member is the last one that arrived. `cut` is the sentence; the tree's caller writes it.
     const dimCls = dim ? " jt-unsent" : "";
+    const sep = comma ? <span class="jt-comma">,</span> : null;
     if (v === JT_CUT) return <div class={`jt-row jt-cut${dimCls}`} style={pad}>{cut ?? "… truncated here"}</div>;
     // Where the MODEL's copy ended. Everything after this row, here and in every enclosing container, it never read.
     if (v === JT_SEEN) return <div class="jt-row jt-seen-end" style={pad}
@@ -123,6 +125,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
             {times && isTimeField(k, v)
                 ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}</span>
                 : <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>}
+            {sep}
             {trail}
         </div>;
     }
@@ -139,11 +142,15 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
     // right of the closing one and keys indent cleanly under it.
     const collapsible = !allOpen;
     const from = unsent?.get(v as object);
+    // The last REAL member takes no comma; a marker (JT_CUT, JT_SEEN) is a row of its own and never takes one.
+    let lastReal = entries.length - 1;
+    while (lastReal >= 0 && (entries[lastReal][1] === JT_CUT || entries[lastReal][1] === JT_SEEN)) lastReal--;
     return <div class={`jt-node${dimCls}`}>
         <div class={`jt-row jt-branch${collapsible ? " jt-clickable" : ""}`} style={pad} role={collapsible ? "button" : undefined} onClick={collapsible ? () => setOpen(o => !o) : undefined} onContextMenu={menu}>
             {collapsible ? <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span> : null}
             {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object, from != null)}</span>}
+            {open ? null : sep}
             {trail}
         </div>
         {open ? <>
@@ -152,12 +159,12 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
                 const mark = ev === JT_CUT || ev === JT_SEEN;
                 return <JsonNode key={ek} k={arr || mark ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && !mark && !(ek in props)} allOpen={allOpen} cut={cut}
                     // Only at the boundary: opacity compounds, so a dimmed container's own members are not dimmed again.
-                    unsent={unsent} dim={from != null && i >= from} path={path != null && !mark ? childPath(path, ek, arr) : undefined} times={times} menuExtra={menuExtra} />;
+                    unsent={unsent} dim={from != null && i >= from} path={path != null && !mark ? childPath(path, ek, arr) : undefined} times={times} menuExtra={menuExtra} comma={!mark && i < lastReal} />;
             })}
             {!allOpen && entries.length > shown
                 ? <div class="jt-row" style={{ paddingLeft: `${(depth + 1) * 13}px` }}><button class="jt-more" onClick={() => setShown(n => n + JT_PAGE)}>show {Math.min(JT_PAGE, entries.length - shown)} more of {entries.length - shown}</button></div>
                 : null}
-            <div class="jt-row" style={pad}><span class="jt-brace">{arr ? "]" : "}"}</span></div>
+            <div class="jt-row" style={pad}><span class="jt-brace">{arr ? "]" : "}"}</span>{sep}</div>
         </> : null}
     </div>;
 }

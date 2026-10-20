@@ -2159,6 +2159,8 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-time { cursor: help; }
 .jt-key { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
+/* The `,` after a member that another follows. Pulled back over the row's flex gap so it sits against its value. */
+.jt-comma { color: var(--j-base); margin-left: -4px; }
 .jt-preview { color: var(--fg-faint); font-style: italic; }
 .jt-string { color: var(--j-str); word-break: break-word; }
 .jt-number { color: var(--j-key); }
