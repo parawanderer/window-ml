@@ -105,6 +105,13 @@ jobs:
       # A release build for the emulator's ABI (x86_64), the demo world bundled in.
       - name: Build and install the demo app
         run: node scripts/android.mjs install --demo
+      # THE DEVICE LOG, STREAMED from before the first flow: each flow's `clearState` restarts the app and the ring
+      # buffer turns over, so a dump at the end held only the last flow and lost the crash in any earlier one.
+      - name: Record the device log
+        run: |
+          mkdir -p test-results
+          nohup "$ANDROID_HOME/platform-tools/adb" logcat -v threadtime > test-results/logcat.txt 2>&1 &
+          echo $! > test-results/.logcat.pid
       - name: Run the demo flows
         run: node scripts/android.mjs flows --report test-results/maestro.xml tests/mobile/demo-*.yaml
       # Maestro exits 0 when it found nothing to run, so a glob that matched less than it should, or a flow it skipped,
@@ -119,7 +126,8 @@ jobs:
         if: always()
         run: |
           mkdir -p test-results
-          "$ANDROID_HOME/platform-tools/adb" logcat -d > test-results/logcat.txt || true
+          if [ -f test-results/.logcat.pid ]; then kill "$(cat test-results/.logcat.pid)" || true; rm -f test-results/.logcat.pid
+          else "$ANDROID_HOME/platform-tools/adb" logcat -d > test-results/logcat.txt || true; fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
