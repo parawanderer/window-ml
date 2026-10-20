@@ -106,7 +106,7 @@ test("P1-ml: a function a cell defines inside cannot reach `ml` when later code 
     const ns = world();
     const def = await cell(ns, "def f():\n    return ml.config()");
     // A function made inside carries a body the gate never ran: the try is outside and leaves nothing (#892).
-    assert.match(String(def.refused), /'f' holding a function or class it defined/, JSON.stringify(def));
+    assert.match(String(def.refused), /'f' holding a function or class, which/, JSON.stringify(def));
     // DEFENDED: calling f later — the full path of a rerun after approval — must not send a wire call the inside run never made.
     const call = await cell(ns, "return await f()", false);
     assert.deepStrictEqual(call.wire, [], "an inside-defined function does not reach ml when ordinary code calls it");
@@ -131,7 +131,7 @@ test("P2-ungated: a function a cell defines inside does not run UNGATED when a l
     if (skip) return t.skip(skip);
     const ns = world();
     const def = await cell(ns, "def f():\n    import os\n    return os.listdir('/')");
-    assert.match(String(def.refused), /'f' holding a function or class it defined/, JSON.stringify(def));
+    assert.match(String(def.refused), /'f' holding a function or class, which/, JSON.stringify(def));
     // DEFENDED: f's body carries the inside gate with it; a later call cannot `import os`.
     const call = await cell(ns, "return f()", false);
     assert.ok(call.error || call.threw, `f() must not run its body ungated: ${JSON.stringify(call)}`);

@@ -217,12 +217,12 @@ test("a cell's own function is never what the wrapper calls: one shadowing str s
 test("DATA ONLY: a binding that reaches code, at any depth, puts the cell outside and leaves nothing", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const cases = [
-        ["def f():\n    return 1", /'f' holding a function or class it defined/],
-        ["f = lambda: 1", /'f' holding a function or class it defined/],
+        ["def f():\n    return 1", /'f' holding a function or class, which/],
+        ["f = lambda: 1", /'f' holding a function or class, which/],
         ["g = map(abs, [-1, 2])", /'g' holding a map/],
         ["f = open", /'f' holding a builtin it captured \(open\)/],
         ["xs = [1, [2, (3, open)]]", /'xs' holding a builtin it captured \(open\)/],
-        ["d = {'k': {'f': lambda: 1}}", /'d' holding a function or class it defined/],
+        ["d = {'k': {'f': lambda: 1}}", /'d' holding a function or class, which/],
         ["d = {getattr: 1}", /'d' holding a builtin it captured \(getattr\)/],
         ["import pandas as pd\ndf = pd.DataFrame({'a': [1, open]})", /'df' holding a builtin it captured \(open\)/],
         ["import numpy as np\na = np.array([1, open], dtype=object)", /'a' holding a builtin it captured \(open\)/],
@@ -287,7 +287,7 @@ test("DISGUISE: a non-data value under a NEW name puts the cell outside, even on
     const ns = world("none");
     await cell(ns, "def helper(x):\n    return x + 1\nimport math", false);
     for (const [code, re] of [
-        ["h = helper", /'h' holding a function or class it defined/],
+        ["h = helper", /'h' holding a function or class, which/],
         ["m = math", /'m' holding a module/],
         ["import math\nm = math", /'m' holding a module/],
         ["xs = [math]", /'xs' holding a module/],

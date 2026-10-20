@@ -85,7 +85,7 @@ def _ml_not_inert(_roots, _cap=2000000):
                 if _a.dtype.hasobject:
                     _stack.extend(_a.tolist())
             else:
-                _kind = ("a function or class it defined" if isinstance(_x, (_t.FunctionType, type, _t.MethodType))
+                _kind = ("a function or class" if isinstance(_x, (_t.FunctionType, type, _t.MethodType))
                          else "a builtin it captured (" + str(getattr(_x, "__name__", "?")) + ")" if isinstance(_x, _t.BuiltinFunctionType)
                          else "a " + _ty.__name__)
                 return "it leaves " + _ml_what(_name) + " holding " + _kind + ", which the dialect cannot vouch for"
