@@ -231,7 +231,14 @@ inside run. The rule has two layers, and one is not the other's substitute:
    and numpy/pandas object values, and a cell whose binding or returned value falls outside it is OUTSIDE the dialect
    and asks, so the model sees why on the card instead of finding a name silently missing. An inside try no longer
    writes to the live stdout stream at all (a test holds the real stdout to nothing from an inside try), and a refused
-   try's captured stdout is dropped. Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
+   try's captured stdout is dropped. The red team's second pass (2026-10-20, 11/11, no escape) left one gap between the
+   words and the code: the copy-back also admitted any value the namespace already held, by identity, so `a = ml`,
+   `f = [ml]` and `return [ml]` crossed back. That grants no capability the full path did not have, but it DISGUISES
+   one: an approved cell reading `a.config()` hides that `a` is `ml`, and the card shows the person the alias, not the
+   thing. Ruled the same day: a non-data value crosses back only under a name it already had (so `np` stays `np`, and
+   rebinding it elsewhere than its own name makes the cell outside, `h = helper` and `m = math` included) or as the
+   target of an import the gate admitted (`import numpy as np` is the gate's decision, not the copy-back's). The
+   identity pass under a NEW name is gone. Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
    never does, because it is not cell code and layer 1 never sees it.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
