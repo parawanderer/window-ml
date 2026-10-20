@@ -64,8 +64,8 @@ A `window.ml` method that needs the server or privileges touches three files:
 
 ## Config and API formats
 
-`chrome.storage.sync`, schema `DEFAULT_CONFIG` (`contract-config.ts`), which **must stay in sync with `popup.ts`**;
-`popup.ts` `FIELDS` lists every key the popup edits. `API_FORMATS` (`sw-llm.ts`) converts the neutral message shape
+`chrome.storage.sync`, schema `DEFAULT_CONFIG` (`contract-config.ts`, the one copy the worker and the popup import);
+**`popup.ts` `FIELDS` must list every key the popup edits.** `API_FORMATS` (`sw-llm.ts`) converts the neutral message shape
 to each backend's wire form (`openai`, `ollama`): `docs/dev/architecture.md`.
 
 **RULE — a new settings flag goes in the DevTools Settings panel, ALWAYS.** That panel is the SUPERSET; the popup is
