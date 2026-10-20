@@ -642,6 +642,17 @@ jobs:
       # The page the WebView loads, built and synced in: without it the app compiles around an empty generated file.
       - run: node scripts/build-web.mjs
       - run: node mobile/scripts/sync-embed.mjs
+      # GRADLE'S DOWNLOADS, kept between runs, as in android-flows.yml (the reasoning is there). Its own key prefix:
+      # this job builds every ABI in debug and the flows build x86_64 in release, so their caches hold different
+      # transforms, and a hit on the other job's key would restore it and never save what this one adds.
+      - name: Cache Gradle's downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-apk-${{ runner.os }}-${{ hashFiles('mobile/package-lock.json', 'mobile/app.json') }}
+          restore-keys: gradle-apk-${{ runner.os }}-
       - name: Generate the native project
         run: npx expo prebuild --platform android --no-install
         working-directory: mobile
