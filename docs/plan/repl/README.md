@@ -199,8 +199,12 @@ listed as remaining is DONE unless named below.
   double count back; fixed by lane 3 in parawanderer/cpython#4 (merged 2026-10-20, b0bbaa5, lane 4 reviewed): a hidden
   name defers to the startup choice; no wasm32 change, lane 5 re-pins when convenient. Per-run wrapping stays open.
   Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839); its narrower
-  reading is ruled (2026-10-20): no cell auto-approves until lane 5's membership predicate plugs into `pythonCellInDialect`
-  (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Lane 8 is
+  reading is ruled (2026-10-20): no cell auto-approves until the membership predicate plugs into `pythonCellInDialect`
+  (`PYTHON_DIALECT.md`, "Membership replaces `mode`"). Wiring it is lane 3's (assigned 2026-10-20): the seam asks the
+  Pyodide worker's `_restricted` predicate at compile time, every dialect vector through the seam, fail closed without the
+  predicate, the per-cell cost measured in the Python bench first, a red-team pass before merge; lands after #835, lane 5
+  reviews the build side. Lane 3's #865 (merged 2026-10-20, a96b1e3d) wrote the pinned-script section into `POLICIES.md`,
+  and #859 (merged bb460720, Shane's by-hand merge) made merge-when-green run main's copy of itself. Lane 8 is
   closed: the phone pairs a desktop runtime, #814 and #816 (merged 2026-10-19), [`LANE_8_RESULT.md`](LANE_8_RESULT.md) (#840);
   its host-kind flag is DEFERRED (ruled 2026-10-20, `RUNTIME_HUB.md`): the design note
   [`LANE_8_HOST_KIND_DESIGN.md`](LANE_8_HOST_KIND_DESIGN.md) (#852, merged 3ca782c8) is the record, nothing is built.
