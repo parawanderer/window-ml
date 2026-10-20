@@ -222,6 +222,16 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
   running code. A call's `env` ADDS to the session's; in the Python shim, `env={**os.environ, …}` would carry the
   sandbox's environment to the host, so it is refused with a steer. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
+- **`&&` is the calling language's control flow** (ruled 2026-10-20, Shane's question): a chain of calls is judged one
+  call at a time as each arrives, suspending on an ask, and nothing new is needed to express it. In Python a result's
+  truth value IS `ok` (`okCodes` applied, never `code == 0`, or grep's 1 breaks the chain), so
+  `sh.git(["checkout", "main"]) and sh.npm(["install"]) and sh.npm(["test"])` is `&&` exactly: eager, short-circuiting,
+  the first failing result or the last; the API doc says `if r:` means ok, since `CompletedProcess` is always truthy.
+  In JavaScript the `await` makes that clumsy, so a session option `check: true` that throws on a non-ok result is the
+  form there, opt-in only (the default stays the value, above). A chain of LITERAL argv judged as one card before the
+  first spawn, the pipe's card without the pipe, is a possible later sugar, not planned: a later argv that depends on
+  an earlier result cannot be shown before it exists, and with policies covering the free tier a chain of read-only
+  calls asks nothing today. Build it only once a measured case shows the per-call asks are the annoying part.
 
 ## The API's shape: borrowed, not invented
 
