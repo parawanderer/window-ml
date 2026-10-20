@@ -20,24 +20,24 @@ The flag may never widen what a runtime can do, only what the phone shows. So it
 
 ## B in detail
 
-- **Wire.** `string kind = 6;` on `PairingOffer`, open set, same shape rule as a scope name (1 to 16 bytes of `a-z 0-9 . _ -`). Known values: `host`, `browser`. Absent or unknown means today's behaviour exactly. Recorded in `proto/wmlhub/CHANGES.md` (additive) and the vendored pin in this repo bumped.
-- **Hub.** No relay change. The offer is opaque to it. `wmlbox`/`wmlhost` pass `kind` into `Offer::new`; `wmlhost hub pair` sends `host`, the extension sends `browser`.
+- **Wire.** `string kind = 6;` on `PairingOffer`, open set, same shape rule as a scope name (1 to 16 bytes of `a-z 0-9 . _ -`). The vocabulary is the existing `DeviceInfo.kind` (`browser`, `phone`, `desktop`, `headless`), not a new one; a runtime offer would send `desktop` or `browser`. Absent or unknown means today's behaviour exactly. Recorded in `proto/wmlhub/CHANGES.md` (additive) and the vendored pin in this repo bumped.
+- **Hub.** No relay change. The offer is opaque to it. `wmlbox`/`wmlhost` pass `kind` into `Offer::new`; `wmlhost hub pair` sends `desktop`, the extension sends `browser`.
 - **Not authenticated, by design.** The fingerprint covers the two keys only, so a hostile hub can edit `kind` as it can edit `label`. The role is already checked at the answer (`wrong-role`); `kind` is not and cannot be. Hence it is never in a certificate, never signed, never a gate.
-- **What the phone does with it.** `host`: the card says "a desktop host", the "Can add devices" switch is not shown and the grant is sent with `mayPair` false. `browser`, absent or unknown: unchanged from #816. A hub that lies `host` for a browser runtime hides a switch it would have shown (the browser keeps `mayPair` off and cannot re-sign: a denial, visible in the inbox); a hub that lies `browser` for a host shows a switch whose default is off. Neither widens anything.
+- **What the phone does with it.** `desktop` on a runtime offer: the card says "a desktop", the grant is sent with `mayPair` false, and a `receivesLines` sentence takes the place of the switch ("A desktop does not add devices, so there is nothing to switch."): nothing is hidden silently. `browser`, absent, unknown, or `desktop` on any role other than runtime: unchanged from #816. A hub that lies `desktop` for a browser runtime removes a switch it would have shown (the browser keeps `mayPair` off and cannot re-sign: a denial, visible in the inbox); a hub that lies `browser` for a desktop shows a switch whose default is off. Neither widens anything.
 - **Name marking.** `kind` is shown only inside the existing "its own word, not checked" line.
 
 ## After pairing
 
-The device list reads a certificate, which carries no `kind`, so a host there is still "a browser runtime". Option C fixes that and is not proposed now. A cheap local alternative is for the phone to remember the `kind` it saw, keyed by principal, as display text only; not built unless asked.
+The device list reads a certificate, which carries no `kind`, so a desktop there is still "a browser runtime" (`hub-devices.ts` maps every runtime to `browser`). Option C fixes that and is not proposed now. A cheap local alternative is for the phone to remember the `kind` it saw, keyed by principal, as display text only; not built unless asked.
 
 ## Tests
 
 - Hub: a round-trip of an offer with and without `kind`; a peer that never saw the field ignores it; an over-long or ill-shaped `kind` is refused where the label is.
-- Client: enumerate `kind` x (absent, host, browser, unknown, ill-shaped) through `phoneGrant` and the card lines: `mayPair` is never true unless the person turned the switch on, and only for non-`host`. The red team reads the hub side before merge.
+- Client: enumerate `kind` x role x (absent, desktop, browser, unknown, ill-shaped) through `phoneGrant` and the card lines: `mayPair` is never true unless the person turned the switch on, and never for a `desktop` runtime offer; `desktop` on a client or box-connector offer renders exactly as today. The chat page takes the rule free, since it shares `phoneGrant` and `receivesLines`. The red team reads the hub side before merge.
 
 ## Decisions that are not mine
 
 - Whether C is wanted, and whether the value above justifies B at all.
-- The `kind` vocabulary beyond `host` and `browser` (a mobile runtime? a headless one?).
+- The `kind` vocabulary beyond `host` and `browser` (`headless` is already in `DeviceKind`).
 
 > *Drafted by Claude Code · work: repl-lane8 · session 3d8f22b0 · claude-sonnet-5-5*
