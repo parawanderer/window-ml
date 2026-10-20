@@ -191,3 +191,7 @@ derived by the same `eventsFrom` the panel uses, so a consumer never redoes arit
 same three places every time (spans run BACKWARDS from a finish stamp; a tool step is ONE event with
 `phases`, not three; a model load is its own event). If you are asking "where did the time go", that is the
 file. If you are asking "what did it say", it is `run.md`.
+
+## Traps
+
+- **Diff two runs with `run.json`**, after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.

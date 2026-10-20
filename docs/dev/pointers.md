@@ -240,3 +240,9 @@ call; in a survey the worker reads the value store itself), and `DerefText` hand
   only a pipe the script spells out. The read-only dialect has no `.pipe()` or `.schema()` on a value (it reads one as
   a string): a survey re-pipes through `ml.dereference`. `tests/isolated-pointer.test.mjs` holds the four paths to the
   same values and errors.
+
+## Traps
+
+- **`PIPE_CMDS` is the single source for every description of the pipe dialect.**
+- **The three reference forms (`@tool:"label"`, a 7-hex id, a bare tool name) are told apart by SHAPE, never tried
+  in order.**

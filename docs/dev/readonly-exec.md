@@ -769,3 +769,9 @@ unsafely" — new tests prove the new surface keeps that.
   check in front of it?), FAILURE tests (a script that uses it and then falls out of dialect leaves nothing behind),
   and an update to `docs/dev/readonly-exec.md`. Anything that could loop is tested in a worker with a timeout, so a
   regression fails instead of hanging the runner.
+
+## Traps
+
+- **Gaps degrade to "asks the human", never to "runs unsafely"**, and each extension's tests prove it still does.
+- **An extension can break an argument made for an EARLIER one** (`for…of` and the owned `Set`/`Map` mutators):
+  "The rule for extending the dialect" above.

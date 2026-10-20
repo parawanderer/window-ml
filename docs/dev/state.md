@@ -159,3 +159,11 @@ the worker declares only for a run the session index says the page hosts, where 
 (`withPageState`). `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
 and are neither declared nor marked (134 when it was written). This file shrinks to the scopes, the places and the
 hazards as the declarations take over its rows.
+
+## Traps
+
+- **State in worker memory dies with the worker** (an MV3 eviction, ~30 s idle): open gates, in-memory grants and
+  every `@tool:` value (`tokensByRun`) go silently. The full list: "Lost on a worker eviction".
+- **An undeclared store is invisible**: the Run state panel and `ml.current` read the registry. Declare it with
+  `defineState`: scope, realm (`worker`/`page`/`offscreen`), audience (`model`, `human`, or `never` for a secret),
+  what loses it, and a `read` returning plain data for one run ("Adding state?" above).

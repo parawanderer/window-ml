@@ -6,13 +6,14 @@ web pages and bridges it to local LLMs via OpenWebUI / Ollama. It's a
 object you call from any page's devtools console or from userscripts.
 
 See `docs/API.md` for the user-facing API and `docs/` for setup, cloud models,
-and OCR. This file is the map for *extending* the code.
+and OCR. This file is the map for *extending* the code: the working rules and the traps, each pointing at the doc that
+explains it.
 
 ## Layout
 
 The extension's own sources live in **`src/`**; everything else stays at the root (`tests/`, `scripts/`, `tools/`,
 `docs/`, `manifest.json`, `build.mjs`). Inside `src/`, a file sits in the folder of what it is FOR and keeps its
-prefixed name, so this file names files by their bare name (`sw-llm.ts`) and `node scripts/index.mjs '<name>' --kind
+prefixed name, so this file names files by their bare name (`sw-llm.ts`); `node scripts/index.mjs '<name>' --kind
 file` finds the path:
 
 | Folder | Holds |
@@ -35,93 +36,61 @@ A new file goes in the folder of what it is for. Move files with `node scripts/m
 ## Architecture
 
 Requests flow **page → content script → service worker → OpenWebUI/Ollama** and back, to get around CORS: only the
-worker has host permissions. `injected.ts` defines `window.ml` in the page's MAIN world (injected as a real
-`<script>`, so page scripts and userscripts reach it); `content.ts` is a dumb relay (`window.postMessage` ⇄
-`chrome.runtime.sendMessage`, via `HANDLE_MAP`); `background.ts` owns config and every privileged fetch; `popup.ts` is
-the settings popup.
+worker has host permissions. `injected.ts` defines `window.ml` in the page's MAIN world (a real `<script>`, so page
+scripts and userscripts reach it); `content.ts` is a dumb relay (`HANDLE_MAP`); `background.ts` is the message ROUTER
+and the print/nav spine, owning config and every privileged fetch, with each cohesive leaf layer its own `sw-*.ts`;
+`popup.ts` is the settings popup. Both module tables, with what each owns: `docs/dev/architecture.md`.
 
-**The CONTRACT is one contract in eleven files.** `contract.ts` holds `MlApi`, `JsonSchema`, and a BARREL
-(`export * from "./contract-<theme>"`). Keep importing from `./contract`: about a hundred references are the inline
-type query `import("./contract").X`, which `move-symbols` rebases only inside the code it moves, and the doc/schema
-generators start from it by path. List the modules live with `node scripts/index.mjs '^contract-' --kind file --word`.
-
-**`background.ts` is the message ROUTER + the print/nav spine.** Every cohesive leaf layer is its own `sw-*.ts`
-module, bundled back into `dist/background.js`. List them live with `node scripts/index.mjs '^sw-' --kind file
---word`. A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`, which is why neither belongs in the
-router. Both module tables, with what each owns: `docs/dev/architecture.md`.
-
-**Give a new module a blank line after its header comment**, or anything that reads comments by adjacency takes it
-for the first declaration's documentation (`tests/api-docs.test.mjs` fails on it).
+- **The CONTRACT is one contract in eleven files: keep importing from `./contract`** (the barrel over `contract-*`);
+  about a hundred inline `import("./contract").X` queries and the doc/schema generators depend on the path.
+- **A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`**, which is why neither is in the router.
+- **Give a new module a blank line after its header comment**, or it is read as the first declaration's
+  documentation (`tests/api-docs.test.mjs` fails on it).
 
 ## The message contract (how to add a primitive)
 
-Every `window.ml` method that needs the server/privileges follows one pattern.
-To add a new one, touch three files:
+A `window.ml` method that needs the server or privileges touches three files:
 
-1. **injected.js** — call `makeBackgroundTaskPromise(REQUEST_TYPE, RESPONSE_TYPE, payload)`.
-   It posts to the content script and resolves with the matching response.
-2. **page-relay.ts** — add a `HANDLE_MAP` entry mapping `REQUEST_TYPE` →
-   `{ type: BACKGROUND_MSG, responseType: RESPONSE_TYPE }`. The content script relays what is listed there, and the
-   background's ORIGIN GATE applies to every type listed there: a new primitive is refused from an unapproved site
-   with no extra work, and `tests/redteam.test.js` enumerates it without being edited.
-3. **background.js** — add an `if (message.type === BACKGROUND_MSG)` branch in
-   `route()`; do the work; `sendResponse({ data })` or `sendResponse({ error })`; `return true` to keep the channel
-   open.
+1. **injected.ts**: `makeBackgroundTaskPromise(REQUEST_TYPE, RESPONSE_TYPE, payload)`.
+2. **page-relay.ts**: a `HANDLE_MAP` entry `REQUEST_TYPE` → `{ type: BACKGROUND_MSG, responseType: RESPONSE_TYPE }`.
+   The background's ORIGIN GATE applies to every type listed there, so a new primitive is refused from an unapproved
+   site with no extra work, and `tests/redteam.test.js` enumerates it without being edited.
+3. **background.ts**: an `if (message.type === BACKGROUND_MSG)` branch in `route()` that answers
+   `sendResponse({ data })` or `sendResponse({ error })` and returns `true`.
 
-Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
-`SET_MODEL`, `MODEL_CAPS`, `LIST_SERVER_TOOLS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
-`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`, `PYTHON_EXEC`, `FETCH_SHEET`. Plus `ABORT_TASK` and the streaming
-`LLM_STREAM_*` port, both outside HANDLE_MAP. `GET_CONFIG` returns the NON-SECRET subset only: the URL and API key
-never reach the page. `MODEL_CAPS` returns `null` when it cannot tell: "unknown", never "no".
+`GET_CONFIG` returns the NON-SECRET subset only; `MODEL_CAPS` returns `null` when it cannot tell ("unknown", never
+"no"). The existing types, resume, streaming (the one path on a Port), tools/`toolIds` and cancellation:
+`docs/dev/architecture.md`. The agent loop lives CLIENT-SIDE (`ml.step`), so `window.ml` stays a primitive.
 
-How resume, `ml.config()`, the `vision` option, capabilities, streaming (`onToken`, the one path that rides a Port),
-tools/`toolIds` and the `SERVER_TOOL_MODES` probe, and cancellation (`ABORT_REQUEST` → `ABORT_TASK`) work:
-`docs/dev/architecture.md`. The agent loop lives CLIENT-SIDE (`ml.step`); the extension ships no
-loop/whitelist/overseer, so `window.ml` stays a primitive.
+## Config and API formats
 
-## Config
-
-`chrome.storage.sync`, schema in `DEFAULT_CONFIG`:
-`chatUrl`, `apiKey`, `model`, `apiFormat` (`"openai"` | `"ollama"`), `ocrModel`.
-
-**`DEFAULT_CONFIG` is duplicated in `background.js` and `popup.js` and must stay
-in sync** (popup.js has a comment saying so). `popup.js` `FIELDS` must list
-every editable key.
+`chrome.storage.sync`, schema `DEFAULT_CONFIG` (`contract-config.ts`), which **must stay in sync with `popup.ts`**;
+`popup.ts` `FIELDS` lists every key the popup edits. `API_FORMATS` (`sw-llm.ts`) converts the neutral message shape
+to each backend's wire form (`openai`, `ollama`): `docs/dev/architecture.md`.
 
 **RULE — a new settings flag goes in the DevTools Settings panel, ALWAYS.** That panel is the SUPERSET; the popup is
 a curated subset. Adding a flag to the popup is optional, and never without DevTools Settings too.
 
-## API formats
-
-`API_FORMATS` in `background.js` maps each backend to `{ buildMessage,
-extractContent, extractToolCalls, expectedShape, applyFormat, streamChunk }`. `openai` uses
-`choices[0].message.*` + `response_format`; `ollama` uses `message.*` +
-`format`. Messages travel in a neutral `{ role, content, images?, tool_calls?,
-tool_call_id? }` shape; each format converts to its wire form.
-
 ## The read-only `exec` dialect
 
-`autoApproveReadonly` (on by default) runs a read-only DOM survey with no prompt, through a mediated
-mini-interpreter (`readonly-exec.ts`) that is itself the whitelist and never compiles a string. Gaps degrade to
-"asks the human", never to "runs unsafely". `docs/dev/readonly-exec.md` (keep it current).
+`autoApproveReadonly` (on by default) runs a read-only DOM survey with no prompt, through a mediated interpreter
+(`readonly-exec.ts`) that is itself the whitelist and never compiles a string. Gaps degrade to "asks the human",
+never to "runs unsafely". `docs/dev/readonly-exec.md` (keep it current).
 
-**RULE — extending the dialect requires adversarial tests, without being asked.** A new construct, method or facade
-member gets tests that try to abuse it (reach an effectful method, `window`/`constructor`/a realm, mutate, spend
-tokens, loop unbounded) and assert `NotInDialect`/`Denied` or the inert `METHOD_REF`. And re-check the WHOLE
-contract, not just the new surface: HALTING tests (in a worker with a timeout), FAILURE tests (falling out of
-dialect leaves nothing behind), and an update to the doc. Why, with the `for…of` that broke: the doc's last section.
+**RULE — extending the dialect requires adversarial tests, without being asked.** Tests that try to abuse the new
+construct and assert `NotInDialect`/`Denied` or the inert `METHOD_REF`, plus a re-check of the WHOLE contract
+(halting, failure, the doc). The checklist and the `for…of` that broke: readonly-exec.md, "The rule for extending the
+dialect".
 
-**RULE — a new agent tool, `ml.*` member or page-started message type gets a RED-TEAM PASS, without being asked.**
-Before the PR, run a separate agent whose only job is what a hostile page (shares the main world, posts any window
-message, knows every run id) must NOT get from it, each property a test that fails first in `tests/redteam.test.js` or
-`tests/e2e/site-access.spec.mjs`; the change lands with them passing. What to check: `docs/dev/site-access.md`,
-"Adding a tool, a member or a message"; how: the `redteam` skill.
+**RULE — a new agent tool, `ml.*` member or page-started message type gets a RED-TEAM PASS, without being asked.** A
+separate agent writes what a hostile page must NOT get from it as tests that fail first (`tests/redteam.test.js`,
+`tests/e2e/site-access.spec.mjs`); the change lands with them passing. `docs/dev/site-access.md`, "Adding a tool, a
+member or a message"; the `redteam` skill.
 
 ## Where the implementation notes live — read the one you are about to change
 
-This file holds the rules for working in the repo and the traps. How each subsystem works, and why it is built
-that way, lives in `docs/dev/`. Read the matching file BEFORE changing that code: most of what is in them was
-learned by shipping the wrong version first.
+How each subsystem works, and why, lives in `docs/dev/`. Read the matching file BEFORE changing that code: most of
+it was learned by shipping the wrong version first.
 
 | Changing… | Read first |
 | --- | --- |
@@ -153,269 +122,174 @@ learned by shipping the wrong version first.
 | the system prompt, a tool's description, anything else the model reads | `docs/dev/prompt-review.md` (+ `docs/spec/PROMPT_BUDGET.md`) |
 | an analysis worth keeping across several files (bench sweeps, model comparisons): a notebook | `docs/dev/notebooks.md` |
 
-**The traps, one line each.** Each doc's `Traps` section has the full text and the reason.
+**The traps, one line each.** Every known trap, with its full text and reason, by doc: `grep -n -A3 '^## Traps'
+docs/dev/*.md`.
 
-- **Resource panel.** Memory is raw binary BYTES (convert once, `formatBytes`); absent is not zero and not idle;
-  event-stream names are fully qualified and `/api/ps` short (`normModel`); screen↔time only through
-  `axisFrac`/`axisTime`. Frames are typed from the pinned `events.proto`: never hand-add a field. → resource-panel.md
-- **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases; a load is its own
-  event. → resource-panel.md
-- **Pointers.** `PIPE_CMDS` is the single source for every description of the dialect. The three reference
-  forms (`@tool:"label"`, 7-hex id, bare tool name) are told apart by SHAPE, never tried in order.
-- **Python.** A worker-hosted run keeps one namespace across its cells (not a page call or the bench); `readonly` mode hardens the sandbox and may auto-approve, `full` always asks.
-  The wheels (`pyodide-wheels/`) are gitignored and a missing set fails only at run time.
-- **Tables.** One representation (`TableLike`) and one set of parsers (`table-data.ts`); the delimiter is
-  DISCOVERED, never assumed a comma; `shape` is the SOURCE's row count, so pass `rowCount` when you cap; the `Table`
-  facade is read-only. → wire-and-fetch.md
-- **Wire formats.** Protobuf is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder` near
-  binary (`binaryKind` first); a strict backend refusing an optional key is retried once without it. → wire-and-fetch.md
-- **One design language.** The phone app and the chat page's CALM view are one product: a palette or icon change to
-  the page is a change to `mobile/` in the same breath (`mobile/AGENTS.md`). → chat-page.md
-- **Notifications.** Only a certificate's DURABLE fields may reach a scheduled reminder, nothing about a session
-  goes on a lock screen, and `expo-notifications` stays out of `app.json`'s plugins. → chat-page.md
-- **Sidebar.** One app, two surfaces: a new app→parent message is also handled in `panel.ts`; shared session views
-  call `services()`, never `chrome.*`; a session key is `runtime:hash`, split on the LAST `:`. Our shadow roots are
-  CLOSED: the shell uses its kept references, a test `inShell` (harness.mjs), never `.shadowRoot`. → sidebar.md
-- **A run's events never reach the page's window**, and the sidebar app talks to its host only through
-  `parent-channel.ts`: an e2e watches a background run with `watchRunEvents` and opens the sidebar by clicking its
-  tab, never by posting into its iframe. → sidebar.md
-- **Transcript.** A long session is WINDOWED; a jump to a step goes through `reveal`; the window is a plain Map
-  bumped through `rev`, NEVER a signal read during render. → sidebar.md
-- **A delegated tool has a THIRD outcome:** a send to a sleeping tab neither answers nor rejects. Every send goes
-  through `delegateSend` (delegate-send.ts); a tab can come back under a new id (`chrome.tabs.onReplaced`). → agent-tools.md
-- **The execution log** (`run-log.ts`) is where the worker writes what it did under a run, since a service-worker
-  `console.log` is never seen: `recordRunLog`/`noteRunMechanic`. `subsystem`/`kind` must be lowercase slugs or the
-  record is SILENTLY dropped. It is not the housekeeping log. → run-log.md
-- **State in worker memory dies with the worker** (an MV3 eviction, ~30 s idle): open gates, in-memory grants and every
-  `@tool:` value (`tokensByRun`) go silently. Declaring it is the RULE under Conventions. → state.md
-- **Hub client.** A hub is trusted with nothing: act on the signature inside the seal, never `Envelope.sender`.
-  `seal.ts` checks in a deliberate order, nonce last. → hub-client.md
-- **WHO THE ROOT IS:** a phone in a pocket, never a runtime (`extension-pairing.ts` refuses `createAccount`).
-  `scripts/hub-root.mjs` is a test tool, NOT the design. → hub-client.md
-- **Chat page.** `src/chat/` never reaches `chrome`; events reach `sessionMap` only through `SessionFeed`/`onDebug`;
-  no optimistic updates; the session index is fed where the DevTools panel is fed, never at a second point. → chat-page.md
-- **A run never starts on a page WE own** (`AGENT_START_PAGE`): the extension's own page is privileged and puts
-  the API key within `exec`'s reach. Whether a new tab can be opened is the RUNTIME's answer
-  (`capabilities.blankStart`), and absent is not blocked. → agent-tools.md
-- **Backend quirks:** OpenWebUI has no root `/v1/chat/completions`, and its OpenAI route reads `think` from
-  `params`, so a top-level one is silently dropped (`applyThink`). The rest: architecture.md, "Backend gotchas".
-- **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
+- **Resource panel.** Memory is raw BYTES (`formatBytes`, once); absent is not zero and not idle; `/api/ps` names are
+  short (`normModel`); screen↔time only via `axisFrac`/`axisTime`; frames come from the pinned `events.proto`. → resource-panel.md
+- **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases. → resource-panel.md
+- **Pointers.** `PIPE_CMDS` is the single source for the dialect; the three reference forms are told apart by SHAPE. → pointers.md
+- **Python.** Each call is stateless; `full` mode always asks; missing wheels (`pyodide-wheels/`) fail only at run time. → python-sandbox.md
+- **Tables.** One `TableLike`, one set of parsers (`table-data.ts`); the delimiter is DISCOVERED; pass `rowCount` when you cap. → wire-and-fetch.md
+- **Wire formats.** Protobuf is chosen from the RESPONSE's content type; no `TextDecoder` near binary (`binaryKind`). → wire-and-fetch.md
+- **One design language.** A palette or icon change to the chat page's CALM view is a change to `mobile/` too. → chat-page.md
+- **Notifications.** Only a certificate's DURABLE fields reach a reminder; nothing about a session on a lock screen. → chat-page.md
+- **Sidebar.** A new app→parent message is also handled in `panel.ts`; session views call `services()`, never
+  `chrome.*`; split a `runtime:hash` key on the LAST `:`; our shadow roots are CLOSED (tests use `inShell`). → sidebar.md
+- **A run's events never reach the page's window**: e2e uses `watchRunEvents` and opens the sidebar by clicking its tab. → sidebar.md
+- **Transcript.** A long session is WINDOWED: jump via `reveal`; the window is a Map bumped through `rev`, never a signal. → sidebar.md
+- **A delegated tool has a THIRD outcome** (a sleeping tab neither answers nor rejects): send via `delegateSend`. → agent-tools.md
+- **The execution log** (`recordRunLog`/`noteRunMechanic`) drops a record SILENTLY unless `subsystem`/`kind` are lowercase slugs. → run-log.md
+- **State in worker memory dies with the worker** (MV3 eviction, ~30 s idle), `@tool:` values (`tokensByRun`) included. → state.md
+- **Hub client.** A hub is trusted with nothing: act on the signature inside the seal, never `Envelope.sender`. → hub-client.md
+- **WHO THE ROOT IS:** a phone in a pocket, never a runtime; `scripts/hub-root.mjs` is a test tool, NOT the design. → hub-client.md
+- **Chat page.** `src/chat/` never reaches `chrome`; events reach `sessionMap` only through `SessionFeed`; no optimistic updates. → chat-page.md
+- **A run never starts on a page WE own** (`AGENT_START_PAGE`); a new tab is the runtime's `capabilities.blankStart`. → agent-tools.md
+- **Backend quirks:** OpenWebUI has no root `/v1/chat/completions` and drops a top-level `think` (`applyThink`). → architecture.md
+- **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`. → export.md
 
 ## Showing a run
 
 **RULE — the log/export ALWAYS carries what the MODEL actually saw.** Wherever a pretty view differs from the exact
-args the model sent or the exact result it received (a `@tool:<id>` token line included), add the raw view too, in
-the sidebar AND both exports. Which artifact to reach for (`run.md`, `run.md.html`, `run.json`, the PDF,
-`ml.__loads()`, `ml.__events()`): `docs/dev/export.md`.
+args or result (a `@tool:<id>` token line included), add the raw view too, in the sidebar AND both exports.
+`docs/dev/export.md`.
 
-**RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) for anything
-explanatory: a STRING is rendered as escaped inline markdown, a node as authored JSX. The exception is an accessible
-NAME on an icon-only control: `aria-label` (+ the tip). Reasons and the touch behaviour: `docs/dev/sidebar.md`.
+**RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx); an icon-only
+control's accessible name is `aria-label` (+ the tip). `docs/dev/sidebar.md`.
 
 ## Conventions
 
-Each rule below has its reasoning, its measurement and the incident behind it in
-`docs/dev/working-in-the-repo.md`.
+Each rule's reasoning, measurement and incident: `docs/dev/working-in-the-repo.md`.
 
-**RULE — when you change a rule, test the UPGRADE, not just the new behaviour.** Old state (accounts, certificates,
-saved sessions, stored config) meets the new code on someone's machine. The cheap form is a FIXTURE of what the old
-code wrote, read by the new code, asserting what a person sees.
+**RULE — when you change a rule, test the UPGRADE, not just the new behaviour.** Old state meets the new code on
+someone's machine: a FIXTURE of what the old code wrote, read by the new code, asserting what a person sees.
 
 **RULE — when one rule VALIDATES another's output, enumerate the inputs; do not sample them.** Branch on the
-quantity the decision is about, never a proxy for it, and give the DEFAULT its own assertion. Anything that routes on
-box shape runs against every shape in `tests/fixtures/boxes.mjs`.
+quantity the decision is about, never a proxy, and give the DEFAULT its own assertion; box-shape routing runs
+against every shape in `tests/fixtures/boxes.mjs`.
 
-**RULE — before you build ANYTHING reusable, search for it by concept: `node scripts/index.mjs '<regex>'`.** It
-indexes every module, module-scope declaration and documented CSS class by its docstring's first sentence, so an
-undocumented thing is INVISIBLE and gets rebuilt. A new export or CSS family needs a first sentence saying what it
-is FOR (`--new` ratchet), a new file opens with `// <name>.ts — <what it is for>.` (`--headerless` gate).
-`.claude/skills/code-index/SKILL.md`.
+**RULE — before you build ANYTHING reusable, search for it by concept: `node scripts/index.mjs '<regex>'`.** An
+undocumented thing is INVISIBLE to it: a new export or CSS family needs a first sentence saying what it is FOR, and a
+new file opens with `// <name>.ts — <what it is for>.`. The `code-index` skill.
 
-**What a component LOOKS like: `node scripts/gallery.mjs shot <id>`** (props, theme, calm/dev, width, tokens and a
-Playwright `flow` as flags), after the index says it exists. One that renders blank or broken from its inferred props
-gets an `@gallery {json}` example and an `@group` in its JSDoc, COMMITTED, so the next agent sees it right; one that
-draws nothing until triggered gets `@gallery-flow` (a committed Playwright script that also tests it) or, if nothing
-there can break visibly, `@gallery none <reason>`. `gallery.mjs check` (CI) fails on a broken example or flow.
-`.claude/skills/gallery/SKILL.md`.
+**What a component LOOKS like: `node scripts/gallery.mjs shot <id>`.** One that renders blank or broken gets a
+committed `@gallery {json}` example and `@group`; one that draws nothing until triggered gets `@gallery-flow` or
+`@gallery none <reason>`. The `gallery` skill.
 
-**RULE — state goes through the STATE REGISTRY, from the first commit of the component that adds it.** Anything kept
-across calls (a module-level Map/Set/signal/`let`, a storage key, an IndexedDB store, a grant) that a RUN depends on is
-declared beside the store with `defineState` (`src/state-registry.ts`): scope, realm (`worker`/`page`/`offscreen`),
-audience (`model`, `human`, or `never` for a secret) and what loses it, with a `read` returning plain data for one run.
-State that is not a run's is marked `// state: cache|ui|plumbing|fixed|test`. The Run state panel and `ml.current` read
-the registry, so an undeclared store is invisible to both; `scripts/check-state.mjs` ratchets it (pre-commit, CI). Check
-`docs/dev/state.md` first so it is not a fourth copy of something. This rule stays in AGENTS.md: it is for everyone
-adding code, not only someone reading the state docs.
+**RULE — state goes through the STATE REGISTRY, from the first commit of the component that adds it.** State a RUN
+depends on is declared beside its store with `defineState` (`src/state-registry.ts`); other state is marked
+`// state: cache|ui|plumbing|fixed|test`; `scripts/check-state.mjs` ratchets it. Check `docs/dev/state.md` first so
+it is not a fourth copy. This rule stays in AGENTS.md: it is for everyone adding code, not only someone reading the
+state docs.
 
-**RULE — a builtin agent tool is declared in the TOOL REGISTRY** (`defineBuiltinTool`, `src/tools/tool-registry.ts`):
-the gate, `@tool:` pointers, the worker's routing and the start card read it, and an undeclared name is the SITE's own
-tool. `node scripts/check-tools.mjs` (pre-commit, CI) holds factories and declarations together. The `tool-registry` skill.
+**RULE — a builtin agent tool is declared in the TOOL REGISTRY** (`defineBuiltinTool`, `src/tools/tool-registry.ts`);
+an undeclared name is the SITE's own tool. `node scripts/check-tools.mjs`; the `tool-registry` skill.
 
 **RULE — a test goes under a SECTION (`// --- what this group is about ---`), and `node scripts/test-index.mjs
-'<regex>'` is how you find one.** Ratcheted on new tests; a new test file opens with a header comment.
-`.claude/skills/test-index/SKILL.md`.
+'<regex>'` is how you find one.** Before choosing WHICH suite to run: `node scripts/test-cover.mjs <file>`.
 
-**Before choosing WHICH suite to run: `node scripts/test-cover.mjs <file>` (or `--changed`).** It names the tests
-that can notice the change and prints the command. `.claude/skills/test-cover/SKILL.md`.
-
-**RULE — a doc points only at files that exist.** `node scripts/check-doc-links.mjs` (pre-commit, every commit, and
-CI) fails on any broken Markdown link, and on a backticked path (`` `src/<name>.ts` ``) a change ADDS that names nothing;
-old dead paths are listed, not failed. An EXAMPLE path uses a `<placeholder>`, which is never checked. Move files with `move-files`, which rewrites both.
+**RULE — a doc points only at files that exist** (`node scripts/check-doc-links.mjs`, every commit and CI). An
+EXAMPLE path uses a `<placeholder>`; move files with `move-files`, which rewrites both.
 
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** The contract's JSDoc is
-what the MODEL reads. `node scripts/check-jsdoc.mjs`, ratcheted. A stranded block is folded back, not deleted.
+what the MODEL reads. `node scripts/check-jsdoc.mjs`; a stranded block is folded back, not deleted.
 
-**Size.** A file past ~800 lines gets a REMINDER (`node scripts/check-file-size.mjs`, never fails). To decide WHERE
-to refactor use `--cost` (lines x decayed commits), not `--all`. AGENTS.md itself is held under 35k characters
-(`node scripts/check-agents-size.mjs`, same reminder). A huge TEST file costs more than its tests: split one into
-files. `.claude/skills/file-size/SKILL.md`.
+**Size.** A file past ~800 lines gets a REMINDER (`check-file-size.mjs`, `--cost` to decide where to refactor); a huge
+TEST file gets split. AGENTS.md is held under 35k characters (`node scripts/check-agents-size.mjs`).
 
-**Refactoring tools.** `node scripts/imports.mjs` (edges, which names cross, `--cycles`) before planning a split;
-`node scripts/extract-function.mjs` to cut up a body; `node scripts/move-files.mjs --to <dir> <files>` to
-relocate whole files with every path to them rewritten; **RULE — move code between files with `node
-scripts/move-symbols.mjs`, never by copy and paste** (`--dry-run --diff` first). Each has a skill.
+**Refactoring tools:** `imports.mjs`, `extract-function.mjs`, `move-files.mjs`. **RULE — move code between files with
+`node scripts/move-symbols.mjs`, never by copy and paste** (`--dry-run --diff` first). Each has a skill.
 
-**Vitals.** `node scripts/vitals.mjs` about once a month, commit the result; keep `feat:`/`fix:` subject prefixes,
-which it classifies. `.claude/skills/vitals/SKILL.md`.
-
-**Ecosystem totals.** `node scripts/ecosystem.mjs` (`--blame` for survival): lines, commits, PRs, test cases, Claude-trailer share and
-churn across window-ml, the hub, the host and the forks, for any claim about how much is agent-written. `.claude/skills/ecosystem/SKILL.md`.
+**Vitals** (`node scripts/vitals.mjs`) about once a month, committed; keep `feat:`/`fix:` subject prefixes. **Ecosystem
+totals** (`node scripts/ecosystem.mjs`) for any claim about how much is agent-written.
 
 **RULE — AGENTS.md holds working rules and traps; implementation notes go to `docs/dev/`.** Before adding a
 paragraph here, ask whether someone NOT touching that code needs it. A trap is ONE line plus a pointer; a new
 subsystem gets a doc and a row in the table above.
 
-**RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current, WITHOUT asking.** A harness,
-driver or script you will reuse gets `.claude/skills/<name>/SKILL.md`, whose description is the mention every session
-sees, and its detail in `docs/dev/e2e-harness.md` or `docs/dev/working-in-the-repo.md`.
+**RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current, WITHOUT asking.** A reusable
+harness or script gets `.claude/skills/<name>/SKILL.md`, its detail in e2e-harness.md or working-in-the-repo.md.
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
-least monthly, read what a call carries the way `docs/dev/prompt-review.md` describes (panel, bench, debrief).
-Last review: **2026-10-14** (round 3: `python_exec`'s option texts; then the shadow/iframe edge cases). A review commit carries `Prompt-Review: <date>`; update the date here with it. `scripts/check-prompt-review.mjs` reminds.
+least monthly (`docs/dev/prompt-review.md`). Last review: **2026-10-14** (round 3: `python_exec`'s option texts; then
+the shadow/iframe edge cases). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
-**RULE — a complex analysis worth keeping goes in a notebook, not in a reply:** one that spans several files (bench
-sweeps, model comparisons) and is not a feature of a tool lives in `notebooks/<topic>/` as a `make-<name>.py` generator
-plus the executed `.ipynb`, its inputs pinned with `wmlnb.extract`, run with `node scripts/nb.mjs`. Prose cites it rather
-than pasting its tables. `docs/dev/notebooks.md`; the `notebooks` skill.
+**RULE — a complex analysis worth keeping goes in a notebook, not in a reply:** `notebooks/<topic>/`, run with
+`node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.
 
-**RULE — never pad model-facing text for alignment.** A model pays for every space. Single space or a delimiter;
-assert no run of two spaces (`tests/token-pipe.test.mjs`). Human-facing surfaces align freely.
+**RULE — never pad model-facing text for alignment.** A model pays for every space; assert no run of two spaces
+(`tests/token-pipe.test.mjs`). Human-facing surfaces align freely.
 
-- **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style `$`/`$$`.
-- **Document functions with JSDoc** (`/** … */`), not a plain `//` block; inline `//` is for logic inside a body.
-- **A FAILED build leaves `dist/` alone** (it builds into `dist.stage/`), so a silenced failed build looks like
-  a working one: never discard its stderr.
-- **A STALE bundle is CHECKED** (`scripts/check-dist-fresh.mjs`, the Playwright `globalSetup`); `npm run build:all`
-  builds every bundle. `E2E_DIST=<dir>` skips it, `E2E_STALE_OK=1` overrides it.
-- **Iterating? Run a GENRE: `npm run test:core`** (`node scripts/test.mjs core|panel|ext|chat|python|live`,
-  `--list`, `--timings`, `--files a b`). Four files on one prefix in `core` fail `--check-genres`. Run the full
-  `npm test` before you commit. `.claude/skills/test-genres/SKILL.md`.
-- **Tests: `npm test`** (Node ≥ 20, `node:test`) loads the real files into `node:vm` with mocked `chrome`; DOM tools
-  use `loadDomWorld(html)`. A new primitive gets a test in `tests/background.test.js` and `tests/relay.test.js`.
-  Real-CPython tests self-skip without `dist/pyodide/` (`npm run fetch-pyodide`).
-- **Several sessions at once? Each gets its own CLONE** as a sibling directory, with `.env` and `pyodide-wheels`
-  symlinked, `git config core.hooksPath .githooks` (it does not clone, and its absence is silent), and `npm ci`.
-  Never `git add -A` in a shared tree. The commands: `docs/dev/working-in-the-repo.md`.
-- **Talking to another session: `~/git/session-mail/README.md`.** If your harness can message a live session directly
-  (Claude Code: `ListAgents` + `SendMessage`), use it: the message alone for a short note, the mail file plus a message
-  naming it for anything longer. The file is the record; the message is the doorbell.
+- **Plain JS in docs/examples** (`document.querySelector`, never `$`/`$$`); **JSDoc** (`/** … */`) on functions.
+- **A FAILED build leaves `dist/` alone** (it builds into `dist.stage/`): never discard its stderr. A STALE bundle is
+  CHECKED (`scripts/check-dist-fresh.mjs`); `npm run build:all` builds every bundle.
+- **Iterating? Run a GENRE: `npm run test:core`** (the `test-genres` skill); run the full `npm test` before you commit.
+- **Tests: `npm test`** (`node:test`, real files in `node:vm` with mocked `chrome`). A new primitive gets a test in
+  `tests/background.test.js` and `tests/relay.test.js`.
+- **Several sessions at once? Each gets its own CLONE** as a sibling directory (`.env` and `pyodide-wheels`
+  symlinked, `git config core.hooksPath .githooks`, `npm ci`). Never `git add -A` in a shared tree.
 - **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
-  nothing unpushed. One you did not create (or are unsure of) is never removed without asking; `~/git/window-ml` and
-  `~/git/window-ml-hub` never. The checks: `docs/dev/working-in-the-repo.md`, "Cleaning up a clone".
-- **Four absences are silent:** `node_modules`, `pyodide-wheels/` (fails at run time as `No module named
-  'numpy'`), `.env` (`USE_ENV=1` dies on ENOENT), and the `wmlhub` binary (thirty hub tests SKIP; `npm run
-  fetch-hub`).
-- **Coverage: `npm run coverage`**, and `node scripts/coverage-lines.mjs <file>` for NEVER RUN vs BRANCH NOT TAKEN.
-  `.claude/skills/coverage/SKILL.md`.
-- **End-to-end: `npm run test:e2e`** (Playwright, built extension in real Chromium) only for what jsdom/`node:vm`
-  cannot represent; factor pure logic out into a fast `*.test.mjs` instead.
+  nothing unpushed. One you did not create is never removed without asking; `~/git/window-ml` and
+  `~/git/window-ml-hub` never.
+- **Four absences are silent:** `node_modules`, `pyodide-wheels/`, `.env`, and the `wmlhub` binary (`npm run fetch-hub`).
+- **Coverage: `npm run coverage`** (the `coverage` skill). **End-to-end** only for what jsdom/`node:vm` cannot
+  represent; factor pure logic out into a fast `*.test.mjs` instead.
 
 ## End-to-end & real-model testing
 
-`tests/e2e/` loads the BUILT extension in a real Chromium, headless by default (`E2E_HEADFUL=1` to watch). The
-backend is `fake-llm.mjs`, a scriptable OpenAI-shaped server, so the real pipeline runs deterministically; that is
-the CI gate. A real backend: `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`, or `USE_ENV=1`. The harness, the self-tools and
-every demo: `docs/dev/e2e-harness.md`.
+`npm run test:e2e` loads the BUILT extension in a real Chromium against `fake-llm.mjs`, a scriptable OpenAI-shaped
+server (the CI gate); a real backend via `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY` or `USE_ENV=1`. The harness, the
+self-tools and every demo: `docs/dev/e2e-harness.md`.
 
 - **RULE — a wait loop breaks on something visible while a step is COLLAPSED**, or it runs to its cap and passes
-  anyway. Wait for the RUN to finish (`fake.calls()` reached the script's length, no `.astep.tool.pending`).
-- **A spec sharing state across its tests** pins itself with `test.describe.configure({ mode: "default" })`; the
-  suite is `fullyParallel`.
-- **`@real-ok`** marks the only tests the nightly real-model job runs; tag one only if it guards its fake usage.
-- **RULE — a demo says what it is doing, on screen: `narrate(page, "…")`**, at every beat, and `narrateDone(page)`
-  immediately before holding the browser open.
-- **RULE — a demo about what happens INSIDE a run calls `openRunInSidebar(page)`**: the panel opens on the
-  sessions list, not the run.
-- **The self-tools** (observe, converse, panel, bench, probe, the live probes, the demos, …) each have a skill in
-  `.claude/skills/`, which every session is shown; what each does: `docs/dev/e2e-harness.md`.
+  anyway: wait for the RUN to finish (`fake.calls()` reached the script's length, no `.astep.tool.pending`).
+- **A spec sharing state across its tests** pins `test.describe.configure({ mode: "default" })`.
+- **`@real-ok`** marks the only tests the nightly real-model job runs; only one that guards its fake usage.
+- **RULE — a demo says what it is doing, on screen: `narrate(page, "…")`**, at every beat, and `narrateDone(page)` before holding.
+- **RULE — a demo about what happens INSIDE a run calls `openRunInSidebar(page)`.**
 
 ## Branches, PRs and CI
 
-Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at once, and the
-PR is what runs CI (e2e, the unit suite, real CPython), which a green local `npm test` is not.
+Work goes on a **branch and through a PR**, not straight onto main: the PR is what runs CI (e2e, the unit suite, real
+CPython), which a green local `npm test` is not. Why each of these: `docs/dev/working-in-the-repo.md`.
 
-- **RULE — label every PR by TOPIC when you open it** (`gh pr create --label @exec,@api`), every one that applies.
-  Topic labels start with `@`, which keeps them apart from GitHub's defaults: `@core` `@api` `@agent` `@exec`
-  `@python` `@ui` `@chat-page` `@mobile` `@hub` `@hub-compat` `@model-backend-compat` `@resource-panel` `@security`
-  `@docs` `@agent-skills` `@ci` `@lab` (anything under `src/lab/`: reviewed for the maths, not as product). What each means is its description (`gh label list`). A reviewer must not miss the
-  two `-compat` ones: the change needs a matching one in window-ml-hub, or in the forked Ollama/OpenWebUI. A missing
-  topic gets a new `@` label with a description, not a stretched old one.
-- **A PR that changes what the phone app does gets `run:android-flows`** (a trigger, not a topic): it runs the Maestro
-  demo flows on an emulator (`.github/workflows/android-flows.yml`, ~20 min), which no other check does. Skill: `phone`.
-- **A PR that conflicts with its base has NO checks at all.** If `gh run list` shows nothing for a pushed commit,
-  suspect this first.
-- **A CANCELLED check prints as `fail`.** Resolve the JOB conclusions before blaming a change; poll a run by ID.
-- **RULE — every GitHub post an agent makes says WHICH SESSION made it** (any harness: comment, review, inline remark,
-  PR body). `gh` posts under the owner's name, so without it a session takes another's comment for its own. End with
-  `> *Drafted by <harness> · work: <slug> · session <id8> · <model>*` and `<!-- agent-post: harness=… work=… session=<full
-  id> model=… -->`; the work slug is session-mail's name for your work. Not in commits. `docs/dev/working-in-the-repo.md`.
-- **Merge your own PR with `node scripts/merge-when-green.mjs <pr> --wait --merge --session <id>`**: it applies the standing rule and
-  refuses while a worktree on the branch holds bench results or uncommitted files (`--keep-bench`). `merge-when-green` skill.
-- **The `ci` skill is the playbook** (open, watch in the background, read only failing logs, the known-bad list);
-  **the `background-work` skill** is how to run anything slow without blocking on it.
-
-Why each of these, and the concurrency-group trap on main: `docs/dev/working-in-the-repo.md`.
+- **RULE — label every PR by TOPIC when you open it** (`gh pr create --label @exec,@api`), every one that applies:
+  `@core` `@api` `@agent` `@exec` `@python` `@ui` `@chat-page` `@mobile` `@hub` `@hub-compat` `@model-backend-compat`
+  `@resource-panel` `@security` `@docs` `@agent-skills` `@ci` `@lab`. What each means is its description (`gh label
+  list`). A reviewer must not miss the two `-compat` ones: the change needs a matching one in window-ml-hub, or in
+  the forked Ollama/OpenWebUI. A missing topic gets a new `@` label with a description, not a stretched old one.
+- **A PR that changes what the phone app does gets `run:android-flows`** (a trigger, not a topic). The `phone` skill.
+- **A PR that conflicts with its base has NO checks at all**; **a CANCELLED check prints as `fail`**.
+- **RULE — every GitHub post an agent makes says WHICH SESSION made it** (comment, review, inline remark, PR body):
+  end with `> *Drafted by <harness> · work: <slug> · session <id8> · <model>*` and `<!-- agent-post: harness=… work=…
+  session=<full id> model=… -->`; the work slug is session-mail's name for your work. Not in commits.
+- **Merge your own PR with `node scripts/merge-when-green.mjs <pr> --wait --merge --session <id>`** (the skill).
+- **The `ci` skill is the playbook**; **the `background-work` skill** runs anything slow without blocking on it.
 
 ## Forked backends (patched servers)
 
-Most of this runs against stock Ollama + stock OpenWebUI; several capabilities need `parawanderer/ollama` (branch
-`slop`) or `parawanderer/open-webui` (branch `ml/tool-execute-api`). Every one is optional: absent means "not
-reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel field is broken.** Request hints
-(`hint`) go through `wireHint` (contract-run.ts); **an absent `use` means unknown, never guess one.**
+Several capabilities need `parawanderer/ollama` (branch `slop`) or `parawanderer/open-webui` (branch
+`ml/tool-execute-api`); each is optional and absent means "not reported". **Read `docs/FORKED-BACKENDS.md` before
+assuming a resource-panel field is broken.** Hints go through `wireHint`; **an absent `use` means unknown, never guess.**
 
 ## Security invariants (don't regress these)
 
-- **A page uses `window.ml` only once its ORIGIN is approved**: the router refuses every page-started type
-  (`page-relay.ts`) from an unapproved origin, reading `sender`, never anything the page says; a run the USER starts is
-  built by the worker and works on any page. → site-access.md
-
-- **An error's text never carries the server URL, the API key or the model filter to a page or the model**: every
-  answer to a page-started message, the stream port's error, and every tool result a worker-hosted run's model reads
-  go through `sw-scrub.ts`; only extension pages and the run log's `key` keep the raw text. → site-access.md
-
-- **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`, or
-  the page is not approved (`exec-routing.ts`): never hand either to the page's main world. With neither isolated
-  world available, `ml.current` and `ml.sh` and an unapproved page are REFUSED; a pointer script on an approved page
-  falls back to the main world with a note (owner's decision). → site-access.md
-
-- **Config overrides (URL/key) are accepted only from the popup.** Page-relayed
-  messages have `sender.tab` set; `background.js` strips overrides when it's set,
-  so a hostile page can't repoint the saved API key at another host.
-- Pages can change only the **model**, and `setModel` validates it against the
-  server list.
-- **`modelFilter`** (regex whitelist) is enforced on the RESOLVED model in `prepareRequest` and `setModel`, filters
-  `LIST_MODELS`, is NOT in the public config, and an invalid regex fails OPEN. `modelFilterAllows` is the single
-  source. → architecture.md
-- The background's cross-origin fetches rely on `<all_urls>`, which "On click" site access withholds for
+- **A page uses `window.ml` only once its ORIGIN is approved**: the router refuses every page-started type from an
+  unapproved origin, reading `sender`, never anything the page says; a run the USER starts works on any page. → site-access.md
+- **An error's text never carries the server URL, the API key or the model filter to a page or the model**: it goes
+  through `sw-scrub.ts`; only extension pages and the run log's `key` keep the raw text. → site-access.md
+- **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`,
+  or the page is not approved (`exec-routing.ts`). With no isolated world, `ml.current`, `ml.sh` and an unapproved
+  page are REFUSED; a pointer script on an approved page falls back to the main world with a note. → site-access.md
+- **Config overrides (URL/key) are accepted only from the popup**: page-relayed messages have `sender.tab` set and
+  the background strips overrides then, so a hostile page can't repoint the saved API key at another host.
+- **Pages can change only the model**, and `setModel` validates it against the server list.
+- **`modelFilter`** (regex whitelist) is enforced on the RESOLVED model, filters `LIST_MODELS`, is NOT in the public
+  config, and an invalid regex fails OPEN; `modelFilterAllows` is the single source. → architecture.md
+- **The background's cross-origin fetches rely on `<all_urls>`**, which "On click" site access withholds for
   third-party hosts: a known limitation, not a bug.
-- **The page you are ON is free in every fetch mode; a local file is never read** (`isCurrentPage`, dom.ts).
-  `ml.fetch` holds the rule; the background refuses every non-http(s) URL. → wire-and-fetch.md
-- **A privileged/credentialed background fetch MUST validate its target host —
-  the client-side approval gate does NOT protect it.** The agent approval lives
-  in `injected.ts`, but raw messages (`FETCH_SHEET`, …) are reachable by any page
-  through the content-script relay, so a hostile page can call the handler
-  directly. `FETCH_SHEET` fetches `credentials:"include"` (the user's cookies),
-  so it's hard-locked to the `docs.google.com/.../export?` shape (`SHEET_URL_OK`)
-  — without it, it's a cookie-authenticated "read any URL" exfil primitive.
-  `FETCH_IMAGE_B64` names `credentials:"omit"`: a worker fetch's default sends the cookies of every host the
-  extension reaches. It reads only a public host's raster image (`sw-image-fetch.ts`).
+- **The page you are ON is free in every fetch mode; a local file is never read** (`isCurrentPage`); the background
+  refuses every non-http(s) URL. → wire-and-fetch.md
+- **A privileged/credentialed background fetch MUST validate its target host; the client-side approval gate does NOT
+  protect it.** `FETCH_SHEET` is hard-locked to the `docs.google.com/.../export?` shape (`SHEET_URL_OK`);
+  `FETCH_IMAGE_B64` sends `credentials:"omit"` and reads only a public host's raster image. → site-access.md

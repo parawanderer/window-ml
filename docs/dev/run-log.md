@@ -195,7 +195,7 @@ own run's records, with no approval of their own. What holds the two hazards thi
 The state inspector shows `run.log` as the model reads it (`ml.current.log`); the Execution log panel is the person's
 full view, `key` included. `DUMP_RUN_LOG` stays extension pages only: the ring holds every run's records.
 
-## The trap this log exists for
+## Traps: the one this log exists for
 
 - **The execution log is the OTHER half of that trap, and it is NOT the housekeeping log.** What the machinery did
   under a run — the discarded tab reloaded, the CDP attach refused, the tab re-filed under a new id — goes to

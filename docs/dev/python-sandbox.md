@@ -428,3 +428,10 @@ transport, on the server's per-call suspension. Two rules the wiring must keep: 
 reach it through the factory's closure, so a JsProxy there would be one in the namespace), and `codec` holds the
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
+
+## Traps
+
+- **Each call is stateless.**
+- **`readonly` mode hardens the sandbox and may auto-approve; `full` always asks.**
+- **The wheels (`pyodide-wheels/`) are gitignored, and a missing set fails only at run time**, as
+  `No module named 'numpy'`.
