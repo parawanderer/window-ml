@@ -125,9 +125,11 @@ done-mismatch test already held on main through #813. K3's audit is closed.
 **K3c** (2026-10-19 14:07Z, the red team's escape: the policy layer counted any in-root write as inside `B`, so
 `git diff --output=.envrc` ran free) is window-ml #788 (merged 2026-10-19, a6826b0), lane 4's, ahead of K3b: the top-level names of a root are
 outside `B` (`EFFECTS.md`, #783), `write-names` is a manifest word projecting onto `write` (#786), the red team's
-acceptance tests come first unchanged; flaky-3f reviews, never the red team (rule 10). Host follow-up, unassigned: the
-host's manifest reader (`ProgramEffect`, a closed enum) needs a `WriteNames` variant at the next vector sync; until
-then the sync fails closed on the new word, which is the right failure.
+acceptance tests come first unchanged; flaky-3f reviews, never the red team (rule 10). Host follow-up, lane 4's since
+2026-10-20: the host's manifest reader (`ProgramEffect`, a closed enum) needs a `WriteNames` variant at the next vector
+sync; until then the sync fails closed on the new word, which is the right failure. Also lane 4's (2026-10-20): a
+transcript line for an `ml.sh` call that ran under a policy or the default, in the sidebar and both exports, with the
+covering policy and the applied envelope in the card's words; then its setsid residual.
 
 **Added 2026-10-15 from lane 1's root A findings: J. whole text captures in the value store.** The run's pointer store
 keeps only the text the model saw (`fetch_url` stores the first few thousand characters of a body), and only TABLES are
