@@ -192,12 +192,21 @@ listed as remaining is DONE unless named below.
   natively no gain (2026-10-20, an ordering effect), so open for the wasm number only; the code sits on the fork's
   `ml/wasm32-wrappers-per-run`. Also found 2026-10-20: the native double count (the cap refused at half its number
   under pymalloc), fixed in parawanderer/cpython#3 (merged 2026-10-20, 7e400fbc), lane 4 verified it natively; no Pyodide rebuild. A hook on pymalloc before the first run brings the
-  double count back, listed as a known limit that errs toward refusing (`PYTHON_DIALECT.md`).
+  double count back, listed as a known limit that errs toward refusing (`PYTHON_DIALECT.md`); lane 3's fix for it, reading
+  the startup choice when the name is hidden, is parawanderer/cpython#4 (open 2026-10-20, 136 native tests; lane 4 reviews;
+  the limit leaves the spec when it merges). Per-run wrapping stays open.
+  Lane 7 is closed: `mode` removed, #820 (merged 2026-10-19), [`LANE_7_RESULT.md`](LANE_7_RESULT.md) (#839). Lane 8 is
+  closed: the phone pairs a desktop runtime, #814 and #816 (merged 2026-10-19), [`LANE_8_RESULT.md`](LANE_8_RESULT.md) (#840).
+  Lane 9 is closed: a call that asks says why when the policy that covered it is gone, #818 (merged 2026-10-20, 60d0c704;
+  lane 4 reviewed; a red-team pass of 23 tests before merge, six failing first, each fixed in the PR: a page-forged
+  `askWhy` on its own card, control and line-separator characters in labels, an unfiltered card label, a cross-origin
+  archive-note consume; the resume note is a system message marked as the extension's), [`LANE_9_RESULT.md`](LANE_9_RESULT.md).
+  Lane 6: items 2 and 3 are #822 (merged 2026-10-20, 4ca4201d), item 1 (the one shared loader patch with a per-cell lookup)
+  is #830 (merged 2026-10-20, c789e647), item 4 was already closed by #772; the generalist reviewed both; its result file is next.
   Unassigned from lane 8's design (2026-10-19): a hub role or offer flag telling a desktop host from a browser runtime
   (`@hub-compat`; the phone's `mayPair` default of off makes it a convenience, not a safety need).
-- **Unassigned**: the host's hub transport is no longer; left are the typed-node policy tree (the derived breadth),
-  telling a run that relied on a removed policy why its next call asks, lane 1's four follow-ups above, and the phone's
-  UX for pairing a desktop runtime (chat-hub topic).
+- **Unassigned**: the host's hub transport is no longer; left is the typed-node policy tree (the derived breadth). Lanes
+  6 to 9 took the rest of the old list (2026-10-19 to 2026-10-20, above).
 
 ## The lanes
 
