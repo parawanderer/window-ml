@@ -261,11 +261,11 @@ test("property: a real $secret handle is refused at every wrap shape, and its me
     assert.equal((await serveWireCall(req("use", [{ k: 1 }]), ctxOf({ use: { run: () => 1 } }))).value, 1, "positive control");
 });
 
-test("property FAILS TODAY: an own __proto__ key hides a handle from handlesIn and pollutes the copy's prototype", async () => {
-    // toWire's `out[k] = …` invokes the __proto__ setter for k === "__proto__", so the copy loses the key, its
-    // [[Prototype]] becomes the attacker value (copied.$secret === "gh" via inheritance), handlesIn sees no own
-    // $secret, and the member runs. The member's own copy is clean (fromWire copies own keys only) — the break is
-    // the missed refusal and the attacker-controlled prototype on the wire-form args object.
+test("property: an own __proto__ key cannot hide a handle from handlesIn or put one on the copy's prototype", async () => {
+    // Before #757: toWire's `out[k] = …` invoked the __proto__ setter for k === "__proto__", so the copy lost the
+    // key, its [[Prototype]] became the attacker value (copied.$secret === "gh" via inheritance), handlesIn saw no
+    // own $secret, and the member ran. The member's own copy was clean (fromWire copies own keys only); the break
+    // was the missed refusal and the attacker-controlled prototype on the wire-form args object.
     const v = JSON.parse('{"__proto__": {"$secret": "gh"}, "k": 1}');
     const ran = [];
     const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
@@ -277,15 +277,29 @@ test("property FAILS TODAY: an own __proto__ key hides a handle from handlesIn a
     assert.equal(copy[0].$secret, undefined, "no inherited $secret on the copy");
 });
 
-test("property FAILS TODAY: a handle three wrap levels down escapes handlesIn", async () => {
-    // handlesIn's wrap branch looks at the values inside ONE `{ "$": {…} }` and, for a nested wrap, again one
-    // level; at three `$` levels the innermost `$secret` is never reached. A facade that wraps tag-shaped data at
-    // every level can put a real handle there.
+test("property: a handle three wrap levels down is refused by handlesIn like any other", async () => {
+    // Before #757: handlesIn's wrap branch looked at the values inside ONE `{ "$": {…} }` and, for a nested wrap,
+    // again one level; at three `$` levels the innermost `$secret` was never reached. A facade that wraps
+    // tag-shaped data at every level can put a real handle there.
     const v = { $: { $: { $: { $secret: "gh" } } } };
     const ran = [];
     const a = await serveWireCall(req("use", [v]), ctxOf({ use: { run: (...x) => { ran.push(x); return 1; } } }));
     assert.equal(a.error?.code, "SecretHandle", "a handle at any wrapping depth is still a handle");
     assert.deepEqual(ran, []);
+});
+
+// --- handlesIn is not exported: it has no depth bound of its own ---
+
+test("handlesIn stays unexported — it has no depth bound of its own and is only safe behind toWire's", async () => {
+    // serveWireCall copies through toWire first, which refuses nesting past MAX_DEPTH and cycles, so the
+    // search only ever walks a finite tree. handlesIn itself recurses with no bound of its own: exported and
+    // pointed at untrusted input, a deep nest would blow the stack before any refusal. Pin it unexported;
+    // a caller that wants it out gives it its own bound and its own test first. (Lane 1 left this as "should
+    // it ever be exported"; no use for exporting it appeared, so this is the pin, not the bound.)
+    const mod = await import("../src/sw/ml-wire-serve.ts");
+    assert.equal(Object.prototype.hasOwnProperty.call(mod, "handlesIn"), false,
+        "handlesIn is not an export of ml-wire-serve.ts");
+    assert.equal(mod.handlesIn, undefined);
 });
 
 // --- after the one-level unwrap, data is data ---
