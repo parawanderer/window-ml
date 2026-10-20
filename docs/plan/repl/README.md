@@ -185,7 +185,7 @@ listed as remaining is DONE unless named below.
 - **Round 3 (opened 2026-10-19, [`ROUND_3.md`](ROUND_3.md))**: five lanes on this list: 5 the Pyodide build, 6 lane 1's four
   follow-ups, 7 `mode` removal, 8 the phone's pairing UX, 9 telling a run why its next call asks.
   Lane 5's build is window-ml #835 (2026-10-19; merged 2026-10-20 as b2bea587 after the janitor sanctioned one e2e rerun
-  on the annotate-diff flake that fails on main too, the janitor's fix): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
+  on the annotate-diff flake that fails on main too; the janitor's fix is #887, 2026-10-20: the approver outlived the wait): the artefact lives as a RELEASE on the fork, `parawanderer/cpython`
   tag `pyodide-314.0.3-ml-8f6a50ab` (Shane's decision, 2026-10-19, after the fetch-hub precedent), pinned by tag, URL and
   sha256 in the consumer's dist manifest (#835) and checked before unpack. Measured: tarball 6.4 MB; an incremental
   `make all-but-packages` 47 s on an M4, a full build from a clean tree 448 s. The build is NOT reproducible (lane 5,
