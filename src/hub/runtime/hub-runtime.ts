@@ -369,9 +369,16 @@ export class HubRuntime {
         const cached = this.renewals.get(from);
         if (cached && t - cached.at < RENEW_COOLDOWN_MS) return { ok: true, data: cached.data } as CommandResult<CommandType>;
 
+        const own = CertificateBody.decode(this.opts.membership.chain[0].body);
+        // Refused just BEFORE signing, after the answers that sign nothing (expired, not due, cooldown), which every
+        // runtime gives alike: one paired without `may_pair` would sign a certificate no verifier accepts ("an
+        // intermediate may not pair", keys.ts) and answer the asker with that sentence, which nobody can act on. The
+        // phone pairs runtimes without it by default (#815), so this is the common case, not an edge.
+        if (!own.mayPair)
+            return fail("unsupported", "this runtime was paired without permission to pair devices, so it cannot renew another device's certificate; renew it from a browser paired with that permission, or pair the device again");
         // `OutlivesIssuer`: a renewal may not outlast the runtime that signed it, so a runtime near its own expiry
         // hands out shorter windows until the root renews IT. Visible to nobody, which is the point.
-        const mine = CertificateBody.decode(this.opts.membership.chain[0].body).notAfterMs;
+        const mine = own.notAfterMs;
         const notAfterMs = Math.min(t - CLOCK_SKEW_MS + MAX_CERTIFICATE_MS, mine);
         if (notAfterMs <= t) return fail("conflict", "this runtime's own certificate is expiring; renew it from the root device first");
         let renewed: Certificate[];
