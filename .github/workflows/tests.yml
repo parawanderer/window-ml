@@ -235,8 +235,10 @@ jobs:
         id: pyocache
         uses: actions/cache@v6
         with:
-          path: pyodide-wheels
-          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts') }}
+          path: |
+            pyodide-wheels
+            pyodide-core
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
       - if: (steps.pyocache.outputs.cache-hit != 'true') && env.CODE == 'true'
         run: npm run fetch-pyodide
       - if: env.CODE == 'true'
@@ -391,8 +393,10 @@ jobs:
         id: pyocache
         uses: actions/cache@v6
         with:
-          path: pyodide-wheels
-          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts') }}
+          path: |
+            pyodide-wheels
+            pyodide-core
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       - run: npm run build
@@ -489,8 +493,10 @@ jobs:
         id: pyocache
         uses: actions/cache@v6
         with:
-          path: pyodide-wheels
-          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts') }}
+          path: |
+            pyodide-wheels
+            pyodide-core
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       # The pinned hub release, for the specs that pair a client to this browser through a real `wmlhub`

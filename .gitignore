@@ -29,6 +29,7 @@ tmp/
 tools/annotate-preview.html
 tools/legend-notebook.html
 pyodide-wheels
+pyodide-core
 
 # Playwright E2E output
 test-results/

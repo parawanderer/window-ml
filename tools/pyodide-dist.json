@@ -1,0 +1,27 @@
+{
+  "pyodide": "314.0.3",
+  "emscripten": "5.0.3",
+  "abi": "2026_0",
+  "python": "3.14.2",
+  "pythonArchiveSha256": "c609e078adab90e2c6bacb6afafacd5eaf60cd94cf670f1e159565725fcd448d",
+  "cpython": {
+    "repo": "https://github.com/parawanderer/cpython",
+    "base": "v3.14.2",
+    "branch": "ml/restricted-mode",
+    "commit": "de165bb7f87eb9bbfe23f5b8a3095e58e712eaa1"
+  },
+  "patches": {
+    "startNumber": 10,
+    "exclude": [
+      "Tools/restricted"
+    ],
+    "count": 12
+  },
+  "artefact": {
+    "host": "github release on the fork (parawanderer/cpython), Shane's decision 2026-10-19; the consumer pins tag and sha256 and verifies before unpacking",
+    "tag": "pyodide-314.0.3-ml-de165bb7",
+    "name": "pyodide-restricted-314.0.3-de165bb7",
+    "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-ml-de165bb7/pyodide-restricted-314.0.3-de165bb7.tar.gz",
+    "sha256": "37b55414a985f2b8a60806e2680863ab6170bdb07b59c146391b20f627745e1d"
+  }
+}
