@@ -27,7 +27,7 @@ import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/serv
  *  that slice is listed here, the test asserts the attack works. Flip an entry in the change that lands the slice.
  *  `slice2stream` is slice 2's first part (attacks 15 and 16: the run's events and the extension's own iframe), which
  *  landed before the rest. */
-const OPEN = { slice0: false, slice1: false, slice2stream: false, slice2: false, slice4: true };
+const OPEN = { slice0: false, slice1: false, slice2stream: false, slice2: false, slice4: true, mmdFrame: true };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {
@@ -1345,6 +1345,100 @@ test.describe("@security attack 19: the start card", () => {
             await panel.goto(`chrome-extension://${ext.extensionId}/popup.html`);
             await panel.evaluate((id) => chrome.runtime.sendMessage({ type: "SET_START_APPROVAL", payload: { requestId: id, decision: "allow" } }), asks[0].requestId);
             await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
+        } finally { await close(); }
+    });
+});
+
+test.describe("@security attack 20: the diagram sandbox is not a render oracle", () => {
+    test("a page that frames mermaid.html cannot drive it, though it is its parent", async () => {
+        // src/mermaid/mermaid.html is a web-accessible resource (manifest.json WAR, matches `<all_urls>`), so any
+        // page may embed it. The frame's only asker check is `e.source !== parent` (mermaid-frame.ts) — and a page
+        // that embeds it IS its parent. The page then gets a Mermaid render oracle through the extension, and the
+        // answer is posted back with targetOrigin "*". Positive control in the same test: the frame really did load
+        // and really does answer its parent ("ready"), so a silent no-answer below cannot be a broken setup.
+        const { site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test", "/attack-20"));
+            const out = await page.evaluate(async (id) => {
+                const f = document.createElement("iframe");
+                f.src = `chrome-extension://${id}/mermaid.html`;
+                f.style.cssText = "position:fixed;left:-10000px;width:800px;height:600px";
+                document.body.append(f);
+                const heard = [];
+                const waitReady = new Promise((resolve) => {
+                    const t = setTimeout(() => resolve("timeout"), 8000);
+                    addEventListener("message", (e) => {
+                        heard.push({ sourceIsFrame: e.source === f.contentWindow, data: e.data });
+                        if (e.source === f.contentWindow && e.data?.mmd === "ready") { clearTimeout(t); resolve("ready"); }
+                    });
+                });
+                const ready = await waitReady;
+                if (ready !== "ready") return { ready, heard, rendered: "no-frame" };
+                // The page is `parent`, so mermaid-frame.ts's `e.source !== parent` passes. Ask for a drawing.
+                const done = new Promise((resolve) => {
+                    const t = setTimeout(() => resolve("no-answer"), 8000);
+                    addEventListener("message", (e) => {
+                        if (e.source === f.contentWindow && e.data?.mmd === "done") { clearTimeout(t); resolve(e.data); }
+                    });
+                });
+                f.contentWindow.postMessage({ mmd: "render", id: 1, src: "graph TD\n  A[Ask] --> B[Draw]", dark: false }, "*");
+                const rendered = await done;
+                return { ready, heard, rendered };
+            }, ext.extensionId);
+
+            // Positive control: the frame loaded from the page and announced itself TO THE PAGE, so the page is its
+            // parent and the channel works. Without this the test would pass on a broken fixture.
+            expect(out.ready, JSON.stringify(out)).toBe("ready");
+            expect(out.heard.some((h) => h.data?.mmd === "ready" && h.sourceIsFrame), "the frame answered the page that framed it").toBe(true);
+
+            // Defended: a drawing must not come back to a window that merely framed the WAR page.
+            if (holeOpen("mmdFrame", "any page may frame mermaid.html and render diagrams through the extension")) {
+                expect(out.rendered, JSON.stringify(out.rendered)).toHaveProperty("svg");
+                expect(String(out.rendered.svg)).toContain("<svg");
+                return;
+            }
+            expect(out.rendered, JSON.stringify(out.rendered)).toBe("no-answer");
+        } finally { await close(); }
+    });
+
+    test("a page that framed mermaid.html cannot buy drawings at scale", async () => {
+        // The same channel, spent: N distinct sources must not become N Mermaid parses in the extension's process.
+        // Positive control: one request does reach the frame (ready was seen above; here the count of "done" answers
+        // is what is bounded).
+        const { site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test", "/attack-20-cost"));
+            const out = await page.evaluate(async (id) => {
+                const f = document.createElement("iframe");
+                f.src = `chrome-extension://${id}/mermaid.html`;
+                f.style.cssText = "position:fixed;left:-10000px;width:800px;height:600px";
+                document.body.append(f);
+                await new Promise((resolve) => {
+                    const t = setTimeout(resolve, 8000);
+                    addEventListener("message", (e) => {
+                        if (e.source === f.contentWindow && e.data?.mmd === "ready") { clearTimeout(t); resolve(undefined); }
+                    });
+                });
+                const N = 40;
+                const answers = [];
+                addEventListener("message", (e) => {
+                    if (e.source === f.contentWindow && e.data?.mmd === "done") answers.push(e.data);
+                });
+                for (let i = 0; i < N; i++) {
+                    f.contentWindow.postMessage({ mmd: "render", id: 100 + i, src: `graph TD\n  A${i}[n] --> B${i}[m]`, dark: false }, "*");
+                }
+                await new Promise((r) => setTimeout(r, 6000));
+                return { asked: N, got: answers.length };
+            }, ext.extensionId);
+
+            // Positive control: the asks are real (the frame is alive and listening).
+            expect(out.asked).toBe(40);
+            if (holeOpen("mmdFrame", "unbounded distinct renders through the framed sandbox")) {
+                expect(out.got, `only ${out.got}/${out.asked} answered — a bound, not the open flood`).toBe(40);
+                return;
+            }
+            // Defended: a budget on distinct draws; one is enough to prove the channel, 40 must not all land.
+            expect(out.got, `${out.got} distinct draws for one page's 40 asks`).toBeLessThan(40);
         } finally { await close(); }
     });
 });
