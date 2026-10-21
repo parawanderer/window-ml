@@ -165,10 +165,41 @@ Two things deliberately not added from that day: peer messaging as a general fac
 one obligation, and point-to-point was enough), and any tool that merges for a peer (each time, the person's hand was
 the right answer; see "the human is an editor" above).
 
+## From 2026-10-21: a session's state is a fact the harness computes, never a word the model writes
+
+Added 2026-10-21 by the same coordinator session, after a morning in which the peer listing's `busy`/`idle`/`waiting`
+was the only state visible and was wrong or empty each time it mattered. Shane's ruling the same day: this is built in
+window.ml, not patched into the commercial tool, since window.ml is where the coordination moves once it is finished.
+
+The three incidents, each a state the listing could not express:
+
+- **"waiting" said nothing.** The janitor sat in `waiting` for an hour after an offer was sent to it. From outside that
+  was any of three things: the message held for the person's approval (a different permission mode), a permission
+  prompt on a tool it had already started, or a question it had asked the person. The coordinator told the person to
+  go and look, which is the system failing at the one thing it is for.
+- **A false "done" that a state would have made impossible.** Lane 3 reported a fork branch deleted, then corrected
+  itself: its own permission check had refused the push. A state of "blocked on approval: `git push --delete`" makes
+  the first report unwritable and the correction unnecessary.
+- **Silence meant nothing.** A send promises a notice when the receiver holds or refuses the message. None came, and
+  the receiver had not read it. So the absence of a notice does not distinguish "read and working" from "never seen",
+  and the sender cannot act on it.
+
+The primitive: **the one line of "what it is doing" in step 1 below is a computed state, not free text.** One of
+`running`, `blocked: permission` (the tool and one line of the call), `blocked: question` (to the person), `holding
+message from <slug> since <time>`, `idle since <time>`, `exited`; beside it, per message, a delivery receipt
+(`held`, `read by the model at <time>`, `refused`) that the sender queries, so silence is never a signal. Every value
+is produced by the harness at the moment it happens (a permission gate opening, a turn ending, a message dequeued) and
+none is written by the model, so it carries no injection surface and needs no approval to read.
+
+The transcript is a different thing and stays out of this. The last message a session wrote is model text, an injection
+surface for whoever reads it across sessions; the pending message is one the sender wrote and gains nothing by reading
+back. Metadata about it (who, when, read or not) is enough. If the content is ever shown across sessions it is behind
+the person's approval and rendered as data, and it is not built first.
+
 ## What to build first
 
-1. **Identity + the table + the read** — an agent declares a name, a session hash it already has, and one line of
-   what it is doing. `ml.inbox` is a `TableLike` in the read-only dialect. No sending yet: this alone replaces
+1. **Identity + the table + the read** — an agent declares a name, a session hash it already has, and its STATE
+   (the computed line above, 2026-10-21; never free text). `ml.inbox` is a `TableLike` in the read-only dialect. No sending yet: this alone replaces
    "who owns this?" with a query.
 2. **Claims**, with leases and git verification. The piece that removes a human broadcast.
 3. **Send, with topics and the unrouted queue** wired to the attention inbox.
