@@ -284,6 +284,34 @@ test("keepBench adds a column the main clone's older scoreboard lacks, keeping t
     assert.deepEqual(rows, [{ run: "a", shown: null }, { run: "b", shown: "h1" }]);
 });
 
+test("keepBench makes a table the main clone lacks with its keys, so its rows get ids a push sends and are not doubled", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const { SPEND_SCHEMA } = await import("../tests/e2e/bench/spend.mjs");
+    const wt = mkdtempSync(path.join(os.tmpdir(), "mwg-wt-")), main = mkdtempSync(path.join(os.tmpdir(), "mwg-main-"));
+    const B = "tests/e2e/artifacts/bench";
+    for (const d of [wt, main]) mkdirSync(path.join(d, B), { recursive: true });
+    const old = new DatabaseSync(path.join(main, B, "scores.sqlite"));   // a scoreboard from before the bench logged calls
+    old.exec("CREATE TABLE runs (id INTEGER PRIMARY KEY, run TEXT NOT NULL UNIQUE)");
+    old.close();
+    const worktreeWith = (calls, index) => {
+        mkdirSync(path.join(wt, B), { recursive: true });
+        const x = new DatabaseSync(path.join(wt, B, "scores.sqlite"));
+        x.exec(SPEND_SCHEMA);
+        if (index) x.exec("CREATE INDEX calls_model ON calls (model)");
+        for (const c of calls) x.prepare("INSERT INTO calls (run, call, kind, usage) VALUES ('r', ?, 'turn', '{}')").run(c);
+        x.close();
+    };
+
+    worktreeWith([0, 1], true);
+    await keepBench(wt, main, diskOnly(wt, ""));
+    worktreeWith([0]);   // a second worktree holding a call the main clone already has
+    await keepBench(wt, main, diskOnly(wt, ""));
+    const m = new DatabaseSync(path.join(main, B, "scores.sqlite"));
+    assert.deepEqual(m.prepare("SELECT id, call FROM calls ORDER BY call").all().map((r) => ({ ...r })), [{ id: 1, call: 0 }, { id: 2, call: 1 }]);
+    assert.match(m.prepare("SELECT sql FROM sqlite_master WHERE name = 'calls'").get().sql, /id INTEGER PRIMARY KEY[\s\S]*UNIQUE \(run, call\)/);
+    assert.ok(m.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'calls_model'").get(), "its indexes come too");
+});
+
 // --- the pinned script: main's version judges the merge, never the branch's ---
 // A PR that edits this script would otherwise be judged by its own edit. The script reads main's copy of itself and
 // its local imports, and runs that copy whenever the local one differs.
