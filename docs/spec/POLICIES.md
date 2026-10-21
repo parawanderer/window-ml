@@ -248,7 +248,20 @@ found one source that also occurs over `fetch`). That number does not decide whe
 tree becomes the default; the one that does is measured on policies MODELS PROPOSE, which do not exist yet. So the order
 is: the LIFTER first (a syntactic recogniser over the dialect's AST that turns a source which fits the fragment into a
 tree, small, the first code either way), then a bench task per consumer that asks the panel to propose a policy for a
-described need, fed through the lifter, and the covered fraction of THAT corpus is the number. The task asks for the
+described need, fed through the lifter, and the covered fraction of THAT corpus is the number. MEASURED 2026-10-21 (lane
+11, #934 at b8030ae8, 15 models, one answer per cell, $0.58; the report `tests/e2e/panel/policy-proposals.md`, the
+prediction written before the run): of the answers that gave a policy, the lifter covers 33 of 52 on `fetch` (63%; 83%
+leaving out the small local models' format failures) and 24 of 53 on `sh` (45%; 57%), against the predicted 80-95 and
+55-75: both BELOW. The spread between consumers is larger than between models. On `fetch` the fragment selects for
+correct policies (97% right when lifted, 4 of 7 right when a well-formed answer stayed code); on `sh` it does not (63%
+against 67%), and the `sh` misses are the ones predicted plus a number on `repoConfigRunsCode`, a const that is not a
+literal and a prefix that does not end at a separator. What the number decides: at 63 and 45 the tree is not the only
+form a policy takes, so code policies stay and the tree is the DESCRIBED form of the ones that lift; whether it is the
+default form a card leads with is still Shane's, on this number. One fail-open in the corpus, the finding to lead with:
+an ALLOW written as `!c.repoConfigRunsCode` fires when the fact is `null`, unknown (2 of 15 models on S3). RULED here,
+narrow beats wide: a fact that is `null` is unknown, and an ALLOW over an unknown never fires, which is the deciding
+layer's rule, not something a model is asked to remember; lane 11's follow-up PR carries the lifter's and the realm's
+side of it, with a before-and-after `fetch` rerun. The task asks for the
 policy as TEXT in the model's answer, for both consumers, so it needs no tool and nothing reaches a person: the number
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and
