@@ -4,8 +4,9 @@ for the full probe #9 ships and the changed-top-only variant it rejected (window
     node scripts/nb.mjs make notebooks/python-dialect/verify-cost/verify-cost.ipynb
 
 The cells are written here; edit this file, not the notebook. The inputs are the raw rounds under data/, committed as
-taken: data/native-*.jsonl (native_bench.py's earlier form, one line per process and shape) and data/wasm-rounds.json
-(drive.mjs, every rep). Nothing is extracted from a gitignored store, so there is no NB_REFRESH.
+taken: data/native-*.jsonl (native_bench.py's earlier form, one line per process and shape) and data/wasm-rounds-*.json
+(drive.mjs, every rep: `trial` with a core built from #9's branch commit before the merge, `release` with #9's released
+core; the trial rows stay beside the release rows). Nothing is extracted from a gitignored store, so no NB_REFRESH.
 """
 
 from pathlib import Path
@@ -24,7 +25,9 @@ Fork #9 (parawanderer/cpython) runs the memory cap's hook check (`mem_verify`, t
 an approved call into C returns, so a leaf that drops the hook mid-run cannot leave the cell uncounted. #9 chose the
 FULL probe over a variant that probes only when some domain's top allocator changed (`lab/mem-recheck-gate`), on native
 numbers. Under wasm32 an indirect call is a larger share of a tight loop, so the trade may read differently; this
-notebook keeps the rounds so it can be revisited.
+notebook keeps the rounds so it can be revisited. Ruled 2026-10-21 (repl-specs): the full probe stands, since the gate
+is a proxy for "ours is in the chain"; a narrower split (the full probe only after a call that is not one of CPython's
+own builtins) is Shane's to take or not.
 
 Shapes (`shapes.py`): `trivial` (a `return 1` run: the entry, which the fix should not move), `unlifted_c` (200k `len()`
 calls), `lifted_leaf` (200k calls of a lifted host leaf), `py_func` (200k calls of the cell's own def: not checked, the
@@ -33,7 +36,6 @@ control for the call path). A shape's figure for one process is the MIN over its
 
 code("""
 import hashlib, json
-from pathlib import Path
 import pandas as pd
 import wmlnb
 
@@ -66,65 +68,89 @@ def summarise(df, base, other, value):
                      "ratio min": r.min(), "ratio max": r.max(), "rounds": len(r)})
     return pd.DataFrame(rows).round(3)
 
-full = native(DATA / "native-full.jsonl")
-gate = native(DATA / "native-gate.jsonl")
-display(summarise(full, "base", "fixed", "ns_per_call_min"))
-summarise(gate, "base", "gate", "ns_per_call_min")
+display(summarise(native(DATA / "native-full.jsonl"), "base", "fixed", "ns_per_call_min"))
+summarise(native(DATA / "native-gate.jsonl"), "base", "gate", "ns_per_call_min")
 """)
 
 md("""
 ## wasm32 (Pyodide under Node), every rep
 
 `drive.mjs`: one fresh Pyodide per core per round, the order rotated each round. `base` and `base_aa` load the SAME
-7c40b038 core: their ratio is the noise floor. `full` is #9's released core; `gate` is the variant built from
-`lab/mem-recheck-gate` with the same recipe.
+7c40b038 core: their ratio is the noise floor. `full` is #9 (in the `trial` set a core built from its branch commit
+8575f359, in the `release` set its released core); `gate` is the variant built from `lab/mem-recheck-gate` with the
+same recipe. Each set is summarised on its own: rounds are paired only within a set.
 """)
 
 code("""
-raw = json.loads((DATA / "wasm-rounds.json").read_text())
-wasm = pd.DataFrame([{"round": r["round"], "build": r["label"], "core": r["core"], "shape": s, "ns": min(v), "reps": len(v)}
-                     for r in raw for s, v in r["ns"].items()])
-print(wasm.groupby("build").core.first().to_dict(), "rounds:", wasm["round"].nunique())
-tables = {other: summarise(wasm, "base", other, "ns") for other in ["base_aa", "full", "gate"] if other in set(wasm.build)}
-for name, t in tables.items():
-    print(f"\\n{name} / base")
-    display(t)
+sets = {}
+for n in ("release", "trial"):
+    p = DATA / f"wasm-rounds-{n}.json"
+    if p.exists():
+        sets[n] = pd.DataFrame([{"round": r["round"], "build": r["label"], "core": r["core"], "shape": s, "ns": min(v),
+                                 "reps": len(v)} for r in json.loads(p.read_text()) for s, v in r["ns"].items()])
+tables = {}
+for n, wasm in sets.items():
+    print(f"=== {n}:", wasm.groupby("build").core.first().to_dict(), "rounds:", wasm["round"].nunique())
+    for o in ["base_aa", "full", "gate"]:
+        if o in set(wasm.build):
+            tables[n, o] = summarise(wasm, "base", o, "ns")
+            print(f"{n}: {o} / base")
+            display(tables[n, o])
 """)
 
 md("""
 ## The noise floor against each candidate
 
-For each shape: the A/A ratio's range, and each candidate's median ratio. A candidate's median inside the A/A range is
-not distinguishable from no change on these rounds.
+For each set and shape: the A/A ratio's range, and each candidate's median ratio. A candidate's median inside the A/A
+range is not distinguishable from no change on these rounds.
 """)
 
 code("""
-aa = tables.get("base_aa")
 rows = []
-for s in SHAPES:
-    row = {"shape": s}
-    if aa is not None:
-        a = aa.set_index("shape").loc[s]
-        row["A/A min"], row["A/A max"] = a["ratio min"], a["ratio max"]
-    for c in ["full", "gate"]:
-        if c in tables:
-            m = tables[c].set_index("shape").loc[s, "ratio median"]
-            row[f"{c} median"] = m
-            if aa is not None:
-                row[f"{c} beyond noise"] = bool(m > row["A/A max"] or m < row["A/A min"])
-    rows.append(row)
+for n in sets:
+    aa = tables.get((n, "base_aa"))
+    for s in SHAPES:
+        row = {"set": n, "shape": s}
+        if aa is not None:
+            a = aa.set_index("shape").loc[s]
+            row["A/A min"], row["A/A max"] = a["ratio min"], a["ratio max"]
+        for c in ["full", "gate"]:
+            if (n, c) in tables:
+                m = tables[n, c].set_index("shape").loc[s, "ratio median"]
+                row[f"{c} median"] = m
+                if aa is not None:
+                    row[f"{c} beyond noise"] = bool(m > row["A/A max"] or m < row["A/A min"])
+        rows.append(row)
 pd.DataFrame(rows).round(3)
 """)
 
 code("""
 # ns per approved call that each candidate adds over base, under wasm32 (median of per-round differences)
 diff = []
-for c in [x for x in ["full", "gate", "base_aa"] if x in set(wasm.build)]:
-    for s in ["unlifted_c", "lifted_leaf", "py_func"]:
-        b = wasm[(wasm["shape"] == s) & (wasm.build == "base")].set_index("round").ns
-        o = wasm[(wasm["shape"] == s) & (wasm.build == c)].set_index("round").ns
-        diff.append({"build": c, "shape": s, "added ns/call (median)": (o - b).median()})
-pd.DataFrame(diff).pivot(index="shape", columns="build", values="added ns/call (median)").round(1)
+for n, wasm in sets.items():
+    for c in [x for x in ["full", "gate", "base_aa"] if x in set(wasm.build)]:
+        for s in ["unlifted_c", "lifted_leaf", "py_func"]:
+            b = wasm[(wasm["shape"] == s) & (wasm.build == "base")].set_index("round").ns
+            o = wasm[(wasm["shape"] == s) & (wasm.build == c)].set_index("round").ns
+            diff.append({"set": n, "build": c, "shape": s, "added ns/call (median)": (o - b).median()})
+pd.DataFrame(diff).pivot(index=["set", "shape"], columns="build", values="added ns/call (median)").round(1)
+""")
+
+md("""
+## The trivial run's spread
+
+A trivial run is about 150 µs under wasm32, mostly compile; its per-round ratio spreads wider than the call shapes', so
+a median a few percent off 1 is not read as a cost.
+""")
+
+code("""
+spread = []
+for n, wasm in sets.items():
+    t = wasm[wasm["shape"] == "trivial"]
+    for b, g in t.groupby("build"):
+        spread.append({"set": n, "build": b, "min µs": g.ns.min() / 1e3, "median µs": g.ns.median() / 1e3,
+                       "max µs": g.ns.max() / 1e3, "max/min": g.ns.max() / g.ns.min()})
+pd.DataFrame(spread).round(2)
 """)
 
 nb = nbf.v4.new_notebook()
