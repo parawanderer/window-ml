@@ -415,7 +415,12 @@ export async function keepBench(from, to, { sweeps, scoreDbs }) {
         for (const { name: table } of db.prepare("SELECT name FROM wt.sqlite_master WHERE type = 'table'").all()) {
             const info = db.prepare(`PRAGMA wt.table_info(${table})`).all();
             const cols = info.map((c) => c.name).filter((c) => c !== "id");
-            db.exec(`CREATE TABLE IF NOT EXISTS main.${table} AS SELECT * FROM wt.${table} WHERE 0`);
+            // A table the main clone lacks is made from the worktree's own CREATE, keys and indexes included. `CREATE
+            // TABLE … AS SELECT` kept only the column names: every row copied in got a NULL id, which a push (it sends
+            // the ids past its watermark) never sends, and nothing kept a call from being copied twice.
+            if (!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?").get(table)) {
+                for (const { sql } of db.prepare("SELECT sql FROM wt.sqlite_master WHERE tbl_name = ? AND sql IS NOT NULL ORDER BY type = 'index'").all(table)) db.exec(sql);
+            }
             // The main clone's scoreboard may predate a column the worktree's has (a newer bench added it): add it,
             // empty for the old rows, rather than fail the merge or drop the new rows' value.
             const have = new Set(db.prepare(`PRAGMA main.table_info(${table})`).all().map((c) => c.name));
