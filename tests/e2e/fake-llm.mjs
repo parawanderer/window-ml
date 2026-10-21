@@ -35,8 +35,10 @@ import { createServer } from "node:http";
  *   `tool_calls` line is sent once after the last beat. Without `emit`, 8 fragments (fewer if the JSON is shorter).
  *
  * @typedef {object} StreamBeat
- * @property {"think" | "answer" | "call"} kind which channel this beat comes out on
+ * @property {"think" | "answer" | "call" | "pause"} kind which channel this beat comes out on; `pause` sends nothing
+ *   for `ms`, a server gone quiet mid-turn
  * @property {string} [text] the text, for `think` / `answer`
+ * @property {number} [ms] how long a `pause` holds the stream
  *
  * @typedef {FakeStep | ((req: any) => FakeStep)} StepOrFn
  */
@@ -168,6 +170,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             const nCall = step.emit.filter((b) => b.kind === "call").length;
             let sent = 0;
             for (const beat of step.emit) {
+                if (beat.kind === "pause") { await sleep(beat.ms || 0); continue; }
                 if (beat.kind === "think") send({ [reasoningKey]: beat.text || "" });
                 else if (beat.kind === "answer") send({ content: beat.text || "" });
                 else if (calls) {
@@ -309,6 +312,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             const nCall = beats.filter((b) => b.kind === "call").length;
             let sent = 0;
             for (const b of beats) {
+                if (b.kind === "pause") { await sleep(b.ms || 0); continue; }
                 if (b.kind === "think") line({ role: "assistant", content: "", thinking: b.text || "" });
                 else if (b.kind === "answer") line({ role: "assistant", content: b.text || "" });
                 else if (deltas && tc) {
