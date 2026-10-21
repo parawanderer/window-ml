@@ -210,7 +210,7 @@ listed as remaining is DONE unless named below.
   name defers to the startup choice; no wasm32 change. Re-pinned to b0bbaa5 the same day: window-ml #873 (merged
   fecd6abe; release `pyodide-314.0.3-ml-b0bbaa52`, `pyodide` pinned exactly), the pin lane 3's predicate wiring lands on.
   **Lane 5: CLOSED 2026-10-20**: [`LANE_5_RESULT.md`](LANE_5_RESULT.md) (#874, bcbb6543); build trees and clone removed.
-  Left, nobody's: per-run wrapping (the wasm number) and the dist manifest's mismatch throw, tested locally only.
+  Left, nobody's: nothing. Per-run wrapping is fork cpython#6 (merged a315999c, lane 3's wasm number; its release and re-pin follow #918), and the dist manifest's mismatch throw is tested in #911 (merged e9c95c81, lane 10).
   **The membership wiring landed 2026-10-20**: window-ml #880 (lane 3, merged b791311d) runs a `python_exec` cell unasked
   only inside the dialect, under the fork's gate. Its red-team pass (09:40Z mail) requested changes: a function defined
   inside was copied back and ran ungated on the full path (reached `os` and `ml`), captured builtins crossed back, and a
@@ -251,6 +251,12 @@ listed as remaining is DONE unless named below.
   tree before that; both consumers' proposals are measured as text from a bench prompt, no tool widened; widening
   `propose_policy` to `sh` is a later decision of Shane's); lane 3 the per-run wrapper's wasm number. Lanes 6 to 9 took the rest of the old list (2026-10-19 to
   2026-10-20, above). Nothing is unassigned.
+  Lane 10 is closed: #909 (1c3a30da), #910 (96f823ce), #911 (e9c95c81), the seam complete with host #20;
+  [`LANE_10_RESULT.md`](LANE_10_RESULT.md) (#923, d6ccae00). Lane 11's round-4 items are closed: host #20, #21, #22
+  (the `ended` record, five causes; the private-sweep fix), #913, #920, #921; [`LANE_11_RESULT.md`](LANE_11_RESULT.md)
+  (#922, eafcc2b3). Lane 11 stays open on the tree's next item, ruled 2026-10-21 (#921, #924): the lifter, then the
+  `fetch` and `sh` bench tasks measured as text, with the corpus committed (#925). Lane 3 stays open on #918 and the
+  release chain.
 
 ## The lanes
 
