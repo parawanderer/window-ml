@@ -1,6 +1,6 @@
 {
-  "commit": "7d81e7ccfdb0d01d98ba295ced8474e5c35f7a3e",
-  "extracted_at": "2026-10-21T13:44:02+00:00",
+  "commit": "de45e819f2bd1ad14a2a86799fbd5688b92d0211",
+  "extracted_at": "2026-10-21T17:34:04+00:00",
   "rows": [
     {
       "at": "2026-10-09T14:31:24.283Z",
@@ -26351,6 +26351,286 @@
       "scored": 0,
       "sweep": "panel-policy-sh",
       "task": "policy-sh"
+    },
+    {
+      "at": "2026-10-21T13:41:38.184Z",
+      "local": true,
+      "model": "granite4.1:3b",
+      "passed": null,
+      "run": "4d3bcd33799bdbb803c3abe756a79437",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:41.014Z",
+      "local": true,
+      "model": "glm-4.7-flash:latest",
+      "passed": null,
+      "run": "5345cbddc8f25b46c7088a511f23603f",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:49.054Z",
+      "local": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": null,
+      "run": "3e3cc4444c9a24299f25ba941678e90a",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:49.747Z",
+      "local": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "passed": null,
+      "run": "e7a5281cd1e67e29fa29f9fe6e7afdc1",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:52.395Z",
+      "local": false,
+      "model": "litellm.anthropic/claude-sonnet-5-5",
+      "passed": null,
+      "run": "4160ac1951ad0d30337a66bd7296a355",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:53.287Z",
+      "local": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": null,
+      "run": "fe08fc7ed36a15f5cf4366a846a51e8d",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:55.754Z",
+      "local": true,
+      "model": "nemotron-3-nano:4b",
+      "passed": null,
+      "run": "f61b98d756a503a635aa129ab38a8088",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:41:56.168Z",
+      "local": false,
+      "model": "litellm.anthropic/claude-opus-5-5",
+      "passed": null,
+      "run": "ef1dd17a7c9bffefd95cbe738be0ed80",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:42:06.440Z",
+      "local": false,
+      "model": "moonshot.kimi-k3",
+      "passed": null,
+      "run": "c1cc4b908d5aa74afbdd275cd259cbe7",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:42:10.713Z",
+      "local": false,
+      "model": "deepseek.deepseek-v4-pro",
+      "passed": null,
+      "run": "f5e807d830a3207d30f9aaf0e67efd2f",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:45:27.421Z",
+      "local": true,
+      "model": "qwen3.5:9b",
+      "passed": null,
+      "run": "116f70bff90abfed6c35b7a628c9d90d",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:45:31.465Z",
+      "local": true,
+      "model": "qwen3.5:4b",
+      "passed": null,
+      "run": "4c11021b075c5c976c68b8db3ca96f44",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:45:45.888Z",
+      "local": true,
+      "model": "qwen3.8:27b",
+      "passed": null,
+      "run": "e303a3b41ab9437c9abbb66bab47081b",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:46:07.788Z",
+      "local": true,
+      "model": "gemma4:31b",
+      "passed": null,
+      "run": "4cd6fc15523171332b4a4c3ae14c7ac6",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:09.098Z",
+      "local": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": null,
+      "run": "0518f60bcccaa0cb153ed52c938a3c06",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:09.823Z",
+      "local": false,
+      "model": "deepseek.deepseek-v4-pro",
+      "passed": null,
+      "run": "2d24a70c00a0dae770274ec1e7253066",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:10.191Z",
+      "local": true,
+      "model": "glm-4.7-flash:latest",
+      "passed": null,
+      "run": "613fe67660609ea706bc5dc4f33a217a",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:10.195Z",
+      "local": true,
+      "model": "qwen3.5:9b",
+      "passed": null,
+      "run": "0f947b9a0fd90ec868b1efd6dc7905ee",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:12.585Z",
+      "local": false,
+      "model": "litellm.anthropic/claude-sonnet-5-5",
+      "passed": null,
+      "run": "59e824dc34c98980a5ccfe4e3583082a",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:14.060Z",
+      "local": false,
+      "model": "litellm.anthropic/claude-opus-5-5",
+      "passed": null,
+      "run": "3319ca40f122e207904592bc50cee5c2",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:14.411Z",
+      "local": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "passed": null,
+      "run": "8793f7c164ecac64814506909721c67b",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:15.441Z",
+      "local": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": null,
+      "run": "4f00880234777a498b29940202798596",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:17.167Z",
+      "local": true,
+      "model": "qwen3.5:4b",
+      "passed": null,
+      "run": "46ac1d3dd76b5d5bc0ba6963d2a90549",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:22.125Z",
+      "local": false,
+      "model": "moonshot.kimi-k3",
+      "passed": null,
+      "run": "2c7ae4fa2820488b015a1c6c2327991f",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:28.521Z",
+      "local": true,
+      "model": "nemotron-3-nano:4b",
+      "passed": null,
+      "run": "0009da0d6cb7514c2c6b3a6b0d7f172c",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:30.217Z",
+      "local": true,
+      "model": "qwen3.8:27b",
+      "passed": null,
+      "run": "179b239f9bdca0fb4aeff1230a959112",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:33.705Z",
+      "local": true,
+      "model": "gemma4:31b",
+      "passed": null,
+      "run": "c3365761dd59141a09d7b817d94e209f",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
+    },
+    {
+      "at": "2026-10-21T13:53:39.753Z",
+      "local": true,
+      "model": "granite4.1:3b",
+      "passed": null,
+      "run": "aaeb4c4d3c5df6bd823605e71eeb495c",
+      "scored": 0,
+      "sweep": "panel-policy-fetch",
+      "task": "policy-fetch"
     }
   ],
   "source": {

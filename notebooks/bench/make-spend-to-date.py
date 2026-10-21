@@ -132,9 +132,10 @@ md("""
 The table lists the sweeps that have priced AND unpriced calls: the ones where the fresh-profile bug cost a cell its
 first calls' prices, rather than sweeps that ran with no price service.
 
-Not in the store at all (checked 2026-10-21 against the local scoreboards of four checkouts): 3,760 calls of sweeps whose
-rows were pushed before the store kept calls (`prompt-budget-tool-details`, `tool-details-v2` and others). They are in
-the checkouts' own `scores.sqlite`, and a `sync.mjs push` from those checkouts would add them.
+Until 2026-10-21, 3,873 calls of the main clone's scoreboard were in no store object (`prompt-budget-tool-details`,
+`tool-details-v2` and others): `merge-when-green --keep-bench` had made its `calls` table without its key, every id was
+NULL, and a push sends only ids past its watermark. The table was rebuilt with its keys and pushed (#981 fixed
+`keepBench`); every call in a checkout's scoreboard is now in the store.
 """)
 
 nb = nbf.v4.new_notebook()
