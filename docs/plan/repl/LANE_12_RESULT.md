@@ -84,6 +84,7 @@ Tests on the release core: wasm vectors 98 pass, 1 skipped; python genre 353 pas
   blind window. It reopens only if a real workload shows the bare approved-call-loop shape, and that is Shane's call.
 - **Stamp the load average beside the timings** (the janitor's review of #957). The raw JSON has no load-metadata
   field, so the contamination mark and the quiet set's load average live only in the notebook's prose and the PR
-  body. When the quiet A/A set is retaken, `drive.mjs` records the load average before and after each round.
+  body. The quiet A/A retake is the janitor's; when it runs, `drive.mjs` records the load average before and after
+  each round.
 - The native column was not retaken quiet.
 - The `memory` row's tail in `PYTHON_DIALECT.md` is the coordinator's, written on #957's merge.
