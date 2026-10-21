@@ -75,7 +75,12 @@ Filed, not lane 11's: #968, a page-built run's JSON export carries the page's to
 ## What is left
 
 - `sh` in `propose_policy`: only if Shane widens it to shell (#921). The `sh` figure above is measured as text.
+- Left by #961: the model-written proposals are not yet appended to
+  [`tests/fixtures/policy-corpus.json`](../../../tests/fixtures/policy-corpus.json) (neither #934 nor #961 does it), and
+  `riskyRegex` is not widened to accept the safe repeated groups opus and sonnet wrote; `propose_policy`'s details steer
+  a model to the string methods instead.
 - The two-profile residual of the `ended` record stands: profile B's `status` can consume profile A's record. It is
   named in the design note and not fixed.
-- The bench sweeps behind the tables are in the main clone's `tests/e2e/artifacts/bench/` (`panel-policy-fetch`,
-  `panel-policy-sh`) and in the bench store.
+- The committed figures are in `policy-proposals.md`. The sweep directories behind them (`panel-policy-fetch`,
+  `panel-policy-sh`) live on this machine under the main clone's `tests/e2e/artifacts/bench/`, which is gitignored, so
+  they are not committed; the bench store holds the durable copy.
