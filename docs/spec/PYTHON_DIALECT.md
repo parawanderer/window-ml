@@ -222,7 +222,12 @@ inside run. The rule has two layers, and one is not the other's substitute:
    later inside cells call it unasked, and a full-path cell that calls it gets the refusal, whose text names the
    function and says it was defined in an unasked cell, to be redefined in the approved one. What such a function
    carries is walked like any other value: its defaults, keyword defaults and closure cells, so `def f(a=open)` and a
-   lambda closing over `open` stay outside. Captured builtins, bound methods and anything not `CO_RESTRICTED` stay
+   lambda closing over `open` stay outside. The FIRST release of 77376876 (`pyodide-314.0.3-ml-77376876`) did not carry
+   the fork's Python side: the recipe's stale install stamp packed a9f034a2's `restricted.py` under the new name (lane
+   3, 2026-10-21, by hashing the zip's file), so under wasm the C side (entry gate, line numbers) was real and the
+   parse-as-itself (offsets, multi-line string values) was not; superseded by `-r2`, built by a recipe that stamps the
+   patch set and witnesses the zip's `restricted.py` against the fork commit, the hash pinned beside the tarball's.
+   Captured builtins, bound methods and anything not `CO_RESTRICTED` stay
    refused; classes and `yield` stay outside. Stated residual (the red team's post-merge read of cpython#5,
    2026-10-20): APPROVED code on the full path can strip the flag, `f.__code__.replace(co_flags=...)`, and run the body
    ungated (its probe listed the filesystem); a fresh `types.CodeType` from the same bytes would do the same, so the
