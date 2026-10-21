@@ -6,7 +6,8 @@ for the full probe #9 ships and the changed-top-only variant it rejected (window
 The cells are written here; edit this file, not the notebook. The inputs are the raw rounds under data/, committed as
 taken: data/native-*.jsonl (native_bench.py's earlier form, one line per process and shape) and data/wasm-rounds-*.json
 (drive.mjs, every rep: `trial` with a core built from #9's branch commit before the merge, `release` with #9's released
-core; the trial rows stay beside the release rows). Nothing is extracted from a gitignored store, so no NB_REFRESH.
+core, taken on a quiet laptop; `release-loaded` the same cores under stray CPU load; the trial rows stay beside the
+release rows). Nothing is extracted from a gitignored store, so no NB_REFRESH.
 """
 
 from pathlib import Path
@@ -51,7 +52,8 @@ md("""
 ## Native (macOS arm64), as in #9's body
 
 8 interleaved rounds of 7c40b038 (`base`) against #9 (`fixed`), then 6 rounds against the changed-top variant (`gate`),
-a fresh process per build per round. The ratio is taken per round, then summarised.
+a fresh process per build per round. The ratio is taken per round, then summarised. Taken under the same stray load
+as the `trial` set below: the ratios are interleaved, the absolute ns soft.
 """)
 
 code("""
@@ -79,11 +81,16 @@ md("""
 7c40b038 core: their ratio is the noise floor. `full` is #9 (in the `trial` set a core built from its branch commit
 8575f359, in the `release` set its released core); `gate` is the variant built from `lab/mem-recheck-gate` with the
 same recipe. Each set is summarised on its own: rounds are paired only within a set.
+
+The `trial` and `release-loaded` sets ran with six stray CPU-load shells on the laptop (another session's repro, running
+from 2026-10-20 until 15:22 on 2026-10-21; the janitor's mail `20261021-1330Z-flaky-ci-to-repl-specs-orphan-load-shells-killed.md`).
+Every core of a set ran under the same load, so their ratios stand, but their A/A spread is wider than the laptop's own
+and their absolute ns are soft. `release` was taken after the shells were killed, at a load average of about 3.
 """)
 
 code("""
 sets = {}
-for n in ("release", "trial"):
+for n in ("release", "release-loaded", "trial"):
     p = DATA / f"wasm-rounds-{n}.json"
     if p.exists():
         sets[n] = pd.DataFrame([{"round": r["round"], "build": r["label"], "core": r["core"], "shape": s, "ns": min(v),
@@ -171,7 +178,7 @@ lane 13 opens if real cells move 1.2x or more.
 
 code("""
 cellsets = {}
-for n in ("release", "trial"):
+for n in ("release", "release-loaded", "trial"):
     p = DATA / f"cells-rounds-{n}.json"
     if p.exists():
         cellsets[n] = pd.DataFrame([{"round": r["round"], "build": r["label"], "cell": cid, "outcome": v["outcome"],
