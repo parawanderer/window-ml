@@ -2,9 +2,14 @@
 
 import type { AskDef, InterviewDef } from "../bench/spec";
 import { NEEDS, extract, type Need } from "./policy-proposals.score";
+import { TOOL_DETAILS } from "../../../src/tools/tool-details";
 
 /** The rules of the realm every policy runs in (docs/spec/POLICIES.md), in the words a model needs. */
-const RULES = `A policy is a read-only JS function over ONE call, \`(c) => …\`, returning true when it applies and false when it does not. It runs in a restricted interpreter: \`==\` and \`!=\` are refused (use \`===\`/\`!==\`), reading a field \`c\` does not have is an error (the policy is then BROKEN and ignored, so a typo never applies), and a result that is not a boolean is broken too. String methods, array methods, regex literals and \`const\` lists before the function work.`;
+const RULES_BASE = `A policy is a read-only JS function over ONE call, \`(c) => …\`, returning true when it applies and false when it does not. It runs in a restricted interpreter: \`==\` and \`!=\` are refused (use \`===\`/\`!==\`), reading a field \`c\` does not have is an error (the policy is then BROKEN and ignored, so a typo never applies), and a result that is not a boolean is broken too. String methods, array methods, regex literals and \`const\` lists before the function work.`;
+
+/** The rules per consumer. A fetch policy is what `propose_policy` sends, so its interview reads that tool's details too,
+ *  the same text `agent_api_docs({ tool: "propose_policy" })` serves (added after the first run of 2026-10-21). */
+const RULES = { fetch: `${RULES_BASE}\n\n${TOOL_DETAILS.propose_policy}`, sh: RULES_BASE } as const;
 
 /** What `c` holds, per consumer: fetch_url's facts (sw-policies.ts `fetchFacts`) and ml.sh's (sh-call.ts `ShFacts`). */
 const FACTS = {
@@ -52,7 +57,7 @@ export function policyInterview(consumer: "fetch" | "sh"): Omit<InterviewDef, "k
     });
     return {
         about: `Models write ${consumer === "fetch" ? "fetch_url" : "ml.sh"} policies as text for ${needs.length} described needs; policy-proposals.score.ts measures the fraction the policy tree's lifter covers (lifted / extracted), and which are right on hand-labelled calls. Nothing runs.`,
-        task: ask(needs[0], `Write run policies: rules that answer matching ${consumer === "fetch" ? "`fetch_url`" : "`ml.sh`"} calls without asking the person, who reads and approves each rule. ${RULES}\n\n${FACTS[consumer]}\n\nThere are ${needs.length} needs, one per message.\n\n`),
+        task: ask(needs[0], `Write run policies: rules that answer matching ${consumer === "fetch" ? "`fetch_url`" : "`ml.sh`"} calls without asking the person, who reads and approves each rule. ${RULES[consumer]}\n\n${FACTS[consumer]}\n\nThere are ${needs.length} needs, one per message.\n\n`),
         asks: needs.slice(1).map((n) => ask(n)),
     };
 }

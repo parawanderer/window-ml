@@ -104,8 +104,17 @@ Against the prediction:
   S4 split one way only: 8 models wrote an effects answer and missed `rm`, `mv`, `git rm`, `git mv` (no manifest), which
   is fail-safe on a DENY (the person is asked). No argv answer missed `find -delete`. gemma4:31b's S4 refuses `npm test`.
 - Broken is rare, from field names on small models: wrong. The broken answers outside format failures came from the
-  Anthropic models: opus F2 and F3 and sonnet F3 are regexes the realm refuses as able to backtrack without end, and
-  opus S4 does not parse.
+  Anthropic models: opus S4 does not parse, and opus F2 and F3 and sonnet F3 hold a regex the realm refuses by its
+  SHAPE (`riskyRegex`, `limits.ts`: a repeated group holding a quantifier or `|`). Corrected after the first write-up,
+  which said they could backtrack without end: none of the three does. On 100,000-character inputs built to make each
+  backtrack they ran in 0.9, 3.4 and 3.5 ms, where `^(a+)+$` takes 88 s on 29 characters. In each, the alternatives
+  inside the repeated group cannot both match at one place (every repetition of `(-[a-z0-9]+)*` and `(-[a-z]+)*` opens
+  with a `-` the body cannot match; `(\.|%2e){2}`'s two alternatives share no first character), so a string matches in
+  one way only. They are false positives of a check that is conservative by design. Why the models wrote them: opus's
+  F2 also refuses a `..`, `%2e%2e`, `%2f` or backslash in the path, a path-traversal guard (probably redundant once the
+  URL is parsed, which resolves dot segments); the F3 regexes write out the grammar of a Wikipedia language subdomain
+  (`zh-min-nan`), where `endsWith(".wikipedia.org")` was what the need asked. `riskyRegex` is not widened to accept such
+  a group; `propose_policy`'s details now steer a model to the string methods instead (the rerun below).
 - The spread between consumers is larger than the spread between models: wrong. Consumers differ by 18 points; models
   run from 0 to 100% lifted on both.
 
@@ -132,3 +141,42 @@ Gemini's rerun is $0.03 (fetch) and $0.06 (sh) of that. Steps 1 and 2 of every c
 the cell's fresh profile has none, and the worker's first refresh lands after step 2. They carry the longest prompts,
 so the bench's own spend line read $0.04 and $0.11; the figures above price those calls with the snapshot the same run
 recorded at step 3. The box's wall meter measured 24 Wh (fetch) and 67 Wh (sh).
+
+## The null rule, rescored (2026-10-21)
+
+After the first run the realm was given a rule: a fact that is `null` is unknown, and an ALLOW whose evaluation read
+one never fires (POLICIES.md, the tree's ruling; docs/dev/policies.md, "A null fact is unknown"). The `sh` answers above,
+rescored under it with nothing rerun: gemma4:31b's and qwen3.8:27b's S3 are now right (the fail-open asks), and opus's S2
+and sonnet's S1 now ask where they were right, since each adds `c.repoConfigRunsCode !== true` to a call outside any
+repository, where the host sent `null`. Net: 27 right of 53, unchanged, and no fail-open left. SHELL.md's optional-fact
+rule now sends `false` when no repository encloses the call, which gives the two back once the host does it.
+
+## With `propose_policy`'s details (2026-10-21)
+
+The `fetch` interview then read `propose_policy`'s details too (`TOOL_DETAILS.propose_policy`, the text
+`agent_api_docs` serves): one arrow, exact fields over a regex, a prefix ending in `/`, the shapes the realm refuses. 14
+models, the same as above without gemma4:12b (its cell is the first run's, 0 extracted). One run per cell.
+
+| `fetch` | lifted / extracted | excluding format failures | right among lifted | right, all extracted |
+| --- | --- | --- | --- | --- |
+| no details (the Result above) | 33 / 52 (63%) | 33 / 40 (83%) | 32 / 33 | 36 / 52 |
+| details, first text (withdrawn) | 46 / 52 (88%) | 46 / 48 (96%) | 42 / 46 | 42 / 52 |
+| **details, as shipped** | **41 / 49 (84%)** | **41 / 45 (91%)** | **41 / 41** | **43 / 49** |
+
+- The first text's examples were F1's host (`docs.python.org`) and F2's prefix (`raw.githubusercontent.com/acme/`),
+  and its subdomain example was `c.host.endsWith(".python.org")` without the bare host. Models copied it:
+  glm-4.7-flash, qwen3.5:9b and nemotron wrote F4 as `endsWith(".pastebin.com")` alone and miss `pastebin.com` (asks),
+  and nemotron wrote F1 as `endsWith(".python.org")`, which allows wiki.python.org (a fail-open). Its row measures
+  copying, so it is not the after. The shipped text uses `example.org`, which no need touches, gives the whole idiom
+  (`c.host === "example.org" || c.host.endsWith(".example.org")`), and a test holds it to both.
+- Every lifted answer is right under the shipped text. The Anthropic models' refused regexes are gone: opus and sonnet
+  lift and are right on 4 of 4, where opus lifted 2 and sonnet 3.
+- What still stays code: glm-4.7-flash's four answers (an array of policies again; that format failure was gone in the
+  first text's run, so it comes and goes between runs), nemotron's F3 and F4 (`.includes(…)` on the host, wrong on both:
+  F3 matches `evilwikipedia.org`, a fail-open), qwen3.5:9b's F3 (`startsWith("https://")`) and qwen3.5:4b's one
+  answer (a block body).
+- One run per cell: 83% to 91% excluding format failures is a direction, not a size. The format failures move between
+  runs by four answers at a time.
+
+Spend: $0.23 per sweep, $0.46 for both (opus $0.08 and $0.09 of it); steps 1 and 2 priced with the snapshot each run
+recorded later, as above. Wall meter: 15 Wh and 16 Wh.

@@ -15,8 +15,9 @@ import { effectSet, EffectsData } from "../effects";
 /** What a policy says about a call when it holds. */
 export type PolicyEffect = "allow" | "deny";
 
-/** One evaluation: the decision, or `undefined` for no opinion, and why the policy is broken when it is. */
-export type PolicyResult = { decision: PolicyEffect | undefined; broken?: string };
+/** One evaluation: the decision, or `undefined` for no opinion, why the policy is broken when it is, and, for an ALLOW
+ *  that held over a fact that is `null` (unknown) and so did not fire, which fact. */
+export type PolicyResult = { decision: PolicyEffect | undefined; broken?: string; unknown?: string };
 
 /** The step budget of one policy evaluation. Policies run on every gated call, often several per call, so this is a
  *  fraction of a survey's: a predicate over an argv or an effect set uses a few hundred. */
@@ -79,7 +80,7 @@ function policyRoot(): Record<string, unknown> {
 }
 
 /** Build `c` from the consumer's facts: a deep, frozen copy whose every object and array is a STRICT facade, so
- *  reading a field the call does not have is a refusal. `effects`, when present, is the effect set's policy view
+ *  reading a field the call does not have is a refusal. A list holding a `null` marks the evaluation as having read one. `effects`, when present, is the effect set's policy view
  *  (effects.ts), whose `has` and `uses` are the only callables `c` holds. The caller's facts are never touched. */
 function buildFacade(ev: Evaluator, facts: Record<string, unknown>): Record<string, unknown> {
     const seen = new Map<object, object>();
@@ -93,6 +94,10 @@ function buildFacade(ev: Evaluator, facts: Record<string, unknown>): Record<stri
             const a: unknown[] = [];
             seen.set(v, a);
             for (const x of v) a.push(copy(x, depth + 1));
+            // A list holding a `null` is a list with an unknown member, and its elements leave the facade by more ways
+            // than a member read (a join, a rest pattern, a coercion), so the whole call is unknown to an ALLOW. No fact
+            // list the product builds holds one.
+            if (v.includes(null)) ev.nullRead ??= "a list that holds null";
             return Object.freeze(ev.markStrict(a));
         }
         const proto = Object.getPrototypeOf(v);
@@ -119,7 +124,9 @@ function buildFacade(ev: Evaluator, facts: Record<string, unknown>): Record<stri
  * `true` when the policy holds (the answer is then `effect`) and `false` when it does not (no opinion). ANY other
  * outcome is no opinion plus `broken`: a parse or dialect refusal, a runtime throw, the step budget or call depth
  * spent, reading a field `c` does not have, `==`/`!=`, or a result that is not a boolean (`c.paths.length && …`
- * returns a number). The facts are copied, so nothing a policy does reaches them.
+ * returns a number). An `allow` that holds after reading a fact that is `null` is no opinion too, with `unknown`
+ * naming the fact, but not broken: the policy is sound and the fact unknown. The facts are copied, so nothing a policy
+ * does reaches them.
  */
 export function evalPolicy(source: string, facts: Record<string, unknown>, effect: PolicyEffect = "allow",
     opts: { stepBudget?: number } = {}): PolicyResult {
@@ -130,6 +137,9 @@ export function evalPolicy(source: string, facts: Record<string, unknown>, effec
         const fn = runSync(ev.eval(ast, Object.create(policyRoot())));
         const out = runSync(ev.callOwn(fn, [c]));
         if (typeof out !== "boolean") return { decision: undefined, broken: `returned ${out === null ? "null" : typeof out}, not true or false` };
+        // A fact that is null is UNKNOWN, and an ALLOW over an unknown never fires; a DENY over one does, the narrow
+        // direction (POLICIES.md, the tree's ruling of 2026-10-21). The deciding layer's rule, not one a writer must remember.
+        if (out && effect === "allow" && ev.nullRead !== undefined) return { decision: undefined, unknown: ev.nullRead };
         return { decision: out ? effect : undefined };
     } catch (e) {
         return { decision: undefined, broken: reason(e) };

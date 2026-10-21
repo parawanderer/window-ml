@@ -8,7 +8,7 @@ import fs from "node:fs";
 const { liftPolicy } = await import("../src/readonly-exec/policy-lift.ts");
 const { evalPolicy } = await import("../src/readonly-exec.ts");
 const { CONSUMER_FIELDS } = await import("../src/readonly-exec/policy-lift.ts");
-const { evalTree, cells, asView } = await import("./fixtures/policy-tree-cells.mjs");
+const { evalTree, treeVerdict, cells, asView } = await import("./fixtures/policy-tree-cells.mjs");
 
 const corpus = JSON.parse(fs.readFileSync(new URL("./fixtures/policy-corpus.json", import.meta.url), "utf8"));
 const measured = corpus.policies.filter((e) => e.tree);
@@ -34,7 +34,7 @@ function agreement(src, consumer, tree) {
         const o = evalPolicy(src, f, "allow");
         if (o.broken) { broken++; continue; }
         const want = o.decision === "allow";
-        const got = evalTree(tree, asView(f), CONSUMER_FIELDS[consumer]);
+        const got = treeVerdict(tree, asView(f), CONSUMER_FIELDS[consumer], "allow");
         if (want !== got) return { mismatch: f, want, got, compared, broken };
         compared++;
     }
@@ -77,6 +77,24 @@ test("every lifted corpus policy agrees with its source, in the real policy real
         assert.equal(r.mismatch, undefined, `${e.src}\n  source says ${r.want}, tree says ${r.got} on ${JSON.stringify(r.mismatch)}`);
         assert.ok(r.compared > 0, `${e.src}: some cell must evaluate (broken on all ${r.broken})`);
         assert.equal(r.flat, undefined, `${e.src}: no cell makes ${JSON.stringify(r.flat)} take both values`);
+    }
+});
+
+test("an ALLOW lifted over a nullable fact agrees on the null cell too: the tree, like the realm, does not fire there", () => {
+    // qwen3.8:27b's S3 answer in the 2026-10-21 run, exactly as written, and the shortest form of the same fail-open.
+    const srcs = [
+        "const READONLY = [\"status\", \"diff\", \"log\", \"show\"];\n(c) =>\n  c.argv[0] === \"git\" &&\n  READONLY.includes(c.argv[1]) &&\n  c.cwd.inRoot === true &&\n  c.repoConfigRunsCode !== true &&\n  !c.effects.has(\"write\") &&\n  !c.effects.has(\"exec\")",
+        '(c) => c.argv[0] === "git" && !c.repoConfigRunsCode',
+        '(c) => c.argv[0] === "git" || c.repoConfigRunsCode === null',
+    ];
+    for (const src of srcs) {
+        const { tree, why } = liftPolicy(src, "sh");
+        assert.ok(tree, `${src}: ${why}`);
+        const nullCells = cells(tree, "sh").filter((f) => f.repoConfigRunsCode === null);
+        assert.ok(nullCells.length > 0, `${src}: the cells include the null one`);
+        const r = agreement(src, "sh", tree);
+        assert.equal(r.mismatch, undefined, `${src}\n  source says ${r.want}, tree says ${r.got} on ${JSON.stringify(r.mismatch)}`);
+        assert.equal(r.flat, undefined);
     }
 });
 

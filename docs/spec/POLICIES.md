@@ -260,11 +260,12 @@ form a policy takes, so code policies stay and the tree is the DESCRIBED form of
 default form a card leads with is still Shane's, on this number. One fail-open in the corpus, the finding to lead with:
 an ALLOW written as `!c.repoConfigRunsCode` fires when the fact is `null`, unknown (2 of 15 models on S3). RULED here,
 narrow beats wide: a fact that is `null` is unknown, and an ALLOW over an unknown never fires, which is the deciding
-layer's rule, not something a model is asked to remember; lane 11's follow-up PR carries the lifter's and the realm's
-side of it, with a before-and-after `fetch` rerun. Built and measured the same day (lane 11): on the corpus it nets zero
-on `sh` right answers, the two S3 fail-opens now ask, and two correct allows (a `cat` and an `npm test` guarded by
-`repoConfigRunsCode !== true` outside any repository) now ask too, fail-safe; the host sending `false` when no repository
-encloses `cwd` gives those back ([`SHELL.md`](SHELL.md), the optional-fact rule), and the ruling stands. The task asks for the
+layer's rule, not something a model is asked to remember. BUILT (lane 11's follow-up): the realm's side
+(`evalPolicy`'s `unknown`, docs/dev/policies.md "A null fact is unknown") and the tree's (`treeVerdict`, the null cell
+in the agreement test), with a before-and-after `fetch` rerun. On the corpus it nets zero on `sh` right answers: the two
+S3 fail-opens now ask, and two correct allows (a `cat` and an `npm test` guarded by `repoConfigRunsCode !== true`
+outside any repository) now ask too, fail-safe; the host sending `false` when no repository encloses `cwd` gives those
+back ([`SHELL.md`](SHELL.md), the optional-fact rule), and the ruling stands. The task asks for the
 policy as TEXT in the model's answer, for both consumers, so it needs no tool and nothing reaches a person: the number
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and

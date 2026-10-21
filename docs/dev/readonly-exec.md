@@ -547,7 +547,7 @@ policy page shows: a parse or dialect refusal, a runtime throw, the budget (`POL
 spent, and a result that is not a boolean. A broken policy fails CLOSED: an `allow` that breaks asks, a `deny` that
 breaks asks too, never allows.
 
-Two rules differ from a survey, both because a policy is where a quiet mistake becomes a grant:
+These rules differ from a survey, all because a policy is where a quiet mistake becomes a grant:
 
 - **`c` refuses a field it does not have.** `c` is a frozen deep copy of the facts in which every object and array is
   registered as a STRICT facade (`Evaluator.markStrict`). The member-read path (`readMember`, and `prop` for
@@ -561,6 +561,12 @@ Two rules differ from a survey, both because a policy is where a quiet mistake b
   `>=`) between operands of different types coerces the same way and is refused too (`c.n < "10"`).
 - **A string's typo is refused**: a read on a string of a key it does not have (`c.url.lenght`) is a refusal here,
   while its length, indices and methods read as usual.
+- **A fact that is `null` is unknown to an `allow`.** The evaluator records the first `null` the policy reads
+  (`nullRead`: a strict field read in `strictRead`, a `null` field inside a builtin's or a constructor's argument in
+  `noteNulls`), and `buildFacade` sets it up front when a fact list holds a `null` element. An `allow` that holds with
+  it set is no opinion, `unknown` naming the fact, and not broken; a `deny` is unaffected. Why and what it costs:
+  [policies.md](policies.md#a-null-fact-is-unknown). A new way for a value to leave a strict facade (a builtin that
+  reads its receiver's fields, a new binding form) must note a `null` it carries, or the rule has a side door.
 
 `c.effects`, when the consumer passes `effects` (an `EffectsData`, `src/effects.ts`), is the effect set's policy view:
 `unknown`, `pairs`, `reads`, `writes`, and the two callables `has(op, kind?)` and `uses(name)`. Those are the only

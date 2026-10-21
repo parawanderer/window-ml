@@ -79,6 +79,9 @@ export default defineInterview({
   in `/chat/completions` did, 2026-10-09).
 - **`surface`**: without it the run is a CONSOLE run (`ml.agent` from the page, a smaller toolset). `hud` is what a
   person gets. Say which one a review saw.
+- **Nothing the interview shows may hold an answer it scores.** An example in the rules or a tool text that names a
+  need's host or URL, or is a need's answer with a constant swapped, measures copying. See the bench skill's
+  "Things that will bite you".
 - **The cost is real API traffic.** A panel of five on `bloat.json` is roughly half a million input tokens.
 
 ## Reading the result
