@@ -39,7 +39,7 @@ approved leaf, which is checked on its own return.
 
 So, on an approved call's return:
 
-- always: the top check on every wrapped domain (the gate lane 12 built on `lab/mem-recheck-gate`, 9c7e5fb8);
+- always: the top check on every wrapped domain (the gate lane 12 built on `lab/mem-recheck-gate`, 9c7e5fb8, a branch deleted 2026-10-21 after the number closed the lane);
 - when the callee is NOT a core builtin, or the top check sees any change: the full probe, as in #9.
 
 "Core builtin" is decided ONCE, when the call is approved, from the callable's identity: a `builtin_function_or_method`

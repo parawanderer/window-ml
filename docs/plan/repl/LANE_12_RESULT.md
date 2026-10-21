@@ -27,7 +27,8 @@ the real-cell timing added by the coordinator. All of it is done. Lane 13 stays 
    clean-up regex covers patch numbers from 10 up. A trap line in `docs/dev/pyodide-build.md` for the release build's
    link failure on undefined `_Py_LibHacl_*`. The janitor reviewed it and recomputed every figure from `data/`.
 4. **`lab/mem-recheck-gate`** (`9c7e5fb8`, pushed, not for merge): the variant that probes only when a domain's top
-   allocator changed. Kept for lane 13 if it ever opens.
+   allocator changed. Kept for lane 13 if it ever opens. Deleted 2026-10-21 (Shane); the design is in
+   `LANE_13_PROBE_NARROWED.md`, and the measurement that closed it in `notebooks/python-dialect/verify-cost/`.
 
 ## What was measured
 
