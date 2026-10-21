@@ -4,7 +4,7 @@
 // (the humanized tool phase + a stall heartbeat), with no live token count (it can't, mid-generation).
 import { test } from "node:test";
 import assert from "node:assert";
-import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS, liveShownByTranscript } from "../src/sidebar/transcript/orb-status.ts";
+import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS, liveShownByTranscript, stallNote } from "../src/sidebar/transcript/orb-status.ts";
 
 // Minimal Session fixtures — only the fields the projection reads.
 const run = (over = {}) => ({ steps: [], says: [], lastTs: Date.now(), ...over });
@@ -190,4 +190,11 @@ test("a call being written is what the orb names, over the reasoning still on th
 test("a transcript draws a call being written, so its status line does not repeat it; a whole-call wire still keeps the line", () => {
     assert.equal(liveShownByTranscript(run({ liveStream: { calls: [{ index: 0, name: "exec", chars: 4000 }] } })), true, "even with the args left out by a hub");
     assert.equal(liveShownByTranscript(run({ liveStream: {} })), false);
+});
+
+test("a call being written says it has gone quiet on the orb's threshold, in whole seconds, and nothing before it", () => {
+    assert.equal(stallNote(0), null);
+    assert.equal(stallNote(STALL_MS), null, "at the threshold it is still just slow");
+    assert.equal(stallNote(STALL_MS + 1), `no output for ${Math.round((STALL_MS + 1) / 1000)}s`);
+    assert.equal(stallNote(15_400), "no output for 15s");
 });

@@ -3,12 +3,13 @@
 // tool's streamed output: a long script or document passed as an argument used to show nothing until the model
 // stopped. Display only; the step that replaces it is drawn from the parsed call.
 
-import { useLayoutEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Code, Dot } from "../ui-kit";
 import { markdown } from "../format";
 import { closeStreaming } from "./stream-close";
 import { JsonNode } from "./json-tree";
 import { liveCallView } from "./live-call-view";
+import { stallNote } from "./orb-status";
 import type { LiveToolCall } from "../../contract";
 
 /** "1.2k chars" for a count of characters. */
@@ -29,12 +30,20 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
     const follow = useRef(true);
     useLayoutEffect(() => { const el = body.current; if (el && follow.current) el.scrollTop = el.scrollHeight; });
     const onScroll = (): void => { const el = body.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
+    // HAS IT GONE QUIET? A model that stalls mid-call (a server that stopped, a dropped stream) looked exactly like
+    // one writing slowly: a counter that is not moving. Timed by THIS clock from when the count last changed, so a
+    // runtime's skewed `ts` cannot fake or hide it, on a 1 s beat that is cleared with the call.
+    const seen = useRef({ chars: call.chars, at: Date.now() });
+    if (call.chars !== seen.current.chars) seen.current = { chars: call.chars, at: Date.now() };
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+    const stall = stallNote(now - seen.current.at);
     return (
-        <div class="astep tool pending open live-call" data-live-call={call.index}>
+        <div class={`astep tool pending open live-call${stall ? " stalled" : ""}`} data-live-call={call.index}>
             <div class="astep-head">
                 <Dot status="pending" />
                 <span class="tool-name">{call.name ?? "tool call"}</span>
-                <span class="astep-preview dim">writing… {chars(call.chars)}</span>
+                <span class="astep-preview dim">writing… {chars(call.chars)}{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
             </div>
             <div class="astep-body" ref={body} onScroll={onScroll}>
                 {v.kind === "text" && v.as !== "markdown"
