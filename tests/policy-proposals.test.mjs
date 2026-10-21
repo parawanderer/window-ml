@@ -90,6 +90,11 @@ test("S3's fail-open over null is closed by the realm, so the answer that leaned
     assert.ok(need.vectors.some((v) => v.facts.repoConfigRunsCode === null && !v.holds), "the null vector is still there");
 });
 
+test("a call outside a repository carries repoConfigRunsCode false, as the host answers it; only the could-not-tell vector is null", () => {
+    for (const [, need] of all) for (const v of need.vectors) if (v.facts.argv && v.facts.argv[0] !== "git") assert.equal(v.facts.repoConfigRunsCode, false, `${need.id} ${v.name}`);
+    assert.deepEqual(all.flatMap(([, n]) => n.vectors).filter((v) => v.facts.repoConfigRunsCode === null).map((v) => v.name), ["git status where repoConfigRunsCode is null"]);
+});
+
 // --- extraction ---
 
 test("the source is the first fenced block holding an arrow; prose alone, or a block without one, is not extracted", () => {
