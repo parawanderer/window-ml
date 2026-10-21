@@ -172,6 +172,15 @@ with its SPA's HTML no matter how correct the ollama side is. That is what `/api
 what `/api/events` needed again; both are on the OpenWebUI branch below. So for the capacity and event work
 the OpenWebUI fork IS in the path, and a patched Ollama behind a stock OpenWebUI is not enough.
 
+**A tool call's arguments as they are written: `message.tool_call_deltas` (PROPOSED, not on the branch yet,
+2026-10-21).** Stock Ollama's native stream buffers a call in the server (the per-model parser in `routes.go`'s chat
+handler) and sends it whole, so a long argument shows nothing until the model stops. The agreed shape: each chunk may
+carry `message.tool_call_deltas: [{ index, id?, function: { name?, arguments: "<text fragment>" } }]`, and the whole
+`tool_calls` still comes at the end and is the AUTHORITY: the client draws the deltas (`docs/dev/output-and-code.md`)
+and runs only the whole call. Without the field nothing changes; the call appears when it lands. On `/v1` and protobuf
+the fragments would BE the call (the client concatenates them), so those routes should fragment only where nothing can
+retract a call.
+
 ## OpenWebUI — `parawanderer/open-webui`, branch `ml/tool-execute-api`
 
 Two commits ahead of upstream: `POST /api/v1/tools/id/{id}/execute`, which runs exactly the callable the

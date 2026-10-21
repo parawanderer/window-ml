@@ -175,3 +175,19 @@ test("narration: false reads the phase, not the model's narrated thought the tra
     assert.equal(o.label, "Awakening…", "a model loading, said where nothing else says it");
     assert.match(o.suffix, /· \d+s/, "with the stall heartbeat");
 });
+
+// --- a tool call being WRITTEN: named, and drawn by the transcript ---
+
+test("a call being written is what the orb names, over the reasoning still on the preview and over a finished tool", () => {
+    const calls = [{ index: 0, name: "python_exec", args: '{"code": "print(', chars: 16 }];
+    assert.equal(startupPhase({ steps: [], liveStream: { reasoning: "let me plot it", calls } }, true).label, "Writing the python_exec call…");
+    assert.equal(startupPhase({ steps: [], liveStream: { calls: [{ index: 0, args: "", chars: 0 }] } }, true).label, "Writing a tool call…", "not named yet");
+    const after = { ...run({ steps: [step({ tool: "exec", pending: false })] }), liveStream: { reasoning: "now python", calls } };
+    assert.equal(activityFor(after).label, "Writing the python_exec call…", "the newest thing, not 'thinking about the result'");
+    assert.equal(activityFor(run({ steps: [step({ tool: "python_exec", pending: true })], liveStream: { calls } })).label, "Running Python…", "a RUNNING tool still wins");
+});
+
+test("a transcript draws a call being written, so its status line does not repeat it; a whole-call wire still keeps the line", () => {
+    assert.equal(liveShownByTranscript(run({ liveStream: { calls: [{ index: 0, name: "exec", chars: 4000 }] } })), true, "even with the args left out by a hub");
+    assert.equal(liveShownByTranscript(run({ liveStream: {} })), false);
+});

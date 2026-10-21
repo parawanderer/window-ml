@@ -18,6 +18,18 @@ export interface LooseJson {
     /** Keys from the root to the innermost container still open at the cut (empty: the root itself). Null when
      *  nothing was open, i.e. the text was whole. */
     cutPath: (string | number)[] | null;
+    /** With `keepOpenString`: the text was cut inside a string VALUE, which is kept as far as it arrived (the last
+     *  member at `cutPath`). Absent otherwise. */
+    openString?: true;
+}
+
+/** How to read the cut. */
+export interface LooseJsonOptions {
+    /** Keep a string VALUE cut in half, as far as it arrived, rather than dropping it. For text that is still being
+     *  WRITTEN (a tool call's arguments as the model streams them), where the half-written string is the news; a
+     *  clipped value keeps the default, since its cut string is a fragment of something that will never arrive.
+     *  A half-written escape at the very end is held back, and a half-written KEY is still dropped. */
+    keepOpenString?: boolean;
 }
 
 // `at`: this container's key or index in its parent. `lastKey`: the key most recently read inside it.
@@ -32,9 +44,10 @@ type Frame = { close: "}" | "]"; at: string | number | null; lastKey: string | n
  * closing brackets that were open at that point. A string, number or key cut in half is dropped whole.
  *
  * @param text The value's text, optionally ending in `clipOut`'s note.
+ * @param opts {@link LooseJsonOptions}.
  * @returns The container, or null when the text is not (the start of) a JSON object or array.
  */
-export function parseLooseJson(text: string): LooseJson | null {
+export function parseLooseJson(text: string, opts: LooseJsonOptions = {}): LooseJson | null {
     const note = CLIP_NOTE.exec(text);
     const body = note ? text.slice(0, note.index) : text;
     const droppedChars = !note ? null : note[1] != null ? Number(note[1]) : Number(note[3]) - Number(note[2]);
@@ -77,7 +90,21 @@ export function parseLooseJson(text: string): LooseJson | null {
         if (c === "\"") {
             let j = i + 1;
             while (j < body.length && body[j] !== "\"") j += body[j] === "\\" ? 2 : 1;
-            if (j >= body.length) break;   // the cut is inside this string: drop it
+            if (j >= body.length) {
+                // The cut is inside this string: drop it, unless it is a value the caller wants kept as it stands.
+                if (opts.keepOpenString && top && !(top.close === "}" && top.expectKey)) {
+                    const kept = closeOpenString(body.slice(i + 1));
+                    if (kept == null) break;
+                    const at = top.close === "}" ? top.lastKey : top.count;
+                    const cutPath = stack.slice(1).map(f => f.at as string | number);
+                    const closed = body.slice(0, i) + JSON.stringify(kept) + stack.map(f => f.close).reverse().join("");
+                    try {
+                        const v = JSON.parse(closed);
+                        if (v && typeof v === "object" && at != null) return { value: v, droppedChars, repaired: true, cutPath, openString: true };
+                    } catch { /* fall back to dropping it */ }
+                }
+                break;
+            }
             if (top && top.close === "}" && top.expectKey) {
                 try { top.lastKey = JSON.parse(body.slice(i, j + 1)); } catch { return null; }
             } else valueDone(j + 1);
@@ -102,4 +129,19 @@ export function parseLooseJson(text: string): LooseJson | null {
         const v = JSON.parse(closed);
         return v && typeof v === "object" ? { value: v, droppedChars, repaired: true, cutPath } : null;
     } catch { return null; }
+}
+
+/** The decoded text of a string whose closing quote has not arrived: `raw` is everything after the opening quote. A
+ *  trailing escape still being written (`\`, `\u00`) is held back until its next characters decide it. Null when the
+ *  text is not a JSON string's inside at all. */
+function closeOpenString(raw: string): string | null {
+    const m = /\\(u[0-9a-fA-F]{0,3})?$/.exec(raw);
+    // An even run of backslashes before the match is escaped backslashes, not an open escape.
+    let body = raw;
+    if (m) {
+        let n = 0;
+        for (let k = m.index - 1; k >= 0 && raw[k] === "\\"; k--) n++;
+        if (n % 2 === 0) body = raw.slice(0, m.index);
+    }
+    try { return JSON.parse(`"${body}"`); } catch { return null; }
 }

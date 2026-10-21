@@ -10,6 +10,7 @@ import { clipClear, secretsOf } from "../secret-scrub";   // a quoted body is cu
 import type { MlConfig, ApiFormat, ProtoMode } from "../contract/contract-config";
 import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "../contract/contract-chat";
 import type { LoadedModel, ServerTool } from "../contract/contract-server";
+import type { LiveToolCall } from "../contract/contract-debug";
 import type { FetchLlmPayload } from "../contract/contract-messages";
 import { wireHint } from "../contract/contract-run";
 import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract/contract-config";
@@ -73,7 +74,7 @@ interface ApiFormatHandler {
     applyThink(body: ChatBody, think: boolean): void;
     /** One streamed line. `tokens` is the ENGINE's running count of generated tokens up to and including this
      *  chunk (see `withLiveCount`) — a running total, not a delta, and absent unless the request asked. */
-    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null; tokens?: number } | null;
+    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; toolCallPreview?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null; tokens?: number } | null;
 }
 
 const countOf = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
@@ -338,6 +339,10 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls,
                 // Ollama sends tool_calls WHOLE in a chunk (object args, no index/id) — not fragmented like OpenAI.
                 toolCallDelta: Array.isArray(obj.message?.tool_calls) ? obj.message.tool_calls : null,
+                // A patched server's ARGUMENT FRAGMENTS while it writes a call (`tool_call_deltas`, OpenAI's shape: index,
+                // id, function.name, a piece of the arguments string). Display only: the whole `tool_calls` still
+                // arrives at the end and is what runs, so a call the server later fails to parse needs no retraction.
+                toolCallPreview: Array.isArray(obj.message?.tool_call_deltas) ? obj.message.tool_call_deltas : null,
                 usage: obj.done ? normalizeUsage(obj) : null,
                 // `stream_metrics: true` puts the running `eval_count` on every chunk, not just the last.
                 ...(runningCountOf(obj.eval_count) != null ? { tokens: runningCountOf(obj.eval_count) } : {}) };
@@ -1009,7 +1014,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
  *  agent loop uses client-side `tools` (not `tool_ids`), so no SERVER_TOOL_MODES probe is needed here. */
 export async function streamAgentTurn(
     payload: FetchLlmPayload,
-    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean; tokens?: number; reasoningTokens?: number }) => void,
+    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean; tokens?: number; reasoningTokens?: number; calls?: LiveToolCall[] }) => void,
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, protoAsked, requestId } = await prepareRequest(payload, signal);
@@ -1020,6 +1025,26 @@ export async function streamAgentTurn(
     // sends them WHOLE in a chunk. Accumulate both, then normalize via the format's own extractToolCalls.
     const byIndex = new Map<number, { id?: string; name?: string; args: string }>();
     let ollamaCalls: unknown[] | null = null;
+    // The same fragments from a wire that ALSO sends the call whole (a patched Ollama's `tool_call_deltas`): shown
+    // while the call is written, never run, since the whole call is the authority there.
+    const previewByIndex = new Map<number, { id?: string; name?: string; args: string }>();
+    /** Add one OpenAI-shaped fragment to `into`. False when it is not one (Ollama's whole call has no index). */
+    const addFragment = (into: Map<number, { id?: string; name?: string; args: string }>, tc: any): boolean => {
+        if (typeof tc?.index !== "number") return false;
+        const cur = into.get(tc.index) || { args: "" };
+        if (tc.id) cur.id = tc.id;
+        if (tc.function?.name) cur.name = tc.function.name;
+        if (typeof tc.function?.arguments === "string") cur.args += tc.function.arguments;
+        into.set(tc.index, cur);
+        return true;
+    };
+    /** The calls being written, for the live view: the fragments that will run, or else the preview-only ones. */
+    const liveCalls = (): LiveToolCall[] | undefined => {
+        const from = byIndex.size ? byIndex : previewByIndex;
+        if (!from.size || ollamaCalls) return undefined;
+        return [...from.entries()].sort((a, b) => a[0] - b[0])
+            .map(([index, v]) => ({ index, ...(v.name ? { name: v.name } : {}), args: v.args, chars: v.args.length }));
+    };
     let usage: TokenUsage | null = null;
     // WHAT the model is doing, moment to moment. This is the only place it is observable: the parsed chunk
     // says which channel a line carried, and everything downstream sees just the accumulated strings. Stamped
@@ -1067,21 +1092,23 @@ export async function streamAgentTurn(
         if (Array.isArray(chunk.toolCallDelta)) {
             phaseChanged = mark("call") || phaseChanged;
             for (const tc of chunk.toolCallDelta as any[]) {
-                if (typeof tc?.index === "number") {   // OpenAI fragment
-                    const cur = byIndex.get(tc.index) || { args: "" };
-                    if (tc.id) cur.id = tc.id;
-                    if (tc.function?.name) cur.name = tc.function.name;
-                    if (typeof tc.function?.arguments === "string") cur.args += tc.function.arguments;
-                    byIndex.set(tc.index, cur);
-                } else { ollamaCalls = chunk.toolCallDelta; }   // Ollama whole array
+                if (addFragment(byIndex, tc)) changed = true;   // OpenAI fragment: the live view has more to show
+                else { ollamaCalls = chunk.toolCallDelta; }     // Ollama whole array
             }
+        }
+        if (Array.isArray(chunk.toolCallPreview)) {
+            phaseChanged = mark("call") || phaseChanged;
+            for (const tc of chunk.toolCallPreview as any[]) if (addFragment(previewByIndex, tc)) changed = true;
         }
         // AFTER this chunk's answer text and call fragments are in: a chunk that STARTS the answer or a tool call
         // carries a count that already includes it, so it must not move the thinking figure.
-        if (chunk.tokens != null && reasoning && !content && byIndex.size === 0 && !ollamaCalls) reasoningTokens = chunk.tokens;
+        if (chunk.tokens != null && reasoning && !content && byIndex.size === 0 && previewByIndex.size === 0 && !ollamaCalls) reasoningTokens = chunk.tokens;
         // A phase change is reported even with no new TEXT: a turn that only calls a tool produces no content
         // or reasoning deltas at all, so a caller throttling on text alone would never hear that it started.
-        if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged, ...(tokens != null ? { tokens } : {}), ...(reasoningTokens != null ? { reasoningTokens } : {}) });
+        if (changed || phaseChanged) {
+            const calls = liveCalls();
+            onDelta({ reasoning, content, phases, phaseChanged, ...(tokens != null ? { tokens } : {}), ...(reasoningTokens != null ? { reasoningTokens } : {}), ...(calls ? { calls } : {}) });
+        }
     };
     const handleLine = (line: string) => handleChunk(format.streamChunk(line));
     // THE SAME NEGOTIATION the one-shot stream does: we asked for protobuf where it costs nothing to ask, and

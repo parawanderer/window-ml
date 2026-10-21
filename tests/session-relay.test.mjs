@@ -167,6 +167,18 @@ test("each channel is cut on its own, so a long think does not mark a short answ
     assert.equal(out.event.elided, LIVE_PREVIEW_CHARS);
 });
 
+test("a call being written past the bound goes as its name and size, and a short one goes whole", () => {
+    const p = new LivePreview({ now: () => 0, everyMs: 0 });
+    const long = "{\"code\": \"" + "x".repeat(LIVE_PREVIEW_CHARS * 3);
+    const calls = [{ index: 0, name: "python_exec", args: long, chars: long.length }, { index: 1, name: "look", args: "{}", chars: 2 }];
+    const m = { ...preview(0, 1, "content"), event: { ...preview(0, 1, "content").event, calls } };
+    const out = p.forWire(S.hash, m);
+    assert.deepEqual(out.event.calls[0], { index: 0, name: "python_exec", chars: long.length }, "no JSON tail nobody can read");
+    assert.deepEqual(out.event.calls[1], calls[1], "under the bound, untouched");
+    assert.equal(out.event.elided, undefined, "`elided` still counts only the text channels");
+    assert.ok(JSON.stringify(out).length < LIVE_PREVIEW_CHARS, "the frame stays small");
+});
+
 test("previews are paced per session, and nothing else is paced at all", () => {
     let now = 0;
     const p = new LivePreview({ now: () => now });

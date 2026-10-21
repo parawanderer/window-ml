@@ -1277,6 +1277,23 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    So the step animates a custom PROPERTY, which inherits, and both marks read it: the rail as its border's alpha,
    the dot as its opacity. They cannot drift, because there is only one clock. */
 @property --busy-fade { syntax: "<number>"; inherits: true; initial-value: 1; }
+/* The CARET at the end of text a tool call is still writing (`LiveCall`): a terminal's blinking block, so the place
+   the text grows is the place the eye goes. Steady under reduced motion. */
+.live-caret,
+.live-call-code.writing pre.code:not(.numbered) > code::after,
+.live-call-code.writing .cline:last-child .lcode::after,
+.live-call-md.writing > :last-child::after {
+    content: ""; display: inline-block; width: .55ch; height: 1.05em; margin-left: 1px; vertical-align: text-bottom;
+    background: currentColor; opacity: .75; animation: live-caret 1.06s steps(1) infinite;
+}
+@keyframes live-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+    .live-caret, .live-call-code.writing pre.code:not(.numbered) > code::after,
+    .live-call-code.writing .cline:last-child .lcode::after, .live-call-md.writing > :last-child::after { animation: none; opacity: .5; }
+}
+/* A live call's arguments, scroll-capped like a step's In, and kept scrolled to the end by `LiveCall`. */
+.live-call .astep-body { max-height: 320px; overflow: auto; }
+
 .astep.tool.pending {
     border-left-color: color-mix(in srgb, var(--busy) calc(var(--busy-fade) * 100%), transparent);
     animation: busy-fade 1s infinite;

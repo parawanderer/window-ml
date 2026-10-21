@@ -323,13 +323,21 @@ function isToolOutput(ev: unknown): boolean {
 function tail<E extends Preview>(ev: E, chars: number): E {
     const over = (s: string | undefined): number => Math.max(0, (s?.length ?? 0) - chars);
     const elided = over(ev.reasoning) + over(ev.content);
-    if (!elided) return ev;
+    // A call being written past the bound goes as its NAME and SIZE alone: a tail of JSON cannot be read as anything,
+    // and the head is not the news. The remote surface says the call is being written and how far it has got; its
+    // arguments arrive with the step, as they always did.
+    const calls = "calls" in ev ? ev.calls : undefined;
+    const cutCalls = calls?.some((c) => (c.args?.length ?? 0) > chars)
+        ? calls.map((c) => ((c.args?.length ?? 0) > chars ? { index: c.index, ...(c.name ? { name: c.name } : {}), chars: c.chars } : c))
+        : undefined;
+    if (!elided && !cutCalls) return ev;
     const cut = (s: string): string => (s.length > chars ? `${MARK}${s.slice(-chars)}` : s);
     return {
         ...ev,
         ...(ev.reasoning ? { reasoning: cut(ev.reasoning) } : {}),
         ...(ev.content ? { content: cut(ev.content) } : {}),
-        elided: (ev.elided ?? 0) + elided,
+        ...(elided ? { elided: (ev.elided ?? 0) + elided } : {}),
+        ...(cutCalls ? { calls: cutCalls } : {}),
     };
 }
 

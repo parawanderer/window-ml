@@ -56,10 +56,21 @@ export function currentTurnSteps(run: Session): AgentStep[] {
  *  it is writing, not thinking. */
 export function startupPhase(run: Session, modelResident?: boolean): { icon: string; label: string; short: string } {
     const ls = run.liveStream;
+    const writing = writingCall(run);
+    if (writing) return writing;
     if (ls?.reasoning) return { icon: "💭", label: "Thinking…", short: "thinking" };
     if (ls?.content) return { icon: "✍️", label: "Writing…", short: "writing" };
     if (modelResident === false) return { icon: "🌅", label: "Awakening…", short: "loading" };
     return { icon: "⏳", label: "Waiting for the model…", short: "waiting" };
+}
+
+/** The phrase for a tool call the model is still WRITING, named once the stream has said which tool. Checked before
+ *  "Thinking…", because the accumulated reasoning stays on the preview after the model has moved on to the call. */
+function writingCall(run: Session): { icon: string; label: string; short: string } | null {
+    const calls = run.liveStream?.calls;
+    if (!calls?.length) return null;
+    const name = calls[calls.length - 1].name;
+    return { icon: "✍️", label: name ? `Writing the ${name} call…` : "Writing a tool call…", short: "writing" };
 }
 
 /** What the HUD orb should SAY a run is doing right now — the icon and the short label. Headless
@@ -72,6 +83,9 @@ export function activityFor(run: Session, modelResident?: boolean): { icon: stri
         const A = ACTIVITY[running.tool];
         return A ? { icon: A.icon, label: A.label, short: A.short } : { icon: "⚙️", label: `Running ${running.tool}…`, short: running.tool };
     }
+    // A call being WRITTEN is the newest thing the model is doing, whatever it read before it.
+    const writing = writingCall(run);
+    if (writing) return writing;
     // No tool running, but one just RETURNED → the model is processing its result. Name WHAT it's chewing on
     // ("Thinking about the Python output…") instead of a stale "Running Python…" or a context-free "Thinking…".
     const done = [...cur].reverse().find(s => s.tool && !s.pending);
@@ -176,11 +190,12 @@ export function orbStatus(run: Session, now: number = Date.now(), modelResident?
 /**
  * Is the run's liveness ALREADY on screen in a surface that draws its transcript, so a status line there would only
  * repeat it? True while reply text or reasoning streams (the words appearing are the signal) and while a tool runs
- * (its step is drawn in flight, and the live tail of a run is never folded away). What is left is the wait nothing
- * else shows: the model loading or not yet answering, thinking about a tool's result, writing a tool call's arguments.
+ * (its step is drawn in flight, and the live tail of a run is never folded away), and while a tool call is written on a
+ * wire that streams its arguments (`LiveCall` draws it). What is left is the wait nothing else shows: the model loading
+ * or not yet answering, thinking about a tool's result, writing a tool call on a wire that sends it whole.
  * The HUD has no transcript and never asks this.
  */
 export function liveShownByTranscript(run: Session): boolean {
-    if (run.liveStream?.content || run.liveStream?.reasoning) return true;
+    if (run.liveStream?.content || run.liveStream?.reasoning || run.liveStream?.calls?.length) return true;
     return currentTurnSteps(run).some((s) => s.pending && s.tool && !s.awaitingApproval);
 }
