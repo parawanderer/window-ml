@@ -94,6 +94,41 @@ of them has a place for it, and together they answer parts of the threat model a
 - **The backend's own URL and key are the built-in secret**, already handled this way: never to a page or the model
   (`src/sw/sw-scrub.ts`), never to a process.
 
+## Scrubbing is by VALUE, in the harness, and says when it fired (2026-10-21)
+
+From an incident on the GPU box the same day (the mlbox session's report): an agent read a container's environment
+through a filter it wrote itself, `grep -vi "pass\|key\|token"`, and a live password printed anyway, because it sat in
+the VALUE of a variable whose name gives no hint, inside a URL's userinfo (`...=tasmota@http://user:password@host`).
+The value was in a gitignored `.env` the whole time. What that fixes in this spec's wording:
+
+- **A denylist of NAMES written by the agent per command is the wrong layer.** Secrets hide in values of harmless keys
+  (URLs, DSNs, connection strings, command lines), and a one-off filter under time pressure misses them. The scrub
+  belongs between a tool's raw output and anything that reads it (the model, a pipe, a log, an export), and it never
+  depends on the agent remembering. `scrubSecrets` already sits there for the backend's own secrets; the rule is that
+  it takes a REGISTRY (every value the person marked secret, from a listed `.env`, the keychain, a handle's value) and
+  runs on every tool result, file read and process output, matching the value and its obvious encodings (URL-encoded,
+  base64, JSON- and shell-escaped). By value there are no false negatives for a known secret.
+- **Patterns are the second line, for what nobody registered**: URL userinfo (redact the password, keep the host),
+  `Authorization: Bearer|Basic`, the common key shapes (`sk-`, `ghp_`, `AKIA`, a JWT, a PEM block), `password=` and
+  `secret=` pairs, a high-entropy token beside a credential word. Lower precision, so a match is replaced with a
+  placeholder, never a refused call.
+- **Commands that dump an environment are known to the manifest**, which is what `echoes` already says
+  ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): `env`, `printenv`, `set`, `docker inspect`, `docker exec … env`,
+  `/proc/*/environ`, `ps e`, `systemctl show -p Environment`, `kubectl get secret`, `git config -l`, a read of a `.env`
+  or a credentials file. Refused with a secret present, scrubbed otherwise; a manifest that misses one is a finding.
+- **A registered value in a tool's INPUT is flagged too**: the command line is logged as well, so a secret belongs in a
+  handle or a temporary env file, never in argv.
+- **The output says it was touched**: `[REDACTED:PLUG_PASSWORD]` in place, and "1 secret redacted (PLUG_PASSWORD)"
+  appended, name and count only, never the value, so the model does not conclude the value is absent. The check "does
+  this output contain secret X" is offered as a count, which is the practice that was already in use by hand.
+- **The same scrub runs on persisted transcripts and exports**, so an unregistered secret that slipped through is fixed
+  after the fact: register the value, re-scrub what is stored, report which sessions held it, and the person decides
+  on rotation.
+
+The test that discriminates: `FOO_SOURCES=a=x@http://u:REALSECRET@10.0.0.1` with `REALSECRET` in a registered `.env`
+comes out redacted by value; the same line with it unregistered comes out redacted by the userinfo pattern. Not
+built; this is the shape the scrub grows into, recorded so the next builder does not start from a name list.
+
 ## Open questions
 
 - Is per-API scoping bearable to set up, or does it need presets (GitHub read-only, one Google Sheet)?
