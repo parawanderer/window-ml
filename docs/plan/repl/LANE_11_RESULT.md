@@ -44,10 +44,11 @@ SHELL.md's Ownership bullet records the rule (#917, #921).
   macOS, green on every merged head. The owner-table tests were mutation-checked: each new guard was removed in turn
   and a test failed. Stdio tests: `an_orphan_killed_at_its_deadline_is_reported_once_to_the_next_session`,
   `a_call_killed_with_its_port_is_reported_to_the_next_session` and `a_sandboxed_call_cannot_touch_the_state_dir`.
-- Policy coverage: 35 of the 38 policies over a real consumer fit the grammar by machine, and 49 of all 60 functional
+- Policy coverage: 36 of the 39 policies over a real consumer fit the grammar by machine, and 49 of all 60 functional
   ones. **No model- or person-written policy exists to measure**: every policy on disk is from tests, docs or
-  built-ins, and the bench results on S3 were not searched. The corpus file was a local working copy and is not
-  committed. The note's tables list every policy that was rewritten or did not fit.
+  built-ins, and the bench results on S3 were not searched. The corpus is committed as
+  [`tests/fixtures/policy-corpus.json`](../../../tests/fixtures/policy-corpus.json) (docs/dev/policies.md, "The policy
+  corpus"). The note's tables list every policy that was rewritten or did not fit.
 - Not run: the extension against the new host. Window-ml makes no orphans and has no `status` reader, by the ruling;
   the first PR that asks for an orphan adds the reader.
 

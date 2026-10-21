@@ -24,6 +24,7 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | A proposal from the model: its check, its measured breadth, the card's note | `src/sw/policy-proposal.ts` |
 | The `propose_policy` tool (reports the decision; adds nothing) | `src/tools/propose-policy-tool.ts` |
 | Its gate: precheck, card, the add in the resolve (`offersProposals`) | `src/sw/sw-run-host.ts` |
+| Every policy source written anywhere, for measuring a grammar or a lifter over ("The policy corpus" below) | `tests/fixtures/policy-corpus.json` |
 
 State is declared in the registry as `policies.global` and `policies.run` (audience `model`, exposed as
 `ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (`"fetch"`, and `"sh"` for `ml.sh`, whose facts its own consumer builds),
@@ -215,6 +216,36 @@ The model never adds a policy; it asks for one, and the person answers a card (`
 - **Added only in the gate's resolve**, when the answer approves, from the proposal the card showed (`addRunPolicy`,
   origin `proposed`), with a `policy`/`added` run-log record. The tool's own `run` only reports whether the run now
   holds that policy. Its descriptor carries no `consumer`/`facts`, so `rejudgePending` never answers its card.
+
+## The policy corpus
+
+`tests/fixtures/policy-corpus.json` holds every distinct policy source anyone has written, with who wrote it and where:
+tests, docs, built-ins, and (once they exist) the policies models propose. It is what a claim like "the tree's grammar
+covers N% of policies" is measured over ([`LANE_11_POLICY_TREE_DESIGN.md`](../plan/repl/LANE_11_POLICY_TREE_DESIGN.md)),
+and what the lifter's test runs over. `meta` says when and at which commit it was collected; `fields` lists what `c`
+holds for each consumer, with source refs.
+
+One entry per distinct (`src`, `author`, `consumer`):
+
+| Field | Holds |
+| --- | --- |
+| `src` | the source exactly as written; a template's text with its placeholder; never a policy's id or label |
+| `author` | `test`, `doc`, `builtin`, `model` (a bench or run proposal), `person` (set through the product) |
+| `consumer` | `fetch`, `sh`, or `other` (a test's hybrid facts object, not a real consumer) |
+| `roles` | `functional` (meant to answer true/false), `negative` (meant to be refused or broken), `attack` (written to escape, hang or game the breadth probe) |
+| `adversarial` | whether it came from a red-team test |
+| `shape` | `arrow` (a complete `(c) => …`), `fragment` (a body only), `template` (built by code), `helpers+arrow`, or as named |
+| `locations`, `count` | every `file:line` it appears at (repo-relative), and how many |
+| `notes` | anything a reader needs: what the test feeds it, that it is display text and never evaluated |
+| `tree` | on a measured entry only (functional, a complete arrow): `group` (`consumer` or `probe`), `fit` (`as-written`, `mechanical`, `hand`, `no`) and `why`. The rule is `meta.tree_legend`; the tree note's counts are recomputed from it |
+
+**Keeping it current.** A PR that adds a policy source to a test, a doc or a built-in adds its entry, or a location to
+the existing one (match `src` exactly, whitespace included). A bench run that collects model proposals appends them
+with `author: "model"`, the model id and run in `notes`, and `locations` naming the result file. A new measured entry gets a `tree` field, and an edited source has its `tree` field
+checked again. A recount (every source
+searched again) bumps `meta.commit` and `meta.collected` and says what was searched in `searched`. Nothing checks the
+file against the tree yet, so a missing entry is silent: it only makes a coverage figure stale. Remove an entry only
+when its source is gone from every location.
 
 ## Not built yet
 
