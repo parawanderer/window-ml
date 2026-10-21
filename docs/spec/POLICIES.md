@@ -265,7 +265,11 @@ layer's rule, not something a model is asked to remember. BUILT (lane 11's follo
 in the agreement test), with a before-and-after `fetch` rerun. On the corpus it nets zero on `sh` right answers: the two
 S3 fail-opens now ask, and two correct allows (a `cat` and an `npm test` guarded by `repoConfigRunsCode !== true`
 outside any repository) now ask too, fail-safe; the host sending `false` when no repository encloses `cwd` gives those
-back ([`SHELL.md`](SHELL.md), the optional-fact rule), and the ruling stands. The task asks for the
+back ([`SHELL.md`](SHELL.md), the optional-fact rule), and the ruling stands. MEASURED AGAIN with `propose_policy`'s
+details text served to the model (#961, merged c1d1f6ed, 2026-10-21; `tests/e2e/panel/policy-proposals.md`): `fetch`
+lifted 41 of 49 (84%; 91% excluding format failures), every lifted policy right, against 33 of 52 (63%) without the text;
+a first text whose examples were two needs' own answers reached 88% and was withdrawn, since the models copied it (a trap
+in the bench and panel skills). `sh` is unchanged by the text. Spend $0.46 for both reruns. The task asks for the
 policy as TEXT in the model's answer, for both consumers, so it needs no tool and nothing reaches a person: the number
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and
