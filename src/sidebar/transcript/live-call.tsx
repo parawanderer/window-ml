@@ -10,10 +10,56 @@ import { closeStreaming } from "./stream-close";
 import { JsonNode } from "./json-tree";
 import { liveCallView } from "./live-call-view";
 import { stallNote } from "./orb-status";
+import { advance, nextGap, revealJumps, revealRate, tickDelay } from "./reveal";
 import type { LiveToolCall } from "../../contract";
 
 /** "1.2k chars" for a count of characters. */
 const chars = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k chars` : `${n} chars`);
+
+/** Whether the person asked for less motion. Read per arrival: cheap, and it follows a change of the setting. */
+const reducedMotion = (): boolean => {
+    try { return !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+};
+
+/**
+ * `text` TYPED OUT at an even pace instead of in the bursts it arrives in (reveal.ts has the rules). It only ever
+ * shows text that has arrived, trailing it by about one gap between arrivals; a long backlog, a replaced text, an
+ * expensive render or reduced motion shows it at once. Nothing waits on it: the step that replaces the call unmounts
+ * it mid-reveal, and its timer goes with it.
+ */
+function useReveal(text: string): string {
+    // state: ui — this call's reveal, gone with the call
+    const st = useRef({ shown: 0, seen: "", gap: 90, rate: 0, at: 0, cost: 0, ticked: 0, timer: 0 });
+    const [, bump] = useState(0);
+    const s = st.current;
+    const t0 = performance.now();
+    if (text !== s.seen) {
+        if (s.at) s.gap = nextGap(s.gap, t0 - s.at);
+        s.at = t0;
+        // A tick's step is measured from the PREVIOUS TICK, and from this arrival only when the reveal was idle: measured
+        // from each arrival, a tick slower than the gap between arrivals (a long cell) never caught up.
+        if (s.shown >= s.seen.length) s.ticked = t0;
+        if (revealJumps({ shownText: s.seen.slice(0, s.shown), text, costMs: s.cost, reduced: reducedMotion() })) s.shown = text.length;
+        s.rate = revealRate(text.length - s.shown, s.gap);
+        s.seen = text;
+    }
+    // What a render costs (highlighting the cell is most of it), smoothed: it sets how often the reveal ticks.
+    useLayoutEffect(() => { s.cost = s.cost ? s.cost * 0.7 + (performance.now() - t0) * 0.3 : performance.now() - t0; });
+    // ONE pending tick at a time, armed when none is: an arrival never postpones it. Re-armed on every render, a tick
+    // slower than the gap between arrivals (a long cell) was pushed back by each one and never fired.
+    useEffect(() => {
+        if (s.timer || s.shown >= s.seen.length) return;
+        s.timer = setTimeout(() => {
+            s.timer = 0;
+            const now = performance.now();
+            s.shown = advance(s.shown, s.seen.length, s.rate, now - s.ticked);
+            s.ticked = now;
+            bump((n) => n + 1);
+        }, tickDelay(s.cost)) as unknown as number;
+    });
+    useEffect(() => () => clearTimeout(s.timer), []);
+    return text.slice(0, s.shown);
+}
 
 /**
  * A tool call still being written, open, in the shape of a pending `.astep` so the step that lands in its place does
@@ -24,6 +70,9 @@ const chars = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k cha
  */
 export function LiveCall({ call }: { call: LiveToolCall }) {
     const v = liveCallView(call);
+    // Code is typed out evenly; Markdown and argument trees are drawn as they arrive (re-rendering either per frame
+    // costs more than it shows).
+    const typed = useReveal(v.kind === "text" && v.as !== "markdown" ? v.text : "");
     // FOLLOW THE TEXT, like a terminal: past its height cap the body scrolls, and the line being written is the one to
     // see. Until the reader scrolls up to read an earlier line, which stops the follow; scrolling back down resumes it.
     const body = useRef<HTMLDivElement>(null);
@@ -47,7 +96,7 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
             </div>
             <div class="astep-body" ref={body} onScroll={onScroll}>
                 {v.kind === "text" && v.as !== "markdown"
-                    ? <div class={`live-call-code${v.writing ? " writing" : ""}`}><Code text={v.text} lang={v.as} /></div>
+                    ? <div class={`live-call-code${v.writing || typed.length < v.text.length ? " writing" : ""}`}><Code text={typed} lang={v.as} /></div>
                     : v.kind === "text"
                         ? <div class={`md live-call-md${v.writing ? " writing" : ""}`} dangerouslySetInnerHTML={{ __html: markdown(closeStreaming(v.text) || "\u200b", { math: true }) }} />
                         : v.kind === "tree"

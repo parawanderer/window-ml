@@ -1,0 +1,202 @@
+{
+  "commit": "271466d3575ce902ed3edbec007bd5ceb8a13ccb",
+  "extracted_at": "2026-10-21T13:02:02+00:00",
+  "rows": [
+    {
+      "chars": 250,
+      "dom_ms": 0.09999990463256836,
+      "dom_numbered_ms": 0.10000002384185791,
+      "gutter_split_ms": 0.0014159999999492356,
+      "hljs_ms": 0.01183400000002166,
+      "hljs_p95_ms": 0.05129199999998946,
+      "lang": "python",
+      "lines": 7,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 500,
+      "dom_ms": 0.10000002384185791,
+      "dom_numbered_ms": 0.20000004768371582,
+      "gutter_split_ms": 0.00987499999996544,
+      "hljs_ms": 0.01479200000005676,
+      "hljs_p95_ms": 0.01916700000003857,
+      "lang": "python",
+      "lines": 16,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 1000,
+      "dom_ms": 0.20000004768371582,
+      "dom_numbered_ms": 0.3999999761581421,
+      "gutter_split_ms": 0.009708999999929802,
+      "hljs_ms": 0.09545800000000781,
+      "hljs_p95_ms": 0.11266699999998764,
+      "lang": "python",
+      "lines": 34,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 2000,
+      "dom_ms": 0.5,
+      "dom_numbered_ms": 0.8000000715255737,
+      "gutter_split_ms": 0.019792000000052212,
+      "hljs_ms": 0.2262909999999465,
+      "hljs_p95_ms": 0.27479200000004766,
+      "lang": "python",
+      "lines": 59,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 5000,
+      "dom_ms": 1.5,
+      "dom_numbered_ms": 2.100000023841858,
+      "gutter_split_ms": 0,
+      "hljs_ms": 1.0667499999999563,
+      "hljs_p95_ms": 4.780208000000016,
+      "lang": "python",
+      "lines": 140,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 10000,
+      "dom_ms": 3.100000023841858,
+      "dom_numbered_ms": 4.699999928474426,
+      "gutter_split_ms": 0.13904200000001765,
+      "hljs_ms": 1.357499999999959,
+      "hljs_p95_ms": 1.8369169999999713,
+      "lang": "python",
+      "lines": 272,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 20000,
+      "dom_ms": 6.899999976158142,
+      "dom_numbered_ms": 9.5,
+      "gutter_split_ms": 0,
+      "hljs_ms": 3.126457999999957,
+      "hljs_p95_ms": 4.3263749999999845,
+      "lang": "python",
+      "lines": 534,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 40000,
+      "dom_ms": 16.100000023841858,
+      "dom_numbered_ms": 18.5,
+      "gutter_split_ms": 1.5608749999998963,
+      "hljs_ms": 4.4877080000001115,
+      "hljs_p95_ms": 6.673000000000002,
+      "lang": "python",
+      "lines": 1067,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 250,
+      "dom_ms": 0.09999990463256836,
+      "dom_numbered_ms": 0.10000002384185791,
+      "gutter_split_ms": 0,
+      "hljs_ms": 0.04770800000005693,
+      "hljs_p95_ms": 0.06616700000017772,
+      "lang": "javascript",
+      "lines": 3,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 500,
+      "dom_ms": 0.10000002384185791,
+      "dom_numbered_ms": 0.10000002384185791,
+      "gutter_split_ms": 0,
+      "hljs_ms": 0.096416999999974,
+      "hljs_p95_ms": 0.12083299999994779,
+      "lang": "javascript",
+      "lines": 6,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 1000,
+      "dom_ms": 0.2999999523162842,
+      "dom_numbered_ms": 0.3999999761581421,
+      "gutter_split_ms": 0.011416999999937616,
+      "hljs_ms": 0.2889580000000933,
+      "hljs_p95_ms": 0.6280000000001564,
+      "lang": "javascript",
+      "lines": 17,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 2000,
+      "dom_ms": 0.6000000238418579,
+      "dom_numbered_ms": 0.7999999523162842,
+      "gutter_split_ms": 0,
+      "hljs_ms": 0.7377910000000156,
+      "hljs_p95_ms": 0.9395409999999629,
+      "lang": "javascript",
+      "lines": 35,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 5000,
+      "dom_ms": 1.7000000476837158,
+      "dom_numbered_ms": 2,
+      "gutter_split_ms": 0,
+      "hljs_ms": 2.4266660000000684,
+      "hljs_p95_ms": 3.9836250000000746,
+      "lang": "javascript",
+      "lines": 83,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 10000,
+      "dom_ms": 3.799999952316284,
+      "dom_numbered_ms": 4.599999904632568,
+      "gutter_split_ms": 0.34691600000019207,
+      "hljs_ms": 3.812624999999798,
+      "hljs_p95_ms": 6.0747499999999945,
+      "lang": "javascript",
+      "lines": 171,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 20000,
+      "dom_ms": 8.5,
+      "dom_numbered_ms": 9.199999928474426,
+      "gutter_split_ms": 0.7959169999994629,
+      "hljs_ms": 7.3647500000001855,
+      "hljs_p95_ms": 11.900125000000116,
+      "lang": "javascript",
+      "lines": 326,
+      "node": "v26.5.0",
+      "reps": 30
+    },
+    {
+      "chars": 40000,
+      "dom_ms": 20,
+      "dom_numbered_ms": 17.899999976158142,
+      "gutter_split_ms": 2.538626000000022,
+      "hljs_ms": 15.229041000000052,
+      "hljs_p95_ms": 25.090374999999767,
+      "lang": "javascript",
+      "lines": 652,
+      "node": "v26.5.0",
+      "reps": 30
+    }
+  ],
+  "source": {
+    "machine": "the laptop that ran it",
+    "script": "notebooks/ui/highlight-cost.mjs"
+  }
+}
