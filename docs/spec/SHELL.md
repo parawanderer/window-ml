@@ -348,11 +348,14 @@ and that the free tier is a built-in default policy over it.
 | `mode`, `sandboxed` | where it would run |
 
 **An optional fact is sent as `null`, never left out** (ruled 2026-10-21, lane 11's design note, its open point 2). A
-fact the host could not answer (`containsSecret` past the walk's cap, `repoConfigRunsCode` with no repository, `topLevel`
-and `isRoot` with no roots) is present with the value `null`, so a policy reads it with `=== true`, `=== false` or
+fact the host could not answer (`containsSecret` past the walk's cap, `repoConfigRunsCode` with a config or an include it
+could not read, `topLevel` and `isRoot` with no roots) is present with the value `null`, so a policy reads it with `=== true`, `=== false` or
 `=== null` and never needs a presence test; the strict facade's refusal of an absent key then means one thing only, a
 name that is not a fact. `null` is the third cell of every optional fact in the policy tree's breadth, and nothing is
-read off a key's absence. As built, `sh-call.ts` leaves `containsSecret`, `topLevel` and `isRoot` out when it has no
+read off a key's absence. RULED 2026-10-21 (lane 11's measurement of the null-ALLOW rule, [`POLICIES.md`](POLICIES.md)):
+`null` means COULD NOT TELL and nothing else. A call whose `cwd` no repository encloses gets `repoConfigRunsCode: false`,
+since there is no config to run anything, which is a host change; a blanket `false` whenever `argv[0]` is not `git` is
+refused, because `npm test` or `make` can run git under a repository's config, and that is the case the fact exists for. As built, `sh-call.ts` leaves `containsSecret`, `topLevel` and `isRoot` out when it has no
 answer; the first PR that reads any of them from a policy sends them as `null` instead, with a fixture of the old shape
 (AGENTS.md: test the upgrade).
 
