@@ -3,7 +3,7 @@
 
 import type { CurrentSnapshot } from "../agent/current-context";
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
-import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
+import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
 import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
@@ -1024,15 +1024,28 @@ export class Evaluator {
 /** Run an evaluation to completion, AWAITING every yielded value. The top-level driver. A rejected
  *  awaited value (e.g. an `ml` read that throws) is thrown BACK INTO the generator via `gen.throw`, so a
  *  dialect `try { await … } catch` can catch it; uncaught, it propagates out (→ falls back to approval). */
-export async function runAsync(gen: Ev): Promise<unknown> {
+export async function runAsync(gen: Ev, stop?: AbortSignal): Promise<unknown> {
     let sent: unknown, err: unknown, hasErr = false;
     for (;;) {
+        // STOPPED: the generator is never resumed again, not thrown into. A throw into it would run the script's own
+        // `finally` (the Try case runs a finalizer after a guard error), and a finalizer can await and print, so a
+        // stopped survey would go on. Abandoned, nothing of it runs; the host call it was awaiting is left to settle.
+        if (stop?.aborted) throw new Stopped("the run was stopped while this survey ran");
         const r = hasErr ? gen.throw(err) : gen.next(sent);
         hasErr = false;
         if (r.done) return r.value;
-        try { sent = await r.value; }
+        try { sent = await (stop ? untilStopped(r.value, stop) : r.value); }
         catch (e) { err = e; hasErr = true; }
     }
+}
+
+/** `v` awaited, or a rejection the moment `stop` aborts, so a stop lands during a slow host call too. */
+function untilStopped(v: unknown, stop: AbortSignal): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        const onStop = (): void => reject(new Stopped("the run was stopped while this survey ran"));
+        stop.addEventListener("abort", onStop, { once: true });
+        Promise.resolve(v).then(resolve, reject).finally(() => stop.removeEventListener("abort", onStop));
+    });
 }
 
 /** Run one SYNCHRONOUSLY — for an arrow a host method invokes (`arr.map(fn)` calls fn synchronously,

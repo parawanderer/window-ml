@@ -109,6 +109,14 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
 const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
+/** The Stop of each run's read-only survey in flight on this page, by run id: the worker's `CANCEL_TOOL_IN_PAGE`,
+ *  relayed as `PAGE_TOOL_CANCEL`, aborts it and the interpreter is not resumed again. The page can post that message
+ *  too; all it can do with it is refuse its own survey, which then asks the person (docs/dev/readonly-exec.md). */
+const surveyStops = new Map<string, AbortController>();   // state: plumbing
+
+/** Stop run `runId`'s read-only survey in flight on this page, if one is: what `PAGE_TOOL_CANCEL` does. */
+export const stopSurvey = (runId: string): void => { surveyStops.get(runId)?.abort(); };
+
 /** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
  *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
  *  (RequestHint: `use: "agent"`, the run's session). */
@@ -252,6 +260,8 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
         // A `world` this page's run cannot give (an isolated one) is never surveyed here in the main world: the precheck refuses it.
         if (pageWorldRefusal((args as { world?: unknown }).world)) return { result: "", readonly: false };
+        const stop = new AbortController();
+        surveyStops.set(runId, stop);
         try {
             // A worker-built run's set is the worker's: the script is given its shape and reports what it changed.
             const log = opts.answerShape ? new AnswerLog(opts.answerShape) : undefined;
@@ -267,7 +277,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
                 hidden: hiddenMlMembers((n) => n in run.byName),
                 // Each line as it prints, stamped here (the executor) like an approved exec's. A refused try's lines
                 // are discarded by the loop, which owns the stream.
-                onLog: opts.onStream ? (line) => opts.onStream!(line + "\n", Date.now()) : undefined }));
+                onLog: opts.onStream ? (line) => opts.onStream!(line + "\n", Date.now()) : undefined, signal: stop.signal }));
             const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped, (args as { maxChars?: unknown }).maxChars);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, render }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
@@ -280,6 +290,8 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
             const { in: renderIn } = descriptorFor(tool, { result: msg }, args);
             return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) }, readonly: true };
+        } finally {
+            if (surveyStops.get(runId) === stop) surveyStops.delete(runId);
         }
     }
     // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —
@@ -377,6 +389,12 @@ export function installToolDelegation(): void {
         const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), ...(pageRead && typeof pageRead === "object" ? { pageRead } : {}), onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
+    });
+    // STOP of a survey in flight (content.ts relays the worker's CANCEL_TOOL_IN_PAGE): only the named run's.
+    window.addEventListener("message", (event: MessageEvent) => {
+        if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_CANCEL") return;
+        const { runId } = event.data as { runId?: unknown };
+        if (typeof runId === "string") stopSurvey(runId);
     });
     // THE STATE INSPECTOR'S READ of this page's realm (sw-run-state.ts): content.ts relays RUN_STATE_IN_PAGE as
     // PAGE_STATE_READ, and the members this bundle declares answer for the run. Only the page's own: the worker reads

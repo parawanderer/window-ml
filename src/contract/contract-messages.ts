@@ -119,6 +119,7 @@ export type MlWireAnswer =
  *  `PAGE_TOOL_RESULT` envelope via sendResponse. */
 export type ContentMessageType =
     | "RUN_TOOL_IN_PAGE"   // background → page: run a named tool from an active run's toolset
+    | "CANCEL_TOOL_IN_PAGE"   // background → page: the run was stopped; halt its read-only survey in flight, re-posted as PAGE_TOOL_CANCEL
     | "ML_DEBUG_TO_PAGE";  // background → page: a debug event from a background-hosted run, re-posted as __mlDebug for the overlay
 
 /** START_RUN payload — everything the background needs to run an ml.agent loop with tool execution

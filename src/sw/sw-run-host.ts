@@ -1360,6 +1360,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
                         ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId),
                         live,
+                        signal: abortCtl.signal,
                     });
                     if (w.kind !== "needs-page") {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
@@ -1373,15 +1374,22 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // BEFORE returning, so a chunk still in flight from a refused try cannot land after the loop's
                     // discard: it finds no sink.
                     if (live) delegateStreams.set(runId, live.push);
+                    // STOP reaches the survey in the page too: the loop has stopped waiting for it (agent-loop.ts
+                    // `orStopped`), and the page halts its interpreter at the next await. Fire-and-forget: a tab that
+                    // cannot be told has a survey bounded by its own budget, whose answer nothing reads.
+                    const tellStop = (): void => { void chrome.tabs.sendMessage(tabId, { type: "CANCEL_TOOL_IN_PAGE", payload: { runId } }).catch(() => {}); };
+                    abortCtl.signal.addEventListener("abort", tellStop, { once: true });
                     try {
                         const answerShape = workerAnswer() ? await answerShapeFor(runId) : undefined;
                         const env = await sendTool({ runId, name, args: byWorker() ? withoutWorld(args) : args, readonlyTry: true, stream: !!live, ...(answerShape ? { answerShape } : {}) }, live?.push)
                             .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                         // Only an answered survey's changes count: a refused try leaves nothing behind, as on the page.
-                        if (answerShape && env?.readonly && env.answerOps !== undefined) await replayOps(env.answerOps);
+                        // Nor a survey's that answered after Stop: the loop stopped reading it (agent-loop.ts `orStopped`).
+                        if (answerShape && env?.readonly && env.answerOps !== undefined && !abortCtl.signal.aborted) await replayOps(env.answerOps);
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-page", reason: env?.readonly ? "reads-page" : "refused-in-page", detail: { tool: name } });
                         return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
                     } finally {
+                        abortCtl.signal.removeEventListener("abort", tellStop);
                         if (live) delegateStreams.delete(runId);
                     }
                 } : undefined,

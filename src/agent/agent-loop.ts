@@ -362,6 +362,9 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
     // `start` is the kept head; `win` the last `room` characters after it, at absolute offset `winAt`; `prevNl` says
     // whether the character before `win` is a newline. `total` is everything pushed.
     let start = "", win = "", winAt = h, prevNl = h === 0, total = 0, last = 0, timer: ReturnType<typeof setTimeout> | null = null;
+    // After `done` nothing changes the view: a call Stop landed on can still print, or be refused and discard, after
+    // its DONE was emitted (agent-loop's `orStopped`), and the DONE is the step's last word.
+    let closed = false;
     let marks: [number, number][] = [];   // [ABSOLUTE offset in the whole output, when the producer emitted it]
     const view = (): [string, [number, number][]] => {
         if (total <= STREAM_OUTPUT_CAP) return [start + win, marks.slice()];
@@ -380,6 +383,7 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
     const send = (): void => { last = Date.now(); const [text, m] = view(); emit(text, m); };
     return {
         push(text: string, ts?: number, skipped?: number): void {
+            if (closed) return;
             let s = String(text);
             // Characters the producer's sender left out before `text` (stream-sender.ts). It forwards the stream's
             // first cap whole, so the head is already full; what it skipped never arrived, so the window cannot hold
@@ -414,8 +418,9 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
             if (Date.now() - last >= STREAM_EMIT_MS) { if (timer) { clearTimeout(timer); timer = null; } send(); }   // leading edge
             else if (!timer) timer = setTimeout(() => { timer = null; send(); }, STREAM_EMIT_MS);                    // trailing, coalesced
         },
-        done(): void { if (timer) { clearTimeout(timer); timer = null; } },   // the DONE result supersedes the live view
+        done(): void { closed = true; if (timer) { clearTimeout(timer); timer = null; } },   // the DONE result supersedes the live view
         discard(): void {
+            if (closed) return;
             if (timer) { clearTimeout(timer); timer = null; }
             const shown = last > 0;
             start = ""; win = ""; winAt = h; prevNl = h === 0; total = 0; last = 0; marks = [];
@@ -426,6 +431,16 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
 // imported from approval.ts) so this module stays DOM/chrome-free for the standalone build.
+/** What the model reads for a call the run was stopped before or at the gate of: it never ran. */
+const CANCELLED_RESULT = "The user cancelled the run. Stop here and wait for their next instructions — do not retry this call.";
+/** A call Stop landed on while it RAN, which the loop no longer waits for. Its host may not be able to stop it (an
+ *  approved exec is the page's own JavaScript), so this never says it stopped. */
+const STOPPED_RUNNING = "Error: the user cancelled the run while this call was running, so its result was not waited for; it may not have stopped. Stop here and wait for their next instructions — do not retry this call.";
+/** A read-only survey Stop landed on: the interpreter is not resumed again (readonly-exec.md), so this one did stop. */
+const STOPPED_SURVEY = "Error: the user cancelled the run while this survey was running, and it was stopped. Stop here and wait for their next instructions — do not retry this call.";
+/** {@link orStopped}'s answer when the run's signal aborted first. */
+const STOPPED: unique symbol = Symbol("stopped");
+
 const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" | "policy"; cancelled: boolean } => {
     if (d && typeof d === "object") return {
         approved: !!d.approved,
@@ -775,6 +790,23 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (signal?.aborted) throw e;
         try { deps.toolThrew?.(name, phase, e); } catch { /* a record that cannot be written is not the run's end */ }
     };
+    /** Set when Stop landed while the current call was running: its answer was not waited for, and the run ends after
+     *  this step. One holder for the same reason as `lastToolMs`. */
+    let stoppedMidCall = false;
+    /** `p`, or {@link STOPPED} the moment the run's signal aborts. A delegated tool has no abort of its own (a page
+     *  survey, an exec, a click all answer when they answer), so without this a Stop waited for the call to end on its
+     *  own: 50 s for a survey printing through `ml.ps()`. What the call still does is its host's to stop. */
+    const orStopped = <T>(p: Promise<T>): Promise<T | typeof STOPPED> => {
+        if (!signal) return p;
+        return new Promise((resolve, reject) => {
+            // One macrotask late: a call that aborted the run and then answered or threw in the same turn (a tool
+            // pressing Stop, a cancel's own AbortError) finished, and its own outcome is the one that stands.
+            const onStop = (): void => { p.catch(() => {}); setTimeout(() => resolve(STOPPED), 0); };
+            p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onStop));
+            if (signal.aborted) onStop();
+            else signal.addEventListener("abort", onStop, { once: true });
+        });
+    };
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. A throw
      *  from the tool or its host becomes an error result the model reads, never the run's end (`threw`). */
     const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
@@ -785,7 +817,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
-            return withText("error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push, { seq, step }));
+            if ("error" in l) return withText({ result: `Error: ${l.error}` });
+            const r = await orStopped(deps.runTool(name, l.args, push, { seq, step }));
+            if (r === STOPPED) { stoppedMidCall = true; return { result: STOPPED_RUNNING }; }
+            return withText(r);
         } catch (e) {
             threw(name, "run", e);
             return { result: toolThrewResult(name, e) };
@@ -867,7 +902,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
             let gateWhy: string | undefined;   // why the gate asked (a policy that covered this call is gone), told to the model with the result
-            lastToolMs = undefined; lastApproveMs = undefined; lastDispatchMs = undefined;   // this step's own measurements, never the previous step's
+            lastToolMs = undefined; lastApproveMs = undefined; lastDispatchMs = undefined; stoppedMidCall = false;   // this step's own measurements, never the previous step's
             // A PENDING step shows a pretty In from the moment it starts, not raw JSON args. This used to be
             // gated on `stream`, on the reasoning that only a streaming run leaves the row on screen long
             // enough to matter — which confused two different clocks. Streaming is about how the MODEL's
@@ -883,7 +918,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: out, streamMarks: marks }), panelHead(cut));
             let result: string, approval: Approval | undefined;
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
-            if (!meta) {
+            if (stopRun || signal?.aborted) {
+                // Stopped by an earlier call of this same message: the rest are answered, since every call needs a
+                // result, and none of them runs.
+                approval = "cancelled";
+                result = CANCELLED_RESULT;
+            } else if (!meta) {
                 result = `Error: no tool named "${call.name}".`;
             } else if (typeof call.arguments === "string" && call.arguments) {
                 // Arguments that are not JSON: a call cut off mid-stream, or fragments that stopped being JSON (a server
@@ -901,7 +941,13 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // A throw in any step that only DECIDES (the read-only try, auto-approve, the precheck) falls through to
                 // the gate: the person is asked, which is never less safe than the step that threw.
                 let ro: ToolRunResult | null = null;
-                try { ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args, fan ?? undefined) : null; if (ro) ro = withText(ro); }
+                try {
+                    const r = deps.tryReadonly ? await orStopped(deps.tryReadonly(call.name, args, fan ?? undefined)) : null;
+                    // Stopped mid-try: its lines so far stay (they ran). An exec survey's host stops its interpreter
+                    // (readonly-exec.md); a Python cell's sandbox is not told, so it is not said to have stopped.
+                    if (r === STOPPED) { stoppedMidCall = true; ro = { result: call.name === "exec" ? STOPPED_SURVEY : STOPPED_RUNNING }; }
+                    else ro = r ? withText(r) : null;
+                }
                 catch (e) { threw(call.name, "readonly", e); ro = null; }
                 // A refused try leaves nothing behind, and lines it streamed are something (docs/dev/readonly-exec.md).
                 if (!ro) fan?.discard();
@@ -965,7 +1011,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         // case). The DONE emit below clears the approve/deny buttons on every surface.
                         if (signal?.aborted || d.cancelled) {
                             approval = "cancelled";
-                            result = "The user cancelled the run. Stop here and wait for their next instructions — do not retry this call.";
+                            result = CANCELLED_RESULT;
                             stopRun = true;
                         } else {
                             if (!d.approved) {
@@ -989,6 +1035,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // non-approval tool
             }
             fan?.done();   // the tool finished — stop any trailing live emit; the DONE below carries the full result
+            if (stoppedMidCall) stopRun = true;
             result = String(result);
             if (gateWhy && approval !== "cancelled") result += `\n${gateWhy}`;
             if (deps.forModel) {
@@ -1021,7 +1068,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const revision = revisionOf(args);
             // misses a logged-then-failed call. Biasing toward "failed" is the safe direction: a false positive
             // just withholds a token (degrades to plain prose); a false negative would cite an ERROR as an answer.
-            const failed = blocked
+            const failed = blocked || stoppedMidCall
                 || /(^|\n)(Error:|Denied|Python error:)/.test(result)
                 || (tr?.renderOut?.type === "python-out" && !!tr.renderOut.error);
             // `token` is either `true` (opt in) or a SHORT LABEL the model writes for itself — a string is both

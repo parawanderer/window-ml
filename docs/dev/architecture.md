@@ -157,7 +157,10 @@ on abort posts an **`ABORT_REQUEST`** (→ `content.js` → **`ABORT_TASK`**) so
 background aborts the fetch keyed by that requestId (a per-request `AbortController` in
 an `inflight` map — `FETCH_LLM` is the only registered honorer today), AND rejects the
 page-side promise immediately so the loop's try/catch converts it to the same clean
-cancel — no waiting on a slow local generation.
+cancel — no waiting on a slow local generation. A TOOL call running when Stop lands is not
+waited for either: the loop races each call against the signal (`orStopped`), ends the step
+saying so, and a read-only survey's interpreter is halted where it runs
+(docs/dev/readonly-exec.md, "Stopped by the run").
 
 ## Rate-limit backoff
 

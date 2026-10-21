@@ -335,6 +335,35 @@ but not what a script arrow returned to one, what an `ml` member was handed, or 
 first rates (one, calibrated on the slowest work) refused ordinary surveys at a few percent of the intended time; the
 rows above are the result.
 
+### Stopped by the run
+
+Halting bounds how long a survey CAN run; Stop is the person saying it should not run any longer. A survey that prints
+through `await ml.ps()` thirty times is in budget and takes as long as the page takes, and before this the run's Stop
+waited for it: the loop checked its signal only between steps, and a delegated call has no abort of its own, so Stop
+took effect 50 seconds later, when the survey ended on its own.
+
+Two parts, either of which alone would leave the other half of the bug:
+
+- **The loop does not wait** (agent-loop.ts `orStopped`). Every tool call, the read-only try and an approved run alike,
+  is raced against the run's signal. On abort the step ends with a result saying so (an exec survey "was stopped";
+  any other call "may not have stopped", since an approved exec is the page's own JavaScript and nothing can halt it),
+  the rest of that message's calls answer `cancelled` without running, and the run ends. No pointer is minted for a
+  stopped call, and its stream fan is closed, so a line or a discard arriving after the step's DONE changes nothing.
+- **The interpreter halts** (`runAsync`'s `stop`, `evalReadonly`'s `signal`). Once the signal aborts, the driver never
+  resumes the generator again, and an await in progress rejects at once. It throws `Stopped`, a `NotInDialect`, so
+  the checkpoint is restored and every caller reads it as a refusal. It is not thrown INTO the script: the `Try` case
+  runs a finalizer after a guard error and a finalizer can await and print, so a stop delivered as a throw would let
+  `finally { … }` carry on. Checking at awaits is enough: a cancel message can only arrive between tasks, and a
+  synchronous stretch is bounded by the step budget to about a second.
+
+Each realm gets the signal its own way: a page-built run passes its own; the worker realm gets the run's controller; a
+survey the worker sent to the page is told by `CANCEL_TOOL_IN_PAGE` → content.ts → the `PAGE_TOOL_CANCEL` window
+message → `stopSurvey(runId)` (run-delegation.ts). That last message is one the PAGE can post too. All a forged one does
+is refuse the page's own survey, which on a run that was not stopped reaches the approval gate: a gap that asks the
+person, never one that runs. Tests: `tests/readonly-stop.test.mjs` (the escapes through `try`, `finally`, an async
+IIFE and `.then`; the checkpoint; each realm; the loop) and `tests/e2e/cancel-states.spec.mjs` (Stop in each state a
+run streams through, in the real extension).
+
 ## Working on fetched tables
 
 A survey can read a table the run already fetched, and this needed no extension to the dialect — which is the

@@ -500,7 +500,8 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
                 // executeTool's binding, and `ml.dereference` reads whatever is bound.
                 const ro = await withRunDeref(toolCtx.deref, () => evalReadonly(roSrc, document, this,
                     makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint(), hidden: hiddenMlMembers((n) => n in byName),
-                    onLog: live ? (line) => live.push(line + "\n") : undefined }));   // each line as it prints, as an approved exec streams it
+                    onLog: live ? (line) => live.push(line + "\n") : undefined,   // each line as it prints, as an approved exec streams it
+                    signal: signal ?? undefined }));   // Stop halts the survey at its next await (readonly-exec.md)
                 const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped, (args as { maxChars?: unknown }).maxChars);
                 const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements, render }, args);
                 // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).
