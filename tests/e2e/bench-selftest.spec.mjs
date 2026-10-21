@@ -10,6 +10,7 @@
 
 import { test, expect } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runOnce } from "./run-once.mjs";
@@ -139,6 +140,32 @@ test("capture: a failed run snapshots the BROWSER; a clean one does not", async 
     });
     expect(clean.error).toBeFalsy();
     expect(clean.captured, "nothing went wrong, so nothing is captured").toEqual([]);
+});
+
+// --- a cell that times out ---
+
+test("a cell that times out cancels its run: the model call is closed before the browser is, and no answer is invented", async () => {
+    // A non-streamed generation on the box runs on until something closes its request; the browser closing after the
+    // capture was the first thing that did. A server that never answers a chat call stands in for the slow model.
+    const open = new Set();
+    let chats = 0;
+    const server = createServer((req, res) => {
+        if (req.method !== "POST") { res.writeHead(200, { "content-type": "application/json" }); res.end('{"data":[]}'); return; }
+        chats++; open.add(req.socket); req.socket.on("close", () => open.delete(req.socket));
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    try {
+        let openAtKeep = null;
+        const run = await runOnce({
+            ...base, task: "anything", warm: false, timeoutMs: 6000,
+            backend: { chatUrl: `http://127.0.0.1:${server.address().port}/v1/chat/completions`, model: "slow", key: "" },
+            keep: async () => { await new Promise((r) => setTimeout(r, 500)); openAtKeep = open.size; },
+        });
+        expect(chats, "the run reached its model call").toBeGreaterThan(0);
+        expect(openAtKeep, "the call was closed while the browser still stood").toBe(0);
+        expect(String(run.error)).toMatch(/timed out/);
+        expect(run.events.some((e) => e.kind === "agent-result"), "the cancel's own result is not recorded as the run's").toBe(false);
+    } finally { server.closeAllConnections(); server.close(); }
 });
 
 // --- a follow-up after the first turn navigated ---

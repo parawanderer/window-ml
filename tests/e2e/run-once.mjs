@@ -437,6 +437,10 @@ export async function runOnce(cfg = {}) {
     const approvals = [];
     const transcript = [];
     const events = [];
+    /** Set once a run has timed out and been cancelled: the cancel's own events are not the run's (a "cancelled" answer
+     *  would be scored as the model's), so the record stops where the deadline found it. */
+    let frozen = false;
+    const record = (ev) => { if (frozen) return; events.push(ev); onEvent?.(ev); dump(events); };
     let stepCount = 0;
 
     try {
@@ -508,7 +512,7 @@ export async function runOnce(cfg = {}) {
         // (addInitScript) so it survives a cross-page navigation — a page-context array would be wiped each
         // reload, losing every event after the first nav. Dump on EVERY event so a hung/interrupted run still
         // leaves a readable partial transcript.
-        await page.exposeFunction("__obsEvent", (ev) => { events.push(ev); onEvent?.(ev); dump(events); });
+        await page.exposeFunction("__obsEvent", record);
         await page.addInitScript(() => {
             // TOP frame only: addInitScript runs in EVERY frame, and the overlay's sidebar iframe ALSO receives
             // __mlDebug messages — capturing there too would double every event (same seq twice).
@@ -549,7 +553,7 @@ export async function runOnce(cfg = {}) {
         }
         // The worker's events (a background-hosted run's steps) never reach the page's window, so they come from the
         // DevTools port; the page's own still arrive through the bridge above. Overlay mode sends neither twice.
-        await watchRunEvents(ext, page, (ev) => { events.push(ev); onEvent?.(ev); dump(events); });
+        await watchRunEvents(ext, page, record);
 
         // Watch for + resolve approval gates the whole time the run is in flight (a gate can appear at any step).
         const seen = new Set();
@@ -716,6 +720,13 @@ export async function runOnce(cfg = {}) {
             while (Date.now() < deadline && !hasResult()) await new Promise((r) => setTimeout(r, 500));
         }
         const timedOut = !hasResult();
+        if (timedOut) {
+            // Cancel every run in the worker, so its model call is aborted NOW rather than when the browser closes after
+            // the capture; a generation on a local box otherwise runs on to its token cap after the cell has given up.
+            frozen = true;
+            const n = await ext.sw.evaluate(() => globalThis.__mlCancelAllRunsForTest?.() ?? null).catch(() => null);
+            log(`  timed out: cancelled ${n ?? "no"} run(s) in the worker`);
+        }
         approvalLoopOn = false; await approvalTask.catch(() => {});   // stop watching for gates
         const runMs = Date.now() - t0;   // wall time of the agent run only (warm-up excluded)
 

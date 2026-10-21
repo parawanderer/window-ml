@@ -2455,6 +2455,28 @@ test("CANCEL_ALL_RUNS (the popup panic button) aborts every live run and reports
     assert.equal(again.data.cancelled, 0, "a second call finds nothing to stop");
 });
 
+test("__mlCancelAllRunsForTest (the bench's cell deadline) stops a live run AND a page-made model call", async () => {
+    // A timed-out bench cell must not leave its generation running until the browser closes: both kinds of call die now.
+    let inFlight = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => new Promise((_, reject) => {
+            const abort = () => { const e = new Error("aborted"); e.name = "AbortError"; reject(e); };
+            if (call.opts.signal?.aborted) return abort();
+            call.opts.signal?.addEventListener("abort", abort);
+            inFlight++;
+        }),
+    });
+    const base = { systemPrompt: "s", tools: [], model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools" };
+    const run = bg.send({ type: "START_RUN", payload: { ...base, runId: "cell1", task: "a" } }, { tab: { id: 1 } });
+    const step = bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] }, requestId: "cellstep" });
+    for (let i = 0; i < 200 && inFlight < 2; i++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(inFlight, 2, "the run and the page's call both reached their model call");
+    assert.equal(await bg.context.__mlCancelAllRunsForTest(), 1, "the one live run is counted");
+    assert.ok((await run).data?.cancelled, "the run resolved cancelled");
+    assert.match((await step).error, /abort/i, "the page-made call was aborted too");
+});
+
 // --- a cancel that lands while the run is still STARTING is not dropped (the pre-hostRun awaits) ---
 
 /** A START_RUN payload for `runId` on a tab, as a page's content script sends it. */

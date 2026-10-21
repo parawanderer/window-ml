@@ -148,6 +148,15 @@ startValueSweeps();
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }, origin?: import("./contract/contract-run").PromptOrigin) => userRunAction(hash, action, body, undefined, origin);
 
+// TEST-ONLY (SW realm only): the popup's "Stop all agent runs" (CANCEL_ALL_RUNS), plus every in-flight page-made model
+// call, as one call: the bench cancels a cell's run when its deadline passes (tests/e2e/run-once.mjs). Resolves how many
+// runs it stopped.
+(globalThis as unknown as { __mlCancelAllRunsForTest?: unknown }).__mlCancelAllRunsForTest = (): Promise<number> => new Promise((resolve) => {
+    for (const [, ctl] of [...inflight]) { try { ctl.abort(); } catch { /* already gone */ } }
+    inflight.clear();
+    route({ type: "CANCEL_ALL_RUNS" }, {}, (r?: { data?: { cancelled?: number } }) => resolve(r?.data?.cancelled ?? 0));
+});
+
 // TEST-ONLY (SW realm only): crop a data URL with the worker's raster, so tests/e2e/raster.spec.mjs can hold the real
 // worker's OffscreenCanvas to the page's canvas pixel for pixel.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
