@@ -118,14 +118,15 @@ one-line counter file. The bounds are guesses: no measurement says how often a p
    from the NEXT session's `status` exactly once; the self-exit and not-ours causes; two concurrent sweepers give one
    record; a forged oversize record is dropped; the sandbox cannot write the state dir.
 
-## For the coordinator
+## Ruled (2026-10-21, the coordinator; written into `SHELL.md`'s K3b paragraph, #914)
 
-1. **The extension side.** Window-ml sends no `onOwnerLoss: "orphan"` and has no `status` reader, so "the extension's
-   `status` reader showing it once" has nothing to extend. Options: (a) build only the host side now, and the
-   extension's reader with whatever first asks for `orphan`; (b) add `HostClient.status()` and read `ended` once per
-   connect (in `shellHost()` after `configure`) into the housekeeping log (`docs/spec/HOUSEKEEPING_LOG.md`), a surface
-   that exists and needs no UI. I am building (a) and will add (b) in the same lane if you rule it in. (b) costs one
-   round trip per connect.
-2. **The universal rule** (all three causes, not only the deadline) widens the ruling's wording but not what runs
-   without asking. I am building it.
-3. Whether a `kill`-policy entry swept after a host SIGKILL also gets a record (`cause: "host-lost"`). Not building it.
+1. **The extension side: (a), host only.** Window-ml makes no orphans, so a reader would read nothing it produced. The
+   PR that first lets the extension ask for an orphan adds `HostClient.status()` once per connect, with `ended` into the
+   housekeeping log. An orphan policy without that reader is refused in review.
+2. **Universal: yes**, every ledger entry's leaving.
+3. **`host-lost`: in**, report-only. It closes the reporting gap of the second Ownership residual.
+
+As built (window-ml-host #21), there is one cause more than this note listed: `owner-lost`, a `kill`-policy call
+killed when its port closes. Its `done` goes to a closed port, which is the same gap and happens today whenever an MV3
+worker is evicted mid-call. That makes five causes: `deadline`, `owner-lost`, `host-lost`, `exited`, `not-ours`. The
+flock, the no-replace link, the two-profile residual and the 7-day / 64 guesses stand as written.
