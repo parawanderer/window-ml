@@ -169,6 +169,81 @@ test("the core's restricted.py is the one the pin names (cpython.restrictedPySha
     assert.strictEqual(have, pin.cpython.restrictedPySha256, "dist/pyodide's restricted.py is not the pinned commit's: a stale build");
 });
 
+// --- parse-as-itself: every shape whose meaning depends on the cell's own indentation or columns ---
+//
+// The one row above proves a bare multi-line string and one SyntaxError column. These enumerate the rest of the surface
+// the wrapper relies on: a cell that is re-indented by a surrounding def, or re-parsed with the wrapper's columns, changes
+// meaning here. Each input is a cell source; each want is what `restricted.run_cell` must answer on the fork's
+// 77376876 restricted.py (and later). On the stale build that shipped a9f034a2's restricted.py under 77376876's name
+// (2026-10-21) the string contents come back carrying the wrapper's indent and the SyntaxError tuples name the wrapper's
+// lines — that is the failure these rows are for.
+
+/** `restricted.run_cell(src, {})`: its return value, or `["SyntaxError", lineno, offset, text, msg]`. */
+function cellParse(src) {
+    return JSON.parse(py.runPython(`
+import json, restricted
+src = json.loads(${JSON.stringify(JSON.stringify(src))})
+try:
+    out = restricted.run_cell(src, {})
+except SyntaxError as e:
+    out = ["SyntaxError", e.lineno, e.offset, e.text, e.msg]
+except Exception as e:
+    out = ["other", type(e).__name__, str(e)[:120]]
+json.dumps(out)`));
+}
+
+const PARSE_VALUE_ROWS = [
+    // [name, cell source, what run_cell returns]
+    ["multi-line string keeps its internal indent and tabs", 's = """a\n    b\n\tc"""\nreturn s', "a\n    b\n\tc"],
+    ["an f-string expression on its own line is the cell's own expression", 'x = 2\ns = f"""{\n  x * 21\n}"""\nreturn s', "42"],
+    ["implicit concatenation across a line break", 's = "a" \\\n    "b"\nreturn s', "ab"],
+    ["backslash continuation at a deep indent", 'x = 1 + \\\n    2 + \\\n    3\nreturn x', 6],
+    ["a string that holds what looks like the wrapper's indent is content", 's = """    def _user():\n        pass"""\nreturn s', "    def _user():\n        pass"],
+    ["an if-block's multi-line string keeps its content indent", 'if 1:\n    s = """\n    keep\n    """\nreturn s', "\n    keep\n    "],
+    ["tab and space inside a string are both kept", 's = "\tX \tY"\nreturn s', "\tX \tY"],
+    ["a string line at column 0 is column 0", 's = """\nhead\n"""\nreturn s', "\nhead\n"],
+    ["a multi-line dict display with trailing commas", 'd = {\n  "a": 1,\n  "b": 2,\n}\nreturn d', { a: 1, b: 2 }],
+    ["a call spanning lines with a comment on the continuation", 'x = (\n  1  # one\n  + 2\n)\nreturn x', 3],
+    ["a lambda spanning lines with the body indented", 'f = lambda a: (\n  a + 1\n)\nreturn f(1)', 2],
+];
+
+test("parse-as-itself: values that depend on the cell's own indentation or columns", (t) => {
+    if (skip) return t.skip(skip);
+    for (const [name, src, want] of PARSE_VALUE_ROWS) {
+        assert.deepStrictEqual(cellParse(src), want, name);
+    }
+});
+
+const PARSE_SYNTAX_ROWS = [
+    // [name, cell source, [lineno, offset, text]] — msg is asserted only as a non-empty string
+    ["an unclosed paren on line 2", "x = 1\ny = (\n", [2, 5, "y = (\n"]],
+    ["an unclosed paren on line 4", "a = 1\nb = 2\nc = 3\nd = (\n", [4, 5, "d = (\n"]],
+    ["a close paren alone at column 1 of line 2", "x = 1\n)\n", [2, 1, ")"]],
+    ["an unclosed triple-quoted string", 's = """open\n', [1, 5, 's = """open']],
+    ["a tab/space indent mix", "if 1:\n\tx = 1\n  y = 2\n", [3, 8, "  y = 2\n"]],
+];
+
+test("parse-as-itself: a SyntaxError names the cell's own lineno and offset", (t) => {
+    if (skip) return t.skip(skip);
+    for (const [name, src, want] of PARSE_SYNTAX_ROWS) {
+        const got = cellParse(src);
+        assert.strictEqual(got[0], "SyntaxError", name);
+        assert.deepStrictEqual(got.slice(1, 4), want, name);
+        assert.strictEqual(typeof got[4], "string", name);
+        assert.ok(got[4].length > 0, name);
+    }
+});
+
+test("parse-as-itself: a format spec that carries the cell's own newlines is the cell's own text", (t) => {
+    if (skip) return t.skip(skip);
+    // The multi-line spec is what the cell wrote, so `format` sees the newlines and refuses; the one-line form of the
+    // same value is the same expression with the cell's own spec on one line, and it formats.
+    const multi = cellParse('w = 5\ns = f"""{\n  w:03d\n}"""\nreturn s');
+    assert.strictEqual(multi[0], "other", "the multi-line spec reaches format()");
+    assert.strictEqual(multi[1], "ValueError", "format() refuses the spec the cell wrote");
+    assert.strictEqual(cellParse('w = 5\ns = f"{w:03d}"\nreturn s'), "005", "the same value one line up");
+});
+
 // --- the vectors, one test each, by genre ---
 
 
