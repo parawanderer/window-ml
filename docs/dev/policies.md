@@ -266,6 +266,11 @@ both values over those facts. The tree evaluator and the cell generator that tes
 (ruled #927). A source added to the corpus with a `tree` field is checked by the same test, so a new kind of rewrite
 lands with the entry that needs it.
 
+What it covers of MODEL-written policies is measured by two bench interviews, `policy-fetch` and `policy-sh`, scored by
+`tests/e2e/panel/policy-proposals.score.ts`: the needs, their hand-labelled calls and the figure are in
+[`policy-proposals.md`](../../tests/e2e/panel/policy-proposals.md). A model's answer that stays code is a lifter miss to
+read there before it is a rewrite to add.
+
 ## Not built yet
 
 - The DERIVED breadth for the decidable fragment of a typed-node policy (`POLICIES.md`), and a corpus wider than this
