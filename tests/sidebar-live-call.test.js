@@ -4,7 +4,7 @@
 const { test, after } = require("node:test");
 const assert = require("node:assert");
 const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
-const { agentStart, agentStep } = require("./sidebar-helpers");
+const { agentStart, agentStep, agentResult } = require("./sidebar-helpers");
 
 after(closeSidebarWorlds);
 
@@ -104,4 +104,26 @@ test("a call with nothing new for longer than the orb's stall says so, the caret
         assert.equal(lc().querySelector(".live-call-stall"), null, "a fragment arrived: it is writing again");
         assert.ok(!lc().classList.contains("stalled"));
     } finally { w.window.Date.now = realNow; }
+});
+
+// --- a call that never landed: the preview does not outlive the turn ---
+
+test("a call the server never finished leaves no preview once the run ends, or once the next turn streams", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lc6", "cut off"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(live("lc6", [call("python_exec", '{"code": "for i in range(')]));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".live-call"));
+    // The model is told the call was cut off and streams its next turn: text, no call.
+    await w.dispatch(live("lc6", undefined, { step: 2, localStep: 2, session: { hash: "lc6", turn: 2 }, content: "Let me try that again" }));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".live-call"), null, "the next turn's stream replaces it");
+    await w.dispatch(live("lc6", [call("python_exec", '{"code": "for i in')], { step: 2, localStep: 2, session: { hash: "lc6", turn: 2 } }));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".live-call"));
+    await w.dispatch(agentResult("lc6", "", 2));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".live-call"), null, "the run ended: nothing is being written");
 });

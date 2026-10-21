@@ -885,6 +885,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (!meta) {
                 result = `Error: no tool named "${call.name}".`;
+            } else if (typeof call.arguments === "string" && call.arguments) {
+                // Arguments that are not JSON: a call cut off mid-stream, or fragments that stopped being JSON (a server
+                // whose parser saw a parameter written twice). Never run on a guess; the model is told and can call again.
+                result = `Error: the arguments of this "${call.name}" call did not arrive as complete JSON, so it did not run. Call it again.`;
             } else if (meta.capabilities?.includes("meta")) {
                 // Self-introspection (chat_metadata): the LOOP answers it — it holds the live token counts
                 // and message list, so the numbers are accurate on both the page and background paths with no
