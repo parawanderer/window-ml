@@ -448,8 +448,10 @@ What follows from it:
   new `status` surface with its own consume-once semantics; left as a named open item, not built in K3b, see
   the plan). Built by lane 11 under its design note (the plan's `LANE_11_ENDED_RECORD_DESIGN.md`; ruled 2026-10-21):
   NO LEDGER ENTRY LEAVES THE LEDGER WITHOUT AN `ended` RECORD, one file per entry beside the ledger, with the cause
-  (`deadline`, `exited`, `not-ours`, and `host-lost` for a `kill`-policy entry swept after the host itself died, which
-  is the second Ownership residual's reporting gap and is in, report-only), whether the sweep killed anything, and
+  (`deadline`, `exited`, `not-ours`, `host-lost` for a `kill`-policy entry swept after the host itself died, which
+  is the second Ownership residual's reporting gap and is in, report-only, and `owner-lost` for a `kill`-policy call
+  killed when its port closes, since its `done` goes to a closed port, the same gap, and an MV3 eviction mid-call does
+  that today; five causes as built, window-ml-host #21), whether the sweep killed anything, and
   `protectedChanged` against the entry's start snapshot computed after the kill, bounded as `done` is; absent when
   the entry has no snapshot. `status` returns the records once (`ended`, oldest first, under the frame cap, `endedMore`
   and `endedDropped` for the rest) and deletes what it queued; a crash between queue and read loses the record, the
@@ -459,7 +461,13 @@ What follows from it:
   number says otherwise. The extension side: window-ml sends no `onOwnerLoss: "orphan"` today and has no `status`
   reader, so the host side stands alone for now, and the rule that keeps it honest is that THE PR WHICH FIRST LETS THE
   EXTENSION ASK FOR AN ORPHAN ALSO ADDS THE READER: `HostClient.status()` once per connect, `ended` into the housekeeping
-  log ([`HOUSEKEEPING_LOG.md`](HOUSEKEEPING_LOG.md)); an orphan policy without the reader is refused in review. The report is BOUNDED (ruled 2026-10-19, the generalist's #13 review: an unbounded `.git/hooks` walk could push `done`
+  log ([`HOUSEKEEPING_LOG.md`](HOUSEKEEPING_LOG.md)); an orphan policy without the reader is refused in review. Found by lane 3's review of #21 and fixed in it, on the shipped host: the start-up sweep
+  and `status` swept `host.owners_dir` whether or not it passed `private_dir`, which only `Ledger::open` checked; on
+  Linux the ledger directory is a predictable name under the shared `/tmp`, so another local user could create it first
+  with mode 0777 and plant a ledger naming one of the user's process groups with its start time read from `/proc`, and
+  the user's own host would SIGKILL it. Now nothing is swept, taken or wardened from a directory that is not private,
+  pinned by a test with a live sleeper and a forged record in a 0777 directory; and a record that cannot be written is
+  counted in `endedDropped`, so "no entry leaves without a record" fails loud, not silent. The report is BOUNDED (ruled 2026-10-19, the generalist's #13 review: an unbounded `.git/hooks` walk could push `done`
   past the output cap and lose the call's result): the host reads at most 256 `.git/hooks` entries per root, and the list
   stops at 256 changes or 512 KiB of JSON, whichever comes first (a count alone proves nothing: a root path can be 4096
   bytes and an escaped control character six). A report that hit a bound says so with the sibling key
