@@ -119,6 +119,7 @@ objection building K3c): it projects onto `write` with `names: true` on the `fs`
 in-place write so the two never de-duplicate. A separate operation would make a person's policy fail open: `has("write")`
 would never fire for `rm`, `mv` or `sed -i`, and a universal over `writes` would be vacuously true for `rm .envrc`.
 The operations table stays as it is; `covers` reads `names` the way it reads `secret`.
+A call recording `effects: []` is the empty set, and the empty set is free on any bound.
 
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because
