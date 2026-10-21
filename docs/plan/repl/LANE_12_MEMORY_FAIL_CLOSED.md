@@ -1,0 +1,36 @@
+# Lane 12: the memory cap's block table fails closed (fork PR)
+
+Brief, 2026-10-21, by the coordinator (`repl-specs`). One fork PR on parawanderer/cpython, branch from `ml/restricted-mode`
+at 7c40b038, then a window-ml re-pin (#928's shape: `pyodide-build` skill, release, pin sha, the two wasm tests).
+
+Read first: `PYTHON_DIALECT.md`'s `memory` row to its end (the ruling is its last sentences);
+[`LANE_3_RESULT.md`](LANE_3_RESULT.md) (how the last two fork PRs were built, measured and pinned); the red team's mail
+`~/git/session-mail/window-ml/20261021-1300Z-redteam-e3-to-coordinator-fork6-fork7-post-merge.md` (the finding, with
+lines). The red team found it and does not build or review the defence; a different session than lane 12 reviews.
+
+## Build
+
+1. `mem_record` (`Python/restricted.c:898`): a failed `_Py_hashtable_set` is a trip (`mem_tripped = 1`), the block is
+   freed and `NULL` returned. The same for `counted_realloc`'s failure restore (`:960`, `:967`).
+2. `mem_verify` runs again when an approved leaf (`allow_call`) returns, not only at the outermost entry.
+3. A C test that stacks two of our wrappers, so the `hits != 1` refusal is exercised.
+
+## Tests, failing first
+
+- The table-OOM shape: a run grows many tiny live blocks until the insert fails, then allocates a block that must be
+  refused against the cap. Needs an injectable table allocator or a lowerable capacity in the test build; pick the
+  smaller, say which.
+- The mid-run drop: `tracemalloc.start()` before the first run, a cell that calls an approved `stop_hook()` then the
+  `DOUBLING` body against an 8 MiB cap; assert refusal.
+- Both as `Lib/test/test_restricted.py` rows; mutation-check each by reverting its fix alone.
+
+## Measure before claiming
+
+The verify-on-return cost, natively, on the trivial-run and the many-approved-calls shapes, against 7c40b038; the
+numbers go in the PR body and into the `memory` row's sentence. No "free" without them.
+
+## Rules that bind
+
+Narrow beats wide; the cap errs toward refusing. Every change of the row's wording is the coordinator's, same hour as
+the PR. Clone of your own; label `@python,@security`; the fork PR is merged by whoever the coordinator says once a
+reviewer other than the red team has read it.
