@@ -56,6 +56,9 @@ const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "chat-stream",
 /** The worker's marks of a run a SITE started (contract-debug.ts `SiteRunEvent`) the index keeps, so every transcript,
  *  the chat page's included, names the site on its turns (Q2a). Only the worker's own source may write them. */
 const WORKER_KINDS = new Set(["agent-site", "agent-site-say"]);
+/** Kinds only the worker's own source may write, with no `site` to check: `agent-config` is its record of the prompt and
+ *  tools it sent the model, and a page that could write one would put its own texts back over the wire's. */
+const WORKER_ONLY_KINDS = new Set(["agent-config"]);
 /** Kinds that describe a SESSION rather than a chat or a run. They never create one: a note about a session this
  *  index does not hold is not a session, and the kind-from-prefix rule below would have to guess what it was. */
 const SESSION_KINDS = new Set(["session-resumed"]);
@@ -174,6 +177,7 @@ export class SessionIndex {
     ingest(ev: MlDebugEvent, src: IngestSource): IngestOutcome {
         if (!ev || typeof ev !== "object" || typeof ev.kind !== "string" || !KNOWN_KINDS.has(ev.kind)) return { accepted: false, reason: "invalid" };
         if (WORKER_KINDS.has(ev.kind) && (!src.trusted || typeof (ev as { site?: unknown }).site !== "string")) return { accepted: false, reason: "invalid" };
+        if (WORKER_ONLY_KINDS.has(ev.kind) && !src.trusted) return { accepted: false, reason: "invalid" };
         const hash = ev.session?.hash;
         if (typeof hash !== "string" || !HASH_RE.test(hash)) return { accepted: false, reason: "invalid" };
 

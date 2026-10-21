@@ -517,3 +517,18 @@ test("a nested ask is a gate of its own while it waits: the row is waiting and c
     ix.ingest(result(h), bg());
     assert.equal(ix.get(h).pendingApprovals, 0, "a finished turn clears its asks with its gates");
 });
+
+// --- what only the worker may write: its record of what the model was sent (#968) ---
+
+test("agent-config is the worker's record of what the model was sent: refused from a page, accepted from the worker", () => {
+    const ix = index();
+    const cfg = (hash, description) => base(hash, "agent-config", { config: { system: "S", tools: [{ name: "click", requiresApproval: true, vision: false, description }] } });
+    const configs = (h) => ix.heldEvents(h).events.filter((e) => e.kind === "agent-config").map((e) => e.config.tools[0].description);
+    // A page-built run on the page's own tab: the page may write its start, never the worker's record of the wire.
+    assert.equal(ix.ingest(start("aaaa0001"), page(TAB_A)).accepted, true);
+    assert.deepEqual(ix.ingest(cfg("aaaa0001", "the page's words"), page(TAB_A)), { accepted: false, reason: "invalid" });
+    assert.deepEqual(configs("aaaa0001"), [], "the refused record left the session as it was");
+    assert.equal(ix.ingest(cfg("aaaa0001", "ours"), bg()).accepted, true);
+    assert.deepEqual(ix.ingest(cfg("aaaa0001", "the page's words"), page(TAB_A)), { accepted: false, reason: "invalid" });
+    assert.deepEqual(configs("aaaa0001"), ["ours"], "a later page copy does not overwrite the worker's");
+});
