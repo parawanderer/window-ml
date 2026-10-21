@@ -269,7 +269,7 @@ back ([`SHELL.md`](SHELL.md), the optional-fact rule), and the ruling stands. ME
 details text served to the model (#961, merged c1d1f6ed, 2026-10-21; `tests/e2e/panel/policy-proposals.md`): `fetch`
 lifted 41 of 49 (84%; 91% excluding format failures), every lifted policy right, against 33 of 52 (63%) without the text;
 a first text whose examples were two needs' own answers reached 88% and was withdrawn, since the models copied it (a trap
-in the bench and panel skills). `sh` is unchanged by the text. Spend $0.46 for both reruns. The task asks for the
+in the bench and panel skills). `sh` is unchanged by the text. Spend $0.46 for both reruns. RESCORED 2026-10-21 (#973, merged e7ab5488; the scorer's calls outside a repository carry `repoConfigRunsCode: false` as window-ml-host #23 answers, `null` only for the could-not-tell vector; nothing rerun; recomputed by the coordinator from the sweep): `sh` 29 right of 53 (16 of 24 lifted, 13 of 29 that stayed code), up from 27 as the two answers that add `c.repoConfigRunsCode !== true` are right again; no fail-open. Merged before its named reviewer posted (the merge tool waits only on a posted, unread review), so the janitor's review of e7ab5488 is post-merge. The task asks for the
 policy as TEXT in the model's answer, for both consumers, so it needs no tool and nothing reaches a person: the number
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and
