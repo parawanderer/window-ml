@@ -43,19 +43,24 @@ preview stays until the step that replaces it lands (the reducer clears `liveStr
 chooses how: `exec`, `python_exec` and `answer` show their one long field decoded, as code or Markdown
 (`LIVE_TEXT_FIELD`), and any other call the tree of its arguments so far. The partial JSON is read by
 `parseLooseJson(text, { keepOpenString: true })`, which keeps a cut string VALUE, decoded, and holds back a half escape.
-A caret blinks where the text arrives (steady under reduced motion), the body follows the text until the reader scrolls
-up, and the orb says "Writing the <tool> call…". Nothing new for longer than the orb's `STALL_MS` and the row says "no
-output for Ns" and the caret stops (`stallNote`), timed by the panel's clock from the last change in the count, so a
-stalled server is not mistaken for a slow one. It is DISPLAY ONLY: what runs is the parsed call. Which wires fragment a
-call: OpenAI-shaped SSE always; Ollama native only from a patched server's `tool_call_deltas`
-(`docs/FORKED-BACKENDS.md`), whose whole `tool_calls` at the end is still the call that runs. Over a hub, a call whose
-arguments exceed the preview bound goes as its name and size only (`tail()`, session-relay.ts), since a cut JSON tail
-cannot be parsed. A call that never becomes whole is never run: arguments that do not parse (`/v1` fragments that
-stopped being JSON) and a native call whose fragments came without the whole call (generation stopped mid-call) both
-reach the loop as text, and it tells the model they did not arrive as complete JSON; the preview goes with the turn,
-replaced by the next turn's stream or cleared by the run's end. Real streams from the patched server are replayed from
-`tests/fixtures/tool-call-deltas/`. Tests: `tests/background-stream-calls.test.js`, `tests/sidebar-live-call.test.js`,
-`tests/e2e/live-call.spec.mjs` (both wires, in a real browser).
+The code is TYPED OUT at an even pace rather than in the bursts it arrives in (`useReveal`, rules in reveal.ts): it
+shows only text that has arrived, trailing it by about one gap between arrivals; a long backlog, a replaced text, a
+render over 30 ms or reduced motion shows it at once, and the step that replaces the call unmounts it mid-reveal. Ticks
+are spaced by the measured render cost so the reveal spends at most a quarter of the main thread; one tick is pending at
+a time, since re-arming it on every arrival starved it on long cells. Costs and the pacing's simulation:
+`notebooks/ui/live-call-reveal.ipynb`. A caret blinks where the text arrives (steady under reduced motion), the body
+follows the text until the reader scrolls up, and the orb says "Writing the <tool> call…". Nothing new for longer than
+the orb's `STALL_MS` and the row says "no output for Ns" and the caret stops (`stallNote`), timed by the panel's clock
+from the last change in the count, so a stalled server is not mistaken for a slow one. It is DISPLAY ONLY: what runs is
+the parsed call. Which wires fragment a call: OpenAI-shaped SSE always; Ollama native only from a patched server's
+`tool_call_deltas` (`docs/FORKED-BACKENDS.md`), whose whole `tool_calls` at the end is still the call that runs. Over a
+hub, a call whose arguments exceed the preview bound goes as its name and size only (`tail()`, session-relay.ts), since
+a cut JSON tail cannot be parsed. A call that never becomes whole is never run: arguments that do not parse (`/v1`
+fragments that stopped being JSON) and a native call whose fragments came without the whole call (generation stopped
+mid-call) both reach the loop as text, and it tells the model they did not arrive as complete JSON; the preview goes
+with the turn, replaced by the next turn's stream or cleared by the run's end. Real streams from the patched server are
+replayed from `tests/fixtures/tool-call-deltas/`. Tests: `tests/background-stream-calls.test.js`,
+`tests/sidebar-live-call.test.js`, `tests/e2e/live-call.spec.mjs` (both wires, in a real browser).
 
 *Streaming vs truncation.* The model's result is clipped to its context budget, but the UI keeps far more
 (`UI_OUT_CAP`) — otherwise output you watched stream in would visibly SHRINK when the step landed. So the render
