@@ -204,7 +204,8 @@ parses, encodes or injects — and the wrapper looks the harness up in the NAMES
 (`injectInputs` re-binds it every cell), never through `sys.modules`, so a cell that pops
 `sys.modules["_ml_harness"]` cannot force the import fallback onto patched modules. (4) No
 JsProxy lands in the Python namespace: injected inputs are `None`/`str` via `undefined`, and
-the stdout tee is Pyodide's JS-side `setStdout`. (5) asyncio pending handles are cancelled
+the stdout tee is Pyodide's JS-side `setStdout`, given the exact bytes (`stdoutWriter`; the `batched`
+handler strips each line's newline). (5) asyncio pending handles are cancelled
 before a cell's result is returned. The strip, the harness capture and the wrapper are
 **escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never

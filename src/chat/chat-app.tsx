@@ -333,7 +333,9 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // step (the jump then went nowhere, in about half the runs).
     const byUser = useRef(0);
     // A citation's own pointerdown (or Enter) lands here BEFORE its click fires the jump, which sets `jumped` again.
-    const markUser = () => { byUser.current = Date.now(); jumped.current = false; };
+    // state: ui (what the reader's last gesture landed on: a tap opening the RUNNING step keeps the follow, below)
+    const userTarget = useRef<Element | null>(null);
+    const markUser = (e?: Event) => { byUser.current = Date.now(); jumped.current = false; userTarget.current = e?.target instanceof Element ? e.target : null; };
     // READ, for the list's dot (read-marks.ts): this session's history is drawn, the end of it is on screen, and the
     // tab is visible. Asked when any of those can change: the session or its newest event, a scroll, the tab showing.
     const lastTs = summary?.lastTs ?? 0, status = summary?.status;
@@ -347,12 +349,20 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         document.addEventListener("visibilitychange", noteRead);
         return () => document.removeEventListener("visibilitychange", noteRead);
     }, [ready, sessionKey, lastTs, status]);
+    // A gesture that GROWS the page leaves the bottom too: a tap opening an earlier step is someone about to read it,
+    // and following the bottom would carry the step they tapped off the screen. Except the RUNNING step: its output is
+    // the bottom, so opening it keeps the follow, and only a scroll UP leaves. Without that exception the glide down to
+    // the new bottom landed short of it within the gesture's window and stopped the follow just as the output began.
+    // state: ui (where the scroller last was, to tell a scroll up from the follow's glide down)
+    const lastTop = useRef(0);
     const onScroll = () => {
         const el = scroller.current;
         if (!el) return;
         noteRead();
+        const up = el.scrollTop < lastTop.current - 1;
+        lastTop.current = el.scrollTop;
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) { if (!jumped.current) stuck.current = true; }
-        else if (Date.now() - byUser.current < USER_SCROLL_MS) { stuck.current = false; glide.current?.stop(); }
+        else if (Date.now() - byUser.current < USER_SCROLL_MS && (up || !userTarget.current?.closest(".astep.pending"))) { stuck.current = false; glide.current?.stop(); }
     };
     // A citation sending the reader UP the transcript stops it following the bottom, or the step it opens grows
     // the content, the observer above pins back down, and the jump is overwritten before it lands.

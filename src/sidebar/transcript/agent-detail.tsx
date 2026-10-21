@@ -41,6 +41,7 @@ import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
 import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 import { LiveCall } from "./live-call";
+import { liveCallView } from "./live-call-view";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
@@ -1074,6 +1075,12 @@ export function AgentRunView({ s }: { s: Session }) {
 export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; s: Session }) {
     if (!ls.reasoning && !ls.content && !ls.calls?.length) return null;
     if (ls.content) noteLiveAnswer(s.hash);
+    // AN ANSWER WRITTEN AS A CALL is the reply all the same. The reading view draws it as one (the words fading in, and
+    // the settled answer taking over in place); the detailed view keeps the call. Both are drawn and CSS hides one
+    // (`.live-answer`, sidebar.css), as every calm/focus difference is a hide.
+    const answer = (ls.calls || []).map(liveCallView).find((v, i) => ls.calls![i].name === "answer" && v.kind === "text" && v.as === "markdown" && v.text);
+    const answerText = answer?.kind === "text" ? answer.text : "";
+    if (answerText) noteLiveAnswer(s.hash);
     return (
         <>
             {/* The turn as it will land: the pill, the thinking, then the calls being written (`LiveCall`), each in the
@@ -1086,6 +1093,7 @@ export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; 
                   </div>
                 : null}
             {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}
+            {answerText && !ls.content ? <div class="live-answer"><ReplyBubble content={answerText} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step} streaming /></div> : null}
         </>
     );
 }

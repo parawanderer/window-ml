@@ -16,7 +16,7 @@
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
 import { DIALECT_FILES, DIALECT_NODES } from "./dialect-data";
-import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
+import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
 import { dialectSetup } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 
@@ -247,7 +247,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // LIVE stdout tee (opt-in streaming): Pyodide's JS-side setStdout wraps the interpreter's real stdout,
     // which the prelude's _MlTee writes through to. No callback object lands in the namespace — a JsProxy
     // of one is a JS `Function` constructor to a hostile cell. Cleared in finally.
-    if (onStdout) py.setStdout({ batched: onStdout });
+    if (onStdout) py.setStdout(stdoutWriter(onStdout));
     try {
         // SETUP first: harness refs, RESET (per-run isolation) + PRELUDE (preloaded vars) + net policy + the
         // `ml` facade → `python-runtime.ts`. Not the user's cell, so it is not what the 15s covers.

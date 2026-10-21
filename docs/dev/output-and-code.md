@@ -51,7 +51,10 @@ a time, since re-arming it on every arrival starved it on long cells. Costs and 
 `notebooks/ui/live-call-reveal.ipynb`. A caret blinks where the text arrives (steady under reduced motion), the body
 follows the text until the reader scrolls up, and the orb says "Writing the <tool> call…". Nothing new for longer than
 the orb's `STALL_MS` and the row says "no output for Ns" and the caret stops (`stallNote`), timed by the panel's clock
-from the last change in the count, so a stalled server is not mistaken for a slow one. It is DISPLAY ONLY: what runs is
+from the last change in the count, so a stalled server is not mistaken for a slow one. That row is exempt from focus
+mode's hiding of step previews (sidebar.css), so the calm view shows it too. In the calm view an `answer` call being
+written is drawn as the reply it will be (`.live-answer`, `LiveStream`): words fade in as in a streamed reply, and the
+settled answer takes over in place; the detailed view keeps the call. It is DISPLAY ONLY: what runs is
 the parsed call. Which wires fragment a call: OpenAI-shaped SSE always; Ollama native only from a patched server's
 `tool_call_deltas` (`docs/FORKED-BACKENDS.md`), whose whole `tool_calls` at the end is still the call that runs. Over a
 hub, a call whose arguments exceed the preview bound goes as its name and size only (`tail()`, session-relay.ts), since

@@ -3240,6 +3240,102 @@ test("a streamed THOUGHT also silences the status line, which would otherwise co
     expect(errors, "no page errors").toEqual([]);
 });
 
+test("a call being written keeps its progress line in the reading view, and says when it has gone quiet", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.clock.install();
+    await page.goto(server.url + `#s=${encodeURIComponent(WATCHED)}`);
+    await page.locator(".chat-transcript").waitFor();
+    expect(await page.evaluate(() => document.documentElement.hasAttribute("data-focus")), "the reading view quiets previews").toBe(true);
+    const args = JSON.stringify({ code: "import math\nfor i in range(3):\n    print(math.sqrt(i))" });
+    await page.evaluate(([k, a]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
+        calls: [{ index: 0, name: "python_exec", args: a, chars: a.length }],
+    }), [WATCHED, args]);
+    const line = page.locator(".live-call .astep-preview");
+    // Focus mode hides a tool row's preview as chrome, and this one went with it: in the reading view a stalled call
+    // and a slow one looked the same again.
+    await expect(line, "the progress line is not hidden as chrome").toBeVisible();
+    await expect(line).toContainText("writing…");
+    await page.clock.fastForward(6000);
+    await expect(line, "and it says when nothing has arrived").toContainText(/no output for \d+s/);
+    expect(errors, "no page errors").toEqual([]);
+});
+
+test("an answer written as a call streams in as the reply in the reading view, and settles without growing in again", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`);
+    const text = "## The count\n\nThere are **42** of them, all accounted for.";
+    const emitCall = (args) => page.evaluate(([k, a]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
+        calls: [{ index: 0, name: "answer", args: a, chars: a.length }],
+    }), [WATCHED, args]);
+    const args = JSON.stringify({ text });
+    await emitCall(args.slice(0, 40));
+    const reply = page.locator(".live-answer .msg.asst.streaming");
+    // It used to be drawn as a tool block ("answer · writing…") with its text indented under it, which jumped into the
+    // reply column when it landed, and arrived in chunks instead of the reading view's word-by-word fade.
+    await expect(reply, "drawn as the reply").toBeVisible();
+    await expect(page.locator('.live-call[data-tool="answer"]'), "not as a call").toBeHidden();
+    await emitCall(args.slice(0, -2));
+    await expect(reply).toContainText("all accounted for");
+
+    await page.evaluate(([k, summary]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-result", id: `${k.split(":").pop()}-ans`, ts: Date.now(), save: true,
+        session: { hash: k.split(":").pop(), turn: 9 }, steps: 9, hitCap: false, summary,
+    }), [WATCHED, text]);
+    await expect(reply).toHaveCount(0);
+    const settled = page.locator(".msg.asst").last();
+    await expect(settled).toContainText("all accounted for");
+    const growing = await settled.evaluate((el) => el.getAnimations().filter((a) => a.effect?.target === el).length);
+    expect(growing, "the settled answer is not animated in as a new arrival").toBe(0);
+
+    // The detailed view keeps the call: it is instrumentation, and the call is what the model sent.
+    await reading(page);
+    await calmRow(page).click();
+    await page.keyboard.press("Escape");
+    await emitCall(args.slice(0, 40));
+    await expect(page.locator('.live-call[data-tool="answer"]')).toBeVisible();
+    await expect(page.locator(".live-answer")).toBeHidden();
+    expect(errors, "no page errors").toEqual([]);
+});
+
+// --- following the newest turn ---
+
+test("opening a running step at the bottom keeps the page following its output", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const hash = "f011040d", key = `laptop:${hash}`;
+    const emit = (e) => page.evaluate(([k, h, ev]) => globalThis.__chatFake.emit(k, { id: h, ts: Date.now(), save: ev.kind !== "agent-stream", session: { hash: h, turn: 0 }, ...ev }), [key, hash, e]);
+    await page.evaluate(([k, h]) => globalThis.__chatFake.addSession({ id: { runtime: "laptop", hash: h }, kind: "agent", status: "running", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: true, task: "Count to forty" }), [key, hash]);
+    await emit({ kind: "agent", task: "Count to forty", model: "fake", maxSteps: 10 });
+    await page.goto(server.url + `#/s/${encodeURIComponent(key)}`);
+    const scroller = page.locator(".chat-transcript");
+    await scroller.waitFor();
+    const gap = () => scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+    const code = Array.from({ length: 40 }, (_, i) => `print("line ${i}")`).join("\n");
+    // As a streamed run sends it: the call written first, then the step that replaces it, which the reader opens.
+    const args = JSON.stringify({ code });
+    await emit({ kind: "agent-stream", step: 1, localStep: 1, calls: [{ index: 0, name: "python_exec", args, chars: args.length }] });
+    await emit({ kind: "agent-step", step: 1, seq: 1, pending: true, tool: "python_exec", arguments: { code }, renderIn: { type: "python-in", mode: "script", code } });
+    const head = page.locator('.astep.tool[data-astep-seq="1"] .astep-head');
+    await head.waitFor();
+    await page.waitForTimeout(400);
+    // The click is a gesture, and opening the step grows the page; the follow's own glide down to the new bottom was
+    // read as the reader scrolling away, and the page stopped following just as the output began.
+    await head.click();
+    let out = "";
+    for (let i = 0; i < 16; i++) {
+        out += `line ${i}\n`;
+        await emit({ kind: "agent-step", step: 1, seq: 1, streamOutput: out });
+        await page.waitForTimeout(120);
+    }
+    expect(await scroller.evaluate((el) => el.scrollHeight > el.clientHeight), "the page has somewhere to scroll").toBe(true);
+    await expect.poll(gap, { timeout: 3000 }).toBeLessThan(40);
+    expect(errors, "no page errors").toEqual([]);
+});
+
 // --- what a remote client is not offered ---
 
 test("the Run state panel is not offered here: it reads this browser's own runs, and a remote client has none", async () => {
