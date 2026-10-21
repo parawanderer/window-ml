@@ -1,0 +1,3983 @@
+{
+  "fields": {
+    "_common": {
+      "where": "src/readonly-exec/policy-realm.ts:84-114 (buildFacade), 124-137 (evalPolicy)",
+      "semantics": "c is a deep frozen copy; every object/array is a STRICT facade: reading an absent key is a refusal (policy broken), array non-index keys strict, an index past the end reads undefined; == and != refused at parse; number<string ordering refused; result must be boolean or the policy is broken. Absent OPTIONAL fields (e.g. paths[i].topLevel when no roots given) are therefore refusals, not undefined.",
+      "root_globals": {
+        "where": "src/readonly-exec/policy-realm.ts:73-78",
+        "names": [
+          "Array",
+          "Object",
+          "JSON",
+          "Math",
+          "String",
+          "Number",
+          "Boolean",
+          "parseInt",
+          "parseFloat",
+          "isNaN",
+          "isFinite",
+          "undefined",
+          "NaN",
+          "Infinity"
+        ]
+      },
+      "effects": {
+        "where": "src/readonly-exec/policy-realm.ts:107-113; src/effects.ts:40-49 (EffectSet), 68-85 (effectSet)",
+        "fields": {
+          "unknown": "boolean",
+          "pairs": "{op: Op, res: Resource}[]",
+          "reads": "Resource[]",
+          "writes": "Resource[]",
+          "has": "(op: Op, kind?: ResourceKind) => boolean (throws on an op/kind outside the algebra)",
+          "uses": "(name: string) => boolean (throws on a non-string or empty name)"
+        },
+        "on_unknown": "unknown=true; pairs = every Op over the unknown resource; reads/writes = [unknown resource]; has()/uses() always true",
+        "Op": {
+          "where": "src/effects.ts:9",
+          "values": [
+            "read",
+            "write",
+            "exec",
+            "use",
+            "alloc"
+          ]
+        },
+        "ResourceKind": {
+          "where": "src/effects.ts:19-26, 91",
+          "values": [
+            "heap",
+            "fs",
+            "net",
+            "process",
+            "entropy",
+            "secret",
+            "unknown"
+          ]
+        },
+        "Resource_fields": {
+          "where": "src/effects.ts:54 (RESOURCE_FIELDS); every resource carries ALL of them, absent ones undefined",
+          "names": [
+            "kind",
+            "of",
+            "path",
+            "inRoot",
+            "secret",
+            "exists",
+            "topLevel",
+            "isRoot",
+            "names",
+            "host",
+            "name"
+          ],
+          "types": {
+            "kind": "ResourceKind",
+            "of": "\"owned\"|\"unowned\"|{arg:number} (heap)",
+            "path": "string (fs)",
+            "inRoot": "boolean? (fs)",
+            "secret": "boolean? (fs)",
+            "exists": "boolean? (fs)",
+            "topLevel": "boolean? (fs)",
+            "isRoot": "boolean? (fs)",
+            "names": "boolean? (fs write of the entry)",
+            "host": "string (net; \"*\" = any)",
+            "name": "string (secret)"
+          }
+        }
+      }
+    },
+    "fetch": {
+      "where": "src/sw/sw-policies.ts:378-382 (fetchFacts)",
+      "fields": {
+        "kind": "\"fetch\" (always)",
+        "url": "string (as given)",
+        "host": "string (new URL(url).hostname lowercased; \"\" when unparsable)",
+        "method": "\"GET\" (always; fetch_url has no other)",
+        "credentials": "boolean",
+        "rendered": "boolean",
+        "effects": "EffectSet view; fromFetch({url}) = [read(net(host))], or \"unknown\" when the URL has no host (src/effects.ts:206-220)"
+      },
+      "callers": [
+        "src/sw/sw-run-host.ts:1539,1543",
+        "src/sw/worker-tools.ts:179",
+        "src/sw/policy-proposal.ts:115,156 (checkProposal probe, measureBreadth)"
+      ],
+      "as_told_to_model": {
+        "where": "src/tools/propose-policy-tool.ts:38-39",
+        "text": "Fields: url, host, method, credentials, rendered. Use === only.",
+        "note": "omits kind and effects"
+      }
+    },
+    "sh": {
+      "where": "src/shell/sh-call.ts:215-235 (interface ShFacts), 247-288 (shFacts builder), 199 (ShPathFact), 203-208 (placeAmongRoots); passed as c by src/sw/sw-shell-call.ts:210-211 (asPolicyFacts), judged at 146, 223, 284",
+      "fields": {
+        "argv": "string[]",
+        "program": "{ path: string, inRoot: boolean, version: string | null }",
+        "cwd": "{ path: string, inRoot: boolean, topLevel?: boolean, isRoot?: boolean, containsSecret?: boolean | null }",
+        "env": "{ set: string[], free: boolean }",
+        "secrets": "string[] (names of handles)",
+        "paths": "{ arg: number, given: string, path: string, inRoot: boolean, secret: boolean, exists: boolean, topLevel?: boolean, isRoot?: boolean, containsSecret?: boolean | null, sha256?: string | null }[]",
+        "repo": "{ root: string, reasons: string[] } | null",
+        "repoConfigRunsCode": "boolean | null",
+        "effects": "EffectSet view (from the program manifest via describeCall, src/shell/program-manifest.ts:154; \"unknown\" when no manifest, a version mismatch, an entrypoint miss or a non-free env)",
+        "described": "boolean",
+        "why": "string[]",
+        "runner": "boolean",
+        "mode": "\"host\" | \"container\"",
+        "sandboxed": "boolean",
+        "placement": "\"host-sandbox\" | \"host-plain\" | \"container\" (src/shell/host-protocol.ts:99)"
+      },
+      "notes": "NO kind field on sh facts (c.kind in an sh policy is a refusal). topLevel/isRoot present only when roots were given; containsSecret/sha256 only when the host sent them. The probe judgement at sw-shell-call.ts:283-284 uses shFacts(probe) with effects: []. docs/spec/SHELL.md's field table lists a `run` field and describes `program` as a resolved file; neither matches: there is no `run`, and program is an object, so the POLICIES.md:71 example /git/.test(c.program) would test \"[object Object]\"-like coercion, not the path."
+    }
+  },
+  "searched": [
+    {
+      "where": "tests/ (all .js/.mjs/.ts/.json, unit + red-team + fixtures; string-literal extraction + manual review)",
+      "found": 205
+    },
+    {
+      "where": "tests/e2e/ (specs, bench, panel, harness)",
+      "found": 0
+    },
+    {
+      "where": "src/ (built-ins, tool descriptions, starters, @gallery examples, comments)",
+      "found": 8
+    },
+    {
+      "where": "docs/ and .claude/skills/ (markdown; complete predicates and body fragments)",
+      "found": 18
+    },
+    {
+      "where": "~/git/window-ml/tmp (286M, incl. tmp/runs/*.zip run exports)",
+      "found": 0
+    },
+    {
+      "where": "~/git/window-ml/tests/e2e/artifacts (3.7G: bench, observe, panel runs; run.json/run.md, logs, zips)",
+      "found": 0
+    },
+    {
+      "where": "~/git/window-ml/.claude/worktrees, test-results",
+      "found": 0
+    },
+    {
+      "where": "sibling clones' gitignored tmp/, tests/e2e/artifacts/, test-results/, notebooks/: window-ml-bench, -chatpage, -flaky, -raster, -redteam, -redteam-mermaid, -redteam-pyinside, -repl, -repl-lane10, -repl-lane11, -repl-lane3 (2.7G tmp), -host*, searched for propose_policy and predicate text",
+      "found": 0
+    },
+    {
+      "where": "tracked tests/src/docs JS of window-ml (main), -repl, -repl-lane10, -repl-lane3, -redteam: predicates not already in lane11",
+      "found": 0
+    },
+    {
+      "where": "~/.cache/window-ml-bench (bench ledger; full results are pushed to S3, not local)",
+      "found": 0
+    },
+    {
+      "where": "~/git/session-mail/window-ml/ (195 notes)",
+      "found": 1
+    },
+    {
+      "where": "~/.claude/projects/-Users-sb-git-window-ml/memory",
+      "found": 0
+    }
+  ],
+  "policies": [
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.url === \"https://a.example/x\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:37"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:37: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url === \"https://a.example/x\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:38"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:38: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url === \"https://b.example/\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:39"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:39: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.paths.length",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:47"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:47: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:48"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:48: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => undefined",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:49"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:49: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => null",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:50"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:50: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.paths.length && c.paths[0].inRoot",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:51"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:51: evaluated with paths: [] "
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" &&",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:56"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:56: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kidn === \"fetch\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:63"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:63: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.paths[0].inroot === true",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:64"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:64: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.lenght > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:65"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:65: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.hass(\"write\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:66"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:66: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.reads[0].inroot",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:67"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:67: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.arg[0] === \"rm\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:71"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:71: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const x = c; return x.argv0 === 1; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:75"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:75: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const { argv0 } = c; return !!argv0; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:76"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:76: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c?.argv0 === undefined",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:77"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:77: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c[\"ar\" + \"gv0\"] === undefined",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:78"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:78: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => ((x) => x.urll)(c) === 1",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:79"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:79: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => [c].map(x => x.urll)[0] === 1",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:80"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:80: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv[5] === undefined && c.argv[1] === \"status\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:84"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:84: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv[9].length > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:88",
+        "tests/readonly-policy.test.mjs:190",
+        "tests/readonly-policy.test.mjs:196"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:88: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}",
+        "readonly-policy.test.mjs:190: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}",
+        "readonly-policy.test.mjs:196: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 3
+    },
+    {
+      "src": "(c) => c.argv[9]?.length === undefined",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:89"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:89: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => ({ ...c }).argv0 === undefined",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:93"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:93: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.reads.every((r) => r.inRoot === true)",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:97",
+        "tests/readonly-policy.test.mjs:111"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:97: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}",
+        "readonly-policy.test.mjs:111: over effects: \"unknown\""
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.effects.reads.some((r) => r.host === \"a.example\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:98"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:98: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.has(\"read\", \"net\") && !c.effects.has(\"write\") && !c.effects.uses(\"github\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:102"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:102: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const h = c.effects.has; return h(\"read\"); }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:103"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:103: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.has.call(null, \"read\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:104"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:104: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url.big() === \"\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:105"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:105: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !c.effects.has(\"write\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:110"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:110: over effects: \"unknown\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.unknown",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:112"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:112: over effects: \"unknown\", effect deny"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.pairs.every((e) => e.op === \"read\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:113"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:113: over effects: \"unknown\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.pairs.length === 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:114"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:114: over effects: \"unknown\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !c.effects.has(\"wirte\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:118",
+        "tests/readonly-policy.test.mjs:121"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:118: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}",
+        "readonly-policy.test.mjs:121: over effects: \"unknown\""
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => !c.effects.has(\"write\", \"files\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:119"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:119: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !c.effects.uses(1)",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:120"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:120: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url.lenght > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:125"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:125: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url.length > 0 && c.url[0] === \"h\" && c.url.startsWith(\"https:\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:126"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:126: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind == \"fetch\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:132"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:132: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind != \"x\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:133"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:133: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.some((a) => a == \"git\")",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:134"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:134: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" || c.kind == \"x\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:135"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:135: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.length < \"10\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:139"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:139: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.length < 10 && \"a\" < \"b\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:140"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:140: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind !== \"x\" && c.argv[0] === \"git\"",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:144"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:144: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c = 1; return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:165"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:165: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { Object.assign(Math, { pwned: 1 }); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:170"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:170: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { Object.assign(JSON, { stringify: (x) => \"PWN\" }); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:171"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:171: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { Object.assign(Array, { isArray: (x) => false }); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:172"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:172: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => Math.pwned === undefined",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:177"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:177: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => /(a+)+$/.test(c.url)",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:181"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:181: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => new RegExp(\"(\\\\w+\\\\s?)*$\").test(c.url)",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:182"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:182: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url.match(\"(a|a)+\") !== null",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:183"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:183: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => /^https:\\/\\/a\\.example\\//.test(c.url)",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:184"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:184: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => JSON.parse(\"{\") && true",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:191"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:191: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { throw new Error(\"no\"); }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:192"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:192: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { try { return c.kidn === 1; } catch (e) { return true; } }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:202"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:202: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { try { return c.kind == \"fetch\"; } catch (e) { return true; } }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:203"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:203: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.argv.push(\"x\"); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:212",
+        "tests/fixtures/dialect-vectors/abuse.json:620"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:212: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}",
+        "abuse.json:620: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => { c.kind = \"x\"; return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:212",
+        "tests/fixtures/dialect-vectors/abuse.json:612"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:212: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}",
+        "abuse.json:612: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => { const a = c.argv; a[0] = \"rm\"; return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:213"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:213: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.paths[0].inRoot = false; return c.kidn; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:213"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:213: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { Object.assign(c.paths[0], { secret: true }); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:214"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:214: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv[0] === \"git\" && c.kind === \"fetch\" && c.paths[0].inRoot === true",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:219"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:219: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => true",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:230",
+        "tests/readonly-policy.test.mjs:231",
+        "tests/sw-policies.test.mjs:13"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:230: evaluated over facts holding a function (refused before the policy runs)",
+        "readonly-policy.test.mjs:231: evaluated over facts holding a Date (refused)",
+        "sw-policies.test.mjs:13: stored with consumer \"mail\": dropped on load"
+      ],
+      "shape": "arrow",
+      "count": 3
+    },
+    {
+      "src": "(c) => (",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:235",
+        "tests/readonly-policy.test.mjs:235"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:235: parse error, cached; evaluated twice",
+        "readonly-policy.test.mjs:235: parse error, cached; evaluated twice"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => { let n = 0; for (const a of c.argv) n += a.length; return n > 0; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:275"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:275: over 5000-element argv in a worker"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.every((a) => c.argv.every((b) => a !== b || a === b))",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:280"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:280: over 5000-element argv"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { let s = \"ab\"; for (const a of c.argv) s = s + s; return s.length > 0; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:297"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:297: over 5000-element argv"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const f = (n) => n === 0 ? 1 : f(n - 1) + f(n - 1); return f(40) > 0; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:298",
+        "tests/fixtures/dialect-vectors/halting.json:1204"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:298: over 5000-element argv",
+        "halting.json:1204: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => { const a = []; for (const x of c.argv) for (const y of c.argv) a.push(x + y); return a.length > 0; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:299"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:299: over 5000-element argv"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => /(a+)+b/.test(c.url)",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:309"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:309: url = \"a\"*40"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "const READ = [\"status\", \"log\", \"diff\"];\n(c) => c.argv[0] === \"git\" && READ.includes(c.argv[1])",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:43"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:43: helper const before the function; hybrid FACTS"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1
+    },
+    {
+      "src": "const seen = [];\n(c) => { seen.push(c.url); return seen.length === 1; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:224"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:224: tries to keep state across evaluations"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1
+    },
+    {
+      "src": "1 + 1",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:55"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:55: not a function"
+      ],
+      "shape": "not-a-function",
+      "count": 1
+    },
+    {
+      "src": "",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/readonly-policy.test.mjs:57"
+      ],
+      "notes": [
+        "readonly-policy.test.mjs:57: empty source"
+      ],
+      "shape": "empty",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!ml",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:396"
+      ],
+      "notes": [
+        "abuse.json:396: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!document",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:404"
+      ],
+      "notes": [
+        "abuse.json:404: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!window",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:412"
+      ],
+      "notes": [
+        "abuse.json:412: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!globalThis",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:420"
+      ],
+      "notes": [
+        "abuse.json:420: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { console.log(\"x\"); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:428"
+      ],
+      "notes": [
+        "abuse.json:428: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => Date.now() > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:436"
+      ],
+      "notes": [
+        "abuse.json:436: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => new Date() > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:444"
+      ],
+      "notes": [
+        "abuse.json:444: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!Promise",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:452"
+      ],
+      "notes": [
+        "abuse.json:452: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!getComputedStyle",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:460"
+      ],
+      "notes": [
+        "abuse.json:460: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!Function",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:468"
+      ],
+      "notes": [
+        "abuse.json:468: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!fetch",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:476"
+      ],
+      "notes": [
+        "abuse.json:476: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!self",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:484"
+      ],
+      "notes": [
+        "abuse.json:484: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.constructor",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:492"
+      ],
+      "notes": [
+        "abuse.json:492: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.__proto__",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:500"
+      ],
+      "notes": [
+        "abuse.json:500: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.argv.constructor",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:508"
+      ],
+      "notes": [
+        "abuse.json:508: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c[\"constr\" + \"uctor\"]",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:516"
+      ],
+      "notes": [
+        "abuse.json:516: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.url.constructor",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:524"
+      ],
+      "notes": [
+        "abuse.json:524: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.effects.has.constructor",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:532"
+      ],
+      "notes": [
+        "abuse.json:532: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const { constructor } = c.argv; return !!constructor; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:540"
+      ],
+      "notes": [
+        "abuse.json:540: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.paths[0].__proto__",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:548"
+      ],
+      "notes": [
+        "abuse.json:548: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => !!c.argv.prototype",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:556"
+      ],
+      "notes": [
+        "abuse.json:556: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.map((x) => x.constructor).length > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:564"
+      ],
+      "notes": [
+        "abuse.json:564: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.map((x) => Object.getPrototypeOf(x)).length > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:572"
+      ],
+      "notes": [
+        "abuse.json:572: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.some(function () { return this; })",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:580"
+      ],
+      "notes": [
+        "abuse.json:580: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.map(c.effects.has).length > 0",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:588"
+      ],
+      "notes": [
+        "abuse.json:588: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.argv.sort((a, b) => a.constructor.constructor(\"return 1\")()) && true",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:596"
+      ],
+      "notes": [
+        "abuse.json:596: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => JSON.parse(\"{}\", (k, v) => v.constructor) && true",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:604"
+      ],
+      "notes": [
+        "abuse.json:604: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.argv[0] = \"x\"; return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:628"
+      ],
+      "notes": [
+        "abuse.json:628: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.paths[0].inRoot = false; return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:636"
+      ],
+      "notes": [
+        "abuse.json:636: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.argv.sort(); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:644"
+      ],
+      "notes": [
+        "abuse.json:644: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { Object.assign(c, { kind: \"x\" }); return true; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/abuse.json:652"
+      ],
+      "notes": [
+        "abuse.json:652: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const f = (n) => f(n + 1); return f(0); }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/halting.json:1180"
+      ],
+      "notes": [
+        "halting.json:1180: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const g = (n) => h(n); const h = (n) => g(n + 1); return g(0); }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/halting.json:1188"
+      ],
+      "notes": [
+        "halting.json:1188: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const f = (n) => [n].map((x) => f(x + 1))[0]; return f(0) === 1; }",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/fixtures/dialect-vectors/halting.json:1196"
+      ],
+      "notes": [
+        "halting.json:1196: dialect vector, env \"policy\", run over readonly-policy FACTS"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"other.example\" && !c.credentials",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:31",
+        "tests/propose-policy.test.mjs:24"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:31: NARROW proposal",
+        "propose-policy.test.mjs:24: NARROW proposal"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => true",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack",
+        "functional",
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:32",
+        "tests/propose-policy-redteam.test.mjs:115",
+        "tests/propose-policy-redteam.test.mjs:211",
+        "tests/propose-policy-redteam.test.mjs:309",
+        "tests/propose-policy-redteam.test.mjs:310",
+        "tests/propose-policy-redteam.test.mjs:311",
+        "tests/propose-policy.test.mjs:103",
+        "tests/propose-policy.test.mjs:113",
+        "tests/propose-policy.test.mjs:156",
+        "tests/propose-policy.test.mjs:185",
+        "tests/sw-policies.test.mjs:11",
+        "tests/sw-policies.test.mjs:14",
+        "tests/sw-policies.test.mjs:197",
+        "tests/sw-policies-unloaded.test.mjs:15",
+        "tests/redteam.test.js:907",
+        "tests/redteam.test.js:921",
+        "tests/lapsed-ask-redteam.test.mjs:324",
+        "tests/lapsed-ask-redteam.test.mjs:325",
+        "tests/run-start.test.mjs:963",
+        "tests/run-start.test.mjs:975"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:32: BROAD proposal",
+        "propose-policy-redteam.test.mjs:115: a page posting POLICIES add",
+        "propose-policy-redteam.test.mjs:211: extension page adds it while a card is open",
+        "propose-policy-redteam.test.mjs:309: label with a closing quote (refused)",
+        "propose-policy-redteam.test.mjs:310: label with a line break (refused)",
+        "propose-policy.test.mjs:103: breadth measure",
+        "propose-policy.test.mjs:113: breadthNote",
+        "propose-policy.test.mjs:156: scripted fake-model propose_policy call; RED TEAM test",
+        "propose-policy.test.mjs:185: page START_RUN listing propose_policy; RED TEAM test",
+        "sw-policies.test.mjs:11: stored with effect \"maybe\": dropped on load",
+        "sw-policies.test.mjs:14: stored with wrong scope: dropped on load",
+        "sw-policies-unloaded.test.mjs:15: store not loaded yet: answers ask",
+        "lapsed-ask-redteam.test.mjs:324: page-posted POLICIES op add",
+        "lapsed-ask-redteam.test.mjs:325: page-posted POLICIES op add with forged lapsed",
+        "run-start.test.mjs:975: effect \"maybe\" (refused)"
+      ],
+      "shape": "arrow",
+      "count": 20
+    },
+    {
+      "src": "(c) => c.host === \"other.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:223",
+        "tests/lapsed-ask-redteam.test.mjs:161",
+        "tests/run-start.test.mjs:939",
+        "tests/run-start.test.mjs:984"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 4
+    },
+    {
+      "src": "(c) => false",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack",
+        "functional"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:293",
+        "tests/sw-policies.test.mjs:146",
+        "tests/sw-policies.test.mjs:159",
+        "tests/sw-policies.test.mjs:165",
+        "tests/lapsed-ask-redteam.test.mjs:351"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:293: a page tool faking the card renderIn text"
+      ],
+      "shape": "arrow",
+      "count": 5
+    },
+    {
+      "src": "(c) => !c.host.endsWith(\".invalid\") && !c.host.endsWith(\".example\") && !c.host.startsWith(\"10.\") && !c.host.startsWith(\"192.168.\") && c.host !== \"localhost\" && c.host !== \"127.0.0.1\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:334"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:334: excludes the probe hosts by shape"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host.endsWith(\".com\")",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:344"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:344: suffix match, caught by sibling probes"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"shop.com\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:348"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host.endsWith(\".github.io\")",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:356"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:356: suffix match, caught by sibling probes"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url === \"https://shop.com/a\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:365"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { while (true) {} }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:410"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { for (;;) {} return true; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:411"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const f = (n) => f(n + 1); return f(0); }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:412"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { const f = (n) => n === 0 ? 1 : f(n - 1) + f(n - 1); return f(40) > 0; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:413"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { let s = \"ab\"; for (let i = 0; i < 60; i++) s = s + s; return s.length > 0; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:414"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host == \"other.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack",
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:416",
+        "tests/propose-policy.test.mjs:77",
+        "tests/propose-policy.test.mjs:175"
+      ],
+      "notes": [
+        "propose-policy.test.mjs:77: == refused",
+        "propose-policy.test.mjs:175: scripted fake-model propose_policy call"
+      ],
+      "shape": "arrow",
+      "count": 3
+    },
+    {
+      "src": "(c) => c.nope.deeper === 1",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:417"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.constructor.constructor(\"return globalThis\")() !== null",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:418"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.__proto__ !== null",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:419"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.host = \"other.example\"; return true; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:420"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { Object.prototype.polluted = 1; return true; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:421"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => ({}).toString.call(c) === 1",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:422"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => import(\"x\")",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:423"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => fetch(c.url) !== null",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:424"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => globalThis.chrome !== undefined",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:425"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => true; while (true) {}",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:427"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"unrelated.invalid\" ? false : c.url.split(\"\").every((a) => c.url.split(\"\").every((b) => a !== b || a === b))",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:447"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:447: cheap on the probe, exhausts budget on recorded calls"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => ${hosts.map((h) => `c.host !== ${JSON.stringify(h)}`).join(\" && \")}",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:323"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:323: TEMPLATE: one c.host !== \"<probe host>\" conjunct per host of an earlier probeUrls() draw (11 hosts)"
+      ],
+      "shape": "template",
+      "count": 1
+    },
+    {
+      "src": "\"(c) => \" + Array.from({ length: 1500 }, () => \"c.url\").join(\" + \") + \" === 1\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:415"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:415: TEMPLATE: (c) => c.url + c.url + ... (1500 terms) === 1"
+      ],
+      "shape": "template",
+      "count": 1
+    },
+    {
+      "src": "function* g(c) { yield true; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:426"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:426: generator, not an arrow"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "\"(c) => \" + \"(\".repeat(4000) + \"true\" + \")\".repeat(4000)",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/propose-policy-redteam.test.mjs:437"
+      ],
+      "notes": [
+        "propose-policy-redteam.test.mjs:437: TEMPLATE: 4000-deep parenthesised true"
+      ],
+      "shape": "template",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.hots === \"other.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy.test.mjs:78"
+      ],
+      "notes": [
+        "propose-policy.test.mjs:78: field a fetch call lacks"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url.length",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy.test.mjs:79"
+      ],
+      "notes": [
+        "propose-policy.test.mjs:79: not a boolean"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url.startsWith(\"http\")",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/propose-policy.test.mjs:108"
+      ],
+      "notes": [
+        "propose-policy.test.mjs:108: breadth measure"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy.test.mjs:75"
+      ],
+      "notes": [
+        "propose-policy.test.mjs:75: when: \"\" (refused)"
+      ],
+      "shape": "empty",
+      "count": 1
+    },
+    {
+      "src": "\"x\".repeat(10_001)",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy.test.mjs:76"
+      ],
+      "notes": [
+        "propose-policy.test.mjs:76: TEMPLATE: 10001 x characters, over POLICY_SOURCE_MAX"
+      ],
+      "shape": "template",
+      "count": 1
+    },
+    {
+      "src": "this is not code",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/propose-policy.test.mjs:80"
+      ],
+      "notes": [],
+      "shape": "not-a-function",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"blocked.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:10",
+        "tests/sw-policies.test.mjs:52"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:10: stored global deny fixture"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.argv[0] === \"ls\"",
+      "author": "test",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:12",
+        "tests/ml-sh.test.mjs:125",
+        "tests/ml-sh.test.mjs:258",
+        "tests/ml-sh.test.mjs:562"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:12: stored global sh allow fixture",
+        "ml-sh.test.mjs:125: global deny",
+        "ml-sh.test.mjs:258: global allow",
+        "ml-sh.test.mjs:562: global allow"
+      ],
+      "shape": "arrow",
+      "count": 4
+    },
+    {
+      "src": "(c) => c.url === \"https://a.example/x\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:18"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:18: stored run policy (card)"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.uurl === 1",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:59"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:59: typo"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url === \"https://ok.example/\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:60"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "h-bdeny",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:70"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:70: typo in a deny"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.hots === 1",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:70"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:70: typo in a deny"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url === \"cache\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:86"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"edit.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:147"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:147: edit"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "h-view",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:170"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:170: broken"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.nope",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:170"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:170: broken"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => true",
+      "author": "test",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:195",
+        "tests/nested-asks.test.mjs:211"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.effects.has(\"write\")",
+      "author": "test",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:217"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects.writes.every((r) => r.path.startsWith(\"/r/src/\"))",
+      "author": "test",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:218"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"nar.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:286"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.url === \"https://nar.example/keep\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:287"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:287: edit narrows"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"glob.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:297"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"den.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:298"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "h-lap-brk",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:314"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:314: typo"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.nothing === 1",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/sw-policies.test.mjs:314"
+      ],
+      "notes": [
+        "sw-policies.test.mjs:314: typo"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => { c.host = 'evil'; return true; }",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/redteam.test.js:933"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.constructor",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/redteam.test.js:938"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.__proto__",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/redteam.test.js:942"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.urll === 'x'",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "tests/redteam.test.js:946"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === 'x.example'",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/redteam.test.js:950",
+        "tests/redteam.test.js:952",
+        "tests/redteam.test.js:972"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 3
+    },
+    {
+      "src": "(c) => eval('1')",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/redteam.test.js:962"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => Function('return 1')()",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/redteam.test.js:964"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host == 'x.example'",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/redteam.test.js:968"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"victim.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:27"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:27: seeded lapsed policy fixture"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"victim.example\" /* SOURCE-MARKER */",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:28"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:28: SOURCE-MARKER: must never leak"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"globalgone.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:32"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:32: seeded global lapsed"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "h-rearm",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:108"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:108: reads fields a payload might forge"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.lapsed === true || c.askWhy !== undefined || c.policy !== undefined",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:108"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:108: reads fields a payload might forge"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"a.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:363",
+        "tests/lapsed-ask-redteam.test.mjs:366"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:363: checkProposal",
+        "lapsed-ask-redteam.test.mjs:366: checkProposal with hostile labels"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.host === \"person.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:391"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"alter.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:74"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:74: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"order.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:88",
+        "tests/lapsed-ask-redteam.test.mjs:95"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:88: instance of allowHost() template at line 54: (c) => c.host === \"${host}\"",
+        "lapsed-ask-redteam.test.mjs:95: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.host === \"order2.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:99",
+        "tests/lapsed-ask-redteam.test.mjs:101"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:99: instance of allowHost() template at line 54: (c) => c.host === \"${host}\"",
+        "lapsed-ask-redteam.test.mjs:101: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.host === \"lbl.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/lapsed-ask-redteam.test.mjs:373"
+      ],
+      "notes": [
+        "lapsed-ask-redteam.test.mjs:373: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "() => true",
+      "author": "test",
+      "consumer": "sh",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "tests/ml-sh-redteam.test.mjs:151"
+      ],
+      "notes": [
+        "ml-sh-redteam.test.mjs:151: in a hostile page barrage payload (op add)"
+      ],
+      "shape": "zero-param arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"x.example\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/run-start.test.mjs:948"
+      ],
+      "notes": [],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"a.test\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sidebar-settings.test.js:879"
+      ],
+      "notes": [
+        "sidebar-settings.test.js:879: instance of policy(id) template: (c) => c.host === \"${id}.test\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"b.test\"",
+      "author": "test",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sidebar-settings.test.js:879"
+      ],
+      "notes": [
+        "sidebar-settings.test.js:879: instance of policy(id) template, consumer sh, effect deny (line 895)"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"c.test\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sidebar-settings.test.js:879"
+      ],
+      "notes": [
+        "sidebar-settings.test.js:879: instance of policy(id) template, run scope (line 896)"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => false",
+      "author": "test",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sidebar-settings.test.js:897"
+      ],
+      "notes": [
+        "sidebar-settings.test.js:897: fixture standing in for the built-in default row"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"z.test\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sidebar-settings.test.js:935",
+        "tests/sidebar-settings.test.js:939"
+      ],
+      "notes": [
+        "sidebar-settings.test.js:935: typed into the policy page",
+        "sidebar-settings.test.js:939: typed into the policy page"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.host === \"example.com\"",
+      "author": "test",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/sidebar-settings.test.js:952"
+      ],
+      "notes": [
+        "sidebar-settings.test.js:952: the starter, submitted as is"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.url === ${JSON.stringify(url)}",
+      "author": "builtin",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/sw/sw-policies.ts:386"
+      ],
+      "notes": [
+        "sw-policies.ts:386: TEMPLATE fetchUrlPolicySource: \"Approve + remember these URLs\" card; instantiated in tests/sw-policies.test.mjs:94,104,111,119,128,162,263,276,305,307,321 and tests/lapsed-ask-redteam.test.mjs:385,403"
+      ],
+      "shape": "template",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.effects ⊆ B(placement) ∪ { read(fs(p)) : p in a root, not secret }   // free(), src/effects.ts",
+      "author": "builtin",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/sw/sw-policies.ts:294"
+      ],
+      "notes": [
+        "sw-policies.ts:294: BUILTIN_POLICY display text, NOT evaluated (the real rule is free() in src/effects.ts); not valid JS"
+      ],
+      "shape": "pseudo-code",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.host === \"example.com\"",
+      "author": "builtin",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/sidebar/settings/settings.tsx:1157"
+      ],
+      "notes": [
+        "settings.tsx:1157: POLICY_STARTER: pre-fills the add-policy textarea"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"docs.python.org\" && !c.credentials",
+      "author": "builtin",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/tools/propose-policy-tool.ts:38"
+      ],
+      "notes": [
+        "propose-policy-tool.ts:38: example in the propose_policy \"when\" parameter description: what the model reads"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.uurl === \"https://example.com/data.json\"",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "src/sidebar/settings/settings.tsx:1108"
+      ],
+      "notes": [
+        "settings.tsx:1108: @gallery example of a broken card policy"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host === \"docs.python.org\" && !c.credentials",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/sidebar/settings/settings.tsx:1109"
+      ],
+      "notes": [
+        "settings.tsx:1109: @gallery example, origin \"proposed\""
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.host === \"tracker.example\"",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/sidebar/settings/settings.tsx:1110"
+      ],
+      "notes": [
+        "settings.tsx:1110: @gallery example, origin \"person\", deny"
+      ],
+      "shape": "arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.url === \"<literal>\"",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "src/sw/sw-policies.ts:10",
+        "docs/plan/repl/LANE_2_POLICIES.md:58"
+      ],
+      "notes": [
+        "sw-policies.ts:10: header comment describing the card template",
+        "LANE_2_POLICIES.md:58: card template"
+      ],
+      "shape": "template",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.argv[0] === \"git\" && [\"status\", \"diff\", \"log\", \"show\", \"blame\"].includes(c.argv[1])\n    && !c.argv.some((a) => /^--(output|ext-diff|exec|upload-pack)/.test(a))\n    && c.paths.every((p) => p.inRoot)",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:40",
+        "docs/spec/SHELL.md:328"
+      ],
+      "notes": [
+        "POLICIES.md:40: \"Global, set by the person\"",
+        "SHELL.md:328: \"Global, set by the person\""
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.argv[0] === \"npm\" && [\"test\", \"run lint\"].includes(c.argv.slice(1).join(\" \"))",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:45",
+        "docs/spec/SHELL.md:333"
+      ],
+      "notes": [
+        "POLICIES.md:45: \"For one run, granted from an approval card\"",
+        "SHELL.md:333: \"For one run, granted from an approval card\""
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.effects.every((e) => e.op === \"read\" && e.res.kind === \"fs\" && e.res.inRoot && !e.res.secret)",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:137",
+        "docs/spec/SHELL.md:351"
+      ],
+      "notes": [
+        "POLICIES.md:137: the built-in default on the plain host, as the spec writes it. NOTE: c.effects has no every(); against the real facade this is broken (should be c.effects.pairs.every); e.res.inRoot is not a boolean-guarded compare",
+        "SHELL.md:351: same as POLICIES.md:137; same defect"
+      ],
+      "shape": "arrow",
+      "count": 2
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.url === <literal>",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/dev/policies.md:103"
+      ],
+      "notes": [
+        "policies.md:103: card template"
+      ],
+      "shape": "template",
+      "count": 1
+    },
+    {
+      "src": "c.effects.has(\"write\", \"fs\")",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/EFFECTS.md:145"
+      ],
+      "notes": [
+        "EFFECTS.md:145: body fragment: any write to any path"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.effects.writes.every((r) => r.inRoot)",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/EFFECTS.md:146"
+      ],
+      "notes": [
+        "EFFECTS.md:146: body fragment: every written path is inside a root"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.effects.has(\"exec\", \"process\")",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/EFFECTS.md:147"
+      ],
+      "notes": [
+        "EFFECTS.md:147: body fragment"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.effects.uses(\"github\")",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/spec/EFFECTS.md:148"
+      ],
+      "notes": [
+        "EFFECTS.md:148: body fragment; also docs/spec/SECRET_HANDLES.md:71"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.paths.length && …",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:69"
+      ],
+      "notes": [
+        "POLICIES.md:69: body fragment: the guard pattern the spec recommends (note: the realm marks a numeric && result broken)"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "/git/.test(c.program)",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:71"
+      ],
+      "notes": [
+        "POLICIES.md:71: body fragment, the unanchored-regex pitfall. NOTE: c.program is an object {path,inRoot,version} in ShFacts, not a string"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.host !== \"<probe>\"",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:241"
+      ],
+      "notes": [
+        "POLICIES.md:241: body fragment: probe exclusion by name"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "!c.host.endsWith(\".invalid\")",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "docs/spec/POLICIES.md:243"
+      ],
+      "notes": [
+        "POLICIES.md:243: body fragment: probe exclusion by shape"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.argv[1] === \"status\"",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/dev/readonly-exec.md:556"
+      ],
+      "notes": [
+        "readonly-exec.md:556: body fragment"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.argv[9].length > 0",
+      "author": "doc",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "docs/dev/readonly-exec.md:558"
+      ],
+      "notes": [
+        "readonly-exec.md:558: body fragment"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.url.lenght",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "negative"
+      ],
+      "locations": [
+        "docs/dev/readonly-exec.md:562"
+      ],
+      "notes": [
+        "readonly-exec.md:562: body fragment, typo"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.effects.reads.every((r) => r.inRoot)",
+      "author": "doc",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/dev/readonly-exec.md:570"
+      ],
+      "notes": [
+        "readonly-exec.md:570: body fragment"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "c.effects.has(op, kind)",
+      "author": "doc",
+      "consumer": "other",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "docs/plan/repl/LANE_2_RESULT_E.md:25"
+      ],
+      "notes": [
+        "LANE_2_RESULT_E.md:25: signature fragment"
+      ],
+      "shape": "fragment",
+      "count": 1
+    },
+    {
+      "src": "(c) => c.host !== \"<each probe>\"",
+      "author": "doc",
+      "consumer": "fetch",
+      "adversarial": true,
+      "roles": [
+        "attack"
+      ],
+      "locations": [
+        "~/git/session-mail/window-ml/20261015-1719Z-repl-lane2-to-repl-specs-lane-2-results-e-and-3.md:50"
+      ],
+      "notes": [
+        "20261015-1719Z-repl-lane2-to-repl-specs-lane-2-results-e-and-3.md:50: session-mail note quoting the red-team finding; template"
+      ],
+      "shape": "template",
+      "count": 1
+    }
+  ],
+  "meta": {
+    "repo": "window-ml",
+    "commit": "e3b9af1e",
+    "unique_entries": 221,
+    "total_occurrences": 275,
+    "by_author_unique": {
+      "test": 195,
+      "builtin": 4,
+      "doc": 22
+    },
+    "role_legend": {
+      "functional": "meant to evaluate normally (true/false)",
+      "negative": "expected broken/refused (typo, ==, non-boolean, parse error)",
+      "attack": "written to escape, mutate, hang, leak or game the breadth probe"
+    },
+    "shape_legend": "arrow = complete (c) => ...; fragment = predicate body only; template = source built by code (template text recorded); others as named",
+    "dedupe": "exact source text + author + consumer; count = number of locations",
+    "dropped": "10 collected entries whose src was a policy id or a placeholder (h-deny, input, *, ...), not a source; each one's real source is already an entry",
+    "collected": "2026-10-21 by lane 11 (session a0a98fc7); the lane-11 count of 231 includes the dropped entries"
+  }
+}

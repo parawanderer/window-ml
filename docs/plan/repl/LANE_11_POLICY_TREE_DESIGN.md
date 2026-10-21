@@ -17,8 +17,10 @@ the local bench ledger holds none. So the measurement below covers what this rep
 machinery, and it says nothing about what a model would propose. That is the main limit of this note.
 
 **The denominator.** Of the 231, 115 are attacks (escapes, hangs, probe gaming) and 49 are expected to be refused
-(typos, `==`, non-booleans). That leaves 60 distinct complete functional policies once five extraction slips are
-removed (policy ids recorded as sources, such as `h-deny`, whose real sources are already in the set). They split into
+(typos, `==`, non-booleans). That leaves 60 distinct complete functional policies once ten extraction slips are
+removed (policy ids recorded as sources, such as `h-deny`, whose real sources are already in the set). The corpus is
+[`tests/fixtures/policy-corpus.json`](../../../tests/fixtures/policy-corpus.json), with the slips dropped; how to keep it
+current is [`docs/dev/policies.md`](../../dev/policies.md), "The policy corpus". They split into
 two groups, reported separately because they are different things:
 
 - **38 policies over a real consumer** (`fetch` or `sh`), from the policy machinery's tests, the docs and the
