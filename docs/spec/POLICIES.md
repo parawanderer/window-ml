@@ -36,10 +36,11 @@ one: [`EFFECTS.md`](EFFECTS.md), "Three layers, said out loud".
 facts, not as a pattern over text.
 
 ```js
-// Global, set by the person: read-only git anywhere in my roots, except the flags that write or run code.
+// Global, set by the person: read-only git anywhere in my roots, except the flags that write or run code,
+// and never in a repository whose own config runs a program (the fact the built-in default requires too).
 (c) => c.argv[0] === "git" && ["status", "diff", "log", "show", "blame"].includes(c.argv[1])
     && !c.argv.some((a) => /^--(output|ext-diff|exec|upload-pack)/.test(a))
-    && c.paths.every((p) => p.inRoot)
+    && c.paths.every((p) => p.inRoot) && c.repoConfigRunsCode === false
 
 // For one run, granted from an approval card ("allow calls like this for this run"):
 (c) => c.argv[0] === "npm" && ["test", "run lint"].includes(c.argv.slice(1).join(" "))
@@ -234,7 +235,36 @@ write, it becomes the default, and code policies move behind a DevTools Settings
 policies"), off by default. The two answer different questions: a call is always decidable for a code policy (it halts),
 but WHICH calls it allows cannot be read off the code, since that is a question over every possible input, with regexes
 and string operations inside. A tree small enough to analyse can answer it; code cannot, so the breadth shown for a code
-policy is measured, never derived.
+policy is measured, never derived. The toggle governs WRITING a code policy, never a stored one (ruled 2026-10-21, lane
+11's design note): an existing code policy keeps judging with the toggle off, because switching a stored `deny` off would
+let through what the person refused, and the upgrade gets a fixture of stored code policies still deciding as they did.
+
+**The tree, ruled 2026-10-21** (lane 11's design note,
+[`LANE_11_POLICY_TREE_DESIGN.md`](../plan/repl/LANE_11_POLICY_TREE_DESIGN.md), #920, and the ruling PR on it). The
+measurement the note made is over 231 policy sources, none written by a model or by a person using the product (205 from
+tests, 22 from docs, 4 built in), so its 92% is a figure over what this repository's authors wrote to exercise the
+machinery, and 21 of the 38 real-consumer policies are the one atom `c.host === X`. That number does not decide whether the
+tree becomes the default; the one that does is measured on policies MODELS PROPOSE, which do not exist yet. So the order
+is: the LIFTER first (a syntactic recogniser over the dialect's AST that turns a source which fits the fragment into a
+tree, small, the first code either way), then a bench task per consumer that asks the panel to propose a policy for a
+described need, fed through the lifter, and the covered fraction of THAT corpus is the number. `propose_policy` is
+fetch-only today, so the `fetch` task needs no widening; an `sh` task needs `propose_policy` widened to shell, which is
+a widening and Shane's. Nothing else of the tree is built before that number exists. What the note fixed is ruled as it
+stands: the TREE is what is stored, the sentence and the predicate are both rendered from it and never parsed back, the
+judge runs the rendered predicate through the one evaluator as it runs every policy, and a model is never asked to emit
+tree JSON (it writes JS, and the lifter lifts what fits; what does not lift stays code with a MEASURED breadth). A
+prefix is over a field's SEGMENTS (path components, host labels from the right, a URL's scheme, host, port and path
+components), never characters, with one exception: an argv element is opaque text, so `StartsWith` over an argv element
+stays, bounded to that field, because the flags a manifest names (`--output=x`) are character prefixes of it. The card's
+breadth block is DERIVED or MEASURED and never mixed; a derived card still runs the probes, as a test of the derivation,
+and a probe the tree admits that the derivation said it cannot admit is a defect in the analyser: the card falls back to
+MEASURED, the disagreement is logged, and the fix lands with that probe as a test. The atom cap (24) is a stated guess
+until a number says otherwise; above it the card says MEASURED. The empty list is said on the card ("true when there are
+none"). An optional fact is never absent in the facts a policy sees, so the tree has no presence test ([`SHELL.md`](SHELL.md),
+"An optional fact is sent as `null`"). Finally the note found that this spec's own git example admitted `git diff` in a
+repository whose config runs a program, which the built-in default refuses: the example now requires
+`c.repoConfigRunsCode === false`, and the rule it instances is that an example in a spec is never wider than the built-in
+default on a fact the default names.
 
 **How a measured breadth is probed** (lane 2's red team, 2026-10-15, and the ruling on it). The worker runs the proposal
 over this run's own calls and over PROBE URLs on hosts the run never used, and the card leads with both counts. The red

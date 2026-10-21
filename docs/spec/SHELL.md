@@ -324,10 +324,11 @@ sandbox and the roots enforce. The mechanism is shared with every other gated ca
 and that the free tier is a built-in default policy over it.
 
 ```js
-// Global, set by the person: read-only git anywhere in my roots, except the flags that write or run code.
+// Global, set by the person: read-only git anywhere in my roots, except the flags that write or run code,
+// and never in a repository whose own config runs a program (the fact the built-in default requires too).
 (c) => c.argv[0] === "git" && ["status", "diff", "log", "show", "blame"].includes(c.argv[1])
     && !c.argv.some((a) => /^--(output|ext-diff|exec|upload-pack)/.test(a))
-    && c.paths.every((p) => p.inRoot)
+    && c.paths.every((p) => p.inRoot) && c.repoConfigRunsCode === false
 
 // For one run, granted from an approval card ("allow calls like this for this run"):
 (c) => c.argv[0] === "npm" && ["test", "run lint"].includes(c.argv.slice(1).join(" "))
@@ -345,6 +346,15 @@ and that the free tier is a built-in default policy over it.
 | `effects` | what the program's manifest says this call does, as the shared set of (operation, resource) pairs ([`EFFECTS.md`](EFFECTS.md)): `read(fs)`/`write(fs)` per resolved path, `exec(process)`, `net(host)`, or `unknown` |
 | `secrets` | the handles the call carries (`env: { GITHUB_TOKEN: ml.secret("github") }`), by name, never by value |
 | `mode`, `sandboxed` | where it would run |
+
+**An optional fact is sent as `null`, never left out** (ruled 2026-10-21, lane 11's design note, its open point 2). A
+fact the host could not answer (`containsSecret` past the walk's cap, `repoConfigRunsCode` with no repository, `topLevel`
+and `isRoot` with no roots) is present with the value `null`, so a policy reads it with `=== true`, `=== false` or
+`=== null` and never needs a presence test; the strict facade's refusal of an absent key then means one thing only, a
+name that is not a fact. `null` is the third cell of every optional fact in the policy tree's breadth, and nothing is
+read off a key's absence. As built, `sh-call.ts` leaves `containsSecret`, `topLevel` and `isRoot` out when it has no
+answer; the first PR that reads any of them from a policy sends them as `null` instead, with a fixture of the old shape
+(AGENTS.md: test the upgrade).
 
 **The free tier is the built-in default policy**, the one subset rule in [`EFFECTS.md`](EFFECTS.md); on the plain host it
 reads `(c) => c.effects.pairs.every((e) => e.op === "read" && e.res.kind === "fs" && e.res.inRoot && !e.res.secret)`, a universal
@@ -465,7 +475,9 @@ What follows from it:
   Linux the ledger directory is a predictable name under the shared `/tmp`, so another local user could create it first
   with mode 0777 and plant a ledger naming one of the user's process groups with its start time read from `/proc`, and
   the user's own host would SIGKILL it. Now nothing is swept, taken or wardened from a directory that is not private,
-  pinned by a test with a live sleeper and a forged record in a 0777 directory; and a record that cannot be written is
+  pinned by a test with a live sleeper and a forged record in a 0777 directory, and the warden re-checks that the
+  directory is private on EVERY pass, not only when it starts (host #22, the red team's post-merge read of #21: a
+  directory private at start-up and widened later was still swept); and a record that cannot be written is
   counted in `endedDropped`, so "no entry leaves without a record" fails loud, not silent. The report is BOUNDED (ruled 2026-10-19, the generalist's #13 review: an unbounded `.git/hooks` walk could push `done`
   past the output cap and lose the call's result): the host reads at most 256 `.git/hooks` entries per root, and the list
   stops at 256 changes or 512 KiB of JSON, whichever comes first (a count alone proves nothing: a root path can be 4096
