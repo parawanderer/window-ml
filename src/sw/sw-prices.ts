@@ -153,6 +153,21 @@ export async function pricesForCall(setting: unknown): Promise<PriceRef | null> 
 }
 
 /**
+ * The prices a call would run under, waiting for a missing or stale snapshot however long its refresh takes; null when
+ * spend tracking is off or the service could not be reached. For the bench harness, before a cell's first turn: a fresh
+ * profile holds no snapshot, and its first calls gave up after {@link FIRST_WAIT_MS} while the refresh was still running,
+ * so they ran unpriced (panel-policy-sh, 2026-10-21: two of every four calls). Never reachable from a page.
+ * @param setting the `priceSnapshotUrl` setting
+ */
+export async function pricesReady(setting: unknown): Promise<PriceRef | null> {
+    const base = baseUrl(setting);
+    if (!base) return null;
+    if (!current) current = await store(META, "readonly").then((st) => st ? done(st.get("current")) : null).catch(() => null) ?? null;
+    if (!current || Date.now() - current.checkedAt > STALE_MS) await startRefresh(base);
+    return current?.ref ?? null;
+}
+
+/**
  * What a model call records for spend: the price snapshot (when the service is set) and the electricity price (when
  * one is set). Never rejects: a call does not fail over its bookkeeping.
  * @param config the two settings it reads
@@ -237,3 +252,4 @@ export async function costCalls(calls: unknown): Promise<CallCost[]> {
 }
 
 (globalThis as { __mlPriceBody?: typeof priceBody }).__mlPriceBody = priceBody;
+(globalThis as { __mlPricesReady?: typeof pricesReady }).__mlPricesReady = pricesReady;

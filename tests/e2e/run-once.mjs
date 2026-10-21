@@ -474,6 +474,16 @@ export async function runOnce(cfg = {}) {
             autoApprovePython: true,   // wire python_exec (auto-approve readonly) so a DataFrame/table probe can run
             debugMode: "overlay",   // so injected emitDebug posts the event stream to the page window
         });
+        // A fresh profile holds no price snapshot, and a call waits only 15 s for its first one: the cell's first calls
+        // ran unpriced while the refresh was still going. Fetched here, before the clock starts (sw-prices.ts).
+        if (backend?.priceSnapshotUrl) {
+            const p0 = Date.now();
+            const ref = await Promise.race([
+                ext.sw.evaluate((u) => globalThis.__mlPricesReady?.(u) ?? null, backend.priceSnapshotUrl).catch(() => null),
+                new Promise((r) => setTimeout(() => r(null), 120_000)),
+            ]);
+            log(ref ? `  price snapshot ${ref.fetchedAt} ready in ${Date.now() - p0} ms` : `  no price snapshot after ${Date.now() - p0} ms: this cell's calls are unpriced until one arrives`);
+        }
         if (seed && !fake) throw new Error("runOnce: `seed` needs the fake-LLM, which is not running — this is a bug in the harness, not the spec");
         if (fake) fake.setScript(seed ? seed.script : script);
 

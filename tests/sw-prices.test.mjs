@@ -65,6 +65,27 @@ test("a call names each source by its hash, and each body is fetched once and re
     assert.equal(svc.asked.length, before);
 });
 
+test("a fresh profile: a call gives up on a slow first refresh, and pricesReady waits it out for the bench", async (t) => {
+    // panel-policy-sh, 2026-10-21: each cell is a fresh profile, its first two calls each waited out FIRST_WAIT_MS
+    // and ran unpriced, and only the third named a snapshot. The bench now awaits pricesReady before the first turn.
+    const h1 = sha(JSONB);
+    const svc = service({ bodies: { [h1]: JSONB }, sources: { openrouter: { sha256: h1 } } });
+    let release;
+    const slow = new Promise((r) => { release = r; });
+    const { pricesForCall, pricesReady } = await fresh(async (url) => { if (new URL(url).pathname === "/latest") await slow; return svc.fetch(url); });
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const call = pricesForCall("http://box:3002");
+    const ready = pricesReady("http://box:3002");
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    t.mock.timers.tick(15_000);
+    assert.equal(await call, null, "the call ran on without prices");
+    release();
+    const want = { fetchedAt: "2026-10-10T09:07:00Z", sources: { openrouter: h1 } };
+    assert.deepEqual(await ready, want);
+    assert.deepEqual(await pricesForCall("http://box:3002"), want, "and every call after it names the snapshot");
+    assert.equal(await pricesReady(""), null, "spend tracking off: nothing to wait for");
+});
+
 test("a body that does not match its hash is not stored and not named", async () => {
     const h1 = sha(HTML);
     const svc = service({ bodies: { [h1]: JSONB }, sources: { moonshot_pricing_page: { sha256: h1 } } });
