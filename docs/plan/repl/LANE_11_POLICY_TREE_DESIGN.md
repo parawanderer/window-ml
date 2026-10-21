@@ -190,6 +190,10 @@ example policy, as a person's `allow`, would let `git diff` run in such a reposi
 question. The card's job is to say it, and a measured breadth would not have: the probes vary hosts and paths, not
 repository configs.
 
+Ruled since (#921): both specs' example now ends `&& c.repoConfigRunsCode === false`, on the rule that an example in a
+spec is never wider than the built-in default on a fact the default names. That is one more `Is` atom, so the example
+still lifts mechanically, and its derived card loses the last line above.
+
 ## The card: DERIVED or MEASURED, and saying which
 
 The card's breadth block has one label, and it is never mixed:
