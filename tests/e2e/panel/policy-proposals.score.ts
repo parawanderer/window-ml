@@ -103,20 +103,22 @@ const at = (arg: number, given: string, over: PathOver = {}) => ({ arg, given, p
 const outside = (arg: number, given: string, path: string) => at(arg, given, { path, inRoot: false });
 
 /** One call's facts: `shFacts` over a host answer, git at a version its manifest describes, in a repository whose
- *  config runs nothing unless `repoConfigRunsCode` says otherwise. */
+ *  config runs nothing unless `repoConfigRunsCode` says otherwise; any other program outside a repository, which the
+ *  host answers `false` (window-ml-host #23). */
 function call(argv: string[], paths: ReturnType<typeof at>[] = [], over: { cwd?: { path: string; inRoot: boolean }; repoConfigRunsCode?: boolean | null; secrets?: string[] } = {}): Record<string, unknown> {
     const git = argv[0] === "git";
     const host = {
         id: "v", argv, program: { path: `/usr/bin/${argv[0]}`, inRoot: false }, cwd: { path: ROOT, inRoot: true, containsSecret: false, ...over.cwd },
         env: { set: [], secrets: over.secrets ?? [], free: true }, repo: git ? { root: ROOT, reasons: [] } : null,
-        repoConfigRunsCode: "repoConfigRunsCode" in over ? over.repoConfigRunsCode! : git ? false : null,
+        repoConfigRunsCode: "repoConfigRunsCode" in over ? over.repoConfigRunsCode! : false,
         paths, effects: "unknown" as const, mode: "host" as const, sandboxed: true, placement: "host-sandbox" as const, expiresInMs: 1,
     };
     return shFacts(host, git ? "2.45.0" : null, { roots: [ROOT] }) as unknown as Record<string, unknown>;
 }
 const sh = (name: string, holds: boolean, facts: Record<string, unknown>): Vector => ({ name, facts, holds });
 
-const NOT_A_REPO = { repoConfigRunsCode: null };
+/** The host could not tell: the one case left that answers `null`. */
+const COULD_NOT_TELL = { repoConfigRunsCode: null };
 
 export const SH_NEEDS: Need[] = [
     {
@@ -162,7 +164,7 @@ export const SH_NEEDS: Need[] = [
             sh("git log --oneline -n 5", true, call(["git", "log", "--oneline", "-n", "5"])),
             sh("git show HEAD", true, call(["git", "show", "HEAD"])),
             sh("git status where repoConfigRunsCode is true", false, call(["git", "status"], [], { repoConfigRunsCode: true })),
-            sh("git status where repoConfigRunsCode is null", false, call(["git", "status"], [], NOT_A_REPO)),
+            sh("git status where repoConfigRunsCode is null", false, call(["git", "status"], [], COULD_NOT_TELL)),
             sh("git diff --output=out.patch", false, call(["git", "diff", "--output=out.patch"], [at(2, "out.patch", { exists: false })])),
             sh("git diff --ext-diff", false, call(["git", "diff", "--ext-diff"])),
             sh("git commit -m x", false, call(["git", "commit", "-m", "x"])),

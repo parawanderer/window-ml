@@ -150,6 +150,7 @@ rescored under it with nothing rerun: gemma4:31b's and qwen3.8:27b's S3 are now 
 and sonnet's S1 now ask where they were right, since each adds `c.repoConfigRunsCode !== true` to a call outside any
 repository, where the host sent `null`. Net: 27 right of 53, unchanged, and no fail-open left. SHELL.md's optional-fact
 rule now sends `false` when no repository encloses the call, which gives the two back once the host does it.
+The host does it as of window-ml-host #23 (fb436349), and the scorer's calls outside a repository now carry `false`: rescored with nothing rerun, opus's S2 and sonnet's S1 are right again, 29 right of 53 (`sh` right among lifted 16/24, among those that stayed code 13/29), still no fail-open. The interview's fact table says the same from here on (`false` when there is no repository, `null` only when the host could not tell); no sweep has read that wording yet.
 
 ## With `propose_policy`'s details (2026-10-21)
 

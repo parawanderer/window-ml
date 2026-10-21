@@ -32,7 +32,7 @@ const FACTS = {
 | \`paths\` | each argument the program's manifest marks as a path: \`{ arg, given, path, inRoot, secret, exists }\`, resolved with realpath; \`secret\` is true for a file such as \`.env\` |
 | \`env\` | \`{ set, free }\`: the variables the call sets, and whether all of them are harmless |
 | \`secrets\` | the secret handles the call carries, by name |
-| \`repoConfigRunsCode\` | true when the git repository's own config can run a program (a hook, a pager, an fsmonitor), false when it cannot, null when there is no repository or the host could not tell |
+| \`repoConfigRunsCode\` | true when the git repository's own config can run a program (a hook, a pager, an fsmonitor), false when it cannot or there is no repository, null when the host could not tell |
 | \`effects\` | what the program's manifest says this call does. \`c.effects.pairs\`: a list of \`{ op, res }\`, \`op\` one of \`"read"\`, \`"write"\`, \`"exec"\`, \`"use"\`, \`"alloc"\`; \`res.kind\` one of \`"fs"\`, \`"net"\`, \`"process"\`, \`"secret"\`, \`"heap"\`, \`"entropy"\`, \`"unknown"\`. An fs resource has \`path\`, \`inRoot\`, \`secret\`, \`exists\`, and \`names: true\` when the write deletes or renames it. \`c.effects.reads\`/\`c.effects.writes\`: the resources read/written. \`c.effects.has(op, kind?)\`, \`c.effects.uses(name)\`. \`c.effects.unknown\`: true when no manifest describes the call (every question then answers as if it does everything) |
 | \`described\`, \`why\` | whether a manifest describes the call, and what it could not describe |
 | \`mode\`, \`sandboxed\` | where it would run |`,
