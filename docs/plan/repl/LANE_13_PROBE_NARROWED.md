@@ -12,7 +12,7 @@ Read first: `PYTHON_DIALECT.md`'s `memory` row from "Built in parawanderer/cpyth
 2026-10-21 and the wasm32 numbers); [`LANE_12_MEMORY_FAIL_CLOSED.md`](LANE_12_MEMORY_FAIL_CLOSED.md) and lane 12's
 result file once it exists; `notebooks/python-dialect/verify-cost/` (lane 12's rounds; the shape this lane reruns);
 the janitor's mail `~/git/session-mail/window-ml/20261021-1138Z-flaky-ci-to-repl-specs-wrapper-mechanism.md` (why a
-40 ns call is a third of a tight loop under wasm32, and the 1.29x single-round noise floor, an upper bound taken under foreign load).
+40 ns call is a third of a tight loop under wasm32, and the 1.29x single-round noise floor taken under foreign load; retaken quiet 2026-10-21, median 0.988 over 8 same-core rounds, per-round swing 1.3x either way, so a wrapper-bench claim is a median over rounds).
 
 ## The question
 

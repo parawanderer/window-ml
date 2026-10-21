@@ -37,7 +37,7 @@ allocations per approved C call, 1.26x on a native `len()` loop) over the change
 to a hook restarted with an identical top. Under wasm32 one indirect call is already a third of a tight loop (the
 janitor, mail `20261021-1138Z`), so the trade may read differently there, and revisiting it needs the raw rounds. Shape:
 lane 3's `wrapper-bench/` driver (fresh process per core per round, order rotated, 8 or more interleaved rounds, a
-same-core A/A control since one round's noise floor reached 1.29x, measured under four cores of foreign spin, so an upper bound until the quiet rerun), cores 7c40b038 and the #9 release, the four shapes of
+same-core A/A control since one round's noise floor reached 1.29x under four cores of foreign spin; retaken quiet 2026-10-21: median 0.988 over 8 rounds, a single round swings 1.3x either way, so quote medians only), cores 7c40b038 and the #9 release, the four shapes of
 #9's table plus the changed-top-only variant if it is cheap to build, raw JSON committed, the native table of #9's body
 copied in as the first cell. The row's wasm32 sentence quotes the notebook. `docs/dev/notebooks.md` for the form.
 
