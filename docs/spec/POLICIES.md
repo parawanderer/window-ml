@@ -68,7 +68,7 @@ have ruled out by design, and a policy is exactly where a quiet mistake becomes 
   with `===`/`!==`.
 - An empty array, an empty object and any non-empty string are truthy: `c.paths.length && …` is the guard, not
   `c.paths && …`, and `[].every(…)` is `true`, so "every path is in a root" holds for a call with no paths at all.
-- A regex is unanchored unless it says otherwise: `/git/.test(c.program)` matches `/tmp/notgit`. Anchor it, or compare
+- A regex is unanchored unless it says otherwise: `/git/.test(c.program.path)` matches `/tmp/notgit`. Anchor it, or compare
   the resolved program by equality. (A regex that could backtrack without end is already refused by the dialect.)
 
 **The policy realm** (decided 2026-10-15). A policy is evaluated in a third realm of the dialect beside `page` and
@@ -134,7 +134,7 @@ Two specs carry a consumer such as `ml.sh`, and they are separate on purpose:
 **Built-in defaults are policies too.** A consumer's "free" tier is the built-in default policy, sitting beside the
 person's, and it is ONE rule for every consumer ([`EFFECTS.md`](EFFECTS.md)): the call's effects are a subset of what
 the enforcer at its placement bounds, plus reads inside the workspace roots of paths not flagged secret. For a shell
-call on the plain host, where nothing is bounded, that reduces to `(c) => c.effects.every((e) => e.op === "read" &&
+call on the plain host, where nothing is bounded, that reduces to `(c) => c.effects.pairs.every((e) => e.op === "read" &&
 e.res.kind === "fs" && e.res.inRoot && !e.res.secret)`: a UNIVERSAL over the set, never a list of excluded operations
 (an earlier draft wrote `!has("write") && !has("exec") && …`, which let `use(secret)` and `alloc` through unnamed; lane
 2 of the plan caught it building the algebra). Under the OS sandbox, writes inside the roots join the free set because
