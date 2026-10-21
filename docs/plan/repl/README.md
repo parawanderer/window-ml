@@ -210,7 +210,7 @@ listed as remaining is DONE unless named below.
   name defers to the startup choice; no wasm32 change. Re-pinned to b0bbaa5 the same day: window-ml #873 (merged
   fecd6abe; release `pyodide-314.0.3-ml-b0bbaa52`, `pyodide` pinned exactly), the pin lane 3's predicate wiring lands on.
   **Lane 5: CLOSED 2026-10-20**: [`LANE_5_RESULT.md`](LANE_5_RESULT.md) (#874, bcbb6543); build trees and clone removed.
-  Left, nobody's: nothing. Per-run wrapping is fork cpython#6 (merged a315999c, lane 3's wasm number; its release and re-pin follow #918), and the dist manifest's mismatch throw is tested in #911 (merged e9c95c81, lane 10).
+  Left, nobody's: nothing. Per-run wrapping is fork cpython#6 (merged a315999c, lane 3's wasm number in the spec's memory row), the hooks verified at every entry is cpython#7 (merged 7c40b038; #8 is comment only), main's core is pinned to 7c40b038 by #928 (merged 07a4314d, lane 3, 2026-10-21) after #918's `-r2` re-pin (merged 42d5bec9), and the dist manifest's mismatch throw is tested in #911 (merged e9c95c81, lane 10).
   **The membership wiring landed 2026-10-20**: window-ml #880 (lane 3, merged b791311d) runs a `python_exec` cell unasked
   only inside the dialect, under the fork's gate. Its red-team pass (09:40Z mail) requested changes: a function defined
   inside was copied back and ran ungated on the full path (reached `os` and `ml`), captured builtins crossed back, and a
@@ -226,7 +226,7 @@ listed as remaining is DONE unless named below.
   3273be76…): line corrections gone, the copy-back admits a cell function whose every code object is `CO_RESTRICTED`,
   walking defaults and closures. CORRECTION 2026-10-21 (lane 3): that release packed the OLD `restricted.py` (the recipe's
   stale install stamp, found while building the per-run branch), so its Python side was a9f034a2's; a `-r2` release
-  from a stamped, witnessed recipe re-pins it, the red team reruns its suite on it. Red team's post-merge read holds on every route; stated residual: approved code can
+  from a stamped, witnessed recipe re-pins it (#918, merged 42d5bec9, 2026-10-21: recipe stamp, zip witness, two wasm tests), then #928 (07a4314d) pins fork 7c40b038. Red team's post-merge read holds on every route; stated residual: approved code can
   strip the flag, and every shape that does names `__code__`/`co_flags` on the card (#903). Lane 3's #906 (177dde76)
   adds the red-team rule that every probed shape ends as a committed test or a stated reason. Lane 3's extra pin clone
   removed; lane 3 is free.
@@ -255,8 +255,7 @@ listed as remaining is DONE unless named below.
   [`LANE_10_RESULT.md`](LANE_10_RESULT.md) (#923, d6ccae00). Lane 11's round-4 items are closed: host #20, #21, #22
   (the `ended` record, five causes; the private-sweep fix), #913, #920, #921; [`LANE_11_RESULT.md`](LANE_11_RESULT.md)
   (#922, eafcc2b3). Lane 11 stays open on the tree's next item, ruled 2026-10-21 (#921, #924): the lifter, then the
-  `fetch` and `sh` bench tasks measured as text, with the corpus committed (#925). Lane 3 stays open on #918 and the
-  release chain.
+  `fetch` and `sh` bench tasks measured as text, with the corpus committed (#925); the lifter's test may hold a tree evaluator under `tests/` (#927). Lane 3's release chain closed 2026-10-21 (#918, #928; fork #6, #7); its `LANE_3_RESULT.md` follows.
 
 ## The lanes
 
