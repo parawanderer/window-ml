@@ -155,6 +155,12 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         window.postMessage({ type: "PAGE_STATE_READ", callId, runId }, "*");
         return true;
     }
+    // The run was stopped while its read-only survey ran here (sw-run-host.ts): the main world halts it. No answer.
+    if (message && message.type === "CANCEL_TOOL_IN_PAGE") {
+        const { runId } = (message.payload || {}) as { runId?: unknown };
+        if (typeof runId === "string") window.postMessage({ type: "PAGE_TOOL_CANCEL", runId }, "*");
+        return undefined;
+    }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
     const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, reads, answerShape, answerSelect, geometry, pageRead } = (message.payload || {}) as { pageRead?: unknown; verifyInWorker?: boolean; runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
     // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.

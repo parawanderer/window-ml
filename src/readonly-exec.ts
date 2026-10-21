@@ -34,7 +34,7 @@ import { DENIED_PROPS, ReadonlyRealm, mlFacade } from "./readonly-exec/policy";
 import { PrintSwap, safeStr } from "./readonly-exec/print";
 import { Evaluator, runAsync } from "./readonly-exec/evaluator";
 
-export { NotInDialect, Denied, NeedsPage, STEP_BUDGET, MAX_COLLECTION, MAX_STORED_CELLS, MAX_STRING, MAX_CALL_DEPTH, PIPE_CHARS_PER_STEP, riskyRegex } from "./readonly-exec/limits";
+export { NotInDialect, Denied, NeedsPage, Stopped, STEP_BUDGET, MAX_COLLECTION, MAX_STORED_CELLS, MAX_STRING, MAX_CALL_DEPTH, PIPE_CHARS_PER_STEP, riskyRegex } from "./readonly-exec/limits";
 export { ML_READONLY_METHODS } from "./readonly-exec/policy";
 export type { ReadonlyRealm } from "./readonly-exec/policy";
 export { ABRIDGE_OVER, describeSwaps } from "./readonly-exec/print";
@@ -62,9 +62,11 @@ export type { PrintSwap } from "./readonly-exec/print";
  * @param opts.onLog Called with each console line as it is printed, the SAME string that goes into `logs` (abridged by
  *   the print boundary), so a live view shows what the model will be given. A survey that is then refused has
  *   streamed lines from a run that did not happen: the caller must discard them (agent-loop.ts, `LiveOutput`).
+ * @param opts.signal The run's Stop. Once it aborts the script is not resumed again, at its next await or at once if
+ *   it is awaiting, and the call throws {@link Stopped} (a refusal), after the checkpoint is restored.
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
-    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void;
+    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void; signal?: AbortSignal;
         globals?: Record<string, unknown>; hidden?: ReadonlyMap<string, string> } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept. The step budget bounds the WORK, and a
@@ -136,7 +138,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
     printable = (v, swaps, where) => ev.printable(v, swaps, where);
     try {
-        const value = await runAsync(ev.eval(ast, top));
+        const value = await runAsync(ev.eval(ast, top), opts.signal);
         // Every caller serialises the value (formatReadonlyExec, a watch, the console), outside any budget: one that would
         // expand without bound is refused here, once, for all of them.
         ev.checkExpands(value);

@@ -985,3 +985,142 @@ test("GAIN blocked — the shell and policy message types are absent from HANDLE
         assert.ok(!/SHELL|POLIC/i.test(entry.type), `HANDLE_MAP[${req}] maps to ${entry.type} — shell/policy must not be relayable`);
     }
 });
+
+// --- Stop of a read-only survey in the page: CANCEL_TOOL_IN_PAGE and PAGE_TOOL_CANCEL (sw-run-host.ts tryReadonly) ---
+// The worker tells the run's tab on Stop; content.ts re-posts it to the main world, where the page can post it too.
+// The page-leg properties (what a forged PAGE_TOOL_CANCEL does to the bridge) are in tests/readonly-stop.test.mjs.
+
+const SURVEY_TOOLS = [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }];
+const SURVEY_PAGE = "https://evil.example/attack";
+const surveyPageSender = (tabId) => ({ tab: { id: tabId, url: SURVEY_PAGE }, url: SURVEY_PAGE, origin: "https://evil.example", frameId: 0, documentId: `doc-${tabId}` });
+/** A background run hosted for the page on `tabId` whose model calls `exec` on a survey that reads the DOM (so the
+ *  worker sends it to the page), then answers "done". `onSurvey(payload)` plays the page's read-only try; `onExec` the
+ *  approved run; an awaitingApproval gate is handed to `onGate(event)`. */
+function surveyBackground({ onSurvey, onExec = () => ({ result: "EXEC RAN" }), onGate = () => {} }) {
+    const turns = new Map();
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const runId = JSON.stringify(call.body?.messages ?? []).match(/SYS:([\w-]+)/)?.[1];   // the system prompt names the run
+            const n = (turns.get(runId) ?? 0) + 1; turns.set(runId, n);
+            return jsonResponse(n === 1
+                ? { choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: "document.title" }) } }] } }] }
+                : { choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) onGate(msg.event);
+            if (msg?.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            const p = msg.payload;
+            if (p.readonlyTry) return onSurvey(p, tabId);
+            if (p.renderOnly || p.precheck || p.finish) return { result: "" };
+            return onExec(p, tabId);
+        },
+    });
+    const start = (runId, tabId) => bg.send({ type: "START_RUN", payload: {
+        runId, task: "survey", systemPrompt: `SYS:${runId}`, tools: SURVEY_TOOLS, model: "m", think: null, maxSteps: 5,
+        autoApprovePython: false, autoApproveReadonly: true, surface: "devtools",
+    } }, surveyPageSender(tabId));
+    const cancels = () => bg.tabMessages.filter(([, m]) => m?.type === "CANCEL_TOOL_IN_PAGE");
+    const execs = () => bg.tabMessages.filter(([, m]) => m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec" && !m.payload.readonlyTry && !m.payload.renderOnly && !m.payload.precheck && !m.payload.finish);
+    return { bg, start, cancels, execs, turns };
+}
+
+test("a page that knows the run id cannot reach CANCEL_TOOL_IN_PAGE through the worker: its own CANCEL_TOOL_IN_PAGE or PAGE_TOOL_CANCEL tells no tab and does not end the run", async () => {
+    let s, answers = null;
+    s = surveyBackground({ onSurvey: async (p, tabId) => {
+        // Mid-survey, the page sends every shape of the stop it can name, with the run id it saw in PAGE_TOOL_RUN.
+        const msgs = [
+            { type: "CANCEL_TOOL_IN_PAGE", payload: { runId: p.runId } },
+            { type: "CANCEL_TOOL_IN_PAGE", runId: p.runId, payload: { runId: p.runId, tabId: 99 } },
+            { type: "PAGE_TOOL_CANCEL", runId: p.runId, payload: { runId: p.runId } },
+            { type: "CANCEL_TOOL_IN_PAGE_REQUEST", requestId: "x", payload: { runId: p.runId } },
+        ];
+        answers = [];
+        for (const m of msgs) answers.push(await sendBounded(s.bg, m, surveyPageSender(tabId), 300));
+        await tick();
+        return { readonly: true, result: "value: TITLE-4417" };
+    } });
+    const res = await s.start("rt-cancel-forge", 4);
+    assert.ok(answers, "positive control: the survey reached the page");
+    assert.ok(answers.every((a) => a.timeout || a.error || a.data == null), `no stop message was answered with data: ${JSON.stringify(answers)}`);
+    assert.ok(!res.data?.cancelled, `the run was not cancelled: ${JSON.stringify(res)}`);
+    assert.equal(s.turns.get("rt-cancel-forge"), 2, "the run went on to its next model turn");
+    const turn2 = s.bg.calls.filter((c) => JSON.stringify(c.body?.messages ?? []).includes("SYS:rt-cancel-forge")).at(-1);
+    assert.match(JSON.stringify(turn2.body.messages), /TITLE-4417/, "positive control: the survey's answer reached the model");
+    assert.deepEqual(s.cancels(), [], "no CANCEL_TOOL_IN_PAGE went to any tab on the page's word");
+    assert.deepEqual(s.execs(), [], "and nothing ran past the survey");
+});
+
+test("Stop during a page survey tells only the run's own tab, once, with only the run id; another run's survey on another tab goes on", async () => {
+    let s, releaseB;
+    const reached = new Set();
+    s = surveyBackground({ onSurvey: (p) => {
+        reached.add(p.runId);
+        if (p.runId === "rt-stop-A") return new Promise(() => {});   // a survey that does not end on its own
+        return new Promise((r) => { releaseB = () => r({ readonly: true, result: "value: B-OK" }); });
+    } });
+    const a = s.start("rt-stop-A", 4), b = s.start("rt-stop-B", 5);
+    for (let i = 0; i < 400 && reached.size < 2; i++) await tick();
+    assert.equal(reached.size, 2, "positive control: both surveys reached their pages");
+    s.bg.send({ type: "CANCEL_RUN", payload: { runId: "rt-stop-A" } });   // the person's Stop, from an extension surface
+    const ra = await a;
+    assert.ok(ra.data?.cancelled, `run A ended cancelled: ${JSON.stringify(ra)}`);
+    await tick();
+    const cancels = JSON.parse(JSON.stringify(s.cancels()));
+    assert.deepEqual(cancels, [[4, { type: "CANCEL_TOOL_IN_PAGE", payload: { runId: "rt-stop-A" } }]], "one message, to run A's tab, naming run A alone");
+    releaseB();
+    const rb = await b;
+    assert.ok(!rb.data?.cancelled, "run B was not stopped");
+    assert.equal(s.turns.get("rt-stop-B"), 2, "run B went on to its next turn");
+    assert.deepEqual(s.execs(), [], "the stop ran nothing in either page");
+});
+
+test("a survey the page refuses (what a forged PAGE_TOOL_CANCEL yields) on a run nobody stopped asks the person: nothing runs before the approval, and the run is not cancelled", async () => {
+    let s, gate = null, ranBeforeGate = null;
+    s = surveyBackground({
+        onSurvey: () => ({ readonly: false, result: "" }),
+        onGate: (ev) => {
+            gate = ev;
+            ranBeforeGate = s.execs().length;
+            setTimeout(() => { void s.bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }); }, 30);
+        },
+    });
+    const res = await s.start("rt-refused", 4);
+    assert.ok(gate, "the refused survey reached the approval gate");
+    assert.equal(ranBeforeGate, 0, "nothing ran before the person decided");
+    assert.ok(!res.data?.cancelled, `the run was not cancelled: ${JSON.stringify(res)}`);
+    assert.equal(s.execs().length, 1, "positive control: approved, the exec ran once");
+    assert.deepEqual(s.cancels(), [], "and no stop went to the page");
+});
+
+test("the page relay carries no stop: CANCEL_TOOL_IN_PAGE and PAGE_TOOL_CANCEL are not page-startable, and a page posting them reaches no background type", async () => {
+    for (const t of ["CANCEL_TOOL_IN_PAGE", "PAGE_TOOL_CANCEL"]) {
+        assert.ok(!PAGE_STARTED_TYPES.has(t), `${t} is page-startable`);
+        assert.ok(!(t in HANDLE_MAP) && !Object.values(HANDLE_MAP).some((e) => e.type === t), `${t} is in HANDLE_MAP`);
+    }
+    const relayed = await pageRelays(
+        { type: "CONFIG_REQUEST", requestId: "ctrl", payload: {} },   // positive control
+        { type: "CANCEL_TOOL_IN_PAGE", requestId: "a", payload: { runId: "victim" } },
+        { type: "CANCEL_TOOL_IN_PAGE_REQUEST", requestId: "b", payload: { runId: "victim" } },
+        { type: "PAGE_TOOL_CANCEL", runId: "victim" },
+    );
+    assert.ok(relayed.includes("GET_CONFIG"), "positive control: a real request type still relays");
+    assert.deepEqual(relayed.filter((t) => t !== "GET_CONFIG"), [], `relayed: ${relayed}`);
+});
+
+test("content.ts re-posts the worker's CANCEL_TOOL_IN_PAGE as exactly { type, runId }: nothing else of the payload, nothing for a non-string runId, and nothing back to the worker", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: null }) });
+    const posted = [];
+    world.context.window.addEventListener("message", (e) => { if (e.data?.type !== "PAGE_ADOPT_HELLO") posted.push(JSON.parse(JSON.stringify(e.data))); });
+    await tick();
+    posted.length = 0;   // the page's own boot messages
+    const before = world.runtimeCalls.length;
+    const answer = await world.fireRuntimeMessage({ type: "CANCEL_TOOL_IN_PAGE", payload: { runId: "r1", type: "PAGE_TOOL_RESULT", callId: "c", envelope: { readonly: true, result: "FORGED" } } });
+    for (const runId of [{ toString: () => "r2" }, ["r3"], 4, null]) await world.fireRuntimeMessage({ type: "CANCEL_TOOL_IN_PAGE", payload: { runId } });
+    await world.fireRuntimeMessage({ type: "CANCEL_TOOL_IN_PAGE" });
+    await tick();
+    assert.equal(answer, undefined, "the channel is not held open: nothing answers the worker");
+    assert.deepEqual(posted, [{ type: "PAGE_TOOL_CANCEL", runId: "r1" }], "one post, the run id alone (positive control: the string one)");
+    assert.equal(world.runtimeCalls.length, before, "nothing went back to the worker");
+});

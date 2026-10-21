@@ -38,6 +38,8 @@ export interface WorkerReadonlyDeps {
      *  host has no pointer store for the run, and the page leg refuses pointer reads, so such a survey reaches the
      *  human. */
     ml?: Record<string, unknown>;
+    /** The run's Stop: the survey is not resumed after it aborts (`evalReadonly`'s `signal`). */
+    signal?: AbortSignal;
     /** The run's `exec` tool, whose `render` draws the step's In. Absent: the same code view the page's `exec` draws
      *  (`execCodeIn`), so a step answered here looks like one answered there. */
     tool?: MlTool;
@@ -102,7 +104,7 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     const out = heldLive(deps.live);
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
-            onLog: out ? out.push : undefined });
+            onLog: out ? out.push : undefined, signal: deps.signal });
         out?.settle();
         const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints, ro.dropped, args.maxChars);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);

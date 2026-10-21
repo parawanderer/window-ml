@@ -14,6 +14,12 @@ export class Denied extends Error {}
  *  the safe reading. */
 export class NeedsPage extends NotInDialect {}
 
+/** The run was STOPPED while the survey ran (the person pressed Stop): the driver stops resuming the script, so no
+ *  later statement of it runs, its own `finally` included. A {@link NotInDialect} for the same reasons as
+ *  {@link NeedsPage}: uncatchable by the script, rolled back, and read by any caller that does not know it as a refusal,
+ *  which on a run that was NOT stopped (a page forging the stop) asks the human. */
+export class Stopped extends NotInDialect {}
+
 // HALTING. Two properties, deliberately kept apart (docs/dev/readonly-exec.md, "Halting"):
 //
 //   A. HALTING BY CONSTRUCTION, a property of the language. No script can express an infinite loop: there is no
