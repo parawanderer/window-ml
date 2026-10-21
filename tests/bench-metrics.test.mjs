@@ -12,7 +12,7 @@ import {
     stepsOf, authoredTexts, capturedOutputs, sharesRun, reEmission, pointerRefs, pointerUse,
     recovery, execWorld, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse, isRateLimit,
 } from "../tests/e2e/bench/metrics.mjs";
-import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream, runConfig } from "../tests/e2e/bench/cells.mjs";
+import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream, runConfig, BENCH_STEP_MAX_TOKENS } from "../tests/e2e/bench/cells.mjs";
 
 /** A tool step as the sidebar receives it: a pending START, then the DONE carrying the result. */
 const step = (seq, tool, args, result, extra = {}) => ([
@@ -363,6 +363,16 @@ test("runConfig: a task's incognito reaches the launch, and a cell's effect over
     assert.equal(runConfig(cell({}), {}, "/d").incognito, false);
     assert.equal(runConfig(cell({ incognito: true }), {}, "/d").incognito, true);
     assert.equal(runConfig(cell({ incognito: true }, { incognito: false }), {}, "/d").incognito, false);
+});
+
+test("runConfig: a local model's agent steps are capped, a cloud model's and an unknown one's are not", () => {
+    const cell = (model) => ({ task: { id: "a", task: "t" }, effects: { backend: { model } }, combo: {}, repeat: 0 });
+    const env = { backend: { chatUrl: "http://box/api/chat/completions" }, localModels: ["gemma4:12b", "glm-4.7-flash:latest"] };
+    assert.equal(runConfig(cell("gemma4:12b"), env, "/d").backend.agentStepMaxTokens, BENCH_STEP_MAX_TOKENS);
+    assert.equal(runConfig(cell("glm-4.7-flash"), env, "/d").backend.agentStepMaxTokens, BENCH_STEP_MAX_TOKENS, "an implicit :latest is the same model");
+    assert.equal(runConfig(cell("deepseek.deepseek-flash"), env, "/d").backend.agentStepMaxTokens, undefined, "cloud: some reject max_tokens");
+    assert.equal(runConfig(cell("gemma4:12b"), { backend: env.backend }, "/d").backend.agentStepMaxTokens, undefined, "no list (a held job from before it): no cap");
+    assert.equal(runConfig(cell("gemma4:12b"), {}, "/d").backend.model, "gemma4:12b", "the cell's backend still reaches the run");
 });
 
 test("buildGroups: cells needing the same defines share one build; the undefined ones are 'default'", () => {

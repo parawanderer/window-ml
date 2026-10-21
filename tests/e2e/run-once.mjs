@@ -449,6 +449,8 @@ export async function runOnce(cfg = {}) {
             model: backend ? backend.model : FAKE_MODEL,
             // Spend (Settings > Spend): the price service, and the electricity price each call records. Unset, absent.
             ...(backend?.priceSnapshotUrl ? { priceSnapshotUrl: backend.priceSnapshotUrl } : {}),
+            // A cap on each agent step's output, which the bench sets for a local model (cells.mjs BENCH_STEP_MAX_TOKENS).
+            ...(backend?.agentStepMaxTokens ? { agentStepMaxTokens: backend.agentStepMaxTokens } : {}),
             ...(backend?.electricityPerKwh ? { electricityPerKwh: backend.electricityPerKwh, electricityCurrency: backend.electricityCurrency || "EUR" } : {}),
         };
         // Only when seeding. `fake` is NULL whenever a real backend is configured and no seed was asked

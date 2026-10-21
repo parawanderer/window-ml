@@ -657,6 +657,9 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
     // bounds vision calls where this has bitten.
     if (typeof payload.maxTokens === "number" && Number.isInteger(payload.maxTokens) && payload.maxTokens > 0) {
         format.applyMaxTokens(body, payload.maxTokens);
+    } else if (payload.hint?.use === "agent" && Number.isInteger(config.agentStepMaxTokens) && config.agentStepMaxTokens > 0) {
+        // An agent step names no cap of its own; the setting is the one bound on a thinking loop (contract-config.ts).
+        format.applyMaxTokens(body, config.agentStepMaxTokens);
     }
 
     // Ollama runtime options: context window (num_ctx) + GPU layers (num_gpu, 0 =

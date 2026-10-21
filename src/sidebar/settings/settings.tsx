@@ -275,6 +275,7 @@ const TIP = {
     electricityOffPeakHours: "The off-peak hours on this device's clock, from-to in whole hours; \"23-7\" runs past midnight. Public holidays are not counted.",
     electricityOffPeakWeekends: "Saturday and Sunday count as off-peak all day, as most two-rate tariffs have it.",
     electricityCurrency: "The currency of the electricity price, as a code (EUR, USD).",
+    agentStepMaxTokens: "The most tokens one agent step may generate, thinking included. Empty sends no cap. A model that loops in its thinking otherwise runs until its context window is full, which on a local model can take the better part of an hour. A step that hits the cap ends with what it has.",
     priceSnapshotUrl: "Your model box's price service, for spend. Empty (the default) fetches nothing. Set, each model call records the price snapshot it ran under (by hash), and the worker keeps each snapshot once for up to 30 days after its last use.",
     valueStoreBudgetMB: "Disk for fetched tables too large to show whole. The table a pointer names is kept on disk, so a later step can read every row rather than the preview. Past this size, the one read longest ago is dropped first, and a step that then reads it is told to fetch it again. A value no one has read in a day is dropped regardless, and the browser's own storage quota caps this further (at most half of it). 0 stores nothing.",
     labelMatch: "How a pointer LABEL is matched when it isn't recalled exactly. A near match is only ever used when it clearly beats the runner-up, and is always reported — but WHICH metric ranks the candidates is genuinely undecided, so it is exposed here. hybrid (default): the better of trigram and word-overlap; handles both rewording and typos. tokenset: word overlap only — perfect on reordering, blind to typos. trigram: character-level, survives both without excelling. edit: Levenshtein — best on typos, but it ranks a DIFFERENT label above the correct one reworded, so it is here to be measured against, not recommended.",
@@ -1458,6 +1459,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     </select>
                     <div class="set-hint">For a cloud model the extension can't probe (e.g. GPT-4o) — declaring <b>Yes</b> lets the agent see with its own model in the HUD instead of delegating to the OCR model. Ollama models are auto-detected.</div>
                     {defVisionAutoDetected ? <div class="set-moot">Ollama model — vision is auto-detected ({defModelSees ? "yes" : "no"}); this override is locked to Auto.</div> : null}
+                </label>
+                <label class="set-field"><Lbl tip={TIP.agentStepMaxTokens}>Max tokens per agent step</Lbl>
+                    <input type="number" min="0" step="1024" value={c.agentStepMaxTokens || ""} placeholder="no cap"
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("agentStepMaxTokens", Number.isFinite(n) && n > 0 ? n : 0); }} />
                 </label>
                 </Section>
 

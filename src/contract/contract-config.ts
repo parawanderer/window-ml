@@ -124,6 +124,10 @@ export interface MlConfig {
     /** The base URL of the box's price service (port 3002 on mlbox), for spend: each model call records which price snapshot it ran
      *  under, and the worker keeps each snapshot's bodies once. Empty (the default) turns it off, and nothing is fetched. */
     priceSnapshotUrl: string;
+    /** A cap on the tokens ONE agent step may generate (`max_tokens`, or Ollama's `num_predict`), thinking included.
+     *  0 (the default) sends none. A model that loops in its thinking otherwise generates until its context is full:
+     *  a bench cell's gemma4:12b ran 253k tokens over 38 minutes. A call that names its own `maxTokens` keeps it. */
+    agentStepMaxTokens: number;
     /** What a kWh costs you, for the electricity a LOCAL model uses (spend). 0 (the default) is unset: with the price
      *  service on, the inbox asks for it. Recorded on every model call, so changing it later does not reprice old runs. */
     electricityPerKwh: number;
@@ -306,6 +310,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
+    agentStepMaxTokens: 0,
     electricityPerKwh: 0,
     electricityCurrency: "EUR",
     electricityOffPeakPerKwh: 0,

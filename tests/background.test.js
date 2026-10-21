@@ -417,6 +417,38 @@ test("FETCH_LLM maxTokens becomes options.num_predict on the ollama format", asy
     assert.equal(sawBody.options.num_predict, 256);
 });
 
+test("agentStepMaxTokens caps an agent step that names no cap, and nothing else", async () => {
+    // A bench cell's gemma4:12b looped in its thinking to 253k tokens over 38 minutes: no step had a cap.
+    let sawBody;
+    const send = (bg, extra) => bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], ...extra } });
+    const ollama = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat", agentStepMaxTokens: 32768 }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ message: { content: "ok" } }); }
+    });
+    await send(ollama, { hint: { use: "agent" } });
+    assert.equal(sawBody.options.num_predict, 32768);
+    await send(ollama, { hint: { use: "agent" }, maxTokens: 100 });
+    assert.equal(sawBody.options.num_predict, 100, "a call's own cap wins");
+    await send(ollama, { hint: { use: "chat" } });
+    assert.ok(!("num_predict" in (sawBody.options ?? {})), "a chat is not an agent step");
+    await send(ollama, {});
+    assert.ok(!("num_predict" in (sawBody.options ?? {})), "no hint: not an agent step");
+
+    const openai = loadBackground({
+        config: baseConfig({ agentStepMaxTokens: 4096 }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); }
+    });
+    await send(openai, { hint: { use: "agent" } });
+    assert.equal(sawBody.max_tokens, 4096);
+    // The default (0) sends no cap: an existing install's agent steps are unchanged.
+    const off = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); }
+    });
+    await send(off, { hint: { use: "agent" } });
+    assert.ok(!("max_tokens" in sawBody));
+});
+
 test("FETCH_LLM extend:'utility' resolves the utility model + num_ctx/num_gpu (ollama)", async () => {
     let sawBody;
     const bg = loadBackground({

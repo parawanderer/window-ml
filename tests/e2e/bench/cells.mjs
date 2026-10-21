@@ -86,13 +86,27 @@ export function cellStream(cell) {
     return v ?? !!cellSurface(cell);
 }
 
+/** The most tokens one agent step of a LOCAL model may generate in a bench cell (`agentStepMaxTokens`). A thinking
+ *  loop otherwise runs to the context's end: gemma4:12b generated 253k tokens over 38 minutes in panel-policy-sh, and
+ *  the cell's timeout did not stop the box. About 5 minutes at that model's speed, far above any step that finished.
+ *  Cloud models get no cap: some reject `max_tokens`, and their APIs bound a reply themselves. */
+export const BENCH_STEP_MAX_TOKENS = 32768;
+
+/** Whether `model` is one of the server's own models, as `localModels` names them; an implicit `:latest` on either side
+ *  names the same model. */
+const isLocal = (localModels, model) => {
+    const short = (m) => String(m ?? "").replace(/:latest$/, "");
+    return !!model && (localModels ?? []).some((m) => short(m) === short(model));
+};
+
 /**
  * The runOnce options a cell runs with, so the sweep and a held cell's own process (hold.mjs) run it the same way.
- * `env` is what the sweep decided for every cell: `backend`, `dist`, `capture`, `warm`, the spec's `approve` and
- * `timeoutMs`; `extra` adds the caller's hooks (`nextTurn`, `onEvent`, `keep`).
+ * `env` is what the sweep decided for every cell: `backend`, `localModels`, `dist`, `capture`, `warm`, the spec's
+ * `approve` and `timeoutMs`; `extra` adds the caller's hooks (`nextTurn`, `onEvent`, `keep`).
  */
 export function runConfig(cell, env, dir, extra = {}) {
     const t = cell.task, e = cell.effects;
+    const backend = e.backend ? { ...(env.backend || {}), ...e.backend } : env.backend;
     return {
         task: t.task,
         followup: t.followup || "",
@@ -107,7 +121,7 @@ export function runConfig(cell, env, dir, extra = {}) {
         ...(t.script ? { script: t.script } : {}),
         surface: cellSurface(cell),
         sharedWatches: t.sharedWatches ?? [], watchNotes: t.watchNotes ?? {},
-        backend: e.backend ? { ...(env.backend || {}), ...e.backend } : env.backend,
+        backend: backend && isLocal(env.localModels, backend.model) ? { ...backend, agentStepMaxTokens: BENCH_STEP_MAX_TOKENS } : backend,
         dist: env.dist ?? null,
         artDir: dir,
         approve: env.approve || "auto",
