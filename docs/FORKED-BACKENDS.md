@@ -172,14 +172,38 @@ with its SPA's HTML no matter how correct the ollama side is. That is what `/api
 what `/api/events` needed again; both are on the OpenWebUI branch below. So for the capacity and event work
 the OpenWebUI fork IS in the path, and a patched Ollama behind a stock OpenWebUI is not enough.
 
-**A tool call's arguments as they are written: `message.tool_call_deltas` (PROPOSED, not on the branch yet,
-2026-10-21).** Stock Ollama's native stream buffers a call in the server (the per-model parser in `routes.go`'s chat
-handler) and sends it whole, so a long argument shows nothing until the model stops. The agreed shape: each chunk may
-carry `message.tool_call_deltas: [{ index, id?, function: { name?, arguments: "<text fragment>" } }]`, and the whole
-`tool_calls` still comes at the end and is the AUTHORITY: the client draws the deltas (`docs/dev/output-and-code.md`)
-and runs only the whole call. Without the field nothing changes; the call appears when it lands. On `/v1` and protobuf
-the fragments would BE the call (the client concatenates them), so those routes should fragment only where nothing can
-retract a call.
+**A tool call's arguments as they are written: `message.tool_call_deltas`** (branch `slop-stream-tool-args`, 67882976
+the plumbing and 6374360c the qwen3-coder parser; deployed on mlbox as `ollama-slop:streamargs` on 2026-10-21, not
+merged into `slop` yet). Stock Ollama's native stream buffers a call in the server (the per-model parser in
+`routes.go`'s chat handler) and sends it whole, so a long argument shows nothing until the model stops. The patched
+server sends `message.tool_call_deltas: [{ index, id?, function: { name?, arguments: "<text fragment>" } }]` while a
+call is written (the first per `index` carries `id` and `name`), then the whole `tool_calls` with the same `id`, which
+is the AUTHORITY: the client draws the deltas (`docs/dev/output-and-code.md`) and runs only the whole call. Without the
+field nothing changes; the call appears when it lands. On `/v1` SSE and protobuf (`Delta.tool_calls`) the fragments ARE
+the call and no whole call follows. Anthropic `/v1/messages`, the Responses API and every non-streaming request get
+whole calls as before.
+
+Which models fragment: those on the `qwen3.5` Go parser (qwen3.5, qwen3.6:35b, qwen3.8:27b, ornith), and every model
+with no `PARSER`, served by llama-server's own chat endpoint (qwen3.8-flash-next, qwen4-1card, dsv4-flash, gpt-oss:120b,
+qwen3:32b), whose fragments llama.cpp already computed and Ollama used to discard. Every other Go parser still sends
+calls whole.
+
+Where the whole call differs from the fragments, and what the client does about it:
+
+- On the llama-server path the VALUE is equal and the BYTES are not: the fragments are llama.cpp's JSON, the whole call
+  is Go's re-encoding (`<` as `\u003c`, key order, spacing). Compare parsed values, never strings.
+- qwen3-coder writing a parameter twice: the whole call keeps the first position and the last value, after the first
+  value has streamed. Native runs the whole call, so only the preview was wrong. On `/v1` the fragments stop,
+  unterminated, with `finish_reason: tool_calls`: the client does not run arguments that do not parse, and tells the
+  model (agent-loop.ts).
+- A call still open when generation stops (the length cap, an early stop) has fragments and no whole call. The client
+  hands it on as unparsed text, so the same refusal tells the model rather than the turn ending as an empty answer
+  (`streamAgentTurn`).
+- A parse error the server hits after fragments went out aborts the request with an `{"error"}` line in the stream; the
+  turn fails with that text.
+
+Raw captures from the deployed build, replayed by `tests/background-stream-calls.test.js`:
+`tests/fixtures/tool-call-deltas/`.
 
 ## OpenWebUI — `parawanderer/open-webui`, branch `ml/tool-execute-api`
 

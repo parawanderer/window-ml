@@ -74,7 +74,7 @@ interface ApiFormatHandler {
     applyThink(body: ChatBody, think: boolean): void;
     /** One streamed line. `tokens` is the ENGINE's running count of generated tokens up to and including this
      *  chunk (see `withLiveCount`) — a running total, not a delta, and absent unless the request asked. */
-    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; toolCallPreview?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null; tokens?: number } | null;
+    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; toolCallPreview?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null; tokens?: number; error?: string } | null;
 }
 
 const countOf = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
@@ -83,6 +83,10 @@ const countOf = (v: unknown): number | undefined => (typeof v === "number" && Nu
  *  does not count sends the usage object on every chunk with 0 in it until the last, and a 0 taken as the thinking
  *  count labelled a page of thinking "0 tokens". The FINAL usage is read through `normalizeUsage`, not this. */
 const runningCountOf = (v: unknown): number | undefined => { const n = countOf(v); return n != null && n > 0 ? n : undefined; };
+/** The error a server wrote INTO a stream that had already begun (`{"error": "…"}`, or OpenAI's `{"error": {"message"}}`),
+ *  such as Ollama's tool-call parser failing mid-call; undefined for an ordinary chunk. */
+const streamError = (obj: any): string | undefined =>
+    typeof obj?.error === "string" ? obj.error : typeof obj?.error?.message === "string" ? obj.error.message : undefined;
 
 /**
  * ASK THE ENGINE TO COUNT, on every streamed chunk, instead of estimating tokens from text (chars/4).
@@ -272,6 +276,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             try { obj = JSON.parse(payload); } catch { return null; }
             const choice = obj.choices?.[0] || {};
             return {
+                ...(streamError(obj) ? { error: streamError(obj) } : {}),
                 delta: choice.delta?.content || "",
                 // Both spellings: ollama's /v1 passthrough streams `reasoning`, and reading only `reasoning_content` dropped
                 // the whole thinking channel there.
@@ -336,7 +341,8 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             let obj: any;
             try { obj = JSON.parse(line); } catch { return null; }
             // Ollama puts prompt_eval_count/eval_count on the FINAL object (done:true).
-            return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls,
+            return { ...(streamError(obj) ? { error: streamError(obj) } : {}),
+                delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls,
                 // Ollama sends tool_calls WHOLE in a chunk (object args, no index/id) — not fragmented like OpenAI.
                 toolCallDelta: Array.isArray(obj.message?.tool_calls) ? obj.message.tool_calls : null,
                 // A patched server's ARGUMENT FRAGMENTS while it writes a call (`tool_call_deltas`, OpenAI's shape: index,
@@ -1082,6 +1088,9 @@ export async function streamAgentTurn(
      *  same work, and having it once is what stops the two formats drifting into different behaviour. */
     const handleChunk = (chunk: ReturnType<typeof format.streamChunk>) => {
         if (!chunk) return;
+        // The server gave up after the stream began (a tool call it could not parse, after its fragments had gone out).
+        // What arrived is not the turn, so the turn fails rather than ending as the text so far.
+        if (chunk.error) throw new Error(`the server reported an error mid-stream: ${chunk.error}`);
         let changed = false, phaseChanged = false;
         if (chunk.delta) { content += chunk.delta; changed = true; phaseChanged = mark("answer") || phaseChanged; }
         if (chunk.reasoning) { reasoning += chunk.reasoning; changed = true; phaseChanged = mark("think") || phaseChanged; }
@@ -1168,6 +1177,13 @@ export async function streamAgentTurn(
     else if (byIndex.size) {
         const arr = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => ({ id: v.id, type: "function", function: { name: v.name, arguments: v.args } }));
         tool_calls = format.extractToolCalls({ choices: [{ message: { tool_calls: arr } }] } as any);
+    } else if (previewByIndex.size) {
+        // A call the server began and never finished: its fragments came, its whole call did not (generation stopped
+        // mid-call, at the length cap or early). Handed on as the raw text, so the loop fails the call and tells the
+        // model, instead of the turn ending as an empty answer. Never parsed, even when it happens to be JSON: only
+        // the whole call is the call there.
+        tool_calls = [...previewByIndex.entries()].sort((a, b) => a[0] - b[0])
+            .map(([i, v]) => ({ id: v.id ?? `call_${i}`, name: v.name ?? "", arguments: v.args || "{" }));
     }
     const timed = withGenMs(usage, Date.now() - _t0, requestId, await spend);
     // The counted thinking figure goes on the usage when the server did not report a real one itself.
