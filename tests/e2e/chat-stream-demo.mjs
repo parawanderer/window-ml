@@ -157,7 +157,7 @@ try {
     await say("Another call…", "An exec survey, written the same way.");
     await writeCall(2, "exec", { js: SURVEY }, { parts: 40, gapMs: 90, stallAt: 20, stallMs: 9000, onFragment: async (f, wait) => {
         if (f !== "stall") return;
-        await say("…goes quiet", "No fragment for nine seconds. After four the row says how long, and the caret stops: stalled, not slow.");
+        await say("…goes quiet", "No fragment for nine seconds. After four a clock pulses beside the row (hover it for how long), and the caret stops: stalled, not slow.");
         await sleep(6000);
         await shot("exec-stalled");
         await wait;

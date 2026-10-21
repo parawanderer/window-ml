@@ -4,7 +4,8 @@
 // stopped. Display only; the step that replaces it is drawn from the parsed call.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Code, Dot } from "../ui-kit";
+import { Code, Dot, cursorTipOn } from "../ui-kit";
+import { IconQuiet } from "../icons";
 import { markdown } from "../format";
 import { closeStreaming } from "./stream-close";
 import { JsonNode } from "./json-tree";
@@ -93,6 +94,9 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
                 <Dot status="pending" />
                 <span class="tool-name">{call.name ?? "tool call"}</span>
                 <span class="astep-preview dim">writing… {chars(call.chars)}{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
+                {/* The calm view's form of the same readout: a slowly pulsing clock, its words in the tip. A spinner
+                    would say "working", which is the one thing a stall cannot claim. */}
+                {stall ? <span class="live-call-quiet" role="img" aria-label={stall} {...cursorTipOn(stall)}><IconQuiet /></span> : null}
             </div>
             <div class="astep-body" ref={body} onScroll={onScroll}>
                 {v.kind === "text" && v.as !== "markdown"

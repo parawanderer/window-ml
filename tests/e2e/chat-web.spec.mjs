@@ -3240,7 +3240,7 @@ test("a streamed THOUGHT also silences the status line, which would otherwise co
     expect(errors, "no page errors").toEqual([]);
 });
 
-test("a call being written keeps its progress line in the reading view, and says when it has gone quiet", async () => {
+test("a call being written keeps its progress line in the reading view, and a pulsing clock says when it has gone quiet", async () => {
     const page = await browser.newPage({ viewport: DESKTOP });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -3260,7 +3260,22 @@ test("a call being written keeps its progress line in the reading view, and says
     await expect(line, "the progress line is not hidden as chrome").toBeVisible();
     await expect(line).toContainText("writing…");
     await page.clock.fastForward(6000);
-    await expect(line, "and it says when nothing has arrived").toContainText(/no output for \d+s/);
+    // Said by a pulsing clock, not a yellow line: the words are its accessible name and its tip.
+    const quiet = page.locator(".live-call .live-call-quiet");
+    await expect(quiet, "and it says when nothing has arrived").toBeVisible();
+    await expect(quiet).toHaveAttribute("aria-label", /no output for \d+s/);
+    await expect(page.locator(".live-call .live-call-stall"), "without the loud line").toBeHidden();
+    expect(await quiet.evaluate((el) => getComputedStyle(el).animationName), "pulsing, as a wait still going on").toBe("live-call-quiet");
+    await quiet.hover();
+    await page.clock.fastForward(1000);   // the tip's hover delay
+    await expect(page.locator(".cursor-tip, [role=tooltip]").filter({ hasText: /no output for \d+s/ }).first(), "its words on hover").toBeVisible();
+    // The next fragment clears it.
+    await page.evaluate(([k, a]) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
+        calls: [{ index: 0, name: "python_exec", args: a + " ", chars: a.length + 1 }],
+    }), [WATCHED, args]);
+    await expect(quiet, "gone once text arrives again").toHaveCount(0);
     expect(errors, "no page errors").toEqual([]);
 });
 

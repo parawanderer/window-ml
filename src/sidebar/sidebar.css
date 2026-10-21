@@ -1297,6 +1297,13 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .live-call.stalled .live-call-md.writing > :last-child::after { animation: none; opacity: .3; }
 /* How long a call being written has been quiet, in the row's head. */
 .live-call-stall { color: var(--warn); }
+/* The CALM view says it with a clock instead of a yellow line: it pulses slowly, so it reads as a wait still going on
+   rather than a badge, and its words are in the tip. Elsewhere the line stays, for a reader watching the counters. */
+.live-call-quiet { display: none; }
+html[data-calm] .live-call-stall { display: none; }
+html[data-calm] .live-call-quiet { display: inline-flex; align-self: center; margin-left: .4em; color: var(--fg-dim); animation: live-call-quiet 2.4s ease-in-out infinite; }
+@keyframes live-call-quiet { 0%, 100% { opacity: .35; } 50% { opacity: .8; } }
+@media (prefers-reduced-motion: reduce) { html[data-calm] .live-call-quiet { animation: none; opacity: .6; } }
 /* A live call's arguments, scroll-capped like a step's In, and kept scrolled to the end by `LiveCall`. */
 .live-call .astep-body { max-height: 320px; overflow: auto; }
 
