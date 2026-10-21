@@ -224,7 +224,9 @@ listed as remaining is DONE unless named below.
   line fix, and, found by fixing it, the check now parses the cell as itself (the wrapper's indent had been adding four
   spaces to multi-line strings). Re-pinned by #901 (merged 1334d623; release `pyodide-314.0.3-ml-77376876`, sha
   3273be76…): line corrections gone, the copy-back admits a cell function whose every code object is `CO_RESTRICTED`,
-  walking defaults and closures. Red team's post-merge read holds on every route; stated residual: approved code can
+  walking defaults and closures. CORRECTION 2026-10-21 (lane 3): that release packed the OLD `restricted.py` (the recipe's
+  stale install stamp, found while building the per-run branch), so its Python side was a9f034a2's; a `-r2` release
+  from a stamped, witnessed recipe re-pins it, the red team reruns its suite on it. Red team's post-merge read holds on every route; stated residual: approved code can
   strip the flag, and every shape that does names `__code__`/`co_flags` on the card (#903). Lane 3's #906 (177dde76)
   adds the red-team rule that every probed shape ends as a committed test or a stated reason. Lane 3's extra pin clone
   removed; lane 3 is free.
