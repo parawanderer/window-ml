@@ -153,6 +153,69 @@ for n, wasm in sets.items():
 pd.DataFrame(spread).round(2)
 """)
 
+md("""
+## The real cells: does a cell anyone wrote move?
+
+Every real `python_exec` cell the corpus finds (`corpus.py`: the local run exports and the bench store; 1,702 that
+parse), timed inside the dialect by `cells.py`, the way `python-dialect-run.ts` runs one, with `drive.mjs
+--one=one-cells.mjs`: a fresh Pyodide per core per round, the order rotated, `base`/`base_aa` the same 7c40b038 core.
+The cell text stays local (`export_cells.py` writes it outside the repo); the rounds hold only `corpus.py`'s
+`cell_id` (a hash of the text), the outcome's kind and the ns.
+
+A cell enters the ratio only when every process, on both cores, gave it the SAME outcome. The headline is the cells that
+finish (`ok`); a cell that stops on its own error is timed too, but its run is cut short, so it gets its own row. A
+cell's figure for one process is the min over its reps; its ratio is the median over rounds of the per-round ratio. The
+decision (repl-specs, 2026-10-21): the full probe stands if the candidate's upper quartile is inside the A/A spread;
+lane 13 opens if real cells move 1.2x or more.
+""")
+
+code("""
+cellsets = {}
+for n in ("release", "trial"):
+    p = DATA / f"cells-rounds-{n}.json"
+    if p.exists():
+        cellsets[n] = pd.DataFrame([{"round": r["round"], "build": r["label"], "cell": cid, "outcome": v["outcome"],
+                                     "ns": min(v["ns"])} for r in json.loads(p.read_text()) for cid, v in r["ns"].items()])
+
+def per_cell(c, other):
+    # one ratio per cell: the median over rounds of other/base, on cells whose outcome never varied across both builds
+    two = c[c.build.isin(["base", other])]
+    same = two.groupby("cell").outcome.nunique() == 1
+    two = two[two.cell.isin(same[same].index)]
+    w = two.pivot_table(index=["cell", "round"], columns="build", values="ns").dropna()
+    r = (w[other] / w["base"]).groupby("cell").median()
+    out = two.groupby("cell").outcome.first().to_frame().join(r.rename("ratio"), how="inner")
+    return out.join(w["base"].groupby("cell").median().rename("base ns"))
+
+rows = []
+for n, c in cellsets.items():
+    print(f"=== {n}: outcomes per process (round 0, base):", c[(c["round"] == 0) & (c.build == "base")].outcome.value_counts().to_dict())
+    for o in ["base_aa", "full", "gate"]:
+        if o not in set(c.build):
+            continue
+        pc = per_cell(c, o)
+        for label, sel in [("ok", pc.outcome == "ok"), ("own error", pc.outcome.str.startswith("error:")),
+                           ("ok, base >= 1 ms", (pc.outcome == "ok") & (pc["base ns"] >= 1e6))]:
+            q = pc[sel].ratio
+            rows.append({"set": n, "build": o, "cells": label, "n": len(q), "q25": q.quantile(.25), "median": q.median(),
+                         "q75": q.quantile(.75), "q90": q.quantile(.9), "max": q.max()})
+cells_tab = pd.DataFrame(rows).round(3)
+cells_tab
+""")
+
+code("""
+# The decision: each candidate's upper quartile against the A/A pair's interquartile spread, on the same cells.
+verdict = []
+for (n, label), g in cells_tab.groupby(["set", "cells"], sort=False):
+    aa = g[g.build == "base_aa"]
+    for _, r in g[g.build != "base_aa"].iterrows():
+        lo, hi = (aa.q25.iloc[0], aa.q75.iloc[0]) if len(aa) else (float("nan"), float("nan"))
+        verdict.append({"set": n, "cells": label, "build": r.build, "n": r.n, "median": r["median"], "q75": r.q75,
+                        "A/A q25": lo, "A/A q75": hi, "q75 inside A/A": bool(lo <= r.q75 <= hi),
+                        "moves >= 1.2x (q75)": bool(r.q75 >= 1.2)})
+pd.DataFrame(verdict)
+""")
+
 nb = nbf.v4.new_notebook()
 nb.cells = cells
 nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
