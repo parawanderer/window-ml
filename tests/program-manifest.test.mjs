@@ -278,3 +278,24 @@ test("a recursive reader marks every walked path, and its own directory when it 
     assert.equal(describeCall(["ls", "-R", "src"], ls, v(ls)).pathArgs[0].walk, true);
     assert.equal(describeCall(["cat", "a.txt"], manifests.cat, v(manifests.cat)).recursive, false);
 });
+
+// --- a term that names the path it acts on applies to that path (window-ml #882, ruled 2026-10-21) ---
+
+test("write-names on a path-valued flag or find primary lands on the value, not the command", () => {
+    const V = { version: "1", resolve: ({ given }) => ({ kind: "fs", path: "/w/" + given }) };
+    const ver = { range: ">=1", args: ["--version"], pattern: "(\\d+)" };
+    const m = { program: "x", version: ver,
+        command: { effects: ["read"], paths: "operands", flags: { "--rm": { value: true, valueIsPath: "write", effects: ["write-names"] } } } };
+    assert.deepEqual(validateManifest(m), []);
+    const d = describeCall(["x", "--rm", "f", "o"], m, V);
+    assert.equal(d.described, true);
+    assert.ok(!keys(d.effects).some((k) => k.startsWith("write-names:fs:/w/o")), "flag: no write-names on the command's operand");
+    assert.ok(keys(d.effects).some((k) => k.startsWith("write-names:fs:/w/f:")), "flag: write-names on the value");
+    const find = { program: "find", version: ver,
+        command: { syntax: "find", effects: ["read"], paths: "operands", flags: {}, primaries: { "-rm-into": { args: 1, argIsPath: "write", effects: ["write-names"] } } } };
+    assert.deepEqual(validateManifest(find), []);
+    const f = describeCall(["find", "o", "-rm-into", "g"], find, V);
+    assert.equal(f.described, true);
+    assert.ok(!keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/o")), "primary: no write-names on the operand");
+    assert.ok(keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/g:")), "primary: write-names on the value");
+});

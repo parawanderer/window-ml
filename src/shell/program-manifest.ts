@@ -244,7 +244,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
         // A flag's read/write applies to its own path value when it has one (`--output=f`), else to the command's
         // targets (`git push -u` writes the repository's config).
         for (const t of f.effects ?? []) {
-            if (f.valueIsPath && (t === "read" || t === "write")) continue;
+            if (f.valueIsPath && (t === "read" || t === "write" || t === "write-names")) continue;
             terms.push({ term: t, targets: "command" });
         }
         if (f.valueIsPath && valueAt) {
@@ -252,6 +252,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
             else {
                 d.pathArgs.push({ arg: valueAt.arg, ...(valueAt.split ? { split: valueAt.split } : {}), role: f.valueIsPath });
                 terms.push({ term: f.valueIsPath, targets: [argRes(valueAt.arg, valueAt.split)] });
+                if (f.effects?.includes("write-names")) terms.push({ term: "write-names", targets: [argRes(valueAt.arg, valueAt.split)] });
             }
         }
         if (f.valueIsDir && valueAt) {
@@ -339,7 +340,7 @@ function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: 
         if (!p) { unknown(`find expression ${JSON.stringify(a)} is not in the manifest`); break; }
         if (p.effects?.includes("unknown")) unknown(`${a} can make find do what no manifest describes`);
         for (const t of p.effects ?? []) {
-            if (p.argIsPath && (t === "read" || t === "write")) continue;
+            if (p.argIsPath && (t === "read" || t === "write" || t === "write-names")) continue;
             terms.push({ term: t, targets: "command" });
         }
         if (p.runner) d.runner = true;
@@ -355,6 +356,7 @@ function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: 
         if (p.argIsPath && n > 0) {
             d.pathArgs.push({ arg: i + 1, role: p.argIsPath });
             terms.push({ term: p.argIsPath, targets: [argRes(i + 1)] });
+            if (p.effects?.includes("write-names")) terms.push({ term: "write-names", targets: [argRes(i + 1)] });
         }
         i += n;
     }
