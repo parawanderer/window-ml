@@ -1,6 +1,9 @@
 # Lane 13: the verify-on-return probe, narrowed to the calls that can drop a hook (fork PR)
 
-Brief, 2026-10-21, by the coordinator (`repl-specs`), written while the context was fresh. NOT STARTED: it opens only
+Brief, 2026-10-21, by the coordinator (`repl-specs`), written while the context was fresh. CLOSED ON THE NUMBER the same
+day (window-ml #957, the `memory` row): the full probe costs about 4% at the upper quartile of 1,702 real cells, outside
+the A/A spread but no widening's worth; the 1.36x is only a bare loop of approved C calls. It reopens only if a real
+workload shows that shape, and Shane says so. Kept as the design for that day. Originally: it opens only
 when the gate number below says the cost is visible on real cells, and Shane says so. One fork PR on
 parawanderer/cpython after #9 has merged, branched from the fork tip then; a window-ml re-pin in #928's shape; the
 `verify-cost` notebook rerun with the new core as a third column.

@@ -1,5 +1,7 @@
 # Lane 12: the memory cap's block table fails closed (fork PR)
 
+DONE 2026-10-21: fork #9 merged at 0169c4fd (the janitor reviewed); the re-pin and the `verify-cost` notebook in window-ml #957, merged c03e1344 (the janitor reviewed, neither finder nor builder). The as-built numbers are in the `memory` row; lane 13 is CLOSED on them. The lane's result file is `LANE_12_RESULT.md`, lane 12's to write.
+
 Brief, 2026-10-21, by the coordinator (`repl-specs`). One fork PR on parawanderer/cpython, branch from `ml/restricted-mode`
 at 7c40b038, then a window-ml re-pin (#928's shape: `pyodide-build` skill, release, pin sha, the two wasm tests).
 
