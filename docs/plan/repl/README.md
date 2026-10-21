@@ -242,8 +242,10 @@ listed as remaining is DONE unless named below.
   Lane 6: items 2 and 3 are #822 (merged 2026-10-20, 4ca4201d), item 1 (the one shared loader patch with a per-cell lookup)
   is #830 (merged 2026-10-20, c789e647), item 4 was already closed by #772; the generalist reviewed both. Lane 6 is closed:
   [`LANE_6_RESULT.md`](LANE_6_RESULT.md) (#849, merged 73e57802), clone removed.
-- **Unassigned**: the host's hub transport is no longer; left is the typed-node policy tree (the derived breadth). Lanes
-  6 to 9 took the rest of the old list (2026-10-19 to 2026-10-20, above).
+- **Round 4 (opened 2026-10-21, [`ROUND_4.md`](ROUND_4.md))**: lane 10 (Sonnet) the dist mismatch throw in CI and #882;
+  lane 11 (Opus) host #19, the orphan's deadline-kill `ended` record, then the typed-node policy tree's DESIGN NOTE (no
+  code until ruled); lane 3 the per-run wrapper's wasm number. Lanes 6 to 9 took the rest of the old list (2026-10-19 to
+  2026-10-20, above). Nothing is unassigned.
 
 ## The lanes
 
