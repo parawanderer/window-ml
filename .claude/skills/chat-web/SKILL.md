@@ -16,6 +16,7 @@ THEME=light OUT=/tmp/shots node tests/e2e/chat-shots.mjs
 SERVE=1 node tests/e2e/chat-shots.mjs          # serve dist-web/ and print the URL; open it and poke at it
                                                # <url>/client.html is the standalone client (a real hub, no fake)
 npx playwright test tests/e2e/chat-web.spec.mjs  # the spec, ~2s; E2E_DIST_WEB=<dir> for a build elsewhere
+node tests/e2e/chat-stream-demo.mjs            # narrated: a run streaming in the calm view, events by hand
 ```
 
 Every view has an address (`src/chat/route.ts`): `#/s/<runtime:hash>` opens a session (`#/s/laptop%3A3f9a0c21` is

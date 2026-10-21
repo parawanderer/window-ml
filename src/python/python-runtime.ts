@@ -9,6 +9,15 @@ import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 import { insideDefs, INSIDE_CELL } from "./python-dialect-run";
 
+/** Pyodide's stdout handler for a STREAMED run: hands `onStdout` the exact text written, newlines included. The
+ *  `batched` handler it replaces passes each line with its newline stripped, so a live cell read
+ *  "rolled 2000rolled 4000" until the final capture replaced it. Decodes across writes, so a character split
+ *  between two writes arrives whole. */
+export function stdoutWriter(onStdout: (chunk: string) => void): { write: (buf: Uint8Array) => number } {
+    const dec = new TextDecoder();
+    return { write: (buf) => { const s = dec.decode(buf, { stream: true }); if (s) onStdout(s); return buf.length; } };
+}
+
 /**
  * Release a kept namespace (ROOT C's per-run dict) so no other cell in the interpreter can reach it. Emptied FIRST:
  * the functions a cell defined hold the dict through their `__globals__`, so releasing the proxy alone leaves a cycle

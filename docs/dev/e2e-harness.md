@@ -251,13 +251,21 @@ as in AGENTS.md — they are all under `src/`.
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel), `readonly-stream.spec.mjs` (a read-only survey
   streams as an approved `exec` does, and a refused one is discarded) and `output-scroll.spec.mjs` (tail-follow).
-- **`live-call-demo.mjs`**: a **narrated demo, not a test** of a tool call drawn while the model WRITES it: `npm run
-  build && node --import tsx tests/e2e/live-call-demo.mjs`. Three beats on a fake model streaming OpenAI fragments: a
-  forty-line `python_exec` cell grows in place with the caret and the orb naming the call, then its step replaces it and
-  runs; an `exec` whose writing goes quiet for nine seconds (fake-llm's `pause` beat) says "no output for Ns" and stops
-  the caret, and resumes; an `answer` document streams as Markdown. Screenshots land in
+- **`live-call-demo.mjs`**: a **narrated demo, not a test** of everything the sidebar streams during one run: `npm run
+  build && node --import tsx tests/e2e/live-call-demo.mjs`. On a fake model streaming OpenAI fragments: a forty-line
+  `python_exec` cell is typed out in place with the caret and the orb naming the call, its step replaces it, and its
+  `print()` lines stream into the Out cell as it runs; an `exec` survey whose writing goes quiet for nine seconds
+  (fake-llm's `pause` beat) says "no output for Ns" and stops the caret, resumes, then streams its `console.log` lines
+  with no approval asked; an `answer` document streams as Markdown. Screenshots land in
   `tests/e2e/artifacts/live-call-demo/`; `HOLD=0` exits. The assertions are `live-call.spec.mjs`,
-  `tests/sidebar-live-call.test.js` and `tests/background-stream-calls.test.js`.
+  `python-stream.spec.mjs`, `readonly-stream.spec.mjs`, `tests/sidebar-live-call.test.js` and
+  `tests/background-stream-calls.test.js`.
+- **`chat-stream-demo.mjs`**: a **narrated demo, not a test** of the chat page's calm view while a run streams: `npm run
+  build && node tests/e2e/chat-stream-demo.mjs`. No extension and no model: it serves `dist-web/` and emits the events
+  a streamed run sends through the fake host (`__chatFake.emit`): a `python_exec` call typed out as it is written
+  (`agent-stream` `calls`), its output as it runs (`agent-step` `streamOutput`, the step opened as a reader would), an
+  `exec` whose writing goes quiet for nine seconds, and the reply fading in word by word before it settles into the
+  answer. Screenshots land in `tests/e2e/artifacts/chat-stream-demo/`; `HOLD=0` exits, `THEME=light`, `PHONE=1`.
 - **`code-theme-demo.mjs`** — a **narrated demo, not a test** of Settings → Code blocks → Colour theme:
   `npm run build && node --import tsx tests/e2e/code-theme-demo.mjs`. An agent step's JavaScript and a bench script
   side by side, walked through the default, GitHub (a pair, in a light panel), Nord (dark-only, keeping its own

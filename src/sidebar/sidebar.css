@@ -1859,6 +1859,15 @@ html[data-focus] .msg.user .mrow .tt:has(> .icon-btn) { display: none; }
    output preview. That preview is spam here; this is a PROGRESS indicator — on a long think it is the only
    sign the run is moving rather than stuck, and a reading mode wants that more than a debugging one does. */
 html[data-focus] .astep-tokest { display: inline; }
+/* …nor a call still being written: "writing… 2.1k chars · no output for 6s" is the only thing that tells a model writing
+   slowly from one that has stalled mid-call. */
+html[data-focus] .live-call .astep-preview { display: inline; }
+/* An `answer` call being written is drawn twice (LiveStream): as the call, and as the reply it will be. The reading view
+   shows the reply, so the answer streams in as a streamed reply does and does not jump when it lands; the detailed view
+   shows the call. */
+.live-answer { display: none; }
+html[data-calm] .live-answer { display: block; }
+html[data-calm] .live-call[data-tool="answer"]:has(.live-call-md) { display: none; }
 /* With "you" gone, the user bubble's header row held nothing but a right-aligned timestamp — a full empty
    band above every prompt, which is the opposite of what a reading mode is for. The row is FLOATED instead
    of hidden: the timestamp is still worth having (it is the only clock in the transcript), it just has no

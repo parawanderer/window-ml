@@ -88,7 +88,7 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
     const stall = stallNote(now - seen.current.at);
     return (
-        <div class={`astep tool pending open live-call${stall ? " stalled" : ""}`} data-live-call={call.index}>
+        <div class={`astep tool pending open live-call${stall ? " stalled" : ""}`} data-live-call={call.index} data-tool={call.name}>
             <div class="astep-head">
                 <Dot status="pending" />
                 <span class="tool-name">{call.name ?? "tool call"}</span>

@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
-import { wrapUserCode, harden, unharden, injectStoredTable, takeIpc } from "../src/python/python-runtime.ts";
+import { wrapUserCode, harden, unharden, injectStoredTable, takeIpc, stdoutWriter } from "../src/python/python-runtime.ts";
 // For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
 const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
 after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)
@@ -484,6 +484,19 @@ test("live stdout tee: setStdout streams each print() chunk while _stdout keeps 
         const streamed = chunks.join("");
         assert.match(streamed, /alpha/, "alpha streamed live via the tee");
         assert.match(streamed, /beta/, "beta streamed live via the tee");
+    } finally { py.setStdout({}); }
+});
+
+test("live stdout tee: the worker's writer streams the exact text, newlines included, so lines stay lines", { skip }, async () => {
+    const chunks = [];
+    // What python-worker.ts installs. The `batched` handler it replaced stripped each line's newline, so a live cell
+    // showed "rolled 2000rolled 4000" until the run ended.
+    py.setStdout(stdoutWriter((s) => chunks.push(s)));
+    try {
+        const r = await pyRun("print('alpha'); print('beta', end=''); print(' and é'); 42");
+        assert.equal(r.value, 42);
+        assert.equal(chunks.join(""), "alpha\nbeta and é\n", "streamed text equals what was printed");
+        assert.equal(chunks.join(""), r.stdout, "and equals the final capture");
     } finally { py.setStdout({}); }
 });
 
