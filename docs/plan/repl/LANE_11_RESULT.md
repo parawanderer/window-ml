@@ -52,15 +52,35 @@ SHELL.md's Ownership bullet records the rule (#917, #921).
 - Not run: the extension against the new host. Window-ml makes no orphans and has no `status` reader, by the ruling;
   the first PR that asks for an orphan adds the reader.
 
+## After the brief: the lifter and its measurement (2026-10-21)
+
+The item the first version of this Result left as next, ruled in #921, was built and measured. The table's figures
+are in [`tests/e2e/panel/policy-proposals.md`](../../../tests/e2e/panel/policy-proposals.md).
+
+| PR | Merged | What |
+| --- | --- | --- |
+| #930 | `ba268bf7` | The lifter: a syntactic recogniser that turns a dialect source into a tree when it fits, held to the corpus and to the policy realm |
+| #934 | `b8030ae8` | The `policy-fetch` and `policy-sh` interviews and their scorer: each need's hand-labelled calls, and lifted, right and broken per answer |
+| #953 | `a40f7e29` | The first figure: the lifter covers 33 of 52 `fetch` proposals (63%) and 24 of 53 `sh` (45%), below the predicted 80-95 and 55-75. One fail-open: an ALLOW over a `null` `repoConfigRunsCode` |
+| #961 | `c1d1f6ed` | The ruling built: an ALLOW whose evaluation read a `null` fact never fires, in the realm and in the tree's verdict. `propose_policy`'s details; with them `fetch` lifts 41 of 49 (84%), every lifted answer right |
+| window-ml-host #23 | `fb436349` | `repoConfigRunsCode` is `true` or `false` on every call: `false` with no repository, `true` when the host cannot tell (an unreadable `.git`, `commondir` or config). `null` is left for a host that computed nothing |
+| window-ml-host #24 | `afba286c` | The test #22 lacked: a running warden whose directory stops being private exits 2, leaving the group and the ledger alone. It fails without #22's in-loop check |
+| #973 | `e7ab5488` | The scorer's calls outside a repository carry `false`, as #23 answers; `sh` rescored with nothing rerun, 29 of 53 right (27 before), no fail-open |
+
+#973 merged before its assigned review was posted: `merge-when-green --wait` blocks only on posts that exist and are
+unread. The janitor was asked to review it after the merge.
+
+Filed, not lane 11's: #968, a page-built run's JSON export carries the page's tool texts where the wire carried ours.
+
 ## What is left
 
-- **Next: the lifter and a `fetch` bench task** (ruled in #921). The lifter is a syntactic recogniser that turns a
-  dialect source into a tree when the source fits. Its test is that the original and the rendering agree on every
-  cell representative over the corpus. The bench task asks the panel to propose `fetch` policies and feeds the
-  proposals through the lifter, which gives the first coverage figure over model-written policies. It is held until
-  Shane has read #921. An `sh` task joins only if he widens `propose_policy` to shell. Nothing else of the tree is
-  built before that figure exists.
-- Optional facts sent as an explicit `null` ride with the first PR that reads one from a policy (#921). This is not
-  lane 11's.
+- `sh` in `propose_policy`: only if Shane widens it to shell (#921). The `sh` figure above is measured as text.
+- Left by #961: the model-written proposals are not yet appended to
+  [`tests/fixtures/policy-corpus.json`](../../../tests/fixtures/policy-corpus.json) (neither #934 nor #961 does it), and
+  `riskyRegex` is not widened to accept the safe repeated groups opus and sonnet wrote; `propose_policy`'s details steer
+  a model to the string methods instead.
 - The two-profile residual of the `ended` record stands: profile B's `status` can consume profile A's record. It is
   named in the design note and not fixed.
+- The committed figures are in `policy-proposals.md`. The sweep directories behind them (`panel-policy-fetch`,
+  `panel-policy-sh`) live on this machine under the main clone's `tests/e2e/artifacts/bench/`, which is gitignored, so
+  they are not committed; the bench store holds the durable copy.
