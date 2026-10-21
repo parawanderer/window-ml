@@ -54,7 +54,9 @@ type FieldType =
     /** A fact no atom reads (an object compared as a whole, an id). */
     | { t: "opaque" };
 
-/** A fact sent on some calls only, by name, for the reason a tree does not read it. */
+/** A fact sent on some calls only, by name, for the reason a tree does not read it. SHELL.md, "An optional fact is sent
+ *  as `null`": the PR that first sends one of these as `null` makes it `{ t: "nullable", of: BOOL }` here, with a corpus
+ *  entry that reads it. */
 const MAYBE = (f: string): FieldType => ({ t: "absent", why: `${f} is sent only on some calls (it becomes an explicit null first)` });
 /** The plain types the tables below repeat. */
 const STR: FieldType = { t: "str" }, BOOL: FieldType = { t: "bool" }, PATH: FieldType = { t: "path" };
@@ -280,6 +282,8 @@ function call(n: Node, s: Scope, root: FieldType): PolicyTree {
         if (!o.values.every((v) => isScalar(v) && fits(f.type, v))) no(`a value in the list is not a value of ${f.path.join(".")}`);
         return { op: "oneOf", field: f.path, values: o.values as TreeScalar[] };
     }
+    if (m === "includes" && o.r === "field" && (o.type.t === "list" || o.type.t === "argv"))
+        return no(`.includes(…) on the list fact ${o.path.join(".")} (the fragment writes it as .some((x) => x === …))`);
     if ((m === "startsWith" || m === "endsWith") && n.args.length === 1) {
         const a = ref(n.args[0], s, root);
         if (a.r !== "lit" || typeof a.value !== "string") return no(`${m} of something that is not a string constant`);

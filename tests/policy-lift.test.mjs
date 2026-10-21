@@ -150,6 +150,11 @@ test("a source outside the fragment stays code with a reason, and the lifter nev
     }
 });
 
+test("includes on a list fact stays code and says how the fragment writes it", () => {
+    for (const src of ['(c) => c.argv.includes("--force")', '(c) => c.secrets.includes("github")', '(c) => !c.env.set.includes("PATH")'])
+        assert.match(liftPolicy(src, "sh").why ?? "", /^\.includes\(…\) on the list fact (argv|secrets|env\.set) \(the fragment writes it as \.some/, src);
+});
+
 test("a constant list or a const helper lifts as membership; a const that is not a literal stays code", () => {
     assert.deepEqual(liftPolicy('const OK = ["a", "b"]; (c) => OK.includes(c.host)', "fetch").tree, { op: "oneOf", field: ["host"], values: ["a", "b"] });
     assert.equal(liftPolicy('const OK = ["a", c.host]; (c) => OK.includes(c.host)', "fetch").tree, undefined);
