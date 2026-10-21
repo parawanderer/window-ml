@@ -337,6 +337,11 @@ export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summ
  *  "STEP x/N" display. */
 export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }
 
+/** The worker's record of what a page-built run sends the model: the system prompt and tools after its own rewrite (a
+ *  tool named like a builtin gets the extension's texts), which the page's `agent` start event cannot know. Folded over
+ *  the session's `agentConfig`, so the tool cards and both exports carry what the model saw. */
+export interface DebugAgentConfigWire extends DebugBase { kind: "agent-config"; config: Pick<DebugAgentConfig, "system" | "tools">; }
+
 /** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even
  *  though the model only sees it at the next step boundary. */
 export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; images?: string[]; sayId?: string; /** how `text` is shown when it is not what the person typed */ display?: import("./contract-run").PromptDisplay; }
@@ -373,7 +378,7 @@ export interface DebugSessionResumed extends DebugBase {
 
 /** Every event the debug stream carries about a session: a chat's turns, an agent run's lifecycle and live previews. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError | DebugChatStream
-    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentConfigWire | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn
     | DebugSessionResumed;
 
 /** A site asks the person to start, widen or keep driving its agent (docs/spec/SITE_ACCESS_SLICE3.md 1.1): the start

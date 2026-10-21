@@ -172,6 +172,13 @@ recipe, its follow-up, and a page-built handle's follow-up in `injected.ts`) can
 cannot attach a display to its task: the worker drops it from `START_RUN` unless it built the run. Plain chat
 sessions are not covered: an element sent into one is still drawn as the framed text.
 
+**A run's tool definitions and system prompt too.** A page-built run's `agent` start is emitted by the PAGE on the
+overlay and DevTools surfaces, with the page's tool texts; the worker then gives a tool named like a builtin the
+extension's description and schema texts (`ourToolTexts`, `src/sw/builtin-texts.ts`) and adds the page context to the
+prompt. So the worker follows the page's start with an `agent-config` event (`src/sw/sw-run-host.ts`) carrying the
+`system` and `tools` it sends, which the reducer folds over `agentConfig`: the tool cards, `run.md` and `run.json` then
+show the wire's texts. On the off surface, and for a run the worker built, the worker's own start already carries them.
+
 **WHICH ARTIFACT TO REACH FOR.** A run can be got out four ways and they are not interchangeable. Picking
 the wrong one costs a whole read-through, so:
 

@@ -778,6 +778,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (site) noteRunStart(runId, tabId, site.docId);
         else if (!resurrected) void documentOn(tabId).then((d) => { if (runControllers.get(runId) === abortCtl) noteRunStart(runId, tabId, d); });
         if (!resumeMessages) emitLifecycle(startEvent);
+        // A page-built run on the overlay or DevTools surface: the page announced the start with ITS tool texts, which
+        // the worker rewrote above (`ourToolTexts`, `withExecWorld`) and the prompt it extended. The surfaces and both
+        // exports must carry what the model is sent, so the worker says it after the page's start, on the same gate.
+        if (!resumeMessages && p.surface !== "off" && !hasNavigated && !byWorker())
+            fanEvent({ kind: "agent-config", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, config: { system: startEvent.config.system, tools: startEvent.config.tools } });
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         // A plain resume emits NEITHER, so a cap raised here would reach no surface: the step pill would keep counting
         // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event

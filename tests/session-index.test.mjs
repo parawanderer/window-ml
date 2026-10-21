@@ -408,6 +408,7 @@ test("every event kind the index accepts has been considered for de-duplication"
         "chat-stream",   // coalesced by turn id the same way, and dropped by the turn's result or error
         "agent-turn",    // coalesced the same way, and carries no history of its own
         "agent-cap",     // last write wins: a cap is a number, not an occurrence
+        "agent-config",  // last write wins: the wire's tools and prompt replace the page's, a repeat says the same
         "agent-say",     // paired with agent-say-seen, which is the one that can arrive twice
         "chat-error",    // ends a turn opened by `chat`, which is itself de-duplicated
         "agent-site-say", // the worker's own record of one turn a site sent, written once per turn
@@ -515,4 +516,19 @@ test("a nested ask is a gate of its own while it waits: the row is waiting and c
     ix.ingest(step(h, 2, { ...running, asks: [ask("a3", "pending")] }), bg());
     ix.ingest(result(h), bg());
     assert.equal(ix.get(h).pendingApprovals, 0, "a finished turn clears its asks with its gates");
+});
+
+// --- what only the worker may write: its record of what the model was sent (#968) ---
+
+test("agent-config is the worker's record of what the model was sent: refused from a page, accepted from the worker", () => {
+    const ix = index();
+    const cfg = (hash, description) => base(hash, "agent-config", { config: { system: "S", tools: [{ name: "click", requiresApproval: true, vision: false, description }] } });
+    const configs = (h) => ix.heldEvents(h).events.filter((e) => e.kind === "agent-config").map((e) => e.config.tools[0].description);
+    // A page-built run on the page's own tab: the page may write its start, never the worker's record of the wire.
+    assert.equal(ix.ingest(start("aaaa0001"), page(TAB_A)).accepted, true);
+    assert.deepEqual(ix.ingest(cfg("aaaa0001", "the page's words"), page(TAB_A)), { accepted: false, reason: "invalid" });
+    assert.deepEqual(configs("aaaa0001"), [], "the refused record left the session as it was");
+    assert.equal(ix.ingest(cfg("aaaa0001", "ours"), bg()).accepted, true);
+    assert.deepEqual(ix.ingest(cfg("aaaa0001", "the page's words"), page(TAB_A)), { accepted: false, reason: "invalid" });
+    assert.deepEqual(configs("aaaa0001"), ["ours"], "a later page copy does not overwrite the worker's");
 });

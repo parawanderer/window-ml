@@ -323,6 +323,16 @@ export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): v
     // step pill and the Continue button need. It cannot answer "what was granted HERE", and a run continued twice
     // asks that twice: the first seam would be labelled with the second grant. The seams are what a reader is
     // reconciling when they find a "stopped at its step cap" with more steps under it.
+    // What the worker sent the model, after its rewrite of a page-built run's tools and prompt: it replaces the page's.
+    // No source reaches the reducer, so it cannot tell a page's copy: the trust line is the session index's. A page that
+    // forges one only restates its own run, whose `agent` start it already writes with any config it likes.
+    if (ev.kind === "agent-config") {
+        const s = sessionMap.get(key);
+        if (!s) { queueOrphan(key, ev); return; }
+        s.agentConfig = s.agentConfig ? { ...s.agentConfig, ...ev.config } : s.agentConfig;
+        s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
+        return;
+    }
     if (ev.kind === "agent-cap") {
         const s = sessionMap.get(key);
         if (s) {
