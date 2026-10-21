@@ -247,9 +247,12 @@ machinery, and 21 of the 38 real-consumer policies are the one atom `c.host === 
 tree becomes the default; the one that does is measured on policies MODELS PROPOSE, which do not exist yet. So the order
 is: the LIFTER first (a syntactic recogniser over the dialect's AST that turns a source which fits the fragment into a
 tree, small, the first code either way), then a bench task per consumer that asks the panel to propose a policy for a
-described need, fed through the lifter, and the covered fraction of THAT corpus is the number. `propose_policy` is
-fetch-only today, so the `fetch` task needs no widening; an `sh` task needs `propose_policy` widened to shell, which is
-a widening and Shane's. Nothing else of the tree is built before that number exists. What the note fixed is ruled as it
+described need, fed through the lifter, and the covered fraction of THAT corpus is the number. The task asks for the
+policy as TEXT in the model's answer, for both consumers, so it needs no tool and nothing reaches a person: the number
+over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
+from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and
+its prerequisite is the shell side's own probes (programs, paths and flags the run never used) before any such card can
+lead with a measured breadth. Nothing else of the tree is built before the number exists. What the note fixed is ruled as it
 stands: the TREE is what is stored, the sentence and the predicate are both rendered from it and never parsed back, the
 judge runs the rendered predicate through the one evaluator as it runs every policy, and a model is never asked to emit
 tree JSON (it writes JS, and the lifter lifts what fits; what does not lift stays code with a MEASURED breadth). A

@@ -248,7 +248,8 @@ listed as remaining is DONE unless named below.
   lane 11 (Opus) host #19, the orphan's deadline-kill `ended` record, then the typed-node policy tree's DESIGN NOTE (no
   code until ruled; the note is #920, ruled 2026-10-21 into POLICIES.md "The tree, ruled" and SHELL.md "An optional
   fact is sent as `null`": the lifter first, then the number is measured on policies models propose, nothing else of the
-  tree before that; an `sh` proposal task needs `propose_policy` widened, which is Shane's); lane 3 the per-run wrapper's wasm number. Lanes 6 to 9 took the rest of the old list (2026-10-19 to
+  tree before that; both consumers' proposals are measured as text from a bench prompt, no tool widened; widening
+  `propose_policy` to `sh` is a later decision of Shane's); lane 3 the per-run wrapper's wasm number. Lanes 6 to 9 took the rest of the old list (2026-10-19 to
   2026-10-20, above). Nothing is unassigned.
 
 ## The lanes
