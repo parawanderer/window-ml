@@ -28,6 +28,16 @@ window-ml pins and verifies, as `scripts/fetch-hub.mjs` does for the hub binary.
   the emsdk tree, and emsdk's own ccache segfaults on macOS arm64: the recipe's shim dir carries a pass-through `ccache`.
 - **A failed build leaves a half-made install tree** (`cpython/installs/`) that a rerun trusts; delete `cpython/installs`
   and `cpython/build/hiwire` before retrying from a failure.
+- **Pyodide's make applies the CPython patches once, when it unpacks the source**, and skips CPython while its install
+  stamp and stdlib exist, so a moved fork commit used to be packed as the OLD interpreter under the new name (the
+  symptom: a 15 s build that holds none of the branch's code). The recipe stamps the patch set's hash
+  (`cpython/.ml-patchset`) and, when it changes, clears the patched source, the installed stdlib and `libpython` first:
+  a new commit costs about 5 minutes, a rerun of the same one about 15 s.
+- **The core's `restricted.py` is checked twice.** The recipe fails the build unless the zip's file is the pinned
+  commit's, byte for byte, and `cpython.restrictedPySha256` in the pin must be that file's hash;
+  `tests/python-dialect-vectors-wasm.test.mjs` fails a shipped core whose file does not hash to it. The first `77376876`
+  release (`pyodide-314.0.3-ml-77376876`) was built on a stale tree and carried `a9f034a2`'s `restricted.py` with
+  `77376876`'s C: replaced by `-r2`, 2026-10-21.
 - **The stdlib zip drops `test/`**, so `Lib/test/test_restricted.py` is not in the core; `restricted.py` is.
 - **The vectors under wasm** (`tests/python-dialect-vectors-wasm.test.mjs`) self-skip on the stock core (no `_restricted`).
   Under CI they FAIL instead of skipping once an artefact sha256 is pinned. All 87 pass on the wasm32 build: with
