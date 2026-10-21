@@ -1291,6 +1291,12 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
     .live-caret, .live-call-code.writing pre.code:not(.numbered) > code::after,
     .live-call-code.writing .cline:last-child .lcode::after, .live-call-md.writing > :last-child::after { animation: none; opacity: .5; }
 }
+/* Gone QUIET (`stallNote`): the caret stops blinking, since nothing is arriving where it stands. */
+.live-call.stalled .live-caret, .live-call.stalled .live-call-code.writing pre.code:not(.numbered) > code::after,
+.live-call.stalled .live-call-code.writing .cline:last-child .lcode::after,
+.live-call.stalled .live-call-md.writing > :last-child::after { animation: none; opacity: .3; }
+/* How long a call being written has been quiet, in the row's head. */
+.live-call-stall { color: var(--warn); }
 /* A live call's arguments, scroll-capped like a step's In, and kept scrolled to the end by `LiveCall`. */
 .live-call .astep-body { max-height: 320px; overflow: auto; }
 

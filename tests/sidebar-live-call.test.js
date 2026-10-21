@@ -78,3 +78,30 @@ test("a preview a hub cut to its size says the call is being written and how far
     assert.match(lc.querySelector(".astep-preview").textContent, /48\.0k chars/);
     assert.match(lc.querySelector(".astep-body").textContent, /once the call is complete/);
 });
+
+// --- a call that has gone quiet: said, timed from the last character that arrived ---
+
+test("a call with nothing new for longer than the orb's stall says so, the caret stops, and a new fragment clears it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lc5", "write it"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(live("lc5", [call("python_exec", '{"code": "for i in range(')]));
+    await w.tick();
+    const lc = () => w.shadow.querySelector(".live-call");
+    assert.equal(lc().querySelector(".live-call-stall"), null, "just arrived: not quiet");
+    // The panel's clock moves 10 s on, as a stalled server would leave it; the 1 s beat re-renders.
+    const realNow = w.window.Date.now;
+    const skew = 10_000;
+    w.window.Date.now = () => realNow.call(w.window.Date) + skew;
+    try {
+        await new Promise((r) => setTimeout(r, 300));
+        await w.tick();
+        assert.match(lc().querySelector(".astep-preview").textContent, /writing… \d+ chars · no output for 10s/);
+        assert.ok(lc().classList.contains("stalled"), "the caret stops blinking");
+        await w.dispatch(live("lc5", [call("python_exec", '{"code": "for i in range(3):')]));
+        await w.tick();
+        assert.equal(lc().querySelector(".live-call-stall"), null, "a fragment arrived: it is writing again");
+        assert.ok(!lc().classList.contains("stalled"));
+    } finally { w.window.Date.now = realNow; }
+});

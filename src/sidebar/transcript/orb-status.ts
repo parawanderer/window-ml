@@ -160,6 +160,13 @@ export interface OrbStatus {
 // alive (the "did it hang or is it just slow?" case, especially with nothing to stream).
 export const STALL_MS = 4000;
 
+/** What a tool call still being WRITTEN says once nothing of it has arrived for `quietMs`, or null while it is
+ *  arriving: the same threshold as the orb's heartbeat, so a frozen call reads as quiet instead of as a counter that
+ *  merely stopped. */
+export function stallNote(quietMs: number): string | null {
+    return quietMs > STALL_MS ? `no output for ${Math.round(quietMs / 1000)}s` : null;
+}
+
 /** Compose the orb's live status. Priority: (1) STREAMING reply prose the model is typing right now → stream
  *  it live; else (2) the tool/thinking phase from activityFor, decorated with a live token count when
  *  streaming, or an elapsed heartbeat once it's gone quiet. `now` is injected so the heartbeat is testable. */

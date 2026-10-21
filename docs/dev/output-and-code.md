@@ -44,7 +44,9 @@ keeps the last `calls`, so the preview stays until the step that replaces it lan
 as code or Markdown (`LIVE_TEXT_FIELD`), and any other call the tree of its arguments so far. The partial JSON is read
 by `parseLooseJson(text, { keepOpenString: true })`, which keeps a cut string VALUE, decoded, and holds back a half
 escape. A caret blinks where the text arrives (steady under reduced motion), the body follows the text until the
-reader scrolls up, and the orb says "Writing the <tool> call…". It is DISPLAY ONLY: what runs is the parsed call. Which
+reader scrolls up, and the orb says "Writing the <tool> call…". Nothing new for longer than the orb's `STALL_MS` and
+the row says "no output for Ns" and the caret stops (`stallNote`), timed by the panel's clock from the last change in
+the count, so a stalled server is not mistaken for a slow one. It is DISPLAY ONLY: what runs is the parsed call. Which
 wires fragment a call: OpenAI-shaped SSE always; Ollama native only from a patched server's `tool_call_deltas`
 (`docs/FORKED-BACKENDS.md`), whose whole `tool_calls` at the end is still the call that runs. Over a hub, a call whose
 arguments exceed the preview bound goes as its name and size only (`tail()`, session-relay.ts), since a cut JSON tail
