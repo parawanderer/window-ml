@@ -259,7 +259,7 @@ listed as remaining is DONE unless named below.
   numbers, the tracemalloc repro refused on 7c40b038. Left, named there: the red team's post-merge read of fork #6 and #7 and
   its column-shapes PR (the red team's); the superseded fork branch `ml/wasm32-wrappers-per-run` (Shane's to delete); the
   mechanism of the slowdown without per-run unwrapping, since settled by the janitor (2026-10-21, one extra indirect call per allocation, about 40 ns; in the memory row). Fork #7 merged with no review on it
-  (lane 3 reports Shane allowed merging without review mid-round; relayed, so Shane confirms).
+  (lane 3 reports Shane allowed merging without review mid-round; relayed, so Shane confirms). ASSIGNED 2026-10-21 (#963): the host-side change of the null ruling, `repoConfigRunsCode: false` when no repository encloses `cwd`, is lane 11's, a window-ml-host PR, the janitor reviewing after #957; the two `sh` answers it wins back are in #961's rescore.
 
 ## The lanes
 
