@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const { describeCall, hardenArgv, validateManifest, inRange } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
@@ -298,4 +299,20 @@ test("write-names on a path-valued flag or find primary lands on the value, not 
     assert.equal(f.described, true);
     assert.ok(!keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/o")), "primary: no write-names on the operand");
     assert.ok(keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/g:")), "primary: write-names on the value");
+});
+
+// --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
+
+/** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
+ *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
+ *  `vectors/program-manifests/` records it in `PIN`. */
+const VECTOR_PIN = "18075fc660564baa5db258a2a7279cdb4def08fdf403b3247501e3abb2b6bcba";
+
+test("the manifests and call fixtures hash to the pin the host holds", () => {
+    const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
+    const named = [["calls", FIXTURES], ["manifests", MANIFESTS]].flatMap(([dir, url]) =>
+        fs.readdirSync(url).filter((f) => f.endsWith(".json")).map((f) => [`${dir}/${f}`, fs.readFileSync(new URL(f, url))]));
+    named.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+    const pin = sha(named.map(([n, bytes]) => `${sha(bytes)}  ${n}\n`).join(""));
+    assert.equal(pin, VECTOR_PIN, "the manifests or call fixtures changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
 });
