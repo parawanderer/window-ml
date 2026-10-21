@@ -251,6 +251,13 @@ as in AGENTS.md — they are all under `src/`.
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel), `readonly-stream.spec.mjs` (a read-only survey
   streams as an approved `exec` does, and a refused one is discarded) and `output-scroll.spec.mjs` (tail-follow).
+- **`live-call-demo.mjs`**: a **narrated demo, not a test** of a tool call drawn while the model WRITES it: `npm run
+  build && node --import tsx tests/e2e/live-call-demo.mjs`. Three beats on a fake model streaming OpenAI fragments: a
+  forty-line `python_exec` cell grows in place with the caret and the orb naming the call, then its step replaces it and
+  runs; an `exec` whose writing goes quiet for nine seconds (fake-llm's `pause` beat) says "no output for Ns" and stops
+  the caret, and resumes; an `answer` document streams as Markdown. Screenshots land in
+  `tests/e2e/artifacts/live-call-demo/`; `HOLD=0` exits. The assertions are `live-call.spec.mjs`,
+  `tests/sidebar-live-call.test.js` and `tests/background-stream-calls.test.js`.
 - **`code-theme-demo.mjs`** — a **narrated demo, not a test** of Settings → Code blocks → Colour theme:
   `npm run build && node --import tsx tests/e2e/code-theme-demo.mjs`. An agent step's JavaScript and a bench script
   side by side, walked through the default, GitHub (a pair, in a light panel), Nord (dark-only, keeping its own
