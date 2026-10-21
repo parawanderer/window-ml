@@ -258,7 +258,7 @@ listed as remaining is DONE unless named below.
   `fetch` and `sh` bench tasks measured as text, with the corpus committed (#925); the lifter's test may hold a tree evaluator under `tests/` (#927). **Lane 3: CLOSED 2026-10-21**: [`LANE_3_RESULT.md`](LANE_3_RESULT.md) (#932, 84ec012b): fork #6/#7/#8, #918, #928, the wasm
   numbers, the tracemalloc repro refused on 7c40b038. Left, named there: the red team's post-merge read of fork #6 and #7 and
   its column-shapes PR (the red team's); the superseded fork branch `ml/wasm32-wrappers-per-run` (Shane's to delete); the
-  mechanism of the slowdown without per-run unwrapping (nobody's, a curiosity). Fork #7 merged with no review on it
+  mechanism of the slowdown without per-run unwrapping, since settled by the janitor (2026-10-21, one extra indirect call per allocation, about 40 ns; in the memory row). Fork #7 merged with no review on it
   (lane 3 reports Shane allowed merging without review mid-round; relayed, so Shane confirms).
 
 ## The lanes
