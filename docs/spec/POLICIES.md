@@ -262,8 +262,10 @@ an ALLOW written as `!c.repoConfigRunsCode` fires when the fact is `null`, unkno
 narrow beats wide: a fact that is `null` is unknown, and an ALLOW over an unknown never fires, which is the deciding
 layer's rule, not something a model is asked to remember. BUILT (lane 11's follow-up): the realm's side
 (`evalPolicy`'s `unknown`, docs/dev/policies.md "A null fact is unknown") and the tree's (`treeVerdict`, the null cell
-in the agreement test); on the run's `sh` answers it turns 2 wrong answers right and 2 right ones into asks, both on
-non-git calls where no repository gave `null`, which SHELL.md's optional-fact rule now sends as `false`. The task asks for the
+in the agreement test), with a before-and-after `fetch` rerun. On the corpus it nets zero on `sh` right answers: the two
+S3 fail-opens now ask, and two correct allows (a `cat` and an `npm test` guarded by `repoConfigRunsCode !== true`
+outside any repository) now ask too, fail-safe; the host sending `false` when no repository encloses `cwd` gives those
+back ([`SHELL.md`](SHELL.md), the optional-fact rule), and the ruling stands. The task asks for the
 policy as TEXT in the model's answer, for both consumers, so it needs no tool and nothing reaches a person: the number
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and

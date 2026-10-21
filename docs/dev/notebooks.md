@@ -43,3 +43,9 @@ which is `docs/spec/NOTEBOOK_TOOLING.md` (parked; its section 10 says what windo
 - **A generator that rebuilds cells must keep their metadata**, or a regenerated notebook loses its timestamps and the
   check fails (mlbox lost one notebook's evidence this way). The simple form: regenerate, then run.
 - **The extract is the input.** Re-extracting after a sweep has been replaced changes the numbers; say so in the commit.
+
+- **A load generator is torn down by VERIFIED pid, never by a variable.** `jobs -p` inside the harness's zsh snapshot
+  wrapper did not give the subshells' real pids, so `kill $LOAD_PIDS` was a no-op and six spinning shells, showing the
+  outer argv in `ps`, sat under every timing on the machine for 27 hours (2026-10-20/21; the wrapper-mech A/A floor of
+  1.29x is their upper bound). Before a timing run is called done: `pgrep` for the generator and assert zero, and the
+  load average in the raw JSON.
