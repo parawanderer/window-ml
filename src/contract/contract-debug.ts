@@ -139,7 +139,24 @@ export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step
      *  remote live preview carries a bounded tail rather than everything so far (`LivePreview`, session-relay.ts).
      *  Absent means nothing was dropped, which is every event on the runtime's own surfaces. A reader shows what it
      *  has and says it is a tail; the authoritative text arrives in the step, as it always did. */
-    elided?: number; }
+    elided?: number;
+    /** Tool calls the model is still WRITING, as far as their arguments have arrived, in call order. Display only:
+     *  what runs is the parsed call in the step that follows, and a call that never completes simply disappears with
+     *  this preview. Absent while no call has begun, and on a wire that delivers calls whole. */
+    calls?: LiveToolCall[]; }
+
+/** One tool call as far as the model has written it: its name, once the stream has said it, and the argument TEXT so
+ *  far, which is JSON cut off anywhere (`parseLooseJson` with `keepOpenString` reads it). */
+export interface LiveToolCall {
+    /** Its position among the turn's calls. */
+    index: number;
+    /** The tool, once its first fragment has named it. */
+    name?: string;
+    /** The argument text so far. Absent when a hub left it out to bound the preview (`chars` still says how much). */
+    args?: string;
+    /** How many characters of arguments have arrived. */
+    chars: number;
+}
 
 /** A model call is UNDERWAY. Emitted the instant the turn's request goes out, and again whenever the
  *  generation changes phase, so a surface can draw the call while it is happening instead of back-dating a

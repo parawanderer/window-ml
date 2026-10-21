@@ -68,3 +68,41 @@ test("the user's shape: a pretty-printed array of objects cut mid-row, with the 
 test("text that is not JSON after all is refused rather than half-drawn", () => {
     for (const t of [`{"a":1]`, `[1,2] trailing`, `{"a": NaN, "b": 1`, `[1, undefined`, `{a: 1}`]) assert.equal(parseLooseJson(t), null, t);
 });
+
+// --- keepOpenString: arguments still being WRITTEN keep the string the model is in the middle of ---
+
+test("keepOpenString: every prefix of a streamed call's arguments shows its code so far, never anything it did not write", () => {
+    // Escapes of every kind, so a cut lands inside `\n`, `\"`, `\\` and `\u00e9` as well as between them.
+    const code = 'import json\nprint("héllo \\"x\\"", {"a": 1})\npath = "C:\\\\tmp"\nprint("\u00e9t\u00e9")\n';
+    const text = JSON.stringify({ title: "plot", code, mode: "script" });
+    for (let n = 1; n <= text.length; n++) {
+        const r = parseLooseJson(text.slice(0, n), { keepOpenString: true });
+        assert.ok(r, `a prefix of ${n} chars still parses`);
+        const got = r.value.code;
+        if (got != null) assert.ok(code.startsWith(got), `the code at ${n} chars is a prefix of what was written: ${JSON.stringify(got)}`);
+        for (const [k, v] of Object.entries(r.value)) if (k !== "code") assert.ok(typeof v !== "string" || ["plot", "script"].some(w => w.startsWith(v)), `${k} at ${n} chars`);
+    }
+    assert.deepEqual(parseLooseJson(text, { keepOpenString: true }).value, { title: "plot", code, mode: "script" }, "whole, it is the value");
+});
+
+test("keepOpenString: the open string is marked, sits at cutPath, and a half-written escape is held back", () => {
+    const r = parseLooseJson('{"js": "a\\', { keepOpenString: true });
+    assert.deepEqual(r.value, { js: "a" }, "the lone backslash waits for its next character");
+    assert.equal(r.openString, true);
+    assert.deepEqual(r.cutPath, [], "the open string is a member of the root");
+    assert.deepEqual(parseLooseJson('{"js": "a\\u00', { keepOpenString: true }).value, { js: "a" }, "a half \\u escape is held back");
+    assert.deepEqual(parseLooseJson('{"js": "a\\\\', { keepOpenString: true }).value, { js: "a\\" }, "an escaped backslash is complete");
+    const nested = parseLooseJson('{"rows": [{"t": "ab', { keepOpenString: true });
+    assert.deepEqual(nested.value, { rows: [{ t: "ab" }] });
+    assert.deepEqual(nested.cutPath, ["rows", 0]);
+    assert.deepEqual(parseLooseJson('["x", "y', { keepOpenString: true }).value, ["x", "y"], "inside an array too");
+});
+
+test("keepOpenString: a half-written KEY is still dropped, and without the option a cut string is dropped as before", () => {
+    const key = parseLooseJson('{"a": 1, "co', { keepOpenString: true });
+    assert.deepEqual(key.value, { a: 1 });
+    assert.equal(key.openString, undefined);
+    const clipped = parseLooseJson('{"a": 1, "b": "hal');
+    assert.deepEqual(clipped.value, { a: 1 }, "a clipped value keeps the old reading");
+    assert.equal(clipped.openString, undefined);
+});

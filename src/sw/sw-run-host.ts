@@ -880,14 +880,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         const rawStep = (opts?.step as number) || 0, step = stepBase + rawStep;
                         let last = 0;
                         let tokens: number | undefined, reasoningTokens: number | undefined;
-                        const flush = (acc: { reasoning: string; content: string; tokens?: number; reasoningTokens?: number }): void => {
+                        let calls: import("../contract").LiveToolCall[] | undefined;
+                        const flush = (acc: { reasoning: string; content: string; tokens?: number; reasoningTokens?: number; calls?: import("../contract").LiveToolCall[] }): void => {
                             if (abortCtl.signal.aborted) return;
                             last = Date.now();
                             if (acc.tokens != null) tokens = acc.tokens;
                             if (acc.reasoningTokens != null) reasoningTokens = acc.reasoningTokens;
                             fanEvent({ kind: "agent-stream", id: runId, ts: last, save: false, session: { hash: runId, turn: step }, step, localStep: rawStep,
                                 ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}),
-                                ...(tokens != null ? { tokens } : {}), ...(reasoningTokens != null ? { reasoningTokens } : {}) });
+                                ...(tokens != null ? { tokens } : {}), ...(reasoningTokens != null ? { reasoningTokens } : {}),
+                                // The call being WRITTEN, so a long argument (a script, a document) is watched arriving
+                                // rather than appearing whole when the model stops.
+                                ...(acc.calls?.length ? { calls: acc.calls } : {}) });
                         };
                         const r = await streamAgentTurn({ messages, tools: toolDefs, model: modelNow(), think: p.think, hint },
                             (acc) => {
@@ -895,13 +899,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // flush — carries the newest count rather than the last one that happened to fan.
                                 if (acc.tokens != null) tokens = acc.tokens;
                                 if (acc.reasoningTokens != null) reasoningTokens = acc.reasoningTokens;
+                                if (acc.calls) calls = acc.calls;
                                 // A phase CHANGE goes out immediately and unthrottled — there are a handful per
                                 // turn, and it is the edge the live bar draws its divider at. Text deltas stay
                                 // throttled; they are continuous.
                                 if (acc.phaseChanged) emitTurn(rawStep, acc.phases);
                                 if (Date.now() - last >= STREAM_EMIT_MS) flush(acc);
                             }, abortCtl.signal);
-                        flush({ reasoning: r.reasoning || "", content: r.content || "" });   // final: land the last delta even if throttled
+                        // Final: land the last delta even if throttled. The calls as last written go too, so the preview holds until
+                        // the step that runs them replaces it rather than blinking out in the gap before it.
+                        flush({ reasoning: r.reasoning || "", content: r.content || "", ...(calls ? { calls } : {}) });
                         return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                     }
                     const r = await fetchLLM({ messages, tools: toolDefs, model: modelNow(), think: p.think, raw: true, hint }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
