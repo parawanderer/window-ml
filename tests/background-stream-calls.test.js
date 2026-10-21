@@ -182,6 +182,16 @@ test("/v1 fragments that stop being JSON (a parameter written twice) are not run
     assert.match(r.told, NOT_JSON);
 });
 
+test("/v1 fragments that repeat a parameter as a duplicate key (the fork since 1b68cec4) run with the last value", T, async () => {
+    const r = await run(config(), [
+        sse({ tool_calls: [{ index: 0, id: "c1", function: { name: "findByText", arguments: '{"text":"1","code":"2"' } }] }),
+        sse({ tool_calls: [{ index: 0, function: { arguments: ',"text":"3"}' } }] }),
+        sse({}, { finish_reason: "tool_calls" }),
+        "data: [DONE]\n",
+    ], sseAnswer);
+    assert.deepEqual(r.delegated, { text: "3", code: "2" }, "what the server's whole call would be");
+});
+
 test("native: a call still open when generation stops (fragments, no whole call) is not run; the model is told", T, async () => {
     const r = await run(config(NATIVE), [
         nd({ tool_call_deltas: [{ index: 0, id: "c1", function: { name: "findByText", arguments: '{"text":"hal' } }] }),

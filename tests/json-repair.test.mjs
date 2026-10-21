@@ -106,3 +106,13 @@ test("keepOpenString: a half-written KEY is still dropped, and without the optio
     assert.deepEqual(clipped.value, { a: 1 }, "a clipped value keeps the old reading");
     assert.equal(clipped.openString, undefined);
 });
+
+// --- a parameter the model wrote twice, streamed as a duplicate key (the patched Ollama, 1b68cec4) ---
+
+test("a duplicate key reads as the server's whole call does: the first position, the last value, also while cut", () => {
+    const whole = parseLooseJson('{"a":"1","b":"2","a":"3"}').value;
+    assert.deepEqual(whole, { a: "3", b: "2" });
+    assert.deepEqual(Object.keys(whole), ["a", "b"], "the key keeps its first position");
+    const cut = parseLooseJson('{"a":"1","b":"2","a":"3 and mo', { keepOpenString: true }).value;
+    assert.deepEqual(cut, { a: "3 and mo", b: "2" }, "the repeat being written replaces the first value in the preview");
+});
