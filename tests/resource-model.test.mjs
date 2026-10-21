@@ -2636,6 +2636,23 @@ test("deviceBands: a runner's overhead is measured per runner, and is not a cons
     assert.equal(rest.bytes, used - 6348079104);
 });
 
+test("deviceBands: a runner named with :latest is its model's runner, and a card's bands never exceed what is in use", async () => {
+    // panel-policy-sh, 2026-10-21 11:52:16Z: /api/ps and the runner both say "glm-4.7-flash:latest", the panel
+    // shortens the model's name (residentFrom), and the runner kept the long one. The whole 29.5 GiB process was
+    // drawn as a second glm row on top of the model's own 28.8: CUDA0 read 115.2 of 95.6 GiB.
+    const R = await import("../src/resource/residency.ts");
+    const { ps, info } = hwJson("runner-latest-tag-2026-10-21.json");
+    const sample = { t: 1, capacity: C.parseInfo(info), models: R.residentFrom(ps.models.map(M.residencyFrom), []).loaded };
+    for (const g of info.compute.supported_gpus) {
+        const bands = B.deviceBands(sample, g.gpu_id);
+        assert.ok(!bands.some((b) => b.key.startsWith("runner:")), `every runner found its model: ${bands.map((b) => b.key)}`);
+        assert.equal(bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0), g.total_memory - g.free_memory, `card ${g.gpu_id}`);
+    }
+    const glm = B.deviceBands(sample, "0").find((b) => b.key === "ctx:glm-4.7-flash");
+    assert.equal(glm.bytes, 31721521152 - 30966242344);
+    assert.equal(glm.of, "glm-4.7-flash");
+});
+
 test("deviceBands: a process ollama cannot see is named as unseen, and one it can see as a tenant", () => {
     const raw = hwJson("runner-pids-other-processes-2026-09-11.json");
     const sample = { t: 1, capacity: C.parseInfo(raw), models: [] };

@@ -10,7 +10,7 @@
 // band explains itself in its OWN backend's terms, which is why the notes are constants here and not strings
 // at the call site: CUDA, HIP, host RAM and unified memory are four different explanations of the same gap.
 
-import { MemoryBreakdown, ModelResidency, ResourceSample } from "./resource-model";
+import { MemoryBreakdown, ModelResidency, ResourceSample, normModel } from "./resource-model";
 import { DeviceCapacity } from "./resource-capacity";
 
 /** What a band IS, which decides how it draws and whether it can be explained. `unknown` is the one that
@@ -207,10 +207,10 @@ export function residualRank(key: string): number {
 export function pendingAllocation(frames: Band[][], times: number[], model: string, loads: { t: number; until?: number }[], graceMs = 5000): number[] {
     const residual = (bands: Band[]) => bands.filter((b) => b.kind === "other" || b.kind === "unknown").reduce((n, b) => n + b.bytes, 0);
     return frames.map((bands, i) => {
-        if (bands.some((b) => b.model === model)) return 0;
+        if (bands.some((b) => b.model === normModel(model))) return 0;
         // THE RUNNER ITSELF, when the driver lists it: the process's own memory is the allocation, measured
         // rather than inferred from what else moved on the card.
-        const direct = bands.find((b) => b.key === `load:${model}`);
+        const direct = bands.find((b) => b.key === `load:${normModel(model)}`);
         if (direct) return direct.bytes;
         const t = times[i];
         const load = loads.find((l) => l.until != null && t >= l.t && t <= l.until + graceMs);
@@ -316,7 +316,9 @@ function processBands(cap: DeviceCapacity, models: Band[]): Band[] {
     const out: Band[] = [];
     let helpers = 0;
     for (const p of cap.processes ?? []) {
-        const m = p.runner?.model;
+        // The model bands carry `/api/ps`'s names shortened (`residentFrom`); the runner's comes raw. Compared
+        // unshortened, "glm-4.7-flash:latest" missed "glm-4.7-flash" and its whole process drew as a second copy.
+        const m = p.runner?.model ? normModel(p.runner.model) : undefined;
         if (m && p.runner!.loading) {
             out.push({ key: `load:${m}`, label: `loading ${m}`, bytes: p.usedBytes, kind: "other", of: m,
                 note: `${m}'s runner, still loading: its memory is the allocation arriving, before the server reports any figures for it.` });
