@@ -15,6 +15,13 @@ export const IconCopy = () => (
         <path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" />
     </svg>
 );
+/** A clock face — nothing has arrived for a while: the quiet form of a stalled call's "no output for Ns". */
+export const IconQuiet = () => (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 4.8V8l2.2 1.4" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+);
 /** A tick — the confirmation a copy button swaps to. */
 export const IconCheck = () => (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7">
