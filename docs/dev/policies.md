@@ -237,10 +237,12 @@ One entry per distinct (`src`, `author`, `consumer`):
 | `shape` | `arrow` (a complete `(c) => …`), `fragment` (a body only), `template` (built by code), `helpers+arrow`, or as named |
 | `locations`, `count` | every `file:line` it appears at (repo-relative), and how many |
 | `notes` | anything a reader needs: what the test feeds it, that it is display text and never evaluated |
+| `tree` | on a measured entry only (functional, a complete arrow): `group` (`consumer` or `probe`), `fit` (`as-written`, `mechanical`, `hand`, `no`) and `why`. The rule is `meta.tree_legend`; the tree note's counts are recomputed from it |
 
 **Keeping it current.** A PR that adds a policy source to a test, a doc or a built-in adds its entry, or a location to
 the existing one (match `src` exactly, whitespace included). A bench run that collects model proposals appends them
-with `author: "model"`, the model id and run in `notes`, and `locations` naming the result file. A recount (every source
+with `author: "model"`, the model id and run in `notes`, and `locations` naming the result file. A new measured entry gets a `tree` field, and an edited source has its `tree` field
+checked again. A recount (every source
 searched again) bumps `meta.commit` and `meta.collected` and says what was searched in `searched`. Nothing checks the
 file against the tree yet, so a missing entry is silent: it only makes a coverage figure stale. Remove an entry only
 when its source is gone from every location.

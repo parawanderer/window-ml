@@ -196,7 +196,11 @@
         "readonly-policy.test.mjs:37: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.url === \"https://a.example/x\"",
@@ -213,7 +217,11 @@
         "readonly-policy.test.mjs:38: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.url === \"https://b.example/\"",
@@ -230,7 +238,11 @@
         "readonly-policy.test.mjs:39: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.paths.length",
@@ -553,7 +565,12 @@
         "readonly-policy.test.mjs:84: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "mechanical",
+        "why": "argv[k] === undefined is ArgCount in {0..k}"
+      }
     },
     {
       "src": "(c) => c.argv[9].length > 0",
@@ -591,7 +608,12 @@
         "readonly-policy.test.mjs:89: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "reads a string length"
+      }
     },
     {
       "src": "(c) => ({ ...c }).argv0 === undefined",
@@ -608,7 +630,12 @@
         "readonly-policy.test.mjs:93: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "object spread"
+      }
     },
     {
       "src": "(c) => c.effects.reads.every((r) => r.inRoot === true)",
@@ -627,7 +654,11 @@
         "readonly-policy.test.mjs:111: over effects: \"unknown\""
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.reads.some((r) => r.host === \"a.example\")",
@@ -644,7 +675,11 @@
         "readonly-policy.test.mjs:98: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.has(\"read\", \"net\") && !c.effects.has(\"write\") && !c.effects.uses(\"github\")",
@@ -661,7 +696,11 @@
         "readonly-policy.test.mjs:102: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => { const h = c.effects.has; return h(\"read\"); }",
@@ -729,7 +768,11 @@
         "readonly-policy.test.mjs:110: over effects: \"unknown\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.unknown",
@@ -746,7 +789,11 @@
         "readonly-policy.test.mjs:112: over effects: \"unknown\", effect deny"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.pairs.every((e) => e.op === \"read\")",
@@ -763,7 +810,11 @@
         "readonly-policy.test.mjs:113: over effects: \"unknown\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.pairs.length === 0",
@@ -780,7 +831,12 @@
         "readonly-policy.test.mjs:114: over effects: \"unknown\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "mechanical",
+        "why": "Not(Some(pairs, true))"
+      }
     },
     {
       "src": "(c) => !c.effects.has(\"wirte\")",
@@ -867,7 +923,12 @@
         "readonly-policy.test.mjs:126: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "string length, character index, raw URL prefix"
+      }
     },
     {
       "src": "(c) => c.kind == \"fetch\"",
@@ -969,7 +1030,12 @@
         "readonly-policy.test.mjs:140: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "order"
+      }
     },
     {
       "src": "(c) => c.kind !== \"x\" && c.argv[0] === \"git\"",
@@ -986,7 +1052,11 @@
         "readonly-policy.test.mjs:144: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => { c = 1; return true; }",
@@ -1003,7 +1073,12 @@
         "readonly-policy.test.mjs:165: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "assignment"
+      }
     },
     {
       "src": "(c) => { Object.assign(Math, { pwned: 1 }); return true; }",
@@ -1071,7 +1146,12 @@
         "readonly-policy.test.mjs:177: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "a global"
+      }
     },
     {
       "src": "(c) => /(a+)+$/.test(c.url)",
@@ -1139,7 +1219,12 @@
         "readonly-policy.test.mjs:184: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "mechanical",
+        "why": "an anchored literal regex over the URL is Under(url, https://a.example/)"
+      }
     },
     {
       "src": "(c) => JSON.parse(\"{\") && true",
@@ -1313,7 +1398,12 @@
         "readonly-policy.test.mjs:219: hybrid FACTS {kind:\"fetch\",url,argv,paths,effects}"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "a positional index into paths"
+      }
     },
     {
       "src": "(c) => true",
@@ -1370,7 +1460,12 @@
         "readonly-policy.test.mjs:275: over 5000-element argv in a worker"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "no",
+        "why": "a loop with arithmetic"
+      }
     },
     {
       "src": "(c) => c.argv.every((a) => c.argv.every((b) => a !== b || a === b))",
@@ -1474,7 +1569,12 @@
         "readonly-policy.test.mjs:43: helper const before the function; hybrid FACTS"
       ],
       "shape": "helpers+arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "probe",
+        "fit": "mechanical",
+        "why": "the const helper inlines"
+      }
     },
     {
       "src": "const seen = [];\n(c) => { seen.push(c.url); return seen.length === 1; }",
@@ -2122,7 +2222,11 @@
         "propose-policy.test.mjs:24: NARROW proposal"
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => true",
@@ -2174,7 +2278,11 @@
         "run-start.test.mjs:975: effect \"maybe\" (refused)"
       ],
       "shape": "arrow",
-      "count": 20
+      "count": 20,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"other.example\"",
@@ -2192,7 +2300,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 4
+      "count": 4,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => false",
@@ -2214,7 +2326,11 @@
         "propose-policy-redteam.test.mjs:293: a page tool faking the card renderIn text"
       ],
       "shape": "arrow",
-      "count": 5
+      "count": 5,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => !c.host.endsWith(\".invalid\") && !c.host.endsWith(\".example\") && !c.host.startsWith(\"10.\") && !c.host.startsWith(\"192.168.\") && c.host !== \"localhost\" && c.host !== \"127.0.0.1\"",
@@ -2263,7 +2379,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host.endsWith(\".github.io\")",
@@ -2295,7 +2415,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => { while (true) {} }",
@@ -2677,7 +2801,12 @@
         "propose-policy.test.mjs:108: breadth measure"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a raw character prefix over a URL; the URL atom is structured"
+      }
     },
     {
       "src": "",
@@ -2744,7 +2873,11 @@
         "sw-policies.test.mjs:10: stored global deny fixture"
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.argv[0] === \"ls\"",
@@ -2767,7 +2900,11 @@
         "ml-sh.test.mjs:562: global allow"
       ],
       "shape": "arrow",
-      "count": 4
+      "count": 4,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.url === \"https://a.example/x\"",
@@ -2784,7 +2921,11 @@
         "sw-policies.test.mjs:18: stored run policy (card)"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.uurl === 1",
@@ -2816,7 +2957,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "h-bdeny",
@@ -2865,7 +3010,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"edit.example\"",
@@ -2882,7 +3031,11 @@
         "sw-policies.test.mjs:147: edit"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "h-view",
@@ -2932,7 +3085,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.has(\"write\")",
@@ -2947,7 +3104,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.effects.writes.every((r) => r.path.startsWith(\"/r/src/\"))",
@@ -2962,7 +3123,12 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a character prefix ending in / is Under(path, /r/src) on a realpath"
+      }
     },
     {
       "src": "(c) => c.host === \"nar.example\"",
@@ -2977,7 +3143,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.url === \"https://nar.example/keep\"",
@@ -2994,7 +3164,11 @@
         "sw-policies.test.mjs:287: edit narrows"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"glob.example\"",
@@ -3009,7 +3183,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"den.example\"",
@@ -3024,7 +3202,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "h-lap-brk",
@@ -3135,7 +3317,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 3
+      "count": 3,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => eval('1')",
@@ -3197,7 +3383,11 @@
         "lapsed-ask-redteam.test.mjs:27: seeded lapsed policy fixture"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"victim.example\" /* SOURCE-MARKER */",
@@ -3231,7 +3421,11 @@
         "lapsed-ask-redteam.test.mjs:32: seeded global lapsed"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "h-rearm",
@@ -3284,7 +3478,11 @@
         "lapsed-ask-redteam.test.mjs:366: checkProposal with hostile labels"
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"person.example\"",
@@ -3299,7 +3497,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"alter.example\"",
@@ -3316,7 +3518,11 @@
         "lapsed-ask-redteam.test.mjs:74: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"order.example\"",
@@ -3335,7 +3541,11 @@
         "lapsed-ask-redteam.test.mjs:95: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"order2.example\"",
@@ -3354,7 +3564,11 @@
         "lapsed-ask-redteam.test.mjs:101: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"lbl.example\"",
@@ -3371,7 +3585,11 @@
         "lapsed-ask-redteam.test.mjs:373: instance of allowHost() template at line 54: (c) => c.host === \"${host}\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "() => true",
@@ -3403,7 +3621,11 @@
       ],
       "notes": [],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"a.test\"",
@@ -3420,7 +3642,11 @@
         "sidebar-settings.test.js:879: instance of policy(id) template: (c) => c.host === \"${id}.test\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"b.test\"",
@@ -3437,7 +3663,12 @@
         "sidebar-settings.test.js:879: instance of policy(id) template, consumer sh, effect deny (line 895)"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "an sh policy reading host, which sh facts lack: the typed tree refuses to build it (in code it is broken on every call)"
+      }
     },
     {
       "src": "(c) => c.host === \"c.test\"",
@@ -3454,7 +3685,11 @@
         "sidebar-settings.test.js:879: instance of policy(id) template, run scope (line 896)"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => false",
@@ -3471,7 +3706,11 @@
         "sidebar-settings.test.js:897: fixture standing in for the built-in default row"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"z.test\"",
@@ -3490,7 +3729,11 @@
         "sidebar-settings.test.js:939: typed into the policy page"
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.kind === \"fetch\" && c.host === \"example.com\"",
@@ -3507,7 +3750,11 @@
         "sidebar-settings.test.js:952: the starter, submitted as is"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.kind === \"fetch\" && c.url === ${JSON.stringify(url)}",
@@ -3558,7 +3805,11 @@
         "settings.tsx:1157: POLICY_STARTER: pre-fills the add-policy textarea"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.host === \"docs.python.org\" && !c.credentials",
@@ -3575,7 +3826,11 @@
         "propose-policy-tool.ts:38: example in the propose_policy \"when\" parameter description: what the model reads"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.kind === \"fetch\" && c.uurl === \"https://example.com/data.json\"",
@@ -3609,7 +3864,11 @@
         "settings.tsx:1109: @gallery example, origin \"proposed\""
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.kind === \"fetch\" && c.host === \"tracker.example\"",
@@ -3626,7 +3885,11 @@
         "settings.tsx:1110: @gallery example, origin \"person\", deny"
       ],
       "shape": "arrow",
-      "count": 1
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.kind === \"fetch\" && c.url === \"<literal>\"",
@@ -3648,7 +3911,7 @@
       "count": 2
     },
     {
-      "src": "(c) => c.argv[0] === \"git\" && [\"status\", \"diff\", \"log\", \"show\", \"blame\"].includes(c.argv[1])\n    && !c.argv.some((a) => /^--(output|ext-diff|exec|upload-pack)/.test(a))\n    && c.paths.every((p) => p.inRoot)",
+      "src": "(c) => c.argv[0] === \"git\" && [\"status\", \"diff\", \"log\", \"show\", \"blame\"].includes(c.argv[1])\n    && !c.argv.some((a) => /^--(output|ext-diff|exec|upload-pack)/.test(a))\n    && c.paths.every((p) => p.inRoot) && c.repoConfigRunsCode === false",
       "author": "doc",
       "consumer": "sh",
       "adversarial": false,
@@ -3656,15 +3919,20 @@
         "functional"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:40",
-        "docs/spec/SHELL.md:328"
+        "docs/spec/POLICIES.md:41",
+        "docs/spec/SHELL.md:329"
       ],
       "notes": [
         "POLICIES.md:40: \"Global, set by the person\"",
         "SHELL.md:328: \"Global, set by the person\""
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "an anchored alternation of literals over an argv element is StartsWith one of {...}"
+      }
     },
     {
       "src": "(c) => c.argv[0] === \"npm\" && [\"test\", \"run lint\"].includes(c.argv.slice(1).join(\" \"))",
@@ -3675,18 +3943,23 @@
         "functional"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:45",
-        "docs/spec/SHELL.md:333"
+        "docs/spec/POLICIES.md:46",
+        "docs/spec/SHELL.md:334"
       ],
       "notes": [
         "POLICIES.md:45: \"For one run, granted from an approval card\"",
         "SHELL.md:333: \"For one run, granted from an approval card\""
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "(argc 2 and argv[1] in {test, \"run lint\"}) or (argc 3 and argv[1] is run and argv[2] is lint); no lifter finds it"
+      }
     },
     {
-      "src": "(c) => c.effects.every((e) => e.op === \"read\" && e.res.kind === \"fs\" && e.res.inRoot && !e.res.secret)",
+      "src": "(c) => c.effects.pairs.every((e) => e.op === \"read\" && e.res.kind === \"fs\" && e.res.inRoot && !e.res.secret)",
       "author": "doc",
       "consumer": "sh",
       "adversarial": false,
@@ -3694,15 +3967,19 @@
         "functional"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:137",
-        "docs/spec/SHELL.md:351"
+        "docs/spec/POLICIES.md:138",
+        "docs/spec/SHELL.md:360"
       ],
       "notes": [
         "POLICIES.md:137: the built-in default on the plain host, as the spec writes it. NOTE: c.effects has no every(); against the real facade this is broken (should be c.effects.pairs.every); e.res.inRoot is not a boolean-guarded compare",
         "SHELL.md:351: same as POLICIES.md:137; same defect"
       ],
       "shape": "arrow",
-      "count": 2
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
     },
     {
       "src": "(c) => c.kind === \"fetch\" && c.url === <literal>",
@@ -3798,7 +4075,7 @@
         "negative"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:69"
+        "docs/spec/POLICIES.md:70"
       ],
       "notes": [
         "POLICIES.md:69: body fragment: the guard pattern the spec recommends (note: the realm marks a numeric && result broken)"
@@ -3807,7 +4084,7 @@
       "count": 1
     },
     {
-      "src": "/git/.test(c.program)",
+      "src": "/git/.test(c.program.path)",
       "author": "doc",
       "consumer": "sh",
       "adversarial": false,
@@ -3815,7 +4092,7 @@
         "negative"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:71"
+        "docs/spec/POLICIES.md:72"
       ],
       "notes": [
         "POLICIES.md:71: body fragment, the unanchored-regex pitfall. NOTE: c.program is an object {path,inRoot,version} in ShFacts, not a string"
@@ -3832,7 +4109,7 @@
         "attack"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:241"
+        "docs/spec/POLICIES.md:274"
       ],
       "notes": [
         "POLICIES.md:241: body fragment: probe exclusion by name"
@@ -3849,7 +4126,7 @@
         "attack"
       ],
       "locations": [
-        "docs/spec/POLICIES.md:243"
+        "docs/spec/POLICIES.md:276"
       ],
       "notes": [
         "POLICIES.md:243: body fragment: probe exclusion by shape"
@@ -3950,19 +4227,18 @@
       "roles": [
         "attack"
       ],
-      "locations": [
-        "~/git/session-mail/window-ml/20261015-1719Z-repl-lane2-to-repl-specs-lane-2-results-e-and-3.md:50"
-      ],
+      "locations": [],
       "notes": [
-        "20261015-1719Z-repl-lane2-to-repl-specs-lane-2-results-e-and-3.md:50: session-mail note quoting the red-team finding; template"
+        "20261015-1719Z-repl-lane2-to-repl-specs-lane-2-results-e-and-3.md:50: session-mail note quoting the red-team finding; template",
+        "found outside the repo, in session mail: 20261015-1719Z-repl-lane2-to-repl-specs-lane-2-results-e-and-3.md:50"
       ],
       "shape": "template",
-      "count": 1
+      "count": 0
     }
   ],
   "meta": {
     "repo": "window-ml",
-    "commit": "e3b9af1e",
+    "commit": "2aab7263",
     "unique_entries": 221,
     "total_occurrences": 275,
     "by_author_unique": {
@@ -3978,6 +4254,7 @@
     "shape_legend": "arrow = complete (c) => ...; fragment = predicate body only; template = source built by code (template text recorded); others as named",
     "dedupe": "exact source text + author + consumer; count = number of locations",
     "dropped": "10 collected entries whose src was a policy id or a placeholder (h-deny, input, *, ...), not a source; each one's real source is already an entry",
-    "collected": "2026-10-21 by lane 11 (session a0a98fc7); the lane-11 count of 231 includes the dropped entries"
+    "collected": "2026-10-21 by lane 11 (session a0a98fc7); the lane-11 count of 231 includes the dropped entries; sources and locations re-checked against main at 2aab7263 (after #920/#921 changed three doc sources)",
+    "tree_legend": "Lane 11's grammar measurement (docs/plan/repl/LANE_11_POLICY_TREE_DESIGN.md). The measured set is every entry with role functional and shape arrow or helpers+arrow; it is counted by DISTINCT source after collapsing whitespace, so entries sharing a source carry the same tree field. group: consumer when any occurrence is over fetch or sh, else probe (an evaluator test over hybrid facts). fit: as-written, mechanical (a rewrite a lifter does), hand (a correct rewrite no lifter finds), no."
   }
 }

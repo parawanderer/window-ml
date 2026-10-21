@@ -20,35 +20,37 @@ machinery, and it says nothing about what a model would propose. That is the mai
 (typos, `==`, non-booleans). That leaves 60 distinct complete functional policies once ten extraction slips are
 removed (policy ids recorded as sources, such as `h-deny`, whose real sources are already in the set). The corpus is
 [`tests/fixtures/policy-corpus.json`](../../../tests/fixtures/policy-corpus.json), with the slips dropped; how to keep it
-current is [`docs/dev/policies.md`](../../dev/policies.md), "The policy corpus". They split into
-two groups, reported separately because they are different things:
+current is [`docs/dev/policies.md`](../../dev/policies.md), "The policy corpus". Each measured entry carries a `tree`
+field with its group and fit, so the counts below are recomputed from the file (`meta.tree_legend` gives the rule; the
+counts are as of #925, after #920 fixed the built-in's source). They split into two groups, reported separately because
+they are different things:
 
-- **38 policies over a real consumer** (`fetch` or `sh`), from the policy machinery's tests, the docs and the
-  built-ins.
-- **22 evaluator probes** (`tests/readonly-policy.test.mjs`) over a hybrid facts object. These test the policy realm's
+- **39 policies over a real consumer** (`fetch` or `sh`, in at least one place), from the policy machinery's tests,
+  the docs and the built-ins.
+- **21 evaluator probes** (`tests/readonly-policy.test.mjs`) over a hybrid facts object. These test the policy realm's
   semantics (`argv[9]?.length`, `{ c = 1; return true; }`, `Math.pwned`), and nobody would set one as a policy.
 
 | Group | Fits as written | Fits after a mechanical rewrite | Fits after a hand rewrite | Does not fit |
 | --- | --- | --- | --- | --- |
-| real consumer (38) | 32 | 3 | 1 | 2 |
-| evaluator probes (22) | 10 | 4 | 0 | 8 |
-| all (60) | 42 (70%) | 7 | 1 | 10 |
+| real consumer (39) | 34 | 2 | 1 | 2 |
+| evaluator probes (21) | 9 | 4 | 0 | 8 |
+| all (60) | 43 (72%) | 6 | 1 | 10 |
 
-So the grammar covers **35 of 38 (92%)** of the real-consumer policies by machine (as written plus mechanical rewrite),
-and 36 counting the hand rewrite. Over all 60 it covers 49 (82%). Each rewrite and each miss:
+So the grammar covers **36 of 39 (92%)** of the real-consumer policies by machine (as written plus mechanical rewrite),
+and 37 counting the hand rewrite. Over all 60 it covers 49 (82%). Each rewrite and each miss:
 
 | Policy | Outcome | Why |
 | --- | --- | --- |
 | `c.effects.writes.every((r) => r.path.startsWith("/r/src/"))` | mechanical | a character prefix ending in `/` is `Under(path, /r/src)` exactly, on a `realpath`ed path |
 | POLICIES.md's git example, `!c.argv.some((a) => /^--(output\|ext-diff\|exec\|upload-pack)/.test(a))` | mechanical | an anchored alternation of literals is membership of prefixes: `Not(Some(argv, StartsWith one of {…}))` |
-| POLICIES.md's built-in, `c.effects.every(…)` | mechanical, after a doc fix | the effects view has no `every`, so as written it is BROKEN (a refusal); `pairs.every(…)` is what was meant and fits (fixed in this PR) |
+| POLICIES.md's built-in, `c.effects.every(…)` | as written, after a doc fix | the effects view has no `every`, so as first written it was BROKEN (a refusal); `pairs.every(…)` was meant, #920 fixed it, and that fits as written |
 | `["test", "run lint"].includes(c.argv.slice(1).join(" "))` | hand | exactly `(argc 2 and argv[1] is one of {test, "run lint"}) or (argc 3 and argv[1] is run and argv[2] is lint)`; correct, but no lifter would find it |
 | `c.url.startsWith("http")` | no | a raw character prefix over a URL; the tree's URL atom is structured (below) and does not offer this one, which is the shape of the `https://a.example.evil` trap |
 | `(c) => c.host === "b.test"` as an `sh` policy | no, correctly | `sh` facts have no `host`, so in code this policy is BROKEN on every call; the typed tree refuses to build it |
 | probes: `argv[5] === undefined`; `pairs.length === 0`; anchored literal regex over the URL; a `const` helper inlined | mechanical | `ArgCount`; `Not(Some(pairs, true))`; `Under(url, …)`; inlining |
 | probes: `argv[9]?.length`, `({...c}).argv0`, `c.url.length > 0 && c.url[0]`, `argv.length < 10 && "a" < "b"`, `c = 1`, `Math.pwned`, `c.paths[0].inRoot`, a `for…of` summing lengths | no | string length, spread, character index, order, assignment, globals, a positional index into `paths`, a loop with arithmetic |
 
-**What the distribution says.** 21 of the 38 are one atom, `c.host === "<host>"`, because that is what the
+**What the distribution says.** 21 of the 39 are one atom, `c.host === "<host>"`, because that is what the
 proposal and lapsed-policy tests need, and the one generator that ships (`fetchUrlPolicySource`, the card's "Approve +
 remember these URLs") emits `c.kind === "fetch" && c.url === <literal>`, which fits by construction. So the high figure
 is partly an artifact of the corpus: tests write what is easy to assert. The five doc examples are the closest thing to
