@@ -200,7 +200,10 @@ the person's approval and rendered as data, and it is not built first.
 
 1. **Identity + the table + the read** — an agent declares a name, a session hash it already has, and its STATE
    (the computed line above, 2026-10-21; never free text). `ml.inbox` is a `TableLike` in the read-only dialect. No sending yet: this alone replaces
-   "who owns this?" with a query.
+   "who owns this?" with a query. Proposed 2026-10-21 (Shane): the same row carries the PROCESS GROUPS the session
+   registered with the desktop host, so "which session owns this CPU process" is a read of this table through the
+   host's owner table ([`SHELL.md`](SHELL.md), the paragraph after "The boundary"), never of `ps`; open, a widening of
+   the host's boundary that is Shane's.
 2. **Claims**, with leases and git verification. The piece that removes a human broadcast.
 3. **Send, with topics and the unrouted queue** wired to the attention inbox.
 4. **Push at turn boundaries**, through `runInboxes`. Deliberately last: pull-only is useful, and a push path built
