@@ -255,7 +255,7 @@ listed as remaining is DONE unless named below.
   [`LANE_10_RESULT.md`](LANE_10_RESULT.md) (#923, d6ccae00). Lane 11's round-4 items are closed: host #20, #21, #22
   (the `ended` record, five causes; the private-sweep fix), #913, #920, #921; [`LANE_11_RESULT.md`](LANE_11_RESULT.md)
   (#922, eafcc2b3). Lane 11 stays open on the tree's next item, ruled 2026-10-21 (#921, #924): the lifter, then the
-  `fetch` and `sh` bench tasks measured as text, with the corpus committed (#925); the lifter's test may hold a tree evaluator under `tests/` (#927). **Lane 3: CLOSED 2026-10-21**: [`LANE_3_RESULT.md`](LANE_3_RESULT.md) (#932, 84ec012b): fork #6/#7/#8, #918, #928, the wasm
+  `fetch` and `sh` bench tasks measured as text, with the corpus committed (#925); the lifter's test may hold a tree evaluator under `tests/` (#927). **Lane 13: WRITTEN, NOT STARTED** (2026-10-21): [`LANE_13_PROBE_NARROWED.md`](LANE_13_PROBE_NARROWED.md), the verify-on-return probe paid only by calls that can reach the allocator API; opens only if the real-cell gate number in lane 12's `verify-cost` notebook shows the 1.4x on real cells, and Shane says. **Lane 3: CLOSED 2026-10-21**: [`LANE_3_RESULT.md`](LANE_3_RESULT.md) (#932, 84ec012b): fork #6/#7/#8, #918, #928, the wasm
   numbers, the tracemalloc repro refused on 7c40b038. Left, named there: the red team's post-merge read of fork #6 and #7 and
   its column-shapes PR (the red team's); the superseded fork branch `ml/wasm32-wrappers-per-run` (Shane's to delete); the
   mechanism of the slowdown without per-run unwrapping, since settled by the janitor (2026-10-21, one extra indirect call per allocation, about 40 ns; in the memory row). Fork #7 merged with no review on it

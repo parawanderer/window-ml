@@ -172,16 +172,18 @@ with its SPA's HTML no matter how correct the ollama side is. That is what `/api
 what `/api/events` needed again; both are on the OpenWebUI branch below. So for the capacity and event work
 the OpenWebUI fork IS in the path, and a patched Ollama behind a stock OpenWebUI is not enough.
 
-**A tool call's arguments as they are written: `message.tool_call_deltas`** (branch `slop-stream-tool-args`, 67882976
-the plumbing and 6374360c the qwen3-coder parser; deployed on mlbox as `ollama-slop:streamargs` on 2026-10-21, not
-merged into `slop` yet). Stock Ollama's native stream buffers a call in the server (the per-model parser in
-`routes.go`'s chat handler) and sends it whole, so a long argument shows nothing until the model stops. The patched
-server sends `message.tool_call_deltas: [{ index, id?, function: { name?, arguments: "<text fragment>" } }]` while a
-call is written (the first per `index` carries `id` and `name`), then the whole `tool_calls` with the same `id`, which
-is the AUTHORITY: the client draws the deltas (`docs/dev/output-and-code.md`) and runs only the whole call. Without the
-field nothing changes; the call appears when it lands. On `/v1` SSE and protobuf (`Delta.tool_calls`) the fragments ARE
-the call and no whole call follows. Anthropic `/v1/messages`, the Responses API and every non-streaming request get
-whole calls as before.
+**A tool call's arguments as they are written: `message.tool_call_deltas`** (on `slop` since b614c130, 2026-10-21:
+67882976 the plumbing, 6374360c the qwen3-coder parser, 1b68cec4 a repeated parameter streamed as a duplicate key;
+deployed on mlbox as `ollama-slop:streamargs`, which predates 1b68cec4). Checked live from the extension on 2026-10-21
+with qwen3.8-flash-next, native and `/v1` through OpenWebUI's `/ollama` passthrough: the preview grew in place to about
+2.5k characters and the step replaced it. Stock Ollama's native stream buffers a call in the server (the per-model
+parser in `routes.go`'s chat handler) and sends it whole, so a long argument shows nothing until the model stops. The
+patched server sends `message.tool_call_deltas: [{ index, id?, function: { name?, arguments: "<text fragment>" } }]`
+while a call is written (the first per `index` carries `id` and `name`), then the whole `tool_calls` with the same `id`,
+which is the AUTHORITY: the client draws the deltas (`docs/dev/output-and-code.md`) and runs only the whole call.
+Without the field nothing changes; the call appears when it lands. On `/v1` SSE and protobuf (`Delta.tool_calls`) the
+fragments ARE the call and no whole call follows. Anthropic `/v1/messages`, the Responses API and every non-streaming
+request get whole calls as before.
 
 Which models fragment: those on the `qwen3.5` Go parser (qwen3.5, qwen3.6:35b, qwen3.8:27b, ornith), and every model
 with no `PARSER`, served by llama-server's own chat endpoint (qwen3.8-flash-next, qwen4-1card, dsv4-flash, gpt-oss:120b,
@@ -192,10 +194,12 @@ Where the whole call differs from the fragments, and what the client does about 
 
 - On the llama-server path the VALUE is equal and the BYTES are not: the fragments are llama.cpp's JSON, the whole call
   is Go's re-encoding (`<` as `\u003c`, key order, spacing). Compare parsed values, never strings.
-- qwen3-coder writing a parameter twice: the whole call keeps the first position and the last value, after the first
-  value has streamed. Native runs the whole call, so only the preview was wrong. On `/v1` the fragments stop,
-  unterminated, with `finish_reason: tool_calls`: the client does not run arguments that do not parse, and tells the
-  model (agent-loop.ts).
+- qwen3-coder writing a parameter twice: the whole call keeps the first position and the last value. Since 1b68cec4 the
+  repeat streams as a duplicate key (`{"a":"1","b":"2","a":"3"}`), which `JSON.parse` and `parseLooseJson` both read as
+  the whole call does: first position, last value. Before it (and live until the deploy that carries it), the fragments
+  stopped unterminated with `finish_reason: tool_calls` on `/v1`; so does a stream something stopped before the repeat
+  (a `\r` in a value). The client does not run arguments that do not parse, and tells the model (agent-loop.ts). Native
+  always runs the whole call.
 - A call still open when generation stops (the length cap, an early stop) has fragments and no whole call. The client
   hands it on as unparsed text, so the same refusal tells the model rather than the turn ending as an empty answer
   (`streamAgentTurn`).
