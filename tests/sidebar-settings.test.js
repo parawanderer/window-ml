@@ -203,7 +203,9 @@ test("settings view: loads config, populates the model datalist, gates + persist
     w.shadow.querySelector(".model-pick .model-pick-caret").click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".model-pick-menu .model-pick-opt").length, 2, "picker menu populated from LIST_MODELS");
-    assert.ok(w.shadow.querySelector('input[type="number"]').disabled, "utility context disabled until a utility model is set");
+    // The utility model's context field (num_ctx, in steps of 512): Defaults above it has a number field of its own.
+    const utilCtx = () => w.shadow.querySelector('input[type="number"][min="512"]');
+    assert.ok(utilCtx().disabled, "utility context disabled until a utility model is set");
 
     const util = w.shadow.querySelector('input[placeholder="blank = use main model"]');
     util.value = "qwen3.5:0.8b";
@@ -211,7 +213,7 @@ test("settings view: loads config, populates the model datalist, gates + persist
     util.dispatchEvent(new w.window.Event("change", { bubbles: true }));
     await w.tick();
     assert.equal(w.syncStore.utilityModel, "qwen3.5:0.8b", "utility model persisted to storage.sync");
-    assert.ok(!w.shadow.querySelector('input[type="number"]').disabled, "utility context enabled once a model is set");
+    assert.ok(!utilCtx().disabled, "utility context enabled once a model is set");
 });
 
 test("settings: the 'vision capable?' override is DISABLED (locked to Auto) for an Ollama default model", async () => {

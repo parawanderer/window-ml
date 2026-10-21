@@ -350,7 +350,7 @@ async function runCell(cell, ctx, index) {
         }
         ctx.report?.(index, "running", { live });
     };
-    const env = { backend: ctx.backend, dist: ctx.buildDirs.get(cell) ?? null, approve: ctx.spec.approve, capture: ctx.capture, timeoutMs: ctx.spec.timeoutMs, warm: ctx.warm };
+    const env = { backend: ctx.backend, localModels: ctx.localModels, dist: ctx.buildDirs.get(cell) ?? null, approve: ctx.spec.approve, capture: ctx.capture, timeoutMs: ctx.spec.timeoutMs, warm: ctx.warm };
     let run, statuses = driver?.statuses ?? [], held = null;
     try {
         if (hold) {
@@ -664,6 +664,8 @@ const main = async () => {
     const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy(), suite: spec.suite ?? null };
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
+        // The models the server says are its own (Ollama's), whose agent steps get BENCH_STEP_MAX_TOKENS (cells.mjs).
+        localModels: [...info].filter(([, v]) => v.local === true).map(([k]) => k),
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
         cached: 0, ran: 0, retried: 0, pdf: args.pdf, kept: [],
