@@ -70,3 +70,34 @@ test("a private rendered fetch with Incognito off leads with the retry that work
     const src = (await import("node:fs")).readFileSync(new URL("../src/sw/sw-fetch.ts", import.meta.url), "utf8");
     assert.match(src, /which is off\. Retry with credentials:true to render in the user's own session instead/);
 });
+
+// --- propose_policy's details: each claim holds in the realm a proposal is checked in ---
+
+test("propose_policy's details say what the realm does: the regex it names is refused, the forms it warns of over-match", async () => {
+    const { TOOL_DETAILS } = await import("../src/tools/tool-details.ts");
+    const { evalPolicy } = await import("../src/readonly-exec.ts");
+    const { fetchFacts } = await import("../src/sw/sw-policies.ts");
+    const { riskyRegex } = await import("../src/readonly-exec/limits.ts");
+    const d = TOOL_DETAILS.propose_policy;
+    const allows = (src, url) => evalPolicy(src, fetchFacts(url, {}), "allow").decision === "allow";
+    // "refused as one that could backtrack, even where it would not": the example is refused, and each repetition opens
+    // with a `-` its body cannot match, so it does not backtrack.
+    assert.match(d, /`\(-\[a-z\]\+\)\*`/);
+    assert.ok(riskyRegex("^[a-z]+(-[a-z]+)*$"));
+    assert.ok(evalPolicy("(c) => /^[a-z]+(-[a-z]+)*$/.test(c.host)", fetchFacts("https://a.example/", {})).broken);
+    // "the dot included (without it, evilexample.org matches)"; "ending in `/` (without it, /docs-evil matches)".
+    assert.match(d, /evilexample\.org/);
+    const site = '(c) => c.host === "example.org" || c.host.endsWith(".example.org")';
+    assert.ok(allows(site, "https://example.org/") && allows(site, "https://docs.example.org/"), "the site and its subdomains");
+    assert.ok(!allows(site, "https://evilexample.org/"));
+    assert.ok(allows('(c) => c.host.endsWith("example.org")', "https://evilexample.org/"));
+    assert.ok(allows('(c) => c.url.startsWith("https://example.org/docs")', "https://example.org/docs-evil/x"));
+    assert.ok(!allows('(c) => c.url.startsWith("https://example.org/docs/")', "https://example.org/docs-evil/x"));
+    // The examples name none of the interviews' needs, whose answers they would hand the model being measured.
+    const { FETCH_NEEDS } = await import("./e2e/panel/policy-proposals.score.ts");
+    for (const n of FETCH_NEEDS) for (const v of n.vectors.filter((x) => x.holds)) assert.ok(!d.includes(new URL(v.facts.url).host), `${n.id}: ${v.facts.url}`);
+    // "one without `^` matches inside other URLs".
+    assert.ok(allows('(c) => /docs\\.example\\.org/.test(c.url)', "https://evil.example/?u=docs.example.org"));
+    // "a field `c` does not have, `==`, or a result that is not a boolean makes it broken".
+    for (const src of ["(c) => c.hots === \"a\"", "(c) => c.host == \"a\"", "(c) => c.host.length"]) assert.ok(evalPolicy(src, fetchFacts("https://a/", {})).broken, src);
+});

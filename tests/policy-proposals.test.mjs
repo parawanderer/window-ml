@@ -39,8 +39,8 @@ const ANSWERS = {
     S3: {
         good: '(c) => c.argv[0] === "git" && ["status", "diff", "log", "show"].includes(c.argv[1]) && c.cwd.inRoot && c.repoConfigRunsCode === false'
             + ' && c.effects.pairs.every((e) => e.op === "read" && e.res.kind === "fs" && e.res.inRoot)',
+        // `!c.repoConfigRunsCode` was sloppy here until the realm ruled that an allow over a null fact never fires (2026-10-21).
         sloppy: [
-            '(c) => c.argv[0] === "git" && ["status", "diff", "log", "show"].includes(c.argv[1]) && c.cwd.inRoot && !c.repoConfigRunsCode && !c.effects.has("write") && !c.effects.has("exec")',
             '(c) => c.argv[0] === "git" && ["status", "diff", "log", "show"].includes(c.argv[1]) && c.cwd.inRoot && c.repoConfigRunsCode === false',
             '(c) => c.argv[0] === "git" && ["status", "diff", "log", "show"].includes(c.argv[1]) && c.repoConfigRunsCode === false && !c.effects.has("write") && !c.effects.has("exec")',
         ],
@@ -80,6 +80,14 @@ test("each need has 9 to 15 vectors, with both answers among them and no two nam
         assert.ok(need.vectors.some((v) => v.holds) && need.vectors.some((v) => !v.holds), need.id);
         assert.equal(new Set(need.vectors.map((v) => v.name + v.holds)).size, need.vectors.length, need.id);
     }
+});
+
+test("S3's fail-open over null is closed by the realm, so the answer that leaned on it is now right, and still lifts", () => {
+    const need = NEEDS.sh.find((n) => n.id === "S3");
+    const s = scoreProposal("sh", need, fence('(c) => c.argv[0] === "git" && ["status", "diff", "log", "show"].includes(c.argv[1]) && c.cwd.inRoot && !c.repoConfigRunsCode && !c.effects.has("write") && !c.effects.has("exec")'));
+    assert.deepEqual(s.wrong, []);
+    assert.ok(s.lifted, s.why);
+    assert.ok(need.vectors.some((v) => v.facts.repoConfigRunsCode === null && !v.holds), "the null vector is still there");
 });
 
 // --- extraction ---

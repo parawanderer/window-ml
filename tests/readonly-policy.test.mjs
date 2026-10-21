@@ -126,6 +126,111 @@ test("a typo on a string is refused; its length, indices and methods are not", (
     assert.deepEqual(run('(c) => c.url.length > 0 && c.url[0] === "h" && c.url.startsWith("https:")'), { decision: "allow" });
 });
 
+// --- a fact that is null is unknown: an ALLOW that read one never fires, a DENY still does ---
+
+// docs/spec/POLICIES.md, the tree's ruling (2026-10-21): an ALLOW written as `!c.repoConfigRunsCode` fired where the
+// host could not tell. These two are the S3 answers of gemma4:31b and qwen3.8:27b in that run, exactly as written.
+const S3_ANSWERS = {
+    "gemma4:31b": "const allowed = ['status', 'diff', 'log', 'show'];\n(c) => c.argv[0] === 'git' && allowed.includes(c.argv[1]) && c.repoConfigRunsCode !== true && c.cwd.path.startsWith('/w/proj') && !c.effects.unknown && c.effects.pairs.every(p => p.op === 'read')",
+    "qwen3.8:27b": "const READONLY = [\"status\", \"diff\", \"log\", \"show\"];\n(c) =>\n  c.argv[0] === \"git\" &&\n  READONLY.includes(c.argv[1]) &&\n  c.cwd.inRoot === true &&\n  c.repoConfigRunsCode !== true &&\n  !c.effects.has(\"write\") &&\n  !c.effects.has(\"exec\")",
+};
+/** `git status` in the workspace, its effects one read, with `repoConfigRunsCode` as given and a null-holding path. */
+const gitStatus = (repoConfigRunsCode) => ({
+    argv: ["git", "status"], cwd: { path: "/w/proj", inRoot: true }, repoConfigRunsCode, program: { path: "/usr/bin/git", version: null },
+    paths: [{ path: "/w/proj/a", inRoot: true, sha256: null }],
+    effects: [{ op: "read", res: { kind: "fs", path: "/w/proj", inRoot: true, secret: false } }],
+});
+
+test("the S3 answers as the models wrote them: allow where the fact is false, no opinion where it is null, never broken", () => {
+    for (const [model, src] of Object.entries(S3_ANSWERS)) {
+        assert.equal(run(src, gitStatus(false)).decision, "allow", `${model}: the control, a repository whose config runs nothing`);
+        assert.deepEqual(run(src, gitStatus(true)), { decision: undefined }, `${model}: true`);
+        const r = run(src, gitStatus(null));
+        assert.equal(r.decision, undefined, `${model}: null is unknown, and an allow over an unknown never fires`);
+        assert.equal(r.broken, undefined, `${model}: the policy is sound; it is the fact that is unknown`);
+        assert.equal(r.unknown, "repoConfigRunsCode", `${model}: says which fact`);
+    }
+});
+
+test("a DENY that read a null fact still fires: refusing on an unknown is the narrow direction", () => {
+    assert.equal(run("(c) => c.repoConfigRunsCode !== false", gitStatus(null), "deny").decision, "deny");
+    assert.equal(run("(c) => c.repoConfigRunsCode === null", gitStatus(null), "deny").decision, "deny");
+});
+
+test("an allow that asks for null by name does not fire either: null is unknown however it is tested", () => {
+    for (const src of ["(c) => c.repoConfigRunsCode === null", "(c) => c.repoConfigRunsCode !== true", "(c) => !c.repoConfigRunsCode",
+        "(c) => c.program.version === null", "(c) => typeof c.repoConfigRunsCode === \"object\"", "(c) => `${c.repoConfigRunsCode}` === \"null\""])
+        assert.equal(run(src, gitStatus(null)).decision, undefined, src);
+});
+
+test("an allow that never reads the null fact is untouched, though the call has one", () => {
+    assert.equal(run('(c) => c.argv[0] === "git" && c.cwd.inRoot', gitStatus(null)).decision, "allow");
+    assert.equal(run('(c) => c.paths.every((p) => p.inRoot)', gitStatus(null)).decision, "allow", "a list whose element HAS a null field the policy does not read");
+    assert.equal(run('(c) => c.argv.includes("status")', gitStatus(null)).decision, "allow");
+    assert.equal(run('(c) => Object.keys(c).includes("argv") && Object.keys(c.program).includes("path")', gitStatus(null)).decision, "allow", "names are not values");
+    assert.equal(run('(c) => JSON.stringify(c.argv) === \'["git","status"]\'', gitStatus(null)).decision, "allow");
+});
+
+test("an allow that read a null fact and answered false is just no opinion; one that skipped it by short-circuit fires", () => {
+    assert.deepEqual(run('(c) => c.repoConfigRunsCode === false', gitStatus(null)), { decision: undefined });
+    assert.equal(run('(c) => c.argv[0] === "git" || c.repoConfigRunsCode !== true', gitStatus(null)).decision, "allow", "the read never happened");
+});
+
+test("RED-TEAM: every way of getting a null out of the call without naming it is a read of it", () => {
+    const routes = [
+        "(c) => { const r = c.repoConfigRunsCode; return r !== true; }",                        // an alias
+        "(c) => { const { repoConfigRunsCode } = c; return repoConfigRunsCode !== true; }",     // destructuring
+        "({ repoConfigRunsCode: r }) => r !== true",                                            // a destructuring param
+        '(c) => c["repoConfig" + "RunsCode"] !== true',                                         // a computed key
+        "(c) => c?.repoConfigRunsCode !== true",                                                // optional chaining
+        "(c) => ({ ...c }).repoConfigRunsCode !== true",                                        // an object spread: a copy
+        "(c) => !Object.values(c).includes(true)",                                              // a builtin over c
+        "(c) => !Object.entries(c).some(([k, v]) => k === \"repoConfigRunsCode\" && v === true)",
+        "(c) => !JSON.stringify(c).includes('\"repoConfigRunsCode\":true')",                    // a serialisation
+        "(c) => !JSON.stringify([c.program]).includes(\"1\")",                                  // nested in an array the script built
+        "(c) => new Map(Object.entries(c.program)).get(\"version\") === null",                   // a builtin feeding a constructor
+        "(c) => new Set(Object.values(c.program)).has(null)",
+        "(c) => [c].some((x) => x.repoConfigRunsCode !== true)",                                // read inside a callback, off a copy's element
+        "(c) => [c.paths].flat()[0].sha256 === null",                                           // a wrapper the script built
+        "(c) => { try { return c.repoConfigRunsCode !== true; } catch { return false; } }",
+    ];
+    for (const src of routes) {
+        const r = run(src, gitStatus(null));
+        assert.equal(r.decision, undefined, `${src}\n  → ${JSON.stringify(r)}`);
+    }
+});
+
+test("RED-TEAM: a list that holds a null is unknown to an ALLOW whatever reads it, since its elements leave by coercion and copies", () => {
+    // Every route the red-team pass found past a read-by-read check; each answers differently with true or false there.
+    const facts = { ...gitStatus(false), tags: ["a", null], one: [null] };
+    const routes = [
+        "(c) => c.tags.includes(null)", "(c) => c.tags.join(\",\") === \"a,\"", "(c) => (c.tags + \"\") === \"a,\"",
+        "(c) => `${c.tags}` === \"a,\"", "(c) => ({ \"a,\": true })[c.tags] === true", "(c) => +c.one === 0", "(c) => (c.one - 0) === 0",
+        "(c) => new Set(c.tags).has(null)", "(c) => new String(c.tags).length === 2", "(c) => [c.tags].flat().includes(null)",
+        "(c) => [c.tags].join() === \"a,\"", "(c) => [c.tags].flatMap((x) => x).includes(null)", "(c) => [...c.tags].length === 2",
+        "(c) => Math.max(...c.one) === 0", "(c) => { for (const t of c.tags) if (t === null) return true; return false; }",
+        "(c) => { const [, t] = c.tags; return t === null; }", "(c) => { const [...r] = c.tags; return r.includes(null); }",
+        "(c) => { const [, ...r] = c.tags; return r[0] === null; }", "(c) => c.tags.some((t) => t === null)",
+        '(c) => c.argv[0] === "git"',                                                           // even one that never reads the list
+    ];
+    for (const src of routes) assert.deepEqual(run(src, facts), { decision: undefined, unknown: "a list that holds null" }, src);
+    assert.equal(run("(c) => c.tags.includes(null)", facts, "deny").decision, "deny", "a deny still fires");
+    assert.equal(run('(c) => c.argv[0] === "git"', gitStatus(false)).decision, "allow", "the same call without the list allows");
+});
+
+test("UPGRADE: an allow saved before the rule that leaned on a null now asks; the same allow over a known fact still allows", () => {
+    // What a person or an approved proposal could have stored before 2026-10-21 (StoredPolicy's source, as written).
+    const stored = { effect: "allow", source: "(c) => c.argv[0] === \"git\" && c.argv[1] === \"status\" && !c.repoConfigRunsCode" };
+    assert.equal(run(stored.source, gitStatus(null), stored.effect).decision, undefined);
+    assert.equal(run(stored.source, gitStatus(false), stored.effect).decision, "allow");
+});
+
+test("one evaluation's null read does not leak into the next, though the parse is shared", () => {
+    const src = "(c) => c.repoConfigRunsCode !== true";
+    assert.equal(run(src, gitStatus(null)).decision, undefined);
+    assert.equal(run(src, gitStatus(false)).decision, "allow");
+});
+
 // --- == and != are refused here, and only here ---
 
 test("== and != are refused in a policy, wherever they appear", () => {

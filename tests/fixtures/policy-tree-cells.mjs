@@ -10,8 +10,9 @@ const { CONSUMER_FIELDS, PAIR } = await import("../../src/readonly-exec/policy-l
 
 const EFFECT_FIELDS = { unknown: { t: "bool" }, pairs: { t: "list", elem: PAIR }, reads: { t: "list", elem: PAIR.fields.res }, writes: { t: "list", elem: PAIR.fields.res } };
 
-/** The type at a field path under `t` (a number after argv is an argv element; "@" is the list element `elem`). */
-function typeAt(t, path, elem) {
+/** The type at a field path under `t` (a number after argv is an argv element; "@" is the list element `elem`). A
+ *  nullable field is its base type unless `nullable` asks for the wrapper, which the cells need to build its null. */
+function typeAt(t, path, elem, nullable = false) {
     let cur = t;
     for (const seg of path) {
         if (seg === "@") { cur = elem; continue; }
@@ -19,7 +20,7 @@ function typeAt(t, path, elem) {
         if (cur.t === "nullable") cur = cur.of;
         cur = cur.t === "effects" ? EFFECT_FIELDS[seg] : cur.fields[seg];
     }
-    return cur.t === "nullable" ? cur.of : cur;
+    return cur.t === "nullable" && !nullable ? cur.of : cur;
 }
 
 /** The value at a field path, `undefined` where it is missing. */
@@ -41,7 +42,7 @@ function valueAt(c, path, elem) {
  */
 export function evalTree(tree, c, root, elem, elemType) {
     const ev = (t) => evalTree(t, c, root, elem, elemType);
-    const at = (f) => valueAt(c, f, elem);
+    const at = (f) => { const v = valueAt(c, f, elem); if (v === null) nullSeen = true; return v; };
     switch (tree.op) {
         case "all": return tree.of.every(ev);
         case "any": return tree.of.some(ev);
@@ -60,7 +61,7 @@ export function evalTree(tree, c, root, elem, elemType) {
             const list = at(tree.list);
             const et = typeAt(root, tree.list, elemType);
             const inner = et.t === "argv" ? { t: "str" } : et.elem;
-            const f = (x) => evalTree(tree.test, c, root, x, inner);
+            const f = (x) => { if (x === null) nullSeen = true; return evalTree(tree.test, c, root, x, inner); };
             return tree.op === "some" ? list.some(f) : list.every(f);
         }
         case "has": return c.effects.has(tree.effect, tree.kind);
@@ -69,6 +70,20 @@ export function evalTree(tree, c, root, elem, elemType) {
         default: throw new Error(`unknown node ${tree.op}`);
     }
 }
+
+/**
+ * Whether a tree FIRES over facts with this effect: its value, except that an ALLOW whose evaluation read a fact that
+ * is `null` (unknown) does not fire, the realm's rule (POLICIES.md, the tree's ruling of 2026-10-21). The reads are the
+ * ones `evalTree` makes, in its order: `all`/`any` short-circuit as `&&`/`||` do, so a null the source never reached
+ * is not read here either.
+ */
+export function treeVerdict(tree, c, root, effect) {
+    nullSeen = false;
+    const v = evalTree(tree, c, root);
+    return v && !(effect === "allow" && nullSeen);
+}
+// state: test — whether the current treeVerdict's evaluation read a null; reset by each call.
+let nullSeen = false;
 
 // --- the cells ---
 
@@ -162,7 +177,7 @@ export function cells(tree, consumer, cap = 400_000) {
         (choices[key(a.field)] ??= { path: a.field, atoms: [] }).atoms.push(a);
     }
     const dims = {};
-    for (const [k, { path, atoms: on }] of Object.entries(choices)) dims[k] = reps(typeAt(root, path), on).map((v) => [[path, v]]);
+    for (const [k, { path, atoms: on }] of Object.entries(choices)) dims[k] = reps(typeAt(root, path, undefined, true), on).map((v) => [[path, v]]);
     for (const [k, { path, atoms: on }] of listPaths) {
         const elemType = typeAt(root, path).elem;
         dims[k] = lists(elementReps(elemType, on)).map((l) => [[path, l]]);
@@ -181,7 +196,7 @@ function elementReps(elemType, on) {
     if (elemType.t !== "obj") return reps(elemType, on.filter((a) => a.sub.length === 0));
     const bySub = {};
     for (const a of on) if (a.sub.length) (bySub[a.sub.join(".")] ??= []).push(a);
-    const dims = Object.fromEntries(Object.entries(bySub).map(([s, as]) => [s, reps(typeAt(elemType, s.split(".")), as)]));
+    const dims = Object.fromEntries(Object.entries(bySub).map(([s, as]) => [s, reps(typeAt(elemType, s.split("."), undefined, true), as)]));
     const base = Object.fromEntries(Object.keys(elemType.fields).map((f) => [f, defaultFor(elemType.fields[f])]));
     return product(dims, 10_000).map((pick) => {
         const e = structuredClone(base);

@@ -200,6 +200,15 @@ test("a policy is evaluated only over calls of its own consumer: an sh policy ne
     assert.equal(P.judgeCall("h-cons", "sh", sh).decision, "deny");
 });
 
+test("an ALLOW that read a null fact does not decide the call, a DENY that did still refuses it (POLICIES.md, 2026-10-21)", () => {
+    P.addRunPolicy("h-null", { consumer: "sh", effect: "allow", source: '(c) => c.argv[0] === "git" && !c.repoConfigRunsCode', label: "git", origin: "proposed" });
+    const git = (repoConfigRunsCode) => ({ argv: ["git", "status"], repoConfigRunsCode, effects: [{ op: "exec", res: { kind: "process" } }] });
+    assert.equal(P.judgeCall("h-null", "sh", git(false)).decision, "allow", "the control: the fact is known");
+    assert.equal(P.judgeCall("h-null", "sh", git(null)).decision, undefined, "unknown: the call asks");
+    P.addRunPolicy("h-null-deny", { consumer: "sh", effect: "deny", source: "(c) => c.repoConfigRunsCode !== false", label: "only a known-clean repo", origin: "person" });
+    assert.equal(P.judgeCall("h-null-deny", "sh", git(null)).decision, "deny");
+});
+
 test("the policy page re-reads on exactly the keys the store writes (it keeps its own copy, not importing worker code)", async () => {
     const { readFileSync } = await import("node:fs");
     const page = readFileSync(new URL("../src/sidebar/settings/settings.tsx", import.meta.url), "utf8");

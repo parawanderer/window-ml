@@ -67,7 +67,9 @@ dropped.
    Otherwise collect the global policies and the run's, and keep those of the call's `consumer`.
 2. Evaluate each with `evalPolicy(source, facts, effect)`. A policy that breaks (does not parse, falls out of the
    dialect, throws, returns something that is not a boolean) is NO OPINION. It is recorded: `brokenReason(id)` for the
-   policy page, and the caller writes a `policy`/`broken` run log record with the policy id.
+   policy page, and the caller writes a `policy`/`broken` run log record with the policy id. An `allow` that held
+   after reading a fact that is `null` is no opinion too, with `unknown` naming the fact, and is not broken (see
+   "A null fact is unknown" below).
 3. A `deny` from any policy, in either scope, returns at once. Deny wins across scopes.
 4. Otherwise the first `allow` returns, with the policy that gave it in `by`.
 5. With no answer from the person, the built-in default applies: `free(facts.effects, boundFor(placement))` from
@@ -80,6 +82,27 @@ A caller that wants only the PERSON's answer ignores `by === "builtin"`; both ca
 `fetchFacts(url, { credentials, rendered })` builds the facts a `fetch` policy sees: `kind: "fetch"`, `url`, `host`
 (lowercased hostname), `method: "GET"`, `credentials`, `rendered`, and `effects`. Add a consumer by widening
 `PolicyConsumer` and `validList`, and give it a facts builder.
+
+## A null fact is unknown
+
+`null` on a fact means the host could not tell (`SHELL.md`, the optional-fact rule). An `allow` whose evaluation read
+one never fires; a `deny` that read one does, which is the narrow direction (`POLICIES.md`, the tree's ruling of
+2026-10-21). It is the deciding layer's rule, so a writer cannot forget it: `!c.repoConfigRunsCode`, `!== true` and
+`=== null` all ask where the fact is `null`. Two answers in the 2026-10-21 interviews allowed `git status` there.
+
+How the realm knows (`nullRead` on the `Evaluator`, read by `evalPolicy`):
+
+- A member read of a strict facade's field whose value is `null` (`strictRead`), which covers aliases, destructuring,
+  object spread and optional chaining, since all of them read through it.
+- A `null` field inside a value handed to a builtin or a constructor (`noteNulls`: `JSON.stringify(c)`,
+  `Object.values(c.program)`, `new Map(Object.entries(c))`), walking through what the script built to the facades in it.
+  `Object.keys` and `getOwnPropertyNames` read names, not values, and are exempt.
+- A list in the facts that holds a `null` element marks the whole evaluation when the facade is built: an element leaves
+  by a join, a coercion, a rest pattern or a copy, past any read-by-read check. No list the product builds holds one.
+
+The read follows evaluation order: `c.argv[0] === "git" || c.repoConfigRunsCode !== true` allows `git` without reading
+the fact; the same terms the other way round ask. Tested by `tests/readonly-policy.test.mjs`, "a fact that is null is
+unknown", including a red-team pass's routes; the tree evaluator obeys the same rule (`treeVerdict`, "The lifter").
 
 ## The first consumer: remembered URLs
 
@@ -266,10 +289,25 @@ both values over those facts. The tree evaluator and the cell generator that tes
 (ruled #927). A source added to the corpus with a `tree` field is checked by the same test, so a new kind of rewrite
 lands with the entry that needs it.
 
+A lifted tree's verdict obeys the realm's null rule: `treeVerdict` in the cells fixture does not fire an `allow` whose
+evaluation read a `null`, and the cell generator builds the `null` cell of every nullable field it constrains, so the
+agreement test compares there (it did not before 2026-10-21).
+
 What it covers of MODEL-written policies is measured by two bench interviews, `policy-fetch` and `policy-sh`, scored by
 `tests/e2e/panel/policy-proposals.score.ts`: the needs, their hand-labelled calls and the figure are in
-[`policy-proposals.md`](../../tests/e2e/panel/policy-proposals.md). A model's answer that stays code is a lifter miss to
-read there before it is a rewrite to add.
+[`policy-proposals.md`](../../tests/e2e/panel/policy-proposals.md), section "Result" (63% of `fetch` answers lift, 45%
+of `sh`). A model's answer that stays code is a lifter miss to read there before it is a rewrite to add. What the `sh`
+answers taught, for anyone writing a policy or a lifter rewrite:
+
+- Compare argv ELEMENTS (`c.argv[2] === undefined`), not `c.argv.length` against a number, which the fragment does not
+  hold (arithmetic over lengths); four models wrote S1 or S3 that way.
+- A path prefix ends in `/` (`startsWith("/w/proj/")`, or `=== "/w/proj"` beside it): `startsWith("/w/proj")` admits
+  `/w/projevil` and stays code.
+- `repoConfigRunsCode: null` means the host could not tell. A policy reads it with `=== false`; anything else that
+  leans on it asks, by the rule above.
+- On `fetch`, prefer `host ===`, `host.endsWith(".x.org")` and `url.startsWith("https://…/")` to a regex: a regex with a
+  repeated group holding a quantifier or `|` is refused by its shape (`riskyRegex`), even one that cannot backtrack.
+  `propose_policy`'s details (`TOOL_DETAILS`) say this to the model.
 
 ## Not built yet
 

@@ -462,6 +462,14 @@ a mean of five hides the one that went wrong, which is usually the one worth rea
   finding rather than a bug — after the GPU time is spent. `tests/bench-specs.test.mjs` scores each spec's
   predicates against answers a model plausibly writes and against wrong ones; add yours. `pointer-ids`'
   first predicate looked for `502981` where the columns sum to `502980.90`, so nothing correct could match.
+- **Text the model reads during the measurement must not hold the answer.** Before a sweep, read every text the
+  arm adds (a tool description, `TOOL_DETAILS`, a rules paragraph, a worked example) against the task's own needs,
+  hosts, paths and vectors. If an example names a need's host or URL, or is a need's answer with a constant
+  swapped, the arm measures copying, not understanding. Use domains no task touches (`example.org`), and have a test
+  assert it (`tests/tool-details.test.mjs` checks `propose_policy`'s details against the fetch needs' hosts). Write
+  each example as the WHOLE idiom too: a fragment gets copied as-is. The 2026-10-21 `policy-fetch` rerun used
+  `docs.python.org` and `raw.githubusercontent.com/acme/`, F1's and F2's own answers, and a subdomain example
+  without the bare host, which three models copied into F4 and one into F1 (a fail-open). The sweep had to be rerun.
 - **`--dry` first for anything long.** 4 formats x 3 tasks x 2 models x 5 repeats is 120 runs and hours
   of GPU. Trim cells that do not discriminate rather than repeating them five times.
 

@@ -224,6 +224,17 @@ export const TOOL_DETAILS: Readonly<Record<string, string>> = {
         "suggest they want to see the page). Users rarely want raw text documents or JSON; they often do want " +
         "user-facing pages.",
     ].join("\n\n"),
+    // From the policy-writing interviews of 2026-10-21 (tests/e2e/panel/policy-proposals.md): the misses models made.
+    propose_policy: [
+        "`when` is one arrow `(c) => …` returning true or false. Reading a field `c` does not have, `==`, or a result " +
+        "that is not a boolean makes it broken, and it is refused before the person sees it.",
+        "Match by exact fields: one host `c.host === \"docs.example.org\"`; a site and its subdomains " +
+        "`c.host === \"example.org\" || c.host.endsWith(\".example.org\")`, the dot included (without it, " +
+        "evilexample.org matches); a path `c.url.startsWith(\"https://example.org/docs/\")`, ending in `/` (without it, " +
+        "/docs-evil matches).",
+        "Prefer those to a regex. A regex with a repeated group that holds a quantifier or `|`, such as `(-[a-z]+)*`, is " +
+        "refused as one that could backtrack, even where it would not; one without `^` matches inside other URLs.",
+    ].join("\n\n"),
     locate: [LOCATE_FULL.description, ...Object.entries(LOCATE_FULL.params).map(([k, v]) => `\`${k}\`: ${v}`)].join("\n\n"),
     python_exec: Object.entries(PYTHON_FULL).map(([k, v]) => `\`${k}\`: ${v}`).join("\n\n"),
 };

@@ -212,8 +212,8 @@ subsystem gets a doc and a row in the table above.
 harness or script gets `.claude/skills/<name>/SKILL.md`, its detail in e2e-harness.md or working-in-the-repo.md.
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
-least monthly (`docs/dev/prompt-review.md`). Last review: **2026-10-14** (round 3: `python_exec`'s option texts; then
-the shadow/iframe edge cases). A review commit carries `Prompt-Review: <date>`; update the date here with it.
+least monthly (`docs/dev/prompt-review.md`). Last review: **2026-10-21** (`propose_policy`'s details, measured on the
+policy-fetch interview). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
 **RULE — a complex analysis worth keeping goes in a notebook, not in a reply:** `notebooks/<topic>/`, run with
 `node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.

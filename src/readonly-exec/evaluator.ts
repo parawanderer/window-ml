@@ -318,7 +318,30 @@ export class Evaluator {
     private strict = new WeakSet<object>();
     /** Mark a policy facade object strict (see {@link strict}); only `evalPolicy` builds them. */
     markStrict<T extends object>(o: T): T { this.strict.add(o); return o; }
-    /** Refuse a read of a field a strict facade does not have. */
+    /** The first fact this evaluation read that is `null`, by its field name. A `null` fact is UNKNOWN, and an ALLOW
+     *  whose condition read one never fires (docs/spec/POLICIES.md, the tree's ruling of 2026-10-21); `evalPolicy` reads
+     *  this after the call, and sets it before the call for a list holding a `null` (see `buildFacade`). */
+    nullRead: string | undefined;
+    /** Strict facades, to whether one holds a `null` field anywhere beneath it (they are frozen, so it is fixed). */
+    private nullBeneath = new WeakMap<object, boolean>();
+    /** Note a `null` field a builtin or a constructor takes out of the call wholesale (`JSON.stringify(c)`,
+     *  `Object.values(c.program)`, `new Map(Object.entries(c))`), which reads every field without a member read. The
+     *  walk goes through what the script built (`JSON.stringify([c])`) to the facades inside it. */
+    private noteNulls(v: unknown): void {
+        if (this.realm !== "policy" || this.nullRead !== undefined || v === null || typeof v !== "object") return;
+        if (this.holdsNull(v, new Set())) this.nullRead = "a fact that is null";
+    }
+    /** Whether a strict facade at or beneath `v` holds a `null` field. */
+    private holdsNull(v: object, seen: Set<object>): boolean {
+        if (seen.has(v)) return false;
+        seen.add(v);
+        const strict = this.strict.has(v);
+        if (strict) { const got = this.nullBeneath.get(v); if (got !== undefined) return got; }
+        const out = Object.values(v).some((x) => x === null ? strict : typeof x === "object" && this.holdsNull(x, seen));
+        if (strict) this.nullBeneath.set(v, out);
+        return out;
+    }
+    /** Refuse a read of a field a strict facade does not have; note a read of one that is `null`. */
     private strictRead(obj: unknown, key: string): void {
         // A policy reading off null or undefined is a TypeError, as in JavaScript. A survey reads `undefined` there, a
         // forgiveness that in a policy turns `c.argv[9].length > 0` into a quiet `false`, and a `deny` into nothing.
@@ -327,9 +350,9 @@ export class Evaluator {
         // methods (read as values only to be called), and nothing else.
         if (this.realm === "policy" && typeof obj === "string" && !(key in Object(obj))) throw new NotInDialect(`a string has no field '${key}'`);
         if (obj === null || typeof obj !== "object" || !this.strict.has(obj)) return;
-        if (Object.prototype.hasOwnProperty.call(obj, key)) return;
-        if (Array.isArray(obj) && /^(0|[1-9]\d*)$/.test(key)) return;
-        throw new NotInDialect(`the call has no field '${key}'`);
+        const own = Object.prototype.hasOwnProperty.call(obj, key);
+        if (!own && !(Array.isArray(obj) && /^(0|[1-9]\d*)$/.test(key))) throw new NotInDialect(`the call has no field '${key}'`);
+        if (own && (obj as Record<string, unknown>)[key] === null && this.nullRead === undefined) this.nullRead = Array.isArray(obj) ? "a fact that is null" : key;
     }
 
     /** Members this run does not have, to why (ml-member-tools.ts): the host leaves them off the facade, and reaching
@@ -702,6 +725,7 @@ export class Evaluator {
                 // Object.prototype, so own()'s isWritableTarget check would skip it. (Assignment `o[k]=v`
                 // stays restricted to plain objects/arrays — the Assign case re-checks isWritableTarget.)
                 const args = yield* this.evalArgs(node.args, scope);
+                for (const a of args) this.noteNulls(a);
                 this.allocation(node.ctor, args);
                 if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
                 for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
@@ -945,6 +969,9 @@ export class Evaluator {
                 this.notIterating(target, "write into");
             }
             this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
+            // A builtin reads its arguments whole (`JSON.stringify(c)`, `Object.values(c.program)`): a `null` field it
+            // takes out of the call is a read of it. `Object.keys` reads names, never values.
+            if (!(obj === Object && (key === "keys" || key === "getOwnPropertyNames"))) for (const a of args) this.noteNulls(a);
             // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
             // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
             // them and cannot grow them. (Array methods fix their length when they start and would halt anyway; the
