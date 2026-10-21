@@ -33,7 +33,7 @@ const ALL = readdirSync(path.join(ROOT, "tests"))
 const GENRES = {
     panel: {
         about: "the sidebar UI, against a real jsdom document",
-        files: ["sidebar-agent-run.test.js", "sidebar-agent-step.test.js", "sidebar-answer.test.js",
+        files: ["sidebar-agent-run.test.js", "sidebar-agent-step.test.js", "sidebar-live-call.test.js", "sidebar-answer.test.js",
             "sidebar-approval.test.js", "sidebar-card.test.js", "sidebar-event-lane.test.js",
             "sidebar-export.test.js", "sidebar-output.test.js", "sidebar-resource.test.js",
             "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",

@@ -1,0 +1,80 @@
+// sidebar-live-call.test.js — a tool call the model is still WRITING, as the panel draws it: the tool's name, its code
+// growing with a caret where it grows, the tree of any other call's arguments, and the step that replaces it.
+
+const { test, after } = require("node:test");
+const assert = require("node:assert");
+const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
+const { agentStart, agentStep } = require("./sidebar-helpers");
+
+after(closeSidebarWorlds);
+
+/** An `agent-stream` for run `id` carrying `calls`. */
+const live = (id, calls, extra = {}) => ({ kind: "agent-stream", id, ts: Date.now(), save: false, session: { hash: id, turn: 1 }, step: 1, localStep: 1, calls, ...extra });
+const call = (name, args) => ({ index: 0, name, args, chars: args.length });
+
+// --- a call being written: drawn as the step it will become, growing ---
+
+test("python_exec being written shows its code so far with a caret, then grows, then the step replaces it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lc1", "plot it"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(live("lc1", [call("python_exec", '{"code": "import math\\nprint(math.pi')], { reasoning: "plot it" }));
+    await w.tick();
+    const lc = () => w.shadow.querySelector(".live-call");
+    assert.ok(lc(), "the call is drawn while it is written");
+    assert.match(lc().querySelector(".tool-name").textContent, /^python_exec$/);
+    assert.match(lc().querySelector(".astep-preview").textContent, /writing… \d+ chars/);
+    assert.match(lc().querySelector(".live-call-code").textContent, /import math\s*print\(math\.pi/, "the code, decoded, not the JSON");
+    assert.ok(lc().querySelector(".live-call-code.writing"), "the caret is on while the code arrives");
+    assert.ok(lc().closest(".aturn")?.querySelector(".astep-thought, .thought, .aturn-head"), "inside the turn, under its pill and thinking");
+
+    await w.dispatch(live("lc1", [call("python_exec", '{"code": "import math\\nprint(math.pi)\\nprint(2')]));
+    await w.tick();
+    assert.match(lc().querySelector(".live-call-code").textContent, /print\(2/, "it grows in place");
+
+    await w.dispatch(agentStep("lc1", 1, { seq: 1, pending: true, tool: "python_exec", arguments: { code: "import math\nprint(math.pi)\nprint(2)" } }));
+    await w.tick();
+    assert.equal(lc(), null, "the parsed call's step takes its place");
+    assert.ok(w.shadow.querySelector(".astep.tool"), "…which is drawn");
+});
+
+test("a call that is not a code tool is the tree of its arguments so far; a whole one has no caret", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lc2", "fetch it"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(live("lc2", [call("fetch_url", '{"url": "https://example.com/a')]));
+    await w.tick();
+    const lc = w.shadow.querySelector(".live-call");
+    assert.match(lc.querySelector(".jt-args").textContent, /https:\/\/example\.com\/a/, "the half-written string is shown");
+    assert.ok(lc.querySelector(".live-caret"), "with the caret after it");
+    await w.dispatch(live("lc2", [call("fetch_url", '{"url": "https://example.com/a"}')]));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".live-call .live-caret"), null, "the call is complete: nothing is arriving");
+});
+
+test("answer's Markdown streams as Markdown, its open formatting closed", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lc3", "summarise"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(live("lc3", [call("answer", '{"text": "## Fares\\n\\nThe **cheapest')]));
+    await w.tick();
+    const md = w.shadow.querySelector(".live-call .live-call-md.writing");
+    assert.ok(md, "drawn as Markdown, with the caret");
+    assert.equal(md.querySelector("h2")?.textContent, "Fares");
+    assert.equal(md.querySelector("strong")?.textContent, "cheapest", "the open ** is closed for it, not shown as asterisks");
+});
+
+test("a preview a hub cut to its size says the call is being written and how far it got", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lc4", "big"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(live("lc4", [{ index: 0, name: "python_exec", chars: 48000 }]));
+    await w.tick();
+    const lc = w.shadow.querySelector(".live-call");
+    assert.match(lc.querySelector(".astep-preview").textContent, /48\.0k chars/);
+    assert.match(lc.querySelector(".astep-body").textContent, /once the call is complete/);
+});

@@ -40,6 +40,7 @@ import { deepestUserLine } from "../../python/py-format";
 import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
 import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
+import { LiveCall } from "./live-call";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
@@ -1071,14 +1072,17 @@ export function AgentRunView({ s }: { s: Session }) {
 // `ReplyBubble` in streaming mode (model chip + content + a live pulse). Cleared the instant the step's real
 // events land (the reducer nulls liveStream on agent-step/agent-result).
 export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; s: Session }) {
-    if (!ls.reasoning && !ls.content) return null;
+    if (!ls.reasoning && !ls.content && !ls.calls?.length) return null;
     if (ls.content) noteLiveAnswer(s.hash);
     return (
         <>
-            {ls.reasoning
+            {/* The turn as it will land: the pill, the thinking, then the calls being written (`LiveCall`), each in the
+                place its step takes once the call is parsed. */}
+            {ls.reasoning || ls.calls?.length
                 ? <div class="aturn">
                     <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>
-                    <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live />
+                    {ls.reasoning ? <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live /> : null}
+                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} />)}
                   </div>
                 : null}
             {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}

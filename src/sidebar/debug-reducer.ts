@@ -364,7 +364,7 @@ export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): v
     if (ev.kind === "agent-stream") {
         const s = sessionMap.get(key);
         if (!s) return;
-        s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content, ...(ev.tokens != null ? { tokens: ev.tokens } : {}), ...(ev.reasoningTokens != null ? { reasoningTokens: ev.reasoningTokens } : {}), ...(ev.elided ? { elided: ev.elided } : {}) };
+        s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content, ...(ev.tokens != null ? { tokens: ev.tokens } : {}), ...(ev.reasoningTokens != null ? { reasoningTokens: ev.reasoningTokens } : {}), ...(ev.elided ? { elided: ev.elided } : {}), ...(ev.calls?.length ? { calls: ev.calls } : {}) };
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
         return;
     }
