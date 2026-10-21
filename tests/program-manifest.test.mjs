@@ -299,6 +299,7 @@ test("write-names on a path-valued flag or find primary lands on the value, not 
     assert.equal(f.described, true);
     assert.ok(!keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/o")), "primary: no write-names on the operand");
     assert.ok(keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/g:")), "primary: write-names on the value");
+});
 
 // --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
 
