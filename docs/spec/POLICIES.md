@@ -243,7 +243,8 @@ let through what the person refused, and the upgrade gets a fixture of stored co
 [`LANE_11_POLICY_TREE_DESIGN.md`](../plan/repl/LANE_11_POLICY_TREE_DESIGN.md), #920, and the ruling PR on it). The
 measurement the note made is over 231 policy sources, none written by a model or by a person using the product (205 from
 tests, 22 from docs, 4 built in), so its 92% is a figure over what this repository's authors wrote to exercise the
-machinery, and 21 of the 38 real-consumer policies are the one atom `c.host === X`. That number does not decide whether the
+machinery, and 21 of the 39 real-consumer policies are the one atom `c.host === X` (38 in the note; the corpus PR, #925,
+found one source that also occurs over `fetch`). That number does not decide whether the
 tree becomes the default; the one that does is measured on policies MODELS PROPOSE, which do not exist yet. So the order
 is: the LIFTER first (a syntactic recogniser over the dialect's AST that turns a source which fits the fragment into a
 tree, small, the first code either way), then a bench task per consumer that asks the panel to propose a policy for a
@@ -252,7 +253,11 @@ policy as TEXT in the model's answer, for both consumers, so it needs no tool an
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and
 its prerequisite is the shell side's own probes (programs, paths and flags the run never used) before any such card can
-lead with a measured breadth. Nothing else of the tree is built before the number exists. What the note fixed is ruled as it
+lead with a measured breadth. Nothing else of the tree is built before the number exists, in `src/`: the lifter's
+agreement test may hold a tree evaluator and a cell generator under `tests/`, imported by nothing in `src/`, and the
+ORACLE in that test is the ORIGINAL source run through the real policy realm, never the test evaluator, so a tree the
+test accepts is one that agrees with the code a person could read (ruled 2026-10-21, lane 11's question; the evaluator
+moves to `src/` only with the tree itself, after the number). What the note fixed is ruled as it
 stands: the TREE is what is stored, the sentence and the predicate are both rendered from it and never parsed back, the
 judge runs the rendered predicate through the one evaluator as it runs every policy, and a model is never asked to emit
 tree JSON (it writes JS, and the lifter lifts what fits; what does not lift stays code with a MEASURED breadth). A
