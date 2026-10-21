@@ -18,6 +18,16 @@ reaches a store, and no tool is called.
 Per answer: **extracted** (a fenced block holding an arrow), **lifted**, **right** (the source, run in the real policy
 realm, gives the labelled answer on every vector), **broken** (the realm refused it on some vector: an absent field,
 `==`, a non-boolean). Lifted and right are independent: a lifted policy can be wrong, and a right one can stay code.
+The report's head also gives, per consumer, right among the lifted against right among those that stayed code: if the
+fragment selects for correct policies the tree is worth more than its coverage says, and less if the opposite. A turn's
+badge on the bench page is green when the answer is extracted; lifting is the measurement, never the model's failure.
+
+A wrong answer lists each vector as "misses" (the policy does not hold where it must) or "matches" (it holds where it
+must not), and what that does in the product depends on the effect. On an ALLOW, "matches" runs a call without asking:
+the one fail-open, and the finding to lead with; "misses" only asks the person. On a DENY, "misses" asks the person
+(fail-safe) and "matches" refuses a harmless call. "(no manifest)" in a vector's name marks a call no manifest describes
+(`rm`, or a git subcommand git's manifest lacks), whose effects are `unknown`: only an answer naming the program in
+`argv` gets it right.
 
 | need | consumer | effect | what it asks |
 | --- | --- | --- | --- |
@@ -25,7 +35,7 @@ realm, gives the labelled answer on every vector), **broken** (the realm refused
 | F2 | fetch | allow | everything under `https://raw.githubusercontent.com/acme/` |
 | F3 | fetch | allow | Wikipedia in every language |
 | F4 | fetch | deny | pastebin.com and its subdomains |
-| S1 | sh | allow | `npm test` exactly, in the workspace |
+| S1 | sh | allow | `npm test` exactly, anywhere inside the workspace |
 | S2 | sh | allow | any call that only reads non-secret files in the workspace |
 | S3 | sh | allow | read-only git, never where `repoConfigRunsCode` is not false |
 | S4 | sh | deny | any call that deletes or renames |

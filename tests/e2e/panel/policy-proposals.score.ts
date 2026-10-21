@@ -121,7 +121,7 @@ const NOT_A_REPO = { repoConfigRunsCode: null };
 export const SH_NEEDS: Need[] = [
     {
         id: "S1", effect: "allow",
-        text: "Let the run execute the project's tests, `npm test` exactly (no other arguments), in the workspace /w/proj, without asking.",
+        text: "Let the run execute the project's tests, `npm test` exactly (no other arguments), anywhere inside the workspace /w/proj (a subdirectory counts), without asking.",
         vectors: [
             sh("npm test", true, call(["npm", "test"])),
             sh("npm test in /w/proj/packages/api", true, call(["npm", "test"], [], { cwd: { path: `${ROOT}/packages/api`, inRoot: true } })),
@@ -175,12 +175,12 @@ export const SH_NEEDS: Need[] = [
         id: "S4", effect: "deny",
         text: "Refuse, without asking, any call that deletes or renames a file or directory. Leave every other call alone.",
         vectors: [
-            sh("rm a.txt", true, call(["rm", "a.txt"], [at(1, "a.txt")])),
-            sh("rm -rf src", true, call(["rm", "-rf", "src"], [at(2, "src")])),
-            sh("mv a.txt b.txt", true, call(["mv", "a.txt", "b.txt"], [at(1, "a.txt"), at(2, "b.txt", { exists: false })])),
+            sh("rm a.txt (no manifest)", true, call(["rm", "a.txt"], [at(1, "a.txt")])),
+            sh("rm -rf src (no manifest)", true, call(["rm", "-rf", "src"], [at(2, "src")])),
+            sh("mv a.txt b.txt (no manifest)", true, call(["mv", "a.txt", "b.txt"], [at(1, "a.txt"), at(2, "b.txt", { exists: false })])),
             sh("find src -name '*.tmp' -delete", true, call(["find", "src", "-name", "*.tmp", "-delete"], [at(1, "src", { containsSecret: false })])),
-            sh("git rm a.txt", true, call(["git", "rm", "a.txt"], [at(2, "a.txt")])),
-            sh("git mv a.txt b.txt", true, call(["git", "mv", "a.txt", "b.txt"], [at(2, "a.txt"), at(3, "b.txt", { exists: false })])),
+            sh("git rm a.txt (no manifest)", true, call(["git", "rm", "a.txt"], [at(2, "a.txt")])),
+            sh("git mv a.txt b.txt (no manifest)", true, call(["git", "mv", "a.txt", "b.txt"], [at(2, "a.txt"), at(3, "b.txt", { exists: false })])),
             sh("cat a.txt", false, call(["cat", "a.txt"], [at(1, "a.txt")])),
             sh("ls src", false, call(["ls", "src"], [at(1, "src", { containsSecret: false })])),
             sh("find src -name '*.tmp'", false, call(["find", "src", "-name", "*.tmp"], [at(1, "src", { containsSecret: false })])),
@@ -263,19 +263,24 @@ export function report(sweep: string): string {
     const rows: string[] = [];
     const misses = new Map<string, string[]>();
     let ext = 0, lift = 0;
+    const head: string[] = [];
     for (const consumer of ["fetch", "sh"] as const) {
+        const tally = { lifted: [0, 0], code: [0, 0] };
         rows.push(`\n### ${consumer}\n`, "| model | extracted | lifted | right | broken | not extracted |", "| --- | --- | --- | --- | --- | --- |");
         for (const run of runsOf(sweep).filter((r) => r.task === `policy-${consumer}`).sort((a, b) => a.model.localeCompare(b.model))) {
             const scored = NEEDS[consumer].map((need, i) => scoreProposal(consumer, need, run.answers.get(i + 1) ?? ""));
             const got = scored.filter((s) => s.src != null);
             ext += got.length; lift += got.filter((s) => s.lifted).length;
+            for (const s of got) { const t = s.lifted ? tally.lifted : tally.code; t[0] += s.right ? 1 : 0; t[1]++; }
             for (const s of got.filter((x) => !x.lifted)) misses.set(s.why!, [...(misses.get(s.why!) ?? []), `${run.model} ${s.need}`]);
             const ids = (f: (s: Scored) => boolean) => scored.filter(f).map((s) => s.need).join(" ") || "-";
             rows.push(`| ${run.model} | ${got.length} | ${got.filter((s) => s.lifted).length} | ${got.filter((s) => s.right).length} | ${ids((s) => s.broken.length > 0)} | ${ids((s) => s.src == null)} |`);
         }
+        const pc = ([r, n]: number[]) => `${r}/${n}${n ? ` (${Math.round((100 * r) / n)}%)` : ""}`;
+        head.push(`- ${consumer}: lifted ${tally.lifted[1]} of ${tally.lifted[1] + tally.code[1]}; right among lifted ${pc(tally.lifted)}, right among those that stayed code ${pc(tally.code)}`);
     }
     const whys = [...misses].sort((a, b) => b[1].length - a[1].length).map(([why, who]) => `- ${why} (${who.length}): ${who.join(", ")}`);
-    return [`**Covered: ${lift} of ${ext} extracted proposals lift (${ext ? Math.round((100 * lift) / ext) : 0}%).**`, ...rows, "\n### Why a proposal stayed code\n", ...(whys.length ? whys : ["- none"])].join("\n");
+    return [`**Covered: ${lift} of ${ext} extracted proposals lift (${ext ? Math.round((100 * lift) / ext) : 0}%).**`, "", ...head, ...rows, "\n### Why a proposal stayed code\n", ...(whys.length ? whys : ["- none"])].join("\n");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

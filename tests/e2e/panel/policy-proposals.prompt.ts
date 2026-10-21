@@ -2,7 +2,6 @@
 
 import type { AskDef, InterviewDef } from "../bench/spec";
 import { NEEDS, extract, type Need } from "./policy-proposals.score";
-import { liftPolicy } from "../../../src/readonly-exec/policy-lift";
 
 /** The rules of the realm every policy runs in (docs/spec/POLICIES.md), in the words a model needs. */
 const RULES = `A policy is a read-only JS function over ONE call, \`(c) => …\`, returning true when it applies and false when it does not. It runs in a restricted interpreter: \`==\` and \`!=\` are refused (use \`===\`/\`!==\`), reading a field \`c\` does not have is an error (the policy is then BROKEN and ignored, so a typo never applies), and a result that is not a boolean is broken too. String methods, array methods, regex literals and \`const\` lists before the function work.`;
@@ -39,19 +38,17 @@ const FORMAT = "Answer with ONE fenced code block holding only the function `(c)
 /** The words of one need's ask. */
 const needText = (n: Need) => `Need ${n.id} (a${n.effect === "allow" ? "n allow" : " deny"} policy: true means the call is ${n.effect === "allow" ? "run without asking" : "refused without asking"}): ${n.text}`;
 
-/** The check on one turn: the answer gives a source, and the lifter turns it into a tree. THE number is these over extracted. */
-const lifts = (consumer: "fetch" | "sh") => (t: { answer: string }) => {
-    const src = extract(t.answer);
-    return src != null && !!liftPolicy(src, consumer).tree;
-};
+/** The check on one turn: the model did what was asked, one block holding a function. Whether it lifts is the
+ *  MEASUREMENT, which the scorer reports; a lifter miss is not the model's failure, so it never turns a badge red. */
+const extracted = (t: { answer: string }) => extract(t.answer) != null;
 
 /** The interview for one consumer: the facts and the first need as the task, one need per later turn. */
 export function policyInterview(consumer: "fetch" | "sh"): Omit<InterviewDef, "kind"> {
     const needs = NEEDS[consumer];
     const ask = (n: Need, lead = ""): AskDef => ({
         ask: `${lead}${needText(n)}\n\n${FORMAT}`,
-        expect: lifts(consumer),
-        why: "one (c) => … block that the policy tree's lifter turns into a tree",
+        expect: extracted,
+        why: "one fenced (c) => … block (whether it lifts is scored by policy-proposals.score.ts)",
     });
     return {
         about: `Models write ${consumer === "fetch" ? "fetch_url" : "ml.sh"} policies as text for ${needs.length} described needs; policy-proposals.score.ts measures the fraction the policy tree's lifter covers (lifted / extracted), and which are right on hand-labelled calls. Nothing runs.`,

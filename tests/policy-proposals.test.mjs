@@ -4,7 +4,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { NEEDS, extract, scoreProposal } = await import("./e2e/panel/policy-proposals.score.ts");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const { NEEDS, extract, scoreProposal, report } = await import("./e2e/panel/policy-proposals.score.ts");
 
 /** Per need: a careful answer (right on every vector, and lifts) and sloppy ones (each wrong on some vector). */
 const ANSWERS = {
@@ -94,4 +98,23 @@ test("a source the realm refuses is broken, not wrong: an absent field and == ar
     const need = NEEDS.fetch[0];
     assert.ok(scoreProposal("fetch", need, fence("(c) => c.hostname === \"docs.python.org\"")).broken.length > 0);
     assert.ok(scoreProposal("fetch", need, fence("(c) => c.host == \"docs.python.org\"")).broken.length > 0);
+});
+
+// --- a sweep, tabulated ---
+
+test("the report reads a sweep's turns and gives the figure, and right among lifted against right among code", () => {
+    const sweep = fs.mkdtempSync(path.join(os.tmpdir(), "policy-sweep-"));
+    try {
+        const outbox = path.join(sweep, "policy-fetch", "model-m", "r0", "outbox");
+        fs.mkdirSync(outbox, { recursive: true });
+        fs.writeFileSync(path.join(sweep, "policy-fetch", "model-m", "r0", "cell.json"), JSON.stringify({ combo: { model: "m" } }));
+        fs.writeFileSync(path.join(outbox, "turn-1.md"), fence(ANSWERS.F1.good));                                  // lifted, right
+        fs.writeFileSync(path.join(outbox, "turn-2.md"), fence('(c) => c.url.includes("raw.githubusercontent.com/acme/")')); // code, wrong
+        fs.writeFileSync(path.join(outbox, "turn-3.md"), fence('(c) => /^[a-z-]+\\.wikipedia\\.org$/.test(c.host)'));  // code, right
+        fs.writeFileSync(path.join(outbox, "turn-4.md"), "No.");                                                     // not extracted
+        const r = report(sweep);
+        assert.match(r, /Covered: 1 of 3 extracted proposals lift \(33%\)/);
+        assert.match(r, /fetch: lifted 1 of 3; right among lifted 1\/1 \(100%\), right among those that stayed code 1\/2 \(50%\)/);
+        assert.match(r, /\| m \| 3 \| 1 \| 2 \| - \| F4 \|/);
+    } finally { fs.rmSync(sweep, { recursive: true, force: true }); }
 });
