@@ -29,6 +29,16 @@ lines). The red team found it and does not build or review the defence; a differ
 The verify-on-return cost, natively, on the trivial-run and the many-approved-calls shapes, against 7c40b038; the
 numbers go in the PR body and into the `memory` row's sentence. No "free" without them.
 
+Added 2026-10-21 (Shane, after #9 opened with the native table): the wasm32 measurement that comes with the re-pin is a
+NOTEBOOK, `notebooks/python-dialect/verify-cost/`, not a PR body. The reason is the trade #9 makes: the full probe (three
+allocations per approved C call, 1.26x on a native `len()` loop) over the changed-top-only probe (1.13x) that is blind
+to a hook restarted with an identical top. Under wasm32 one indirect call is already a third of a tight loop (the
+janitor, mail `20261021-1138Z`), so the trade may read differently there, and revisiting it needs the raw rounds. Shape:
+lane 3's `wrapper-bench/` driver (fresh process per core per round, order rotated, 8 or more interleaved rounds, a
+same-core A/A control since one round's noise floor is 1.29x), cores 7c40b038 and the #9 release, the four shapes of
+#9's table plus the changed-top-only variant if it is cheap to build, raw JSON committed, the native table of #9's body
+copied in as the first cell. The row's wasm32 sentence quotes the notebook. `docs/dev/notebooks.md` for the form.
+
 ## Rules that bind
 
 Narrow beats wide; the cap errs toward refusing. Every change of the row's wording is the coordinator's, same hour as
