@@ -35,8 +35,8 @@ that work on the same problem by a different mechanism; those rows say what the 
 | Where a model is loaded and how long it stays loaded is decided by the serving layer, learned from how models actually get used, with no knobs for the caller | in the serving layer; the routing a mixture of experts actually does is recorded in the engine | the serving layer |
 | The client tells the serving layer who is waiting on each request and which requests belong together | sent and recorded, as data for the placement and keep-alive predictor | the serving layer |
 | Each generation's decode speed is predicted and the prediction corrected from what is measured | in the serving layer | the serving layer |
-| Read-only work runs without asking me; everything else asks. The permission is whether the script is written in a dialect of the language that can only read, always halts, and leaves nothing behind when it refuses. Where the proof lives depends on the runtime: in JavaScript it is an interpreter beside V8, which cannot be touched; in Python it goes into the interpreter itself, as a restricted mode of CPython whose gates sit in the object layer, with the build's specialization switch part of the argument | [the JavaScript dialect](docs/dev/readonly-exec.md), in daily use; the Python one as a CPython fork that runs natively and under Pyodide, whose first slice costs about 6% on 684 real cells and 1.66x on pure-Python benchmarks, measured, and which now bounds each cell's memory on both platforms (about 1.3x on an allocation-heavy cell under wasm32); the fork's Pyodide build is being pinned as a release of the fork, in review. In the extension, `python_exec`'s `mode` is gone: a cell reaches `ml` over the same wire as JavaScript, matplotlib figures come back as images, and until the fork's membership predicate is wired in every Python cell asks ([notes](docs/spec/PYTHON_DIALECT.md)) | the agent; for Python, the language runtime |
-| A standing permission is a function over a call's resolved facts, written in that same dialect so that it halts and can only answer. My rules and the built-in free tier are the same kind of object, listed on one page, and nothing widens a grant from a button on a card | the policy realm of the dialect, a store with global and run scopes, a policy page, and three consumers: remembered URLs, `ml.sh` calls, and a tool by which the model proposes a run policy that only the person's answer on a card adds; a call that asks says why when the policy that covered it is gone. Not built: the derived breadth of a typed-node policy, and folding the older grant stores into the one page ([notes](docs/spec/POLICIES.md)) | the agent |
+| Read-only work runs without asking me; everything else asks. The permission is whether the script is written in a dialect of the language that can only read, always halts, and leaves nothing behind when it refuses. Where the proof lives depends on the runtime: in JavaScript it is an interpreter beside V8, which cannot be touched; in Python it goes into the interpreter itself, as a restricted mode of CPython whose gates sit in the object layer, with the build's specialization switch part of the argument | [the JavaScript dialect](docs/dev/readonly-exec.md), in daily use; the Python one as a CPython fork that runs natively and under Pyodide, whose first slice costs about 6% on 684 real cells and 1.66x on pure-Python benchmarks, measured, and which bounds each cell's memory on both platforms with a cap that fails closed: about 4% at the upper quartile over 1,702 real cells, 1.36x only on a bare loop of approved C calls; the fork's Pyodide build is pinned as a release of the fork, with the fail-closed release in review. In the extension, `python_exec`'s `mode` is gone: a cell reaches `ml` over the same wire as JavaScript, matplotlib figures come back as images, and a cell inside the dialect runs unasked under the fork's gate while every other cell asks ([notes](docs/spec/PYTHON_DIALECT.md)) | the agent; for Python, the language runtime |
+| A standing permission is a function over a call's resolved facts, written in that same dialect so that it halts and can only answer. My rules and the built-in free tier are the same kind of object, listed on one page, and nothing widens a grant from a button on a card | the policy realm of the dialect, a store with global and run scopes, a policy page, and three consumers: remembered URLs, `ml.sh` calls, and a tool by which the model proposes a run policy that only the person's answer on a card adds; a call that asks says why when the policy that covered it is gone. A lifter turns a policy that fits a typed fragment into a tree, and covers 63% of the policies models write for `fetch` and 45% for `sh` (15 models), below what was predicted; not built: the tree as what a card leads with, and folding the older grant stores into the one page ([notes](docs/spec/POLICIES.md)) | the agent |
 | What a call can affect is one algebra of (operation, resource) pairs. A library, a program and a fetch describe themselves in it, and "runs without asking" is a subset test against what the sandbox at that placement bounds | the algebra as code; manifests for nine programs, with a root's top-level names outside the free tier and `write-names` a manifest word; under the host's sandbox the judged claims are sent as the envelope; the same corpus deciding which Python the dialect admits ([notes](docs/spec/EFFECTS.md)) | the agent, and the manifests that ship with tools |
 | Processes are a capability of the one executor, reached as `ml.sh` under the same rules, never a second world the model has to carry data between. The host is a separate program the browser attaches to, built with no relay code in it, and under its sandbox a manifest's description of a program is enforced as the envelope the program runs in, so a wrong manifest fails the command rather than granting an effect | [the host](https://github.com/parawanderer/window-ml-host), v0.5.0, is reachable as `ml.sh` from JavaScript and from a full Python cell; a call a policy covers runs, a call whose effects stay inside what the sandbox bounds plus reads in its roots runs by default, and anything else asks on the running step, with a card showing the program's facts, never the script. Each call starts under the envelope its judged facts derive, enforced by bubblewrap and Landlock on Linux and by Seatbelt on macOS, with the root's top-level names and `.git` hooks and config held read-only from one list; every call reports what changed among those names, and the result says which envelope the host applied. The hub transport is built behind an optional feature the default build does not compile, and no client drives it yet ([notes](docs/spec/SHELL.md)) | the host, on the person's machine |
 | An agent uses my credentials without ever being able to read them: it holds a handle, and the secret stays in the client's background worker. Holding a handle while a broker keeps the secret is an old pattern in security; I have not found it done for a browser agent | not started; its place among policies, the effect algebra and processes is now written down ([notes](docs/spec/SECRET_HANDLES.md)) | the client's background worker, and the host for the secrets processes need |
@@ -89,6 +89,63 @@ job.
 
 The modified tools are not kept in step with their upstreams, and nothing is written up in them: notes and findings
 land here, in `docs/`.
+
+<details>
+<summary>The pieces, what each one is asking, and what is measured there (open to see the map)</summary>
+
+Every node is a question. An edge is how one piece reaches another. The line under each node is what has been
+measured or tested there so far; a piece with neither would not be on the map.
+
+```mermaid
+flowchart TB
+  subgraph client["Client: the browser extension"]
+    ml["window.ml on a page:<br/>can calling a model be as boring as fetch?"]
+    js["JS read-only dialect:<br/>can a subset be proven to only read and halt?"]
+    py["Python dialect (CPython fork):<br/>can the proof live in the interpreter itself?"]
+    ptr["Pointers and typed tables:<br/>can a context refer to a result instead of holding it?"]
+    pol["Policies + the effect algebra:<br/>is a standing permission a function over resolved facts?"]
+    sb["Sidebar, exports, run log:<br/>can you see exactly what the model saw?"]
+  end
+  host["Host (window-ml-host):<br/>can a manifest be enforced as the envelope a program runs in?"]
+  hub["Relay (window-ml-hub) + phone:<br/>can a relay carry a session it cannot read or drive?"]
+  subgraph stack["The serving column"]
+    owui["Chat server (OpenWebUI fork):<br/>the route the client needs"]
+    oll["Serving layer (Ollama fork):<br/>can placement and keep-alive be learned from use?"]
+    lcpp["Engine (llama.cpp fork):<br/>what the serving layer cannot see"]
+  end
+  bench["Bench + notebooks:<br/>which of the above held up, by number"]
+  frames["Context from chosen frames:<br/>which turns did a conclusion rest on?"]:::idea
+  arith["Exact arithmetic in a thinking block:<br/>can the decode loop splice a computed result?"]:::idea
+  sec["Secret handles:<br/>can an agent use a credential it can never read?"]:::idea
+  classDef idea stroke-dasharray: 5 5
+  ml --> js & py & ptr & sb
+  js --> pol
+  py --> pol
+  pol -- "judges ml.sh" --> host
+  pol -- "judges fetch" --> ml
+  ml --> owui --> oll --> lcpp
+  hub -. "sealed sessions" .-> ml
+  oll -- "telemetry" --> hub
+  bench --> js & py & pol & oll
+  ptr -.-> frames
+  lcpp -.-> arith
+  pol -.-> sec
+  host -.-> sec
+```
+
+- **window.ml**: the API, site access and the origin gate; `tests/redteam.test.js` and the site-access e2e are what a hostile page must not get.
+- **JS dialect**: in daily use; the whitelist, halting and the inert reference are the adversarial tests under `test:core` and `test:security`.
+- **Python dialect**: the fork's first slice costs about 6% on 684 real cells; the memory cap about 4% at the upper quartile on 1,702 real cells, 1.36x only on a bare loop of approved C calls (`notebooks/python-dialect/verify-cost/`, landing with the re-pin); `test:python` runs real CPython; the fork's own `test_restricted` runs on the fork.
+- **Pointers**: one pilot of the identifier's form (2026-09-03, one model, 8 runs): the model retyped the data instead of dereferencing it in every run of both arms, so the form made no difference and the full sweep is not run; typed table pointers both runtimes read; collapse not started.
+- **Policies + effects**: the lifter covers 63% of model-written fetch policies and 45% of sh ones (15 models); the effect algebra's subset test and nine program manifests; `test:security` holds the chokepoints.
+- **Sidebar and exports**: the run log carries what the model saw; `test:panel` and `test:ext` draw it, the e2e demos narrate it.
+- **Host**: v0.5.0; every call reports what changed among a root's protected names; ownership of every spawned process up to three named residuals; the memory bound is next.
+- **Relay + phone**: sealed traffic and a box's telemetry republished; nothing drives an agent through it yet; `test:mobile` and `test:chat` cover the phone app and the chat page.
+- **Serving column**: decode speed predicted per generation with a median error of 1.4% over 7,332 recorded generations on 13 models (75% within 10%, the 90th percentile 43%); the correction is what does it, uncorrected predictions run 74% too fast; placement and keep-alive prediction not measured yet; the engine's routing record of a mixture of experts not measured yet.
+- **Dashed nodes**: posed, nothing measured. Chosen frames and secret handles have a spec each (`AGENT_COMPACTION.md`, `SECRET_HANDLES.md`); exact arithmetic has none yet.
+- **Bench + notebooks**: 2,635 scored runs over 21 models, 25 tasks and 28 sweeps in 13 days; $6.54 of cloud spend on the calls that recorded a price, an undercount, and 5,414 calls on local models; every number above has a notebook under `notebooks/` with its raw rounds; `test:timings` keeps the harness honest.
+
+</details>
 
 ## About the code
 
