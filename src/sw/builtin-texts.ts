@@ -63,7 +63,15 @@ export function withOurTexts(tools: StartRunPayload["tools"], texts: Map<string,
     });
 }
 
-/** A schema with each `description` taken from the same place in `ours`, and dropped where `ours` has none. */
+/** The schema keywords whose value maps NAMES to schemas: a key inside one is a parameter's name, never a keyword. */
+const NAME_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+
+/**
+ * A schema with each `description` taken from the same place in `ours`, and dropped where `ours` has none.
+ *
+ * A key inside `properties` is a NAME, and `locate`'s parameter is named `description` (every tool's `title` too):
+ * reading those as the keyword deleted the parameter and left `required` naming it, which Gemini refuses with a 400.
+ */
 function describeAs(page: unknown, ours: unknown): unknown {
     if (Array.isArray(page)) return page.map((v, i) => describeAs(v, Array.isArray(ours) ? ours[i] : undefined));
     if (!page || typeof page !== "object") return page;
@@ -71,9 +79,15 @@ function describeAs(page: unknown, ours: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(page as Record<string, unknown>)) {
         if (k === "description" || k === "title") { if (typeof o[k] === "string") out[k] = o[k]; continue; }
-        out[k] = describeAs(v, o[k]);
+        out[k] = NAME_MAPS.has(k) && v && typeof v === "object" && !Array.isArray(v) ? describeEach(v as Record<string, unknown>, o[k]) : describeAs(v, o[k]);
     }
     return out;
+}
+
+/** A name → schema map with each schema described as `describeAs` does, every name kept whatever it is. */
+function describeEach(page: Record<string, unknown>, ours: unknown): Record<string, unknown> {
+    const o = ours && typeof ours === "object" && !Array.isArray(ours) ? ours as Record<string, unknown> : {};
+    return Object.fromEntries(Object.entries(page).map(([name, schema]) => [name, describeAs(schema, o[name])]));
 }
 
 /**
