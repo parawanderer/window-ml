@@ -16,3 +16,5 @@ beside it (`make-<name>.py`, the file to edit) and its pinned inputs under `data
   order alternating: a 1M-tuple plain loop before any restricted run, after one trivial run, metered, and after the
   metered runs (`after2`). `results.json` is the 12-round run of 2026-10-21 (`main` = fork 77376876, `perrun` = the
   rebased per-run branch); the table is in `docs/plan/repl/LANE_3_RESULT.md`. Not a notebook yet: no generator.
+- [verify-cost/](verify-cost/): the memory cap's verify-on-return (fork #9), native and wasm32, full probe against the
+  changed-top-only variant, with an A/A control (lane 12). See its README.

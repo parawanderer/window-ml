@@ -33,6 +33,10 @@ window-ml pins and verifies, as `scripts/fetch-hub.mjs` does for the hub binary.
   symptom: a 15 s build that holds none of the branch's code). The recipe stamps the patch set's hash
   (`cpython/.ml-patchset`) and, when it changes, clears the patched source, the installed stdlib and `libpython` first:
   a new commit costs about 5 minutes, a rerun of the same one about 15 s.
+- **A link failure on undefined `_Py_LibHacl_*`** means parallel make generated CPython's Makefile before
+  `Modules/Setup.local`'s rules were in it, so `libpython` was archived without the HACL hash builtins. Touch
+  `cpython/build/Python-<ver>/Modules/Setup.local`, delete `libpython3.*.a` (build and install trees) and
+  `cpython/.installed-pyodide`, then rerun (lane 12's release build of `0169c4fd`).
 - **The core's `restricted.py` is checked twice.** The recipe fails the build unless the zip's file is the pinned
   commit's, byte for byte, and `cpython.restrictedPySha256` in the pin must be that file's hash;
   `tests/python-dialect-vectors-wasm.test.mjs` fails a shipped core whose file does not hash to it. The first `77376876`

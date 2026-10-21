@@ -8,7 +8,7 @@
     "repo": "https://github.com/parawanderer/cpython",
     "base": "v3.14.2",
     "branch": "ml/restricted-mode",
-    "commit": "7c40b038fd95a2fd9ab2aacef70a733d8e5da464",
+    "commit": "0169c4fdd340cd905e01ab58eed78d9eabe1e15f",
     "restrictedPySha256": "f83a075b5ca601e99d0dfa9dbb0aea42063fbcbc3dee6f11b0ba46884d90be27"
   },
   "patches": {
@@ -16,13 +16,13 @@
     "exclude": [
       "Tools/restricted"
     ],
-    "count": 19
+    "count": 21
   },
   "artefact": {
     "host": "github release on the fork (parawanderer/cpython), Shane's decision 2026-10-19; the consumer pins tag and sha256 and verifies before unpacking",
-    "tag": "pyodide-314.0.3-ml-7c40b038",
-    "name": "pyodide-restricted-314.0.3-7c40b038",
-    "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-ml-7c40b038/pyodide-restricted-314.0.3-7c40b038.tar.gz",
-    "sha256": "b3b7e87935119ebbf3c4ecb496a68f531fb1e39b6da21e2697991d74b9e2c045"
+    "tag": "pyodide-314.0.3-ml-0169c4fd",
+    "name": "pyodide-restricted-314.0.3-0169c4fd",
+    "url": "https://github.com/parawanderer/cpython/releases/download/pyodide-314.0.3-ml-0169c4fd/pyodide-restricted-314.0.3-0169c4fd.tar.gz",
+    "sha256": "226b80baa53ef619fe1cfc10527d2d8bc5a9ab58ed540ac867fe042f334ada20"
   }
 }

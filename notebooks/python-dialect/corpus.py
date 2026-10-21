@@ -2,7 +2,8 @@
 
 Public repo, personal sources: the rows never carry source text, string literal values or file contents, only counts
 of AST node classes, module/attribute/method/builtin NAMES and a few shape numbers. `collect()` returns the rows,
-`last_stats()` says what was scanned, `features(code)` is one cell's features.
+`last_stats()` says what was scanned, `last_codes()` holds the text for a local run only (never written to the repo),
+`features(code)` is one cell's features.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ PRELUDE = {"np": "numpy", "pd": "pandas", "Image": "PIL.Image", "io": "io", "bas
            "contextlib": "contextlib"}
 
 _stats: dict[str, Any] = {}
+_codes: dict[str, str] = {}
 
 
 # --- features ---
@@ -311,6 +313,11 @@ def last_stats() -> dict:
     return _stats
 
 
+def last_codes() -> dict[str, str]:
+    """The last `collect()`'s cell text by `cell_id`, for a local run (verify-cost's corpus timing). Never written to the repo."""
+    return _codes
+
+
 def collect(include_store: bool = True, clones: list[Path] | None = None) -> list[dict]:
     """The rows (one per unique cell), ready for wmlnb.extract. `clones` overrides the sibling-clone search (tests). See `last_stats()` for what was scanned."""
     st: dict[str, Any] = {"files_scanned": Counter(), "malformed_files": 0, "cells_before_dedupe": Counter(),
@@ -445,6 +452,8 @@ def collect(include_store: bool = True, clones: list[Path] | None = None) -> lis
     st["clones"] = [c.name for c in clones]
     _stats.clear()
     _stats.update(st)
+    _codes.clear()
+    _codes.update(codes_by_id)
     return rows
 
 

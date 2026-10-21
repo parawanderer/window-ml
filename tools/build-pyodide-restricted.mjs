@@ -67,12 +67,19 @@ mark("preflight ok");
 
 // --- the patch series, from the pinned fork commit ---
 let src = CPYTHON_LOCAL;
-const hasCommit = d => { try { run("git", ["-C", d, "cat-file", "-e", `${pin.cpython.commit}^{commit}`]); return true; } catch { return false; } };
-if (!existsSync(join(src, ".git")) || !hasCommit(src)) { // format-patch needs the commit object, not a checkout of it
+const hasRev = (d, rev) => { try { run("git", ["-C", d, "cat-file", "-e", `${rev}^{commit}`]); return true; } catch { return false; } };
+const hasCommit = d => hasRev(d, pin.cpython.commit);
+const shallow = d => run("git", ["-C", d, "rev-parse", "--is-shallow-repository"]) === "true";
+// format-patch needs the commit object, not a checkout of it, and the whole range down to the base: not a shallow clone
+if (!existsSync(join(src, ".git")) || !hasCommit(src) || shallow(src)) {
     src = join(WORK, "cpython-fork");
     if (!existsSync(join(src, ".git"))) run("git", ["clone", "--no-checkout", pin.cpython.repo, src]);
     run("git", ["-C", src, "fetch", "origin", pin.cpython.branch, "--tags"]);
     if (!hasCommit(src)) throw new Error(`the fork has no commit ${pin.cpython.commit}`);
+}
+// The fork carries no upstream release tags (2026-10-21: a fresh clone had no v3.14.2), so the base comes from CPython.
+if (!hasRev(src, pin.cpython.base)) {
+    run("git", ["-C", src, "fetch", "--no-tags", "https://github.com/python/cpython", `refs/tags/${pin.cpython.base}:refs/tags/${pin.cpython.base}`]);
 }
 const patchDir = join(WORK, "patches-out");
 rmSync(patchDir, { recursive: true, force: true });
@@ -92,7 +99,7 @@ for (const [n, want] of [["PYVERSION", pin.python], ["PYODIDE_EMSCRIPTEN_VERSION
     if (envVar(n) !== want) throw new Error(`Makefile.envs ${n}=${envVar(n)} but the pin says ${want}: the tag moved or the pin is stale`);
 }
 const pdir = join(pyo, "cpython/patches");
-for (const f of readdirSync(pdir)) if (/^00(1\d|2\d)-/.test(f)) rmSync(join(pdir, f)); // a re-run starts from 0001-0009
+for (const f of readdirSync(pdir)) if (/^00([1-9]\d)-/.test(f)) rmSync(join(pdir, f)); // a re-run starts from 0001-0009
 for (const f of series) copyFileSync(join(patchDir, f), join(pdir, f));
 const all = readdirSync(pdir).filter(f => f.endsWith(".patch"));
 if (all.length !== 9 + series.length) throw new Error(`cpython/patches holds ${all.length} patches, expected ${9 + series.length}`);
