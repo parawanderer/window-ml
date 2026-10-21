@@ -31,7 +31,7 @@ const JOBS = opt("--jobs", "10");
 
 const pin = JSON.parse(readFileSync(PIN_FILE, "utf8"));
 for (const k of ["pyodide", "emscripten", "abi", "python", "pythonArchiveSha256"]) if (!pin[k]) throw new Error(`pin: ${k} missing in ${PIN_FILE}`);
-for (const k of ["repo", "base", "commit"]) if (!pin.cpython?.[k]) throw new Error(`pin: cpython.${k} missing`);
+for (const k of ["repo", "base", "commit", "restrictedPySha256"]) if (!pin.cpython?.[k]) throw new Error(`pin: cpython.${k} missing`);
 const sha8 = pin.cpython.commit.slice(0, 8);
 const tarName = `pyodide-restricted-${pin.pyodide}-${sha8}.tar.gz`;
 
@@ -98,6 +98,22 @@ const all = readdirSync(pdir).filter(f => f.endsWith(".patch"));
 if (all.length !== 9 + series.length) throw new Error(`cpython/patches holds ${all.length} patches, expected ${9 + series.length}`);
 mark("patches installed");
 
+// A tree last built from ANOTHER patch set is cleared from the patched source down. Pyodide's make applies the patches
+// once, when it unpacks CPython, and skips CPython entirely while its install stamp and stdlib exist, so a moved fork
+// commit otherwise packs the old interpreter under the new commit's name (2026-10-21: two 15 s "builds" of a new
+// commit held none of its code). The stamp is written only after the witness below holds.
+const patchset = createHash("sha256");
+for (const f of series) patchset.update(readFileSync(join(patchDir, f)));
+const patchsetHash = patchset.digest("hex");
+const patchsetStamp = join(pyo, "cpython/.ml-patchset");
+if ((existsSync(patchsetStamp) ? readFileSync(patchsetStamp, "utf8").trim() : "") !== patchsetHash) {
+    const inst = join(pyo, "cpython/installs", `python-${pin.python}`);
+    const mm = pin.python.split(".").slice(0, 2).join(".");
+    for (const p of [join(pyo, "cpython/build", `Python-${pin.python}`), join(inst, "lib", `python${mm}`),
+        join(inst, "lib", `libpython${mm}.a`), join(inst, ".installed-pyodide")]) rmSync(p, { recursive: true, force: true });
+    mark("patch set changed: CPython rebuilds from source");
+}
+
 // --- build (the hours) ---
 // emsdk's emcc wrapper execs `ccache` from PATH, and emsdk_env.sh (sourced by cpython/Makefile) strips every PATH entry
 // inside the emsdk tree. The ccache emsdk builds also segfaults on macOS arm64, and it is only a cache, so the shim dir
@@ -123,6 +139,17 @@ for (const f of CORE) {
     copyFileSync(from, join(out, f));
     if (!statSync(join(out, f)).size) throw new Error(`${f} is empty`);
 }
+// The witness: the core's restricted.py is the pinned commit's, byte for byte. A stale tree (the patch-set stamp above)
+// once packed the previous commit's under this one's name, and nothing else in the build notices.
+const packed = execFileSync("unzip", ["-p", join(out, "python_stdlib.zip"), "restricted.py"], { maxBuffer: 1 << 24 });
+const pinned = execFileSync("git", ["-C", src, "show", `${pin.cpython.commit}:Lib/restricted.py`], { maxBuffer: 1 << 24 });
+if (!packed.equals(pinned)) throw new Error(`python_stdlib.zip holds a restricted.py that is not ${sha8}'s: the CPython tree is stale`);
+const restrictedPySha = createHash("sha256").update(pinned).digest("hex");
+if (pin.cpython.restrictedPySha256 !== restrictedPySha) {
+    throw new Error(`the pin's cpython.restrictedPySha256 is not ${sha8}'s Lib/restricted.py (${restrictedPySha}): set it with the commit`);
+}
+// Stamped only once the witness holds: a tree whose build fails it is rebuilt from source on the next run, not skipped.
+writeFileSync(patchsetStamp, patchsetHash + "\n");
 const tar = join(WORK, tarName);
 run("tar", ["-czf", tar, "-C", out, ...CORE]);
 const sha = createHash("sha256").update(readFileSync(tar)).digest("hex");
@@ -139,4 +166,4 @@ const report = {
 };
 writeFileSync(join(WORK, "build-report.json"), JSON.stringify(report, null, 2));
 writeFileSync(join(WORK, "BUILD_REPORT.md"), `# Pyodide restricted build\n\n- artefact: ${tarName}\n- sha256: ${sha}\n- tarball: ${(report.tarBytes / 1e6).toFixed(1)} MB\n- wall time: ${report.wallSeconds}s\n- machine: ${report.machine.cpu}, ${report.machine.ncpu} cores\n- emcc: ${report.tools.emcc}\n\n## Sizes\n\n${CORE.map(f => `- ${f}: ${(sizes[f] / 1e6).toFixed(2)} MB`).join("\n")}\n\n## Phases (seconds from start)\n\n${phases.map(p => `- ${p.name}: ${p.at}`).join("\n")}\n`);
-console.log(`\nDone. ${tar}\nsha256 ${sha}\nPut that in tools/pyodide-dist.json artefact.sha256.`);
+console.log(`\nDone. ${tar}\nsha256 ${sha}\nrestricted.py sha256 ${restrictedPySha}\nPut those in tools/pyodide-dist.json: artefact.sha256 and cpython.restrictedPySha256.`);

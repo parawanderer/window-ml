@@ -143,6 +143,32 @@ test("the interpreter is the patched build with specialization, tier 2 and the J
     assert.deepStrictEqual(JSON.parse(py.runPython("import json, _restricted; json.dumps(_restricted.build())")), BUILD_OFF);
 });
 
+// --- the core carries the pinned commit's restricted.py, not a stale build's ---
+
+// A core built on a stale tree once shipped the previous commit's restricted.py under the pin's name (2026-10-21): the C
+// was right, and a cell's multi-line string came back indented by the wrapper's def. Both reads below are the fork's
+// 77376876 and later.
+test("a cell is parsed as itself: a multi-line string keeps its value, and a SyntaxError names the cell's own column", (t) => {
+    if (skip) return t.skip(skip);
+    const got = JSON.parse(py.runPython(`
+import json, restricted
+v = restricted.run_cell('s = """a\\nb"""\\nreturn s', {})
+try:
+    restricted.run_cell("x = 1\\ny = (\\n", {})
+    err = None
+except SyntaxError as e:
+    err = [e.lineno, e.offset, e.text]
+json.dumps([v, err])`));
+    assert.deepStrictEqual(got, ["a\nb", [2, 5, "y = (\n"]]);
+});
+
+test("the core's restricted.py is the one the pin names (cpython.restrictedPySha256)", (t) => {
+    if (skip) return t.skip(skip);
+    const pin = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../tools/pyodide-dist.json"), "utf8"));
+    const have = py.runPython("import hashlib, restricted; hashlib.sha256(restricted.__loader__.get_data(restricted.__file__)).hexdigest()");
+    assert.strictEqual(have, pin.cpython.restrictedPySha256, "dist/pyodide's restricted.py is not the pinned commit's: a stale build");
+});
+
 // --- the vectors, one test each, by genre ---
 
 
