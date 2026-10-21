@@ -34,6 +34,23 @@ binding that won't install compiles no tee into the wrapper and the full output 
 CDP exec also REBUILDS its Out descriptor from the run's own console/value — forwarding the page's CSP-blocked
 render would show that error beside a successful result and wipe the output you just watched stream in.
 
+**A tool call being WRITTEN streams too** (a liveness signal, like the output above: a long script or a whole
+Markdown document passed as an argument used to show nothing until the model stopped). `streamAgentTurn` (sw-llm.ts)
+already accumulates the call's argument fragments; it now also hands them to `onDelta` as `calls`
+(`LiveToolCall { index, name?, args?, chars }`), and `agent-stream` carries them to every surface. The final flush
+keeps the last `calls`, so the preview stays until the step that replaces it lands (the reducer clears `liveStream` on
+`agent-step`). `LiveCall` (live-call.tsx) draws one in the turn, shaped like the pending step it will become;
+`liveCallView` (live-call-view.ts) chooses how: `exec`, `python_exec` and `answer` show their one long field decoded,
+as code or Markdown (`LIVE_TEXT_FIELD`), and any other call the tree of its arguments so far. The partial JSON is read
+by `parseLooseJson(text, { keepOpenString: true })`, which keeps a cut string VALUE, decoded, and holds back a half
+escape. A caret blinks where the text arrives (steady under reduced motion), the body follows the text until the
+reader scrolls up, and the orb says "Writing the <tool> call…". It is DISPLAY ONLY: what runs is the parsed call. Which
+wires fragment a call: OpenAI-shaped SSE always; Ollama native only from a patched server's `tool_call_deltas`
+(`docs/FORKED-BACKENDS.md`), whose whole `tool_calls` at the end is still the call that runs. Over a hub, a call whose
+arguments exceed the preview bound goes as its name and size only (`tail()`, session-relay.ts), since a cut JSON tail
+cannot be parsed. Tests: `tests/background-stream-calls.test.js`, `tests/sidebar-live-call.test.js`,
+`tests/e2e/live-call.spec.mjs` (both wires, in a real browser).
+
 *Streaming vs truncation.* The model's result is clipped to its context budget, but the UI keeps far more
 (`UI_OUT_CAP`) — otherwise output you watched stream in would visibly SHRINK when the step landed. So the render
 descriptors carry **`seen`**: how many characters the model actually received. Everything past it renders MARKED

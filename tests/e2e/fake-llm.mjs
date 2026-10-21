@@ -29,6 +29,10 @@ import { createServer } from "node:http";
  *   default order (all the reasoning, then the tool call or the content), which is what every existing spec
  *   expects. A `call` beat emits ONE fragment of the tool call; several of them split the arguments across
  *   chunks the way OpenAI actually does, which is what the accumulator has to survive.
+ * @property {boolean} [deltas] NATIVE ROUTE ONLY (`/api/chat`), streaming: write the call the way a patched Ollama
+ *   does. Each `call` beat emits one line of `message.tool_call_deltas` (`{ index, id?, function: { name?, arguments } }`,
+ *   `arguments` a STRING piece of the JSON; `id` and `name` on the first fragment of an index only), then the whole
+ *   `tool_calls` line is sent once after the last beat. Without `emit`, 8 fragments (fewer if the JSON is shorter).
  *
  * @typedef {object} StreamBeat
  * @property {"think" | "answer" | "call"} kind which channel this beat comes out on
@@ -293,18 +297,36 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             res.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*", "cache-control": "no-store" });
             /** @param {Record<string, unknown>} message */
             const line = (message) => res.write(JSON.stringify({ model, message, done: false }) + "\n");
+            // `deltas` (opt-in): the call comes out as argument fragments first, then WHOLE once at the end.
+            const deltas = !!(step.deltas && whole && tc);
+            const nFrag = deltas ? Math.max(1, Math.min(8, ...tc.map((c) => String(c.function.arguments || "").length || 1))) : 0;
+            /** @type {StreamBeat[]} */
             const beats = step.emit || [
-                ...(step.reasoning ? [{ kind: "think", text: step.reasoning }] : []),
-                ...(whole ? [{ kind: "call" }] : [{ kind: "answer", text: choice.message.content || "" }]),
+                ...(step.reasoning ? [{ kind: /** @type {const} */ ("think"), text: step.reasoning }] : []),
+                ...(deltas ? Array.from({ length: nFrag }, () => ({ kind: /** @type {const} */ ("call") }))
+                    : whole ? [{ kind: /** @type {const} */ ("call") }] : [{ kind: /** @type {const} */ ("answer"), text: choice.message.content || "" }]),
             ];
+            const nCall = beats.filter((b) => b.kind === "call").length;
+            let sent = 0;
             for (const b of beats) {
                 if (b.kind === "think") line({ role: "assistant", content: "", thinking: b.text || "" });
                 else if (b.kind === "answer") line({ role: "assistant", content: b.text || "" });
+                else if (deltas && tc) {
+                    // Split each call's JSON text evenly across the `call` beats; id and name ride the first piece.
+                    line({ role: "assistant", content: "", tool_call_deltas: tc.map((c, i) => {
+                        const args = String(c.function.arguments || "");
+                        const size = Math.ceil(args.length / Math.max(1, nCall));
+                        return { index: i, ...(sent === 0 ? { id: c.id || `call_${i}` } : {}),
+                                 function: { ...(sent === 0 ? { name: c.function.name } : {}), arguments: args.slice(sent * size, (sent + 1) * size) } };
+                    }) });
+                    sent++;
+                }
                 // WHOLE, every time — Ollama does not fragment, so repeated `call` beats resend the same
                 // array. That is the point: several beats must still collapse to ONE `call` phase.
                 else if (whole) line({ role: "assistant", content: "", tool_calls: whole });
                 await sleep(streamDelayMs);
             }
+            if (deltas) { line({ role: "assistant", content: "", tool_calls: whole }); await sleep(streamDelayMs); }
             res.write(JSON.stringify({ model, message: { role: "assistant", content: "" }, ...done }) + "\n");
             return res.end();
         }
