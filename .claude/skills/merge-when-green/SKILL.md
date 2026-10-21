@@ -9,6 +9,7 @@ description: Merge your own PR only when the standing rule holds (pipeline green
 node scripts/merge-when-green.mjs 501                  # check once: OK, or why not (exit 0 / 1)
 node scripts/merge-when-green.mjs 501 --wait --merge --session <your session id>   # while CI runs, one API call a minute (up to 90 min; sleeps if the account's hourly API budget runs low), then squash-merge
 node scripts/merge-when-green.mjs 501 --read 5577239105 --read 444   # a post you have read that asks nothing further
+node scripts/merge-when-green.mjs 501 --wait --merge --await-review   # you NAMED a reviewer: wait for their post first
 ```
 
 Run the `--wait` form in the background (the `background-work` skill): it exits when the PR is merged or refused, so the

@@ -11,6 +11,9 @@
 //                     # refusal. It still blocks: a marker is text anyone can write, so it can only block, never allow.
 //   … --read <id>     # a post you have read that asks nothing further (repeatable): it stops blocking, and the refusal
 //                     # prints the ids to name. The tool never parses a body: YOU are saying it asks nothing.
+//   … --await-review  # with --wait: a PR that NAMED a reviewer is not merged before anyone else has posted; it keeps
+//                     # polling until a post by someone other than --session's exists, then the unread rule applies.
+//                     # Without it a green PR with no posts merges at once, which is how a named review was skipped (#973).
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
 //   … --discard       # merge even though a worktree holds work in no commit: it stays there, and goes with the worktree
 //
@@ -250,6 +253,8 @@ export function judge(f) {
     if (f.badJobs.length) return { ok: false, reason: `not green: ${f.badJobs.join(" ")} (a cancelled job prints as failed: check before blaming the change)` };
     if (f.deletedTestFiles) return { ok: false, reason: "deletes a test file" };
     if (f.tests.removed > f.tests.added) return { ok: false, reason: `removes tests (${f.tests.removed} removed, ${f.tests.added} added lines)` };
+    // A named reviewer who has not posted yet: wait for the post, then it blocks like any other until --read.
+    if (f.awaitReview && !f.postedByOthers) return { ok: false, pending: true, reason: "no review posted yet (--await-review): waiting for one" };
     if (f.reviews || f.inlineComments) {
         // The ids to name once they have been read and found to ask nothing: `--read` is the only way past one.
         const flags = (f.unread || []).map((u) => `--read ${u.id}`).join(" ");
@@ -295,7 +300,7 @@ function restList(path) {
     }
 }
 
-function facts(pr, session, read = []) {
+function facts(pr, session, read = [], awaitReview = false) {
     git("fetch", "-q", "origin");
     const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable") || "{}");
     const head = view.headRefName;
@@ -311,11 +316,14 @@ function facts(pr, session, read = []) {
     const range = `origin/main...origin/${head}`;
     // REST, so every post carries the numeric id its URL fragment names and `--read` can take either form. The
     // conflicts notice, a session's own post and a post `--read` named are all filtered in pickUnread.
-    const unread = pickUnread({
+    const posts = {
         reviews: restList(`repos/${REPO}/pulls/${pr}/reviews`),
         comments: restList(`repos/${REPO}/issues/${pr}/comments`),
         inline: restList(`repos/${REPO}/pulls/${pr}/comments`),
-    }, { session, read });
+    };
+    const unread = pickUnread(posts, { session, read });
+    // What --await-review waits for: a post by anyone but this session, read or not (the conflicts notice excluded).
+    const postedByOthers = pickUnread(posts, { session, read: [] }).filter((u) => !u.own).length;
     // This copy's own files: main's, since the trampoline always hands over.
     const own = path.resolve(import.meta.dirname, "..");
     const readOwn = (p) => { try { return readFileSync(path.join(own, p), "utf8"); } catch { return null; } };
@@ -329,6 +337,7 @@ function facts(pr, session, read = []) {
         reviews: unread.filter((u) => u.kind !== "inline").length,
         inlineComments: unread.filter((u) => u.kind === "inline").length,
         unread,
+        awaitReview, postedByOthers,
         stacked: Number(gh("pr", "list", "--base", head, "--json", "number", "-q", "length")) || 0,
         mergeable: view.mergeable,
     };
@@ -492,6 +501,7 @@ async function main() {
     // The PR number is the first bare number that is not a valued flag's argument: `--read 123` names a comment, not a PR.
     const wait = argv.includes("--wait"), merge = argv.includes("--merge");
     const keep = argv.includes("--keep-bench"), discard = argv.includes("--discard");
+    const awaitReview = argv.includes("--await-review");
     const read = [];
     let pr = null, session = null;
     const take = (flag, value) => {
@@ -509,10 +519,10 @@ async function main() {
             pr = a;
         }
     }
-    if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>] [--read <comment id>]"); process.exit(2); }
+    if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>] [--read <comment id>] [--await-review]"); process.exit(2); }
     let f, v;
     for (let i = 0; ; i++) {
-        f = facts(pr, session, read);
+        f = facts(pr, session, read, awaitReview);
         v = judge(f);
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         // While the run is still going, one call a minute says so; the full facts wait until it is done.

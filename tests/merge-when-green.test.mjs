@@ -38,6 +38,20 @@ test("every way the rule fails says why, and only CI still running is pending", 
     }
 });
 
+test("--await-review: a green PR with no post by anyone else is pending, not OK; a post by another makes it the unread rule; a read one is OK", () => {
+    const waiting = judge({ ...green, awaitReview: true, postedByOthers: 0 });
+    assert.equal(waiting.ok, false);
+    assert.equal(waiting.pending, true);
+    assert.match(waiting.reason, /no review posted yet \(--await-review\)/);
+    const posted = judge({ ...green, awaitReview: true, postedByOthers: 1, reviews: 1 });
+    assert.equal(posted.ok, false);
+    assert.equal(!!posted.pending, false);
+    assert.match(posted.reason, /read them/);
+    assert.equal(judge({ ...green, awaitReview: true, postedByOthers: 1, reviews: 0 }).ok, true);
+    // Without the flag nothing changes: no posts is OK, as before.
+    assert.equal(judge({ ...green, postedByOthers: 0 }).ok, true);
+});
+
 test("a test whose body changes counts the same removed and added, so an edit is not a removal", () => {
     const diff = ["--- a/tests/x.test.mjs", "+++ b/tests/x.test.mjs", '-test("old name", () => {', '+test("new name", () => {', "-    a.test(1)", "+    retest(2)"].join("\n");
     assert.deepEqual(testLineCounts(diff), { removed: 1, added: 1 });
