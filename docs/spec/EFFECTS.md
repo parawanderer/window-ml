@@ -40,6 +40,8 @@ the empty set, free on any bound, and a manifest that under-claims a program pas
 That is the describe/enforce split, and why a manifest is reviewed as a claim about the program (window-ml-host #19,
 window-ml #882 carry the reader fixes from that read).
 
+A call recording `effects: []` is the empty set, and the empty set is free on any bound; a green vector run holds the reader to the fixtures, not the fixtures to the world.
+
 | Resource | Meaning | Where it comes from |
 | --- | --- | --- |
 | `heap(owned)` / `heap(unowned)` / `heap(arg i)` | values inside the interpreter; a manifest says `arg i`, the interpreter resolves it to owned or unowned at the call | the dialects |
@@ -119,7 +121,6 @@ objection building K3c): it projects onto `write` with `names: true` on the `fs`
 in-place write so the two never de-duplicate. A separate operation would make a person's policy fail open: `has("write")`
 would never fire for `rm`, `mv` or `sed -i`, and a universal over `writes` would be vacuously true for `rm .envrc`.
 The operations table stays as it is; `covers` reads `names` the way it reads `secret`.
-A call recording `effects: []` is the empty set, and the empty set is free on any bound.
 
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because
