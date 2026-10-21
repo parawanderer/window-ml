@@ -31,7 +31,7 @@ const JOBS = opt("--jobs", "10");
 
 const pin = JSON.parse(readFileSync(PIN_FILE, "utf8"));
 for (const k of ["pyodide", "emscripten", "abi", "python", "pythonArchiveSha256"]) if (!pin[k]) throw new Error(`pin: ${k} missing in ${PIN_FILE}`);
-for (const k of ["repo", "base", "commit"]) if (!pin.cpython?.[k]) throw new Error(`pin: cpython.${k} missing`);
+for (const k of ["repo", "base", "commit", "restrictedPySha256"]) if (!pin.cpython?.[k]) throw new Error(`pin: cpython.${k} missing`);
 const sha8 = pin.cpython.commit.slice(0, 8);
 const tarName = `pyodide-restricted-${pin.pyodide}-${sha8}.tar.gz`;
 
@@ -101,7 +101,7 @@ mark("patches installed");
 // A tree last built from ANOTHER patch set is cleared from the patched source down. Pyodide's make applies the patches
 // once, when it unpacks CPython, and skips CPython entirely while its install stamp and stdlib exist, so a moved fork
 // commit otherwise packs the old interpreter under the new commit's name (2026-10-21: two 15 s "builds" of a new
-// commit held none of its code). The stamp is written only after make succeeds.
+// commit held none of its code). The stamp is written only after the witness below holds.
 const patchset = createHash("sha256");
 for (const f of series) patchset.update(readFileSync(join(patchDir, f)));
 const patchsetHash = patchset.digest("hex");
@@ -129,7 +129,6 @@ await new Promise((ok, bad) => {
     p.on("exit", c => c === 0 ? ok() : bad(new Error(`make all-but-packages exited ${c}; see ${join(WORK, "build.log")}`)));
 });
 mark("make all-but-packages done");
-writeFileSync(patchsetStamp, patchsetHash + "\n");
 
 // --- collect ---
 const out = join(WORK, "out");
@@ -146,9 +145,11 @@ const packed = execFileSync("unzip", ["-p", join(out, "python_stdlib.zip"), "res
 const pinned = execFileSync("git", ["-C", src, "show", `${pin.cpython.commit}:Lib/restricted.py`], { maxBuffer: 1 << 24 });
 if (!packed.equals(pinned)) throw new Error(`python_stdlib.zip holds a restricted.py that is not ${sha8}'s: the CPython tree is stale`);
 const restrictedPySha = createHash("sha256").update(pinned).digest("hex");
-if (pin.cpython.restrictedPySha256 && pin.cpython.restrictedPySha256 !== restrictedPySha) {
-    throw new Error(`the pin's cpython.restrictedPySha256 is not ${sha8}'s Lib/restricted.py (${restrictedPySha}): update it with the commit`);
+if (pin.cpython.restrictedPySha256 !== restrictedPySha) {
+    throw new Error(`the pin's cpython.restrictedPySha256 is not ${sha8}'s Lib/restricted.py (${restrictedPySha}): set it with the commit`);
 }
+// Stamped only once the witness holds: a tree whose build fails it is rebuilt from source on the next run, not skipped.
+writeFileSync(patchsetStamp, patchsetHash + "\n");
 const tar = join(WORK, tarName);
 run("tar", ["-czf", tar, "-C", out, ...CORE]);
 const sha = createHash("sha256").update(readFileSync(tar)).digest("hex");
