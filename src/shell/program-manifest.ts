@@ -241,7 +241,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
     let afterTerminator = false;
     const apply = (name: string, f: FlagSpec, valueAt: { arg: number; split?: string; attached?: boolean } | null) => {
         if (f.effects?.includes("unknown")) unknown(`${name} can make ${d.program} do what no manifest describes`);
-        // A flag's read/write applies to its own path value when it has one (`--output=f`), else to the command's
+        // A flag's read/write/write-names applies to its own path value when it has one (`--output=f`), else to the command's
         // targets (`git push -u` writes the repository's config).
         for (const t of f.effects ?? []) {
             if (f.valueIsPath && (t === "read" || t === "write" || t === "write-names")) continue;
