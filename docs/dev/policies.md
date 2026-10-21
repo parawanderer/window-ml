@@ -25,6 +25,7 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | The `propose_policy` tool (reports the decision; adds nothing) | `src/tools/propose-policy-tool.ts` |
 | Its gate: precheck, card, the add in the resolve (`offersProposals`) | `src/sw/sw-run-host.ts` |
 | Every policy source written anywhere, for measuring a grammar or a lifter over ("The policy corpus" below) | `tests/fixtures/policy-corpus.json` |
+| The lifter: a source that fits the tree's fragment, as a tree ("The lifter" below) | `src/readonly-exec/policy-lift.ts` |
 
 State is declared in the registry as `policies.global` and `policies.run` (audience `model`, exposed as
 `ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (`"fetch"`, and `"sh"` for `ml.sh`, whose facts its own consumer builds),
@@ -246,6 +247,24 @@ checked again. A recount (every source
 searched again) bumps `meta.commit` and `meta.collected` and says what was searched in `searched`. Nothing checks the
 file against the tree yet, so a missing entry is silent: it only makes a coverage figure stale. Remove an entry only
 when its source is gone from every location.
+
+## The lifter
+
+`liftPolicy(source, consumer)` (`src/readonly-exec/policy-lift.ts`) turns a policy source into a typed-node tree when the
+source fits the analysable fragment, and otherwise says why it stays code. It parses with the dialect's own parser and
+evaluates nothing. It is the only code of the tree so far: nothing in the product calls it, and there is no renderer,
+analyser or card (POLICIES.md, the tree's ruling: the covered fraction of model proposals comes first). What it accepts
+is the grammar of [`LANE_11_POLICY_TREE_DESIGN.md`](../plan/repl/LANE_11_POLICY_TREE_DESIGN.md), plus the mechanical
+rewrites that design names: a const list inlined, an anchored literal regex as prefixes, a prefix ending at a segment as
+`under`, `.endsWith(".d")` on a host as a subdomain, `argv[k] === undefined` as a count, a list's length against zero.
+
+`tests/policy-lift.test.mjs` holds it to the corpus in both directions. Every measured entry lifts if and only if its
+`tree.fit` is `as-written` or `mechanical`. Every lifted tree agrees with its ORIGINAL source, run through the real
+policy realm, on one fact per combination of the cells its constants induce, and every node outside a quantifier takes
+both values over those facts. The tree evaluator and the cell generator that test uses live in
+`tests/fixtures/policy-tree-cells.mjs` and nothing in `src/` imports them; they move to `src/` only with the tree
+(ruled #927). A source added to the corpus with a `tree` field is checked by the same test, so a new kind of rewrite
+lands with the entry that needs it.
 
 ## Not built yet
 
