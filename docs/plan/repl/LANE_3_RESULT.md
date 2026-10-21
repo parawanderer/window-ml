@@ -30,6 +30,7 @@ the same pin, and the trial build exposed a stale release core, fixed with the r
 
   After metered work, per-run is faster in 12 of 12 paired rounds (ratio 1.03-1.59, median about 1.43). Metered runs
   themselves do not differ.
+  Driver and raw results: `notebooks/python-dialect/wrapper-bench/` (`drive.mjs`, `one.mjs`, `results.json`).
 - The tracemalloc repro (host `tracemalloc.start()`, a run, `tracemalloc.stop()`, then a 2**26-item doubling cell):
   ADMITTED with `memory()` = 0 on 77376876-r2, REFUSED on 7c40b038, under wasm.
 - Entry cost of the verify, natively: 80-99 µs per trivial run with and without it, no measurable difference.
