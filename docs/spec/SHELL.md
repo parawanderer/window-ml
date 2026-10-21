@@ -562,6 +562,20 @@ development machine's suites are governed by the test runner's own slot in the b
 (`scripts/test.mjs`), and the two tables may become one VIEW later, which is a panel, not a mechanism. The runtime never
 becomes a monitor for the rest of the machine, for the same reason a hub is not an execution environment.
 
+Proposed by Shane 2026-10-21, open, his to widen since the boundary above is his: the host answers "which session owns
+this CPU process" for processes it did NOT spawn. The question came up repeatedly in that day's runs, and its live
+instance was found the same hour: six `zsh` shells reparented to pid 1, about 70% CPU each for 27 hours, a parallel-load
+generator one agent session detached on 2026-10-20 and never killed; naming their owner took a parent chain to a
+harness socket, a shell-snapshot name and a grep of a transcript, which is `ps` by another name. The narrow shape, if it
+is taken: ownership is DECLARED, never observed. A session REGISTERS a process group it started with the host (owner =
+the session's hash and harness, the run and step when there is one), and the host answers a pid by its owner table and
+the descendant walk the ownership bullet already does, as it answers for its own spawns; an unregistered process is
+"nobody's", and that is the answer, not a scan. The memory bound then applies to a registered group as to a spawned one,
+and CPU is a second fact on the same span beside memory, measured, never bounded by default. The boundary sentence stays
+true: the host answers only for what was declared to it, and the registering session is who is asked when its group
+outlives its port. The agent-status line ([`AGENT_MAIL.md`](AGENT_MAIL.md), first build step) is where the answer is
+read from; the register call is the host's.
+
 ## The host's language: Rust, a sibling of the box connector (decided 2026-10-15, replacing Node)
 
 The 2026-10-13 decision for Node rested on the host needing to run the TypeScript dialects (the text pipe for "the

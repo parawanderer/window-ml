@@ -180,7 +180,7 @@ listed as remaining is DONE unless named below.
 - **Specs amended by rulings since 2026-10-16** (all merged): root K's interpreted entrypoints and the 3-way Python
   model (#743), the OS sandbox `Plan` as a compiler over `EffectsData` (#744), the checkpoint primitive and receiver
   routing (#759, #762), the host's session events over the hub (#768).
-- **Open decisions for Shane**: none. A desktop host's call events reach the caller only; `view` follows runtimes, never
+- **Open decisions for Shane**: one, his own proposal of 2026-10-21: the host answers "which session owns this CPU process" for groups a session REGISTERS with it (`SHELL.md`, after "The boundary"; `AGENT_MAIL.md` step 1); a widening of the host's boundary, written, not ruled. A desktop host's call events reach the caller only; `view` follows runtimes, never
   hosts (decided 2026-10-19, `SHELL.md`, revisable). #647 (site access, agent level) merged 2026-10-15 as ac417a98 and no longer waits on anyone.
 - **Round 3 (opened 2026-10-19, [`ROUND_3.md`](ROUND_3.md))**: five lanes on this list: 5 the Pyodide build, 6 lane 1's four
   follow-ups, 7 `mode` removal, 8 the phone's pairing UX, 9 telling a run why its next call asks.
