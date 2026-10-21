@@ -408,6 +408,7 @@ test("every event kind the index accepts has been considered for de-duplication"
         "chat-stream",   // coalesced by turn id the same way, and dropped by the turn's result or error
         "agent-turn",    // coalesced the same way, and carries no history of its own
         "agent-cap",     // last write wins: a cap is a number, not an occurrence
+        "agent-config",  // last write wins: the wire's tools and prompt replace the page's, a repeat says the same
         "agent-say",     // paired with agent-say-seen, which is the one that can arrive twice
         "chat-error",    // ends a turn opened by `chat`, which is itself de-duplicated
         "agent-site-say", // the worker's own record of one turn a site sent, written once per turn

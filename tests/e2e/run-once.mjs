@@ -184,6 +184,8 @@ export function buildSession(events) {
             s.answer = ev.answer || undefined; s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // the bottom-of-answer Result block + card media
         } else if (ev.kind === "agent-say" && s) {
             s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxStep(s), images: ev.images }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts;
+        } else if (ev.kind === "agent-config" && s) {
+            if (s.agentConfig) s.agentConfig = { ...s.agentConfig, ...ev.config };
         } else if (ev.kind === "agent-cap" && s) {
             s.maxSteps = ev.maxSteps; s.lastTs = ev.ts;
         }

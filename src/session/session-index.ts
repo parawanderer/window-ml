@@ -52,7 +52,7 @@ export interface SessionIndexOptions {
     maxSessions?: number;
 }
 
-const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "chat-stream", "agent", "agent-step", "agent-result", "agent-cap", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed", "agent-site", "agent-site-say"]);
+const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "chat-stream", "agent", "agent-step", "agent-result", "agent-cap", "agent-config", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed", "agent-site", "agent-site-say"]);
 /** The worker's marks of a run a SITE started (contract-debug.ts `SiteRunEvent`) the index keeps, so every transcript,
  *  the chat page's included, names the site on its turns (Q2a). Only the worker's own source may write them. */
 const WORKER_KINDS = new Set(["agent-site", "agent-site-say"]);
