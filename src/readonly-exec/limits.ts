@@ -28,8 +28,9 @@ export class Stopped extends NotInDialect {}
 //      tree of bounded depth whose every node does finitely much, which is finite). The collection rule went
 //      missing when script-created containers became mutable, and `for (const x of a) a.push(x)` ran forever.
 //   B. BOUNDED COST, a resource policy. A script that halts can still take very long. The step budget and the size
-//      caps below send it to the human gate instead of freezing the page's main thread, and a regex that could
-//      backtrack catastrophically (one host call, unbounded) is refused before it runs. A step is only a fair unit if
+//      caps below send it to the human gate instead of freezing the page's main thread, a regex that could
+//      backtrack exponentially (one host call, unbounded) is refused before it runs, and every regex SEARCH is priced
+//      on its input before it runs (regex-cost.ts), since one quantifier is enough to make it quadratic. A step is only a fair unit if
 //      no single step does unbounded work, so a host call is also charged for the size of what it scans or expands
 //      (HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP,
 //      EXPANDED_PARTS_PER_STEP), and a value that would expand past

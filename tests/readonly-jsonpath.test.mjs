@@ -198,6 +198,37 @@ test("ADVERSARIAL: try/catch cannot swallow a query's refusal — of a pattern, 
     ]) await fallsBack(src, why);
 });
 
+test("HALTING: `search()` with a quadratic pattern over a long run is priced and falls back; `match()` is anchored, so it is linear and runs", async () => {
+    const RUN = `["a".repeat(300000)]`;
+    const r = await fallsBack(`ml.jsonPath(${RUN}, '$[?search(@, "a+b")]')`, "search(@, a+b) over 300,000 characters");
+    assert.match(r.message, /too much work|backtrack/);
+    // Positive controls on the same value: `match` is `^(?:a+b)$`, tried once, and a literal `search` is one scan.
+    const m = await inWorker(`ml.jsonPath(${RUN}, '$[?match(@, "a+b")]').length`);
+    assert.ok(!m.hung, "match() over the run ended");
+    assert.equal(m.value, 0);
+    const s = await inWorker(`ml.jsonPath(${RUN}, '$[?search(@, "b")]').length`);
+    assert.ok(!s.hung, "a literal search over the run ended");
+    assert.equal(s.value, 0);
+});
+
+test("HALTING: a quadratic search inside a try/catch is still a fall-back, not a swallowed error", async () => {
+    await fallsBack(`try { return ml.jsonPath(["a".repeat(300000)], '$[?search(@, "a+b")]') } catch (e) { return "swallowed" }`, "a priced search");
+});
+
+test("mlJsonPath with no limits refuses a quadratic search before it runs, and hands a steps hook the bound", () => {
+    const data = ["a".repeat(100000)];
+    const t = Date.now();
+    assert.throws(() => mlJsonPath(data, '$[?search(@, "a+b")]'), /can backtrack for too long/);
+    assert.ok(Date.now() - t < 2000, "refused, not run");
+    assert.deepEqual(mlJsonPath(data, '$[?match(@, "a+b")]'), [], "positive control: match() is anchored and linear");
+    assert.deepEqual(mlJsonPath(data, '$[?search(@, "b")]'), [], "positive control: a literal search runs");
+    // The hook records the charge and then stops: letting it through would run the quadratic search for seconds.
+    class Stop extends Error {}
+    let total = 0;
+    assert.throws(() => mlJsonPath(data, '$[?search(@, "a+b")]', null, { steps: (n) => { total += n; if (n > 1_000_000) throw new Stop("budget"); } }), (e) => e instanceof Stop);
+    assert.ok(total > 3_000_000, `the hook was charged ${total}`);
+});
+
 // --- FAILURE: a refused query leaves nothing behind --------------------------------------------------------------------
 
 test("FAILURE: a survey that curates its answer and then runs a refused query has changed nothing", async () => {

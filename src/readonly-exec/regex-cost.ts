@@ -141,8 +141,9 @@ function charAtoms(n: Node, out: string[] = []): string[] | null {
  * million "a", `a+` runs a million, and `/a+b/` is quadratic. Starts are every position, or only those where an
  * unquantified first atom matches, or one (or one per line, with `m`) after a leading `^`, or one when sticky.
  *
- * Exponential shapes (a repeated group whose body has more than one path) are `riskyRegex`'s to refuse; here they are
- * unbounded. So is syntax {@link parse} does not read.
+ * A repeated unit that has more than one path on this input (`(a+)+` over a run of "a") is exponential and unbounded
+ * here; `riskyRegex` refuses that shape on any input before a search is priced. So is syntax {@link parse} does not
+ * read, such as a modifier group.
  * @param source the pattern's source
  * @param flags its flags
  * @param input the string it will search

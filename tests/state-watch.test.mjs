@@ -71,6 +71,15 @@ test("a watch that visits too much is stopped, with a sentence, and a backtracki
     assert.match((await W.evalWatch(tree, "$..[?match(@.content, '(a+)+$')]")).error, /can run for hours/);
 });
 
+test("a watch whose search is quadratic on the values it reads is stopped with a sentence, and a linear one over the same value runs", async () => {
+    const long = W.stateTree([m("run.long")], [e(m("run.long"), { text: "a".repeat(100000) })]);
+    const t = Date.now();
+    assert.match((await W.evalWatch(long, "$..[?search(@, 'a+b')]")).error, /backtrack for too long/);
+    assert.ok(Date.now() - t < 2000, "stopped before the search ran");
+    assert.deepEqual((await W.evalWatch(long, "$..[?match(@, 'a+b')]")).nodes, [], "positive control: match() is anchored, so linear");
+    assert.deepEqual((await W.evalWatch(long, "$..[?search(@, 'b')]")).nodes, [], "positive control: a literal search runs");
+});
+
 test("the list a panel sends: strings only, no duplicates, at most the cap", () => {
     assert.deepEqual(W.watchList(["a", 3, "a", null, "b"]), ["a", "b"]);
     assert.deepEqual(W.watchList("inspector.x"), []);
