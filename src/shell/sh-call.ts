@@ -223,6 +223,16 @@ function placeBoth(f: { given: string; path: string; link?: string }, roots: rea
     return { topLevel: a.topLevel || others.some((b) => b.topLevel === true), isRoot: a.isRoot === true || others.some((b) => b.isRoot === true) };
 }
 
+/** Whether the argument's last name changed under resolution while the host sent no `link`: the final component was
+ *  then a symlink the host did not name (an older host), which folded only the target into `inRoot` and `secret`, so
+ *  the name a delete or rename acts on is unchecked and `inRoot` is taken as false (red-team recheck of #990,
+ *  2026-10-22). An unchanged last name (only a directory on the way moved it, `/tmp` → `/private/tmp`) is not. */
+function unnamedLink(f: { given: string; path: string; link?: string }, cwd: string): boolean {
+    if (f.link !== undefined) return false;
+    const last = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+    return last(normalPath(f.given.startsWith("/") ? f.given : cwd + "/" + f.given)) !== last(normalPath(f.path));
+}
+
 /**
  * One call as a policy's `c` and the card see it: everything resolved by the host or read from the manifest, nothing
  * the script asserted (docs/spec/SHELL.md, "What it is given"). Plain data: it is copied into the approval's
@@ -283,7 +293,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
             if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
             const f = byArg.get(p.arg);
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
-            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots, facts.cwd.path) } : { kind: "fs", path: p.given };
+            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot && !unnamedLink(f, facts.cwd.path), secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots, facts.cwd.path) } : { kind: "fs", path: p.given };
         };
         const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
         effects = d.effects;
@@ -306,7 +316,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeBoth(p, place?.roots, facts.cwd.path), ...(p.link !== undefined ? { link: p.link } : {}), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot && !unnamedLink(p, facts.cwd.path), secret: p.secret, exists: p.exists, ...placeBoth(p, place?.roots, facts.cwd.path), ...(p.link !== undefined ? { link: p.link } : {}), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,
@@ -458,7 +468,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
     if (applied !== undefined) lines.push(sandboxAppliedLine(applied, asked));
     if (f.env.set.length) lines.push({ label: "Sets", value: f.env.set.join(", "), ...(f.env.free ? {} : { warn: true }) });
     for (const p of f.paths) {
-        const notes = [!p.inRoot && "outside the roots", p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
+        const notes = [!p.inRoot && (unnamedLink(p, f.cwd.path) ? "a symlink the host did not name, so where the name is was not checked" : "outside the roots"), p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
             p.containsSecret === null && "too large to check for secrets", !p.exists && "does not exist yet"].filter(Boolean);
         // A hashed argument is the script that runs: where it was named, the file it resolved to, and its hash, which
         // stands where a binary's version does.

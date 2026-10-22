@@ -336,7 +336,8 @@ test("ruling 2: the pin is the RESOLVED file's hash, the path must resolve to th
     assert.equal(shFacts(scriptFacts({ sha256: null }), null, placeOf).described, false, "an unreadable file has no hash to match");
     const card = shCardLines(shFacts(scriptFacts({ argv: ["node", "scripts/t.mjs", "a.txt"], path: "/w/scripts/tool.mjs" }), null, placeOf));
     const script = card.find((l) => l.label === "Script");
-    assert.equal(script.value, `scripts/t.mjs → /w/scripts/tool.mjs (sha256 ${PIN.slice(0, 12)})`);
+    assert.equal(script.value, `scripts/t.mjs → /w/scripts/tool.mjs (sha256 ${PIN.slice(0, 12)}) (a symlink the host did not name, so where the name is was not checked)`);
+    // No `link` and a changed last name: a symlink an older host did not name, said so rather than "outside the roots".
 });
 
 test("intended, not a gap: a symlinked entrypoint FILE is undescribed even when its target has the pinned content (a pin names a path AND a hash)", () => {

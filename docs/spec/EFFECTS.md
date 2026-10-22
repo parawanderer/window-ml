@@ -118,7 +118,9 @@ cost falls only on calls that NAME a top-level path, once, until a policy rememb
 this is `ShPathFact.topLevel` (whether `path`'s parent is a configured root), computed by the worker from the host's
 `realpath` and its own roots; for a symlink argument, of the link too (the host's `link` fact), since `rm top` removes
 the link `top` wherever its target is (review of #990, 2026-10-22), and of the argument as typed against the cwd, so a
-host that sends no `link` (one older than the field) still places `rm top` as a top-level name; each only widens. Open: the claim's
+host that sends no `link` (one older than the field) still places `rm top` as a top-level name; each only widens. Such a host also folds only the target into `inRoot` and
+`secret`, so with no `link` and a last name that changed under resolution the worker takes `inRoot` as false and the call
+asks (red-team recheck of #990, 2026-10-22); a path moved only by a directory on the way (`/tmp`) keeps its last name. Open: the claim's
 `path` is still the target, so a person's policy that matches the link's PATH (a deny under `/w/keep` for `rm keep/l`)
 does not see it; only the place, `inRoot` and `secret` are widened. **`write-names` is a manifest WORD, not an operation** (ruled 2026-10-19 on lane 4's
 objection building K3c): it projects onto `write` with `names: true` on the `fs` resource, keyed apart from the
