@@ -540,3 +540,52 @@ test("an absent `link` fact is not read as \"not a symlink\": rm top of a top-le
     // A real top-level file is caught with no link at all (control that the place still reaches the judge).
     assert.equal(free(run(["rm", "top"], { cwd: "/w" }).effects, SANDBOX), false, "a real top-level name asks with no symlink involved");
 });
+
+test("an absent `link` does not narrow inRoot: rm of a link OUTSIDE the roots to an in-root target is not free", { todo: "placeBoth ORs the typed spelling into topLevel/isRoot but inRoot still comes from the host, and an old host folds link_in_root as true when it sends no `link`. rm /outside/l -> /w/src/gen is then free while removing the name /outside/l, which is not nested inside any root. Narrow inRoot by the typed spelling when basename(given) != basename(path) (the final component was followed) and no `link` is present, or treat that pair as unknown. The typed spelling alone must NOT narrow when only an intermediate symlink moved the path (/tmp vs /private/tmp, basename unchanged)" }, () => {
+    // Guards: a names write is free only when the name it removes is nested inside a root. The name removed is
+    // the LINK, at its own parent, not the target `path`. A new host folds `link_in_root` into `inRoot` and asks
+    // (control). An older host sends no `link` and defaults link_in_root to true, so `inRoot` is the nested
+    // target's and the outside name is free. The worker never narrows `inRoot` by the typed spelling.
+    // Residual of the link fact, the unwidened half (review of #990, 2026-10-22).
+    // Positive controls: the same call WITH the link asks; a regular file outside the roots asks with no link;
+    // a nested link to a nested target stays free.
+    // `inRoot` is the HOST's fold: false with the link (link_in_root), true without one (old host).
+    const facts = (link, given, path, argv = ["rm", given]) => ({
+        id: "c1", argv,
+        program: { path: "/bin/rm", inRoot: false },
+        cwd: { path: "/w", inRoot: true },
+        env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+        paths: [{ arg: 1, given, path, inRoot: !link, secret: false, exists: true, ...(link ? { link } : {}) }],
+        effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox", expiresInMs: 1,
+    });
+    assert.equal(free(shFacts(facts("/outside/l", "/outside/l", "/w/src/gen"), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "with the link fact the host folds link_in_root, inRoot is false, and the call asks (control)");
+    assert.equal(free(shFacts(facts(undefined, "/outside/l", "/w/src/gen"), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "without the link fact the same rm still removes the name /outside/l, which no root contains");
+    assert.equal(free(shFacts(facts(undefined, "/outside/l", "/w/src/gen", ["mv", "src/a", "/outside/l"]), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "mv onto a dangling outside link replaces the name /outside/l");
+    assert.equal(free(run(["rm", "/outside/f"], { cwd: "/w" }).effects, SANDBOX), false,
+        "a regular file outside the roots asks with no symlink involved (control)");
+    assert.equal(free(run(["rm", "src/l"], { links: { "/w/src/l": "/w/src/gen" }, cwd: "/w" }).effects, SANDBOX), true,
+        "a nested link to a nested target stays free: the name src/l is nested (control)");
+});
+
+test("an absent `link` does not fold a secret-named link into secret: rm src/.env of a link is not free", { todo: "the host folds looks_secret(given) and looks_secret(link) into secret; an old host folds only looks_secret(path), so rm src/.env -> src/notes is free under a name that looks secret. The worker has `given` and could fold it too, or a names write whose basename changed under resolution and whose typed spelling looks secret is unknown. Left as the owner's call on what `secret` means for a link (removing it exposes no content): the inconsistency is that the same argv asks on a new host and is free on an old one" }, () => {
+    // Guards: `secret` is a name check (looks_secret). A link named `.env` is a secret-named entry whether or
+    // not its target holds anything; `mv src/.env src/x` renames that name away. The new host folds the typed
+    // spelling and the link into secret (control). An old host sees only the innocuous target.
+    const facts = (secret) => ({
+        id: "c1", argv: ["rm", "src/.env"],
+        program: { path: "/bin/rm", inRoot: false },
+        cwd: { path: "/w", inRoot: true },
+        env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+        paths: [{ arg: 1, given: "src/.env", path: "/w/src/notes", inRoot: true, secret, exists: true, link: "/w/src/.env" }],
+        effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox", expiresInMs: 1,
+    });
+    assert.equal(free(shFacts(facts(true), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "the host flags the name src/.env (control)");
+    assert.equal(free(shFacts(facts(false), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "without the secret fold the same rm still removes a name that looks secret");
+    assert.equal(free(run(["rm", "src/.env"], { secret: ["/w/src/.env"], links: { "/w/src/.env": "/w/src/notes" }, cwd: "/w" }).effects, SANDBOX), false,
+        "the resolved path itself named .env asks (control)");
+});
