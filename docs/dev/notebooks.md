@@ -5,6 +5,11 @@ Jupyter notebook under `notebooks/<topic>/`. Anything reusable (a column, a scor
 itself instead. The convention is mlbox's, which has worked there for months; the changes below are the ones it said
 it would make if it started again.
 
+**A measurement a decision rests on is a notebook too, however small** (Shane, 2026-10-22). A runtime performance check
+may start as a throwaway script; once a default, a ruling or a cited figure is decided from its numbers, it is
+committed here, in Python or calling the JS scripts that do the timing, with its outputs kept and prose saying what
+was decided and why.
+
 ## The rules
 
 - **A notebook keeps the numbers; prose keeps the argument.** A PR description, a spec or `PROMPT_BUDGET.md` cites the
