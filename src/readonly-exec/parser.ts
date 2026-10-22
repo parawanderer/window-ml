@@ -27,7 +27,14 @@ export class Parser {
 
     parseProgram(): Node {
         const body: Node[] = [];
-        while (this.peek().t !== "eof") body.push(this.parseStatement());
+        // Nesting deep enough to exhaust the stack is outside the dialect, so it asks like any other refusal; a bare
+        // RangeError would be answered as the script's own error (sw-readonly.ts treats only NotInDialect/Denied as refused).
+        try {
+            while (this.peek().t !== "eof") body.push(this.parseStatement());
+        } catch (e) {
+            if (e instanceof RangeError) throw new NotInDialect("the script nests too deeply");
+            throw e;
+        }
         return { type: "Program", body };
     }
     parseStatement(): Node {
@@ -149,6 +156,10 @@ export class Parser {
         let left = this.parseUnary();
         while (true) {
             const t = this.peek();
+            // Not operators here, and said so where they stand: left alone, the expression just ends and the caller
+            // reports whatever token it then meets (an `expected ')'`), which names neither the keyword nor the fix.
+            if (t.t === "name" && (t.v === "in" || t.v === "instanceof"))
+                throw new NotInDialect(t.v === "in" ? "'in' is not available; read the field itself, or compare it with `undefined` on an object whose keys you know" : "'instanceof' is not available; use Array.isArray or typeof");
             if (t.t !== "punct" || !(t.v in BP) || BP[t.v] < minbp) break;
             const op = t.v; this.i++;
             // JS refuses an UNPARENTHESISED unary operand on the left of `**` (`-2 ** 2` is a SyntaxError, because
@@ -306,30 +317,54 @@ export class Parser {
         throw new NotInDialect(`unexpected token '${t.v || t.t}'`);
     }
     parseParenOrArrow(): Node {
-        // Try (params) =>  ; on failure restore and parse ( expr ).
+        // Try `(params) =>`; on failure restore and parse `( expr )`. Only the PARAMETER LIST is backtracked: an error in
+        // the arrow's BODY (or a default) is the real error and must reach the caller, else a refused `in` inside the
+        // body was re-reported as an `unexpected token '=>'` after the fallback re-read `(c)` as a grouping.
         const save = this.i;
+        let params: (string | Node)[] | null = null;
+        let defaultAt = -1;   // the token after `=` of an arrow parameter's default, which the dialect does not model
         try {
             this.eat("(");
-            const params: (string | Node)[] = [];   // a name, OR a destructuring pattern `[a,b]` / `{a,b}`
+            const ps: (string | Node)[] = [];   // a name, OR a destructuring pattern `[a,b]` / `{a,b}`
             while (!this.is(")")) {
-                if (this.is("[")) params.push(this.parseArrayPattern());
-                else if (this.is("{")) params.push(this.parseObjectPattern());
-                else { const n = this.next(); if (n.t !== "name") throw new NotInDialect("param"); params.push(n.v); }
+                if (this.is("[")) ps.push(this.parseArrayPattern());
+                else if (this.is("{")) ps.push(this.parseObjectPattern());
+                else {
+                    const n = this.next(); if (n.t !== "name") throw new NotInDialect("param"); ps.push(n.v);
+                    if (this.is("=") && this.arrowFollowsParens(save)) { defaultAt = this.i + 1; throw new NotInDialect("default"); }
+                }
                 if (this.is(",")) this.i++; else break;
             }
             this.eat(")");
             if (!this.is("=>")) throw new NotInDialect("not arrow");
             this.eat("=>");
-            return { type: "Arrow", params, body: this.parseArrowBody() };
+            params = ps;
         } catch {
             this.i = save;
-            this.eat("(");
-            const e = this.parseExpression();
-            this.eat(")");
-            // Marked, for the one place grouping changes what is legal: a parenthesised unary operand of `**`.
-            if (e && typeof e === "object") e.paren = true;
-            return e;
         }
+        if (params) return { type: "Arrow", params, body: this.parseArrowBody() };
+        if (defaultAt >= 0) {
+            // Parsed first, so a refused construct INSIDE the default is the error reported, not the default itself.
+            this.i = defaultAt; this.parseExpression();
+            throw new NotInDialect("a default parameter value is not supported; read the argument inside the body");
+        }
+        this.eat("(");
+        const e = this.parseExpression();
+        this.eat(")");
+        // Marked, for the one place grouping changes what is legal: a parenthesised unary operand of `**`.
+        if (e && typeof e === "object") e.paren = true;
+        return e;
+    }
+    /** Whether the `(` at token `open` closes into a `)` that `=>` follows (so it heads an arrow, not a grouping). */
+    arrowFollowsParens(open: number): boolean {
+        let depth = 0;
+        for (let k = open; k < this.toks.length; k++) {
+            const t = this.toks[k];
+            if (t.t !== "punct") continue;
+            if (t.v === "(" || t.v === "[" || t.v === "{") depth++;
+            else if (t.v === ")" || t.v === "]" || t.v === "}") { depth--; if (depth === 0) { const n = this.toks[k + 1]; return !!n && n.t === "punct" && n.v === "=>"; } }
+        }
+        return false;
     }
     parseBlock(): Node {
         this.eat("{");

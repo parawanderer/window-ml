@@ -114,6 +114,16 @@ test("on an undescribed call every effect question answers in the direction that
     assert.deepEqual(run("(c) => c.effects.pairs.length === 0", facts), { decision: undefined });
 });
 
+test("on an undescribed call a DENY over a resource's field does not fire, so the call asks; a DENY over has() does", () => {
+    const facts = { ...FACTS, effects: "unknown" };
+    assert.deepEqual(run("(c) => c.effects.writes.some((r) => r.names === true)", facts, "deny"), { decision: undefined }, "the unknown resource has no names");
+    assert.deepEqual(run('(c) => c.effects.pairs.some((e) => e.op === "write" && e.res.kind === "fs")', facts, "deny"), { decision: undefined }, "nor an fs kind");
+    assert.deepEqual(run('(c) => c.effects.has("write")', facts, "deny"), { decision: "deny" });
+    // Every field but kind reads undefined, so a DENY that tests an ABSENCE does fire (the prompt says so).
+    for (const src of ["(c) => c.effects.writes.some((r) => !r.inRoot)", "(c) => c.effects.writes.some((r) => r.inRoot !== true)", "(c) => !c.effects.writes.every((r) => r.inRoot)"])
+        assert.deepEqual(run(src, facts, "deny"), { decision: "deny" }, src);
+});
+
 test("a question about an operation or kind the algebra does not have is broken, not a quiet false", () => {
     assert.match(broken('(c) => !c.effects.has("wirte")', "a misspelt operation"), /no operation 'wirte'/);
     assert.match(broken('(c) => !c.effects.has("write", "files")', "a misspelt kind"), /no resource kind 'files'/);
@@ -287,6 +297,53 @@ test("a regex that could backtrack without end is refused, as in a survey; a saf
     assert.match(broken('(c) => new RegExp("(\\\\w+\\\\s?)*$").test(c.url)', "new RegExp"), /backtrack/);
     assert.match(broken('(c) => c.url.match("(a|a)+") !== null', "a string pattern"), /backtrack/);
     assert.deepEqual(run("(c) => /^https:\\/\\/a\\.example\\//.test(c.url)"), { decision: "allow" });
+});
+
+// --- a refused `in` / `instanceof` is NAMED, wherever it sits ---
+
+/** Every position an `in` can stand in; each source must be refused with a message naming `in`, never `=>` or `)`. */
+const IN_POSITIONS = {
+    "bare arrow body": `(c) => "x" in c`,
+    "parenthesised": `(c) => ("x" in c)`,
+    "after &&": `(c) => c.argv.length === 2 && ("x" in c)`,
+    "after && unparenthesised": `(c) => c.argv.length === 2 && "x" in c`,
+    "after ||": `(c) => c.argv.length === 9 || ("x" in c)`,
+    "ternary test": `(c) => ("x" in c) ? true : false`,
+    "ternary branch": `(c) => c.kind === "fetch" ? ("x" in c) : false`,
+    "nested in .some": `(c) => c.effects.some((p) => p.op === "write" && "names" in p.res && p.res.names === true)`,
+    "nested in .some, parenthesised": `(c) => c.effects.some((p) => (p.op === "write" && ("names" in p.res)))`,
+    "the model's answer": `(c) => c.kind === "fetch" && c.effects.some((p) => p.op === "write" && "names" in p.res && p.res.names === true)`,
+    "block body": `(c) => { return ("x" in c); }`,
+    "arrow parameter default": `(c, d = ("x" in c)) => true`,
+    "inside a call": `(c) => [1].includes(("x" in c) ? 1 : 2)`,
+};
+
+test("an `in` is refused with a message that names it, in every position", () => {
+    for (const [where, src] of Object.entries(IN_POSITIONS)) {
+        const why = broken(src, where);
+        assert.match(why, /'in'/, `${where}: ${why}`);
+        assert.doesNotMatch(why, /unexpected token|expected '\)'/, `${where}: ${why}`);
+        assert.doesNotMatch(why, /  /, `${where}: no run of two spaces`);
+    }
+});
+
+test("an `instanceof` is named too, and a parenthesised refused construct reports itself", () => {
+    assert.match(broken(`(c) => (c.argv instanceof Array)`, "instanceof"), /'instanceof'/);
+    assert.match(broken(`(c) => (c.kind == "fetch")`, "=="), /== coerces/);
+    assert.match(broken(`(c) => (new Foo())`, "new"), /new Foo\(\) is not allowed/);
+    assert.match(broken(`(c) => (c.argv.length++)`, "update"), /can only assign/);
+});
+
+test("`in` refused changes only the message: lookalikes still parse", () => {
+    assert.equal(run(`(c) => c.argv.includes("in")`).decision, undefined);   // no effect given: still evaluates, not broken
+    for (const src of [`(c) => c.argv.includes("in")`, `(c) => c.paths.some((p) => p.inRoot === true)`,
+        `(c) => (c.argv.indexOf("in") === -1)`, `(c) => ((index) => index === 0)(0)`]) {
+        const r = run(src, FACTS, "deny");
+        assert.ok(!r.broken || !/'in'|instanceof/.test(r.broken), `${src}: ${r.broken}`);
+    }
+    assert.equal(run(`(c) => c.argv.includes("in")`, FACTS, "deny").decision, undefined);
+    assert.equal(run(`(c) => c.argv.includes("git")`, FACTS, "deny").decision, "deny");
+    assert.equal(run(`(c) => c.paths.some((p) => p.inRoot === true)`, FACTS, "deny").decision, "deny");
 });
 
 // --- a broken policy fails CLOSED ---

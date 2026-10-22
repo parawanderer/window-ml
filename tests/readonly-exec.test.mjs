@@ -1893,6 +1893,38 @@ test("FAILURE: a counter survey that falls out of dialect afterwards has changed
     assert.equal(set.dump().length, 0, "the add before the refusal was rolled back");
 });
 
+// --- a refused `in` / `instanceof` is NAMED, wherever it sits ----------------------------------------------------------
+test("an `in` is refused with a message that names it, in every position", async () => {
+    const sources = [
+        `[1].map((c) => "x" in c)`,
+        `[1].map((c) => ("x" in c))`,
+        `[{}].map((c) => c.a && ("x" in c))`,
+        `[{}].map((c) => c.a ? ("x" in c) : false)`,
+        `[{ p: [{ r: {} }] }].map((c) => c.p.some((p) => p.op === "w" && "names" in p.r))`,
+        `[{ p: [{ r: {} }] }].map((c) => c.p.some((p) => (p.op === "w" && ("names" in p.r))))`,
+        `[1].map((c, d = ("x" in c)) => 1)`,
+        `[1].map((c) => { return ("x" in c); })`,
+        `("x" in {})`,
+        `const o = {}; ("x" in o)`,
+    ];
+    for (const js of sources) {
+        await assert.rejects(run(js), (e) => outOfDialect(e) && /'in'/.test(e.message) && !/unexpected token|expected '\)'/.test(e.message) && !/  /.test(e.message), js);
+    }
+    await assert.rejects(run(`[[]].map((c) => (c instanceof Array))`), (e) => outOfDialect(e) && /'instanceof'/.test(e.message));
+});
+
+test("`in` refused changes only the message: lookalikes still run, for…in keeps its own message", async () => {
+    assert.deepEqual((await run(`["in", "x"].includes("in")`)).value, true);
+    assert.deepEqual((await run(`const index = 1; const inRoot = true; [(index), (inRoot)]`)).value, [1, true]);
+    assert.deepEqual((await run(`["a"].map((s) => (s + " in " + s))`)).value, ["a in a"]);
+    await assert.rejects(run(`for (const k in {a: 1}) {}`), (e) => outOfDialect(e) && /for…in/.test(e.message));
+});
+
+test("nesting deep enough to exhaust the stack is out of the dialect (it asks), never a RangeError the script answers", async () => {
+    for (const js of ["(a)=>".repeat(5000) + "1", "(".repeat(20000) + "1" + ")".repeat(20000), "[".repeat(20000) + "]".repeat(20000)])
+        await assert.rejects(run(js), (e) => outOfDialect(e) && /nests too deeply/.test(e.message), js.slice(0, 12));
+});
+
 // --- STORED tables (POINTER_VALUES slice 7) -------------------------------------------------------------------------
 // A facade over a PREVIEW whose whole table is in the value store: `col` / `select` / `records` (and a `head` past the
 // preview) read every row through a reader bound to the run, and return promises. No construct was added, but a new kind
