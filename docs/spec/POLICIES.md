@@ -93,6 +93,22 @@ card shows the call's resolved facts, not the script.
 - A policy answers `allow`, `deny`, or nothing. `deny` wins over `allow` across policies; nothing means the tiers above
   decide. **"Always reject" is a policy like any other** (Shane, 2026-10-13): a call it matches is refused without a
   card, and the model is told which policy refused it, so it can stop trying rather than rephrase.
+- **A policy may also answer `ask`** (Shane, 2026-10-22; found while ruling the default for a nested `rm`, #990). Across
+  policies the stricter answer wins: `deny`, then `ask`, then `allow`, then nothing (the built-in default). A matching
+  `ask` shows the card where a stored `allow` or the built-in default would have run the call; it never refuses and never
+  runs a call by itself. It is how a person is STRICTER than the default without refusing: "ask on every `rm` under
+  `src/`", where the built-in default frees a nested delete inside a root. Three rules come with it:
+  1. **The narrow direction, like `deny`.** An `ask` whose evaluation read a `null` fact fires (docs/dev/policies.md, "A
+     null fact is unknown"). Over an undescribed call (`effects: "unknown"`) a test of a resource's field does not fire,
+     and the call asks anyway, so no `ask` fails open.
+  2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
+     an `allow` the `ask` overrides.
+  3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored
+     `ask` read by an older build is dropped and the default decides there: a downgrade loses the ask, never a refusal.
+     The new build reads a fixture of the old store unchanged, and an `ask` it stores survives its own reload.
+
+  An `ask` is the one answer a model may propose with the least at stake: wrong, it costs the person a click. NOT BUILT;
+  the judge (`judgeCall`), the store, the policy page and the card each take it.
 - It changes only **whether the person is asked**, never what is enforced: whatever bounds the call (for a shell call
   the container, the OS sandbox and the workspace roots) bounds it whatever a policy says.
 - It never reaches the refused tier: a call from a page, or one made from the page's world, is refused before any policy
