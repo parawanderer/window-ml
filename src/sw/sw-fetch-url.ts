@@ -3,7 +3,7 @@
 import { isSelfSourceUrl } from "../agent/self-source";
 import { BUILD_INFO } from "../build-info.gen";
 import { isCurrentPage } from "../dom/dom";
-import { senderTrust, takeCredFetch, tabGrants, fetchConsent } from "./sw-consent";
+import { senderTrust, takeCredFetch, takeOnceFetch, tabGrants, fetchConsent } from "./sw-consent";
 import { fetchRenderedContent, fetchUrlContent } from "./sw-fetch";
 import { getConfig } from "./sw-llm";
 import type { FetchResult } from "../contract";
@@ -107,7 +107,7 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // flag. Enforced HERE, trusted-side (the client autoApprove only skips the prompt; the background is
             // the authority — a forged "self-source" can't make this true for a non-self URL). See self-source.ts.
             const selfSrc = !!cfg.autoApproveSelfSource && !rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl);
-            if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(caller.consented ? caller.consented(url) : tabId != null && !!fetchConsent.get(tabId)?.has(url))) {
+            if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(caller.consented ? caller.consented(url) : tabId != null && (!!fetchConsent.get(tabId)?.has(url) || takeOnceFetch(tabId, url)))) {
                 const inExec = tabId != null && !!tabGrants(tabId)?.fetchUrls;
                 return { error: inExec
                     ? `Refused: "${url}" is not spelled out in the approved script, so it was not approved. Write the URL as a string literal in ml.fetch("…"), or fetch it with the fetch_url tool.`

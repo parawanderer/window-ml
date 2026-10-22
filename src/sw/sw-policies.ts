@@ -410,8 +410,9 @@ export function withoutAsked(runId: string, grants: PersistGrant[]): { grants: P
     for (const g of grants) {
         if (g.kind !== "fetch-url") { kept.push(g); continue; }
         const urls = g.urls.filter((u) => {
-            const j = judgeCall(runId, "fetch", fetchFacts(u));
-            const w = j.decision === "ask" ? askWhyOf(j) : undefined;
+            // A grant carries no options, so an `ask` about a rendered fetch counts as well as one about a plain fetch.
+            const w = [false, true].map((rendered) => judgeCall(runId, "fetch", fetchFacts(u, { credentials: false, rendered })))
+                .map((j) => (j.decision === "ask" ? askWhyOf(j) : undefined)).find(Boolean);
             if (w) why ??= w;
             return !w;
         });

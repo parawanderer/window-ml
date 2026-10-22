@@ -209,3 +209,52 @@ test("a page's FETCH_URL from an unapproved origin is refused before any policy 
     assert.match(add?.error || "", /Refused|refused/);
     assert.equal((await policies(b.bg, {})).global.length, 1, "the page's add changed nothing");
 });
+
+// --- a page-built run: approving an asked fetch_url lends the tab one call, not the session ---
+
+/** A page-built run (`START_RUN` from tab 8) whose model calls fetch_url on `OTHER` once; the delegated tool's ml.fetch is
+ *  the page's `FETCH_URL`. Returns the worker, the tool's result, and what a later `FETCH_URL` of the same URL got. */
+async function pageRun({ ask }) {
+    let n = 0, toolResult;
+    const page = { tab: { id: 8, url: "https://builder.example/" } };
+    const bg = loadBackground({
+        config,
+        onFetch: (call) => {
+            if (call.url === config.chatUrl)
+                return ++n === 1 ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "fetch_url", arguments: JSON.stringify({ url: OTHER }) } }] } }] })
+                    : jsonResponse({ choices: [{ message: { content: "done" } }] });
+            return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => BODY, arrayBuffer: async () => new TextEncoder().encode(BODY).buffer, body: null };
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval)
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: { approved: true, persist: true } } }, EXT_PAGE);
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "fetch_url" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                const r = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, { tab: { id: tabId, url: page.tab.url } });
+                toolResult = r.error ? `Error: ${r.error}` : "ok";
+                return { result: toolResult };
+            }
+            return undefined;
+        },
+    });
+    if (ask) await addAsk(bg);
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "pa1", task: "read it", systemPrompt: "S",
+        tools: [{ name: "fetch_url", requiresApproval: true, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, page);
+    assert.ok(res.data, "the run finished");
+    const later = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, page);
+    return { toolResult, later };
+}
+
+test("a page-built run: approving a fetch an ask raised runs that call, and the tab's own ml.fetch of the URL afterwards is refused", T, async () => {
+    const { toolResult, later } = await pageRun({ ask: true });
+    assert.equal(toolResult, "ok", "the approved call ran");
+    assert.match(String(later.error ?? ""), /hasn't been approved/, "the approval was spent on that one call: no session consent was minted");
+});
+
+test("the control: with no ask, the same approval consents the tab to the URL for the session", T, async () => {
+    const { toolResult, later } = await pageRun({ ask: false });
+    assert.equal(toolResult, "ok");
+    assert.equal(later.error, undefined, "the uncredentialed approval is remembered for the tab (the tier the ask withholds)");
+});

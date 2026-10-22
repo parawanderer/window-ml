@@ -160,7 +160,7 @@ test("an ASK is the one answer a model may propose with the least at stake: it i
         { name: "fetch_url", args: { url: OTHER } },
     ]);
     assert.deepEqual(cards.map((c) => c.tool), ["propose_policy", "fetch_url", "fetch_url"], "each fetch went to the person");
-    assert.match(cards[0].renderIn.note, /^Proposed by the model for this run: ask the person before every fetch/);
+    assert.match(cards[0].renderIn.note, /^Proposed by the model for this run: ask the person before a fetch when/);
     assert.match(results[0], /^Added for this run: "Check with me about other\.example"\. Matching fetch_url calls now always ask the person\./);
     assert.equal(fetched.length, 2);
     const pols = await runPolicies(bg);

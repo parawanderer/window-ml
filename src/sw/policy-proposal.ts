@@ -170,7 +170,7 @@ export function measureBreadth(p: PolicyProposal, calls: readonly RecordedFetch[
  * @returns one paragraph for the card's note
  */
 export function breadthNote(p: PolicyProposal, b: ProposalBreadth): string {
-    const verb = p.effect === "allow" ? "fetch without asking" : p.effect === "ask" ? "ask the person before every fetch" : "refuse without asking";
+    const verb = p.effect === "allow" ? "fetch without asking" : p.effect === "ask" ? "ask the person before a fetch" : "refuse without asking";
     const head = `Proposed by the model for this run: ${verb} when this code returns true. "${p.label}".`;
     const hosts = [...new Set(b.matched.map((c) => hostOf(c.url)))];
     const shown = hosts.slice(0, 3).join(", ") + (hosts.length > 3 ? `, and ${hosts.length - 3} more` : "");

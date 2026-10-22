@@ -170,6 +170,31 @@ export const takeCredFetch = (tabId: number | undefined, url: string): boolean =
     return true;
 };
 
+/** One-time grants for an UNCREDENTIALED fetch that an `ask` policy put to the person: approving the card runs that one
+ *  call and remembers nothing, so the next fetch of the URL asks again (docs/spec/POLICIES.md, the `ask` answer). */
+export const onceFetchGrants = new Map<number, Set<string>>();
+defineState({
+    id: "grants.askedFetch", scope: "tab", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "Fetches an ask policy put to you and you approved, each usable once and not yet used.",
+    read: ({ tabId }) => { const s = tabId == null ? undefined : onceFetchGrants.get(tabId); return s?.size ? [...s] : undefined; },
+});
+
+/** Mint the ONE-TIME grant for an uncredentialed fetch an `ask` policy raised, consumed by `takeOnceFetch`. */
+export const grantOnceFetch = (tabId: number, url: string): void => {
+    let s = onceFetchGrants.get(tabId);
+    if (!s) { s = new Set(); onceFetchGrants.set(tabId, s); }
+    s.add(url);
+};
+
+/** Consume a one-time asked-fetch grant for (tabId, url): true if it existed (and is now spent), else false. */
+export const takeOnceFetch = (tabId: number | undefined, url: string): boolean => {
+    if (tabId == null) return false;
+    const s = onceFetchGrants.get(tabId);
+    if (!s?.has(url)) return false;
+    s.delete(url);
+    return true;
+};
+
 /** The grant key for one server-tool call: the bundle, the function AND the arguments. Hashing the whole
  *  call rather than the tool id is the point — approving "run the search tool for THIS query" must not
  *  authorise running it for another one. Key order is normalised so an equivalent object still matches. */

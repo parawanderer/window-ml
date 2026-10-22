@@ -28,7 +28,7 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
         summary: "Asks the person for a rule that answers matching fetch_url calls of this run without a card, or always shows one.",
         description: "Ask the person to let matching fetch_url calls of this run go without asking (allow), be refused without asking (deny), or always be put to them (ask). " +
             "They see your code, with which of this run's calls it matches and whether it matches other sites, and approve or refuse it. " +
-            "Use it only after several approvals of similar fetches; keep it narrow, e.g. one host.",
+            "Propose an allow only after several approvals of similar fetches; keep it narrow, e.g. one host.",
         parameters: {
             type: "object",
             properties: {

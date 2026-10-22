@@ -129,6 +129,10 @@ policy decides"). It never refuses and never runs a call; it only takes away the
   (`tests/sw-policies-upgrade.test.mjs`).
 - **Not covered.** An exec's inline `ml.fetch` does not go through the `fetch_url` gate (`autoApprove`): the person
   approves the exec's code on its own card, where an `ask` over `fetch` shows only as the missing "Keep".
+- **Approving an asked `fetch_url` remembers nothing.** On a worker-built run the grant is the run's (`grantRunFetch`); on
+  a page-built run the tab gets a ONE-TIME grant (`grantOnceFetch`, spent by `FETCH_URL`), never the session consent
+  `consentFetch` mints, so a script on the tab cannot repeat the fetch without a card. A URL the tab was consented to
+  BEFORE the `ask` existed stays consented for the page's own `ml.fetch`: `FETCH_URL` judges no policy, `allow` or `ask`.
 
 ## The first consumer: remembered URLs
 

@@ -101,6 +101,8 @@ card shows the call's resolved facts, not the script.
   1. **The narrow direction, like `deny`.** An `ask` whose evaluation read a `null` fact fires (docs/dev/policies.md, "A
      null fact is unknown"). Over an undescribed call (`effects: "unknown"`) an `ask` that needs a resource's field to
      hold does not fire, and the call asks anyway; one that tests an absence fires. Either way no `ask` fails open.
+     A BROKEN `ask` is no opinion, like a broken `deny`: a call an `allow` or the built-in default frees still runs, and
+     the policy page shows the `ask` as broken.
   2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
      an `allow` the `ask` overrides.
   3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored
