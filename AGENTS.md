@@ -215,8 +215,8 @@ harness or script gets `.claude/skills/<name>/SKILL.md`, its detail in e2e-harne
 least monthly (`docs/dev/prompt-review.md`). Last review: **2026-10-21** (`propose_policy`'s details, measured on the
 policy-fetch interview). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
-**RULE — a complex analysis worth keeping goes in a notebook, not in a reply:** `notebooks/<topic>/`, run with
-`node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.
+**RULE — a complex analysis worth keeping, or a measurement a decision rests on, goes in a notebook, not in a
+reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.
 
 **RULE — never pad model-facing text for alignment.** A model pays for every space; assert no run of two spaces
 (`tests/token-pipe.test.mjs`). Human-facing surfaces align freely.
