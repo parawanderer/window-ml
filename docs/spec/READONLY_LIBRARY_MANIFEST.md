@@ -342,6 +342,16 @@ Whether a generated manifest requires trust or is self-verifying depends on whic
   a card for that call only ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"); whether a manifest may mark a function
   "ask for this call" and get the same treatment is the remaining half.
 
+## The shipped files' JSON Schema
+
+The four data files the Python dialect loads (`notebooks/python-dialect/data/manifest-{stdlib,numpy,pandas,pil}.json`)
+have a schema, [`library-manifest.schema.json`](library-manifest.schema.json), for editor validation and field hints
+(`.vscode/settings.json` associates them). Unlike [`program-manifest.schema.json`](program-manifest.schema.json) it is
+HAND-MAINTAINED: this format has no TypeScript type or validator here (its reader is `restricted.load_manifests` in the CPython
+fork), so it states the narrowest shape the four files justify, and the fork stays the authority. The shape may change with
+the design above, which is still WIP. `tests/manifest-schemas.test.mjs` checks every file against it and that each name a
+file lists has its row.
+
 ## Related
 
 - Issue [#277](https://github.com/parawanderer/window-ml/issues/277): the evaluator as bytecode, which makes tier 3

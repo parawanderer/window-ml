@@ -151,6 +151,19 @@ scope, `propose_manifest` (drafting from `--help` or script source into an appro
 registration page. None of it blocks the host's first slices; it is a root of its own in
 [`docs/plan/repl/`](../plan/repl/README.md).
 
+## Editing a manifest: the JSON Schema
+
+[`program-manifest.schema.json`](program-manifest.schema.json) gives an editor validation and a hint for every field (VS Code picks
+it up for `src/shell/manifests/*.json` through `.vscode/settings.json`; a manifest of your own may name it in a top-level
+`"$schema"` string). It is GENERATED from the types and their JSDoc in `src/shell/program-manifest.ts` by
+`node scripts/gen-export-schema.mjs` (the rules the types cannot state are laid over it in
+`scripts/manifest-schema-overlay.mjs`), and `tests/manifest-schemas.test.mjs` fails when it is stale. `validateManifest` is the
+authority, not the schema: the test holds the two to the same verdict on every shipped manifest and on one invalid manifest
+per rule, and names the rules JSON Schema cannot state (a `version.pattern` that compiles; a `harden` argument that is a flag
+of the same command). `"$schema"` is the only optional key beyond the table above, and it changes nothing about how a call is
+described. The manifests shipped here carry none (their bytes are pinned and copied to the host), and the host's reader
+rejects unknown fields, so a manifest with one is for this extension only.
+
 ## Related
 
 - [`SHELL.md`](SHELL.md): the consumer; what a call gives a policy; the host that resolves the facts.
