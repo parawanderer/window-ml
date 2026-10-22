@@ -11,6 +11,7 @@ import type { PromptDisplay } from "../contract/contract-run";
 import { navTarget } from "../dom/dom";
 import { emitDebug } from "../bus";
 import { makeBackgroundTaskPromise } from "../bridge";
+import { toIsolated } from "../page-channel";
 
 /** The mutable state of ONE agent session, shared between ml.agent's page loop and (for a handle) the
  *  ml.createAgent handle that steers it. A plain ml.agent() call makes a throwaway one per call; a handle
@@ -133,7 +134,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
         // A background run's loop lives in the service worker. Aborting the page controller only rejects the
         // round-trip (→ ABORT_TASK, which kills a FETCH_LLM, not the run), so the SW loop would keep stepping
         // and emit a stale approval AFTER the "cancelled" bubble. Relay CANCEL_RUN to actually stop it.
-        if (this.bg && this.hash) window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: this.hash } }, "*");
+        if (this.bg && this.hash) toIsolated({ type: "CANCEL_RUN_REQUEST", payload: { runId: this.hash } });
     }
 
     /** A new handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */

@@ -1,11 +1,16 @@
 // Content script (isolated world, document_start): relays messages between injected.js in the page's main world and
-// the background worker (window.postMessage ⇄ chrome.runtime), bridging CORS. Streaming rides a long-lived Port instead.
+// the background worker (the page channel ⇄ chrome.runtime), bridging CORS. Streaming rides a long-lived Port instead.
 // It no longer puts injected.js into the page: the worker registers it for the origins that may see window.ml and
 // injects it into a hidden page only for a run the person starts there (sw-presence.ts). On a hidden page this script
 // says nothing to the page and answers nothing it posts (page-gate.ts, docs/spec/SITE_PRESENCE.md step 2).
 import type { PageRequestType, BackgroundMessageType } from "./contract/contract-messages";
 import { HANDLE_MAP } from "./page-relay";
 import { gateOpen, gateState, setGate, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
+import { listenForPage, toPage, onPage, offPage, type ChannelMessage } from "./page-channel";
+
+// Before injected.js runs (a registered page script runs right after this, at document_start): take the port it hands
+// over (page-channel.ts). Nothing between us and the page script crosses the page's window.
+listenForPage();
 
 // 1. Whether injected.js is up in the main world. If it never comes up (a `sandbox` CSP blocks script EXECUTION in the
 // page), a delegated agent tool would post into the void and HANG, so the waits below are bounded: `pageAlive()` is set
@@ -44,7 +49,7 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
             || (!response ? ((lastErr && lastErr.message ? lastErr.message + " — " : "")
                 + "the extension background didn't respond (it may have been reloaded or evicted mid-run). Try again.") : undefined);
         // Send the response back to the main world.
-        window.postMessage({
+        toPage({
             type: responseType,
             requestId,
             result: response && response.data,
@@ -56,7 +61,7 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
             stepCount: response && response.stepCount,  // + its step/seq extents, so the handle offsets the next turn
             seqCount: response && response.seqCount,
             error,
-        }, "*");
+        });
     });
 };
 
@@ -74,12 +79,12 @@ const startStream = (requestId: string, payload: unknown): void => {
     const end = () => { streamPorts.delete(requestId); port.disconnect(); };
     port.onMessage.addListener((msg: StreamMsg) => {
         if (msg.type === "chunk") {
-            window.postMessage({ type: "LLM_STREAM_CHUNK", requestId, delta: msg.delta }, "*");
+            toPage({ type: "LLM_STREAM_CHUNK", requestId, delta: msg.delta });
         } else if (msg.type === "done") {
-            window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content, sources: msg.sources, model: msg.model, reasoning: msg.reasoning, usage: msg.usage }, "*");
+            toPage({ type: "LLM_STREAM_DONE", requestId, content: msg.content, sources: msg.sources, model: msg.model, reasoning: msg.reasoning, usage: msg.usage });
             end();
         } else if (msg.type === "error") {
-            window.postMessage({ type: "LLM_STREAM_ERROR", requestId, error: msg.error }, "*");
+            toPage({ type: "LLM_STREAM_ERROR", requestId, error: msg.error });
             end();
         }
     });
@@ -124,11 +129,11 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         // A live frame from a running server-side tool → the page's awaiting call (keyed by requestId), which
         // hands it to the tool's ctx.stream. Same one-way shape as PYTHON_STREAM.
         const m = message as { requestId?: string; frame?: unknown; at?: number };
-        if (gateOpen()) window.postMessage({ type: "SERVER_TOOL_STREAM", requestId: m.requestId, frame: m.frame, at: m.at }, "*");
+        if (gateOpen()) toPage({ type: "SERVER_TOOL_STREAM", requestId: m.requestId, frame: m.frame, at: m.at });
         return;
     }
     if (message && message.type === "PYTHON_STREAM") {
-        if (gateOpen()) window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts }, "*");
+        if (gateOpen()) toPage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts });
         return undefined;
     }
     // A run the WORKER is starting on this tab (sw-run-start.ts): register its builtin toolset here, exactly as a
@@ -145,18 +150,18 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         const finish = (r: { pageInfo?: string; error?: string }) => {
             if (done) return;
             done = true; clearTimeout(timer);
-            window.removeEventListener("message", onAdopted);
+            offPage(onAdopted);
             sendResponse(r);
         };
-        const onAdopted = (event: MessageEvent) => {
-            if (event.source !== window || !event.data || event.data.type !== "RUN_ADOPTED_NOW" || event.data.reply !== reply) return;
+        const onAdopted = (event: ChannelMessage) => {
+            if (!event.data || event.data.type !== "RUN_ADOPTED_NOW" || event.data.reply !== reply) return;
             finish({ pageInfo: typeof event.data.pageInfo === "string" ? event.data.pageInfo : "" });
         };
         // Same two bounds as a delegated tool: short while the page script has not proved it is alive, long once it has.
         const timer = setTimeout(() => finish({ error: pageAlive() ? "the page did not answer while the run was starting" : CSP_START_MSG }),
             pageAlive() ? TOOL_RELAY_TIMEOUT_MS : INJECTED_ABSENT_GRACE_MS);
-        window.addEventListener("message", onAdopted);
-        window.postMessage({ type: "ADOPT_RUN", runId, rebuild, reply }, "*");
+        onPage(onAdopted);
+        toPage({ type: "ADOPT_RUN", runId, rebuild, reply });
         return true;
     }
     // The state inspector asking what this page holds for a run (sw-run-state.ts). Short, and never retried: the
@@ -165,20 +170,20 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         const { runId } = (message.payload || {}) as { runId?: string };
         if (!gateOpen() || typeof runId !== "string") { sendResponse(null); return true; }
         const callId = Math.random().toString(36).slice(2);
-        const finish = (r: unknown) => { clearTimeout(timer); window.removeEventListener("message", onState); sendResponse(r); };
-        const onState = (event: MessageEvent) => {
-            if (event.source !== window || !event.data || event.data.type !== "PAGE_STATE_RESULT" || event.data.callId !== callId) return;
+        const finish = (r: unknown) => { clearTimeout(timer); offPage(onState); sendResponse(r); };
+        const onState = (event: ChannelMessage) => {
+            if (!event.data || event.data.type !== "PAGE_STATE_RESULT" || event.data.callId !== callId) return;
             finish({ members: event.data.members, entries: event.data.entries });
         };
         const timer = setTimeout(() => finish(null), PAGE_STATE_RELAY_MS);
-        window.addEventListener("message", onState);
-        window.postMessage({ type: "PAGE_STATE_READ", callId, runId }, "*");
+        onPage(onState);
+        toPage({ type: "PAGE_STATE_READ", callId, runId });
         return true;
     }
     // The run was stopped while its read-only survey ran here (sw-run-host.ts): the main world halts it. No answer.
     if (message && message.type === "CANCEL_TOOL_IN_PAGE") {
         const { runId } = (message.payload || {}) as { runId?: unknown };
-        if (typeof runId === "string" && gateOpen()) window.postMessage({ type: "PAGE_TOOL_CANCEL", runId }, "*");
+        if (typeof runId === "string" && gateOpen()) toPage({ type: "PAGE_TOOL_CANCEL", runId });
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
@@ -191,11 +196,11 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         if (done) return;
         done = true;
         if (clearAll) { clearTimeout(graceTimer); clearTimeout(backstop); }
-        window.removeEventListener("message", onResult);
+        offPage(onResult);
         sendResponse(envelope);
     };
-    const onResult = (event: MessageEvent) => {
-        if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RESULT" || event.data.callId !== callId) return;
+    const onResult = (event: ChannelMessage) => {
+        if (!event.data || event.data.type !== "PAGE_TOOL_RESULT" || event.data.callId !== callId) return;
         finish(event.data.envelope);
     };
     // GRACE: if injected still hasn't proven it's alive (no PAGE_ADOPT_HELLO) by now, window.ml isn't coming up
@@ -214,16 +219,16 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         clearTimeout(graceTimer);
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
-    window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead }, "*");
+    onPage(onResult);
+    toPage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead });
     return true;   // async sendResponse (the window round-trip completes later)
 }
 
 // 2. Listen for messages from injected.js (main world). A hello only marks the page script alive; everything else waits
 // for the gate, so a hidden page that posts our types is neither answered nor relayed (it is held while the worker has
 // not answered yet, and dropped once it says the page is hidden).
-window.addEventListener("message", (event: MessageEvent) => {
-    if (event.source !== window || !event.data) return;
+onPage((event: ChannelMessage) => {
+    if (!event.data) return;
     const data = event.data as PageMessage;
     if (data.type === "PAGE_ADOPT_HELLO") {
         markAlive();   // injected ran → window.ml is up on this page (the signal the delegation grace checks)
@@ -280,7 +285,7 @@ function onPageMessage(data: PageMessage): void {
         const d = data as { id?: string; runId?: string; key?: string; names?: string[]; delimiter?: string; headerless?: boolean };
         chrome.runtime.sendMessage({ type: "VALUE_COLUMNS", runId: d.runId, key: d.key, names: d.names, delimiter: d.delimiter, headerless: d.headerless }, (resp: { rowCount?: number; columns?: unknown; error?: string } = {}) => {
             const err = chrome.runtime.lastError?.message || resp?.error;
-            window.postMessage({ type: "PAGE_VALUE_COLUMNS_RESULT", id: d.id, ...(err ? { error: err } : { rowCount: resp?.rowCount, columns: resp?.columns }) }, "*");
+            toPage({ type: "PAGE_VALUE_COLUMNS_RESULT", id: d.id, ...(err ? { error: err } : { rowCount: resp?.rowCount, columns: resp?.columns }) });
         });
         return;
     }
@@ -312,7 +317,7 @@ function contentReady(tries = 4): void {
         setGate(resp.open === true);
         const adopt = (resp.adopt || []).filter((a) => a && typeof a.runId === "string");
         if (!adopt.length || !gateOpen()) return;
-        const post = () => { for (const a of adopt) window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*"); };
+        const post = () => { for (const a of adopt) toPage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }); };
         if (pageAlive()) post(); else onAlive.push(post);
     });
 }

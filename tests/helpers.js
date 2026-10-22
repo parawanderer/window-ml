@@ -20,6 +20,30 @@ const DIST = path.join(ROOT, "dist");
 // readonly interpreter capture their OWN logs by reassigning the methods, which a fresh object still allows),
 // so route it to no-ops. Fresh object PER sandbox so exec's save/restore can't bleed across worlds. Set
 // SANDBOX_CONSOLE=1 to see the real output while debugging a test.
+/**
+ * A MessagePort for the vm worlds (page-channel.ts): linked to its peer, delivering a structured clone by microtask, as
+ * a real port delivers by task. What arrives before `onmessage` is set waits, as a real port's queue does until started.
+ */
+class FakeMessagePort {
+    constructor() { this.other = null; this.closed = false; this._on = null; this._held = []; }
+    get onmessage() { return this._on; }
+    set onmessage(f) { this._on = f; for (const d of this._held.splice(0)) queueMicrotask(() => this._on && this._on({ data: d })); }
+    postMessage(data) {
+        const o = this.other, copy = structuredClone(data);
+        queueMicrotask(() => { if (!o || o.closed) return; if (o._on) o._on({ data: copy }); else o._held.push(copy); });
+    }
+    start() {}
+    close() { this.closed = true; }
+}
+/** A MessageChannel of two {@link FakeMessagePort}s. */
+class FakeMessageChannel {
+    constructor() { this.port1 = new FakeMessagePort(); this.port2 = new FakeMessagePort(); this.port1.other = this.port2; this.port2.other = this.port1; }
+}
+/** A MessageEvent that carries `ports`, as the page channel's hand-off needs. */
+class FakeMessageEvent {
+    constructor(type, init = {}) { this.type = type; this.data = init.data; this.ports = init.ports || []; this.source = init.source ?? null; }
+}
+
 function mkConsole() {
     if (process.env.SANDBOX_CONSOLE) return console;
     const noop = () => {};
@@ -597,6 +621,8 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     // fetch_url tool's HTML→Markdown conversion (turndown reads `DOMParser` off the global `window`). The stub
     // `document` below is enough for injected.js's own boot; parsing a fetched HTML page needs the real thing.
     const domParser = new JSDOM("").window.DOMParser;
+    // The page channel's isolated end (page-channel.ts), taken from injected.js's hand-off as content.js takes it.
+    const channel = { iso: null };
     const win = {
         DOMParser: domParser,
         addEventListener: (type, fn) => {
@@ -611,6 +637,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         },
         dispatchEvent: (event) => {
             dispatchedEvents.push(event.type);
+            if (event.type === "ml-page-port" && event.ports?.[0] && !channel.iso) channel.iso = event.ports[0];
             for (const fn of [...(listeners[event.type] || [])]) fn(event);
             return true;
         },
@@ -634,6 +661,8 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         // that tests then "passed" against.
         setTimeout, clearTimeout,
         Event: class Event { constructor(type) { this.type = type; } },
+        MessageChannel: FakeMessageChannel,
+        MessageEvent: FakeMessageEvent,
         window: win,
         // injected.js is a browser script — `location` is always present there (used for the run's
         // pageOrigin + the navigate tool's same-origin check). Mock it for the vm.
@@ -724,7 +753,13 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         if (!async) resolve(undefined);   // no listener kept the channel open
     });
 
-    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage };
+    // THE PAGE CHANNEL, from either end. `asContent(data)` sends to injected.js as content.js or the shell would;
+    // `asInjected(data)` sends to them as injected.js would. A test that posts on `window` speaks as the PAGE, which no
+    // longer reaches either.
+    const asContent = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
+    const asInjected = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.other.postMessage(data); };
+
+    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage, asContent, asInjected };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM
@@ -751,6 +786,8 @@ function loadDomWorld(html = "", { url, beforeInjected } = {}) {
         URL,
         Event: win.Event,
         CustomEvent: win.CustomEvent,
+        MessageChannel: FakeMessageChannel,
+        MessageEvent: FakeMessageEvent,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).
         Element: win.Element,
