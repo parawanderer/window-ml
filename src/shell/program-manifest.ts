@@ -476,6 +476,7 @@ function notLiteralPathspec(a: string): boolean {
 }
 
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]);
+const VERSION_KEYS = new Set(["range", "args", "pattern"]);
 const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
 
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
@@ -549,6 +550,7 @@ export function validateManifest(m: unknown): string[] {
     if (m.entrypoint !== undefined && v === undefined) { /* pinned by its hash, checked below */ }
     else if (!isObj(v) || typeof v.range !== "string" || !Array.isArray(v.args) || typeof v.pattern !== "string") errs.push("$.version: {range, args, pattern}");
     else {
+        keys(v, VERSION_KEYS, "$.version");
         if (v.range === "*") { if (v.args.length || v.pattern) errs.push("$.version: a \"*\" range reads no version (args [], pattern \"\")"); }
         else if (!v.range.trim().split(/\s+/).every((c) => /^(>=|<=|>|<|=)?\d+(\.\d+)*$/.test(c))) errs.push("$.version.range: comparators like >=2.30.0 <3");
         try { new RegExp(v.pattern); } catch { errs.push("$.version.pattern: a regex"); }

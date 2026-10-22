@@ -160,7 +160,7 @@ it up for `src/shell/manifests/*.json` through `.vscode/settings.json`; a manife
 `scripts/manifest-schema-overlay.mjs`), and `tests/manifest-schemas.test.mjs` fails when it is stale. `validateManifest` is the
 authority, not the schema: the test holds the two to the same verdict on every shipped manifest and on one invalid manifest
 per rule, and names the rules JSON Schema cannot state (a `version.pattern` that compiles; a `harden` argument that is a flag
-of the same command). `"$schema"` is the only optional key beyond the table above, and it changes nothing about how a call is
+of the same command). `"$schema"` is the only key beyond the types in `program-manifest.ts`, and it changes nothing about how a call is
 described. The manifests shipped here carry none (their bytes are pinned and copied to the host), and the host's reader
 rejects unknown fields, so a manifest with one is for this extension only.
 

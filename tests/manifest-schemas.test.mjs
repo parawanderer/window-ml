@@ -128,6 +128,7 @@ const INVALID = [
     ["unknown subcommand key", BIN, (m) => { m.command.subcommands.sub.extra = 1; }],
     ["unknown flag key (the misspelt `runer`)", BIN, (m) => flag(m, { runer: true })],
     ["unknown primary key", FIND, (m) => prim(m, { args: 1, extra: 1 })],
+    ["unknown version key (the host's VersionSpec refuses one)", BIN, (m) => { m.version.extra = 1; }],
     ["unknown entrypoint key", SCRIPT, (m) => { m.entrypoint.extra = 1; }],
     // required fields
     ["no program", BIN, (m) => { delete m.program; }],
@@ -237,12 +238,12 @@ test("the schema and validateManifest both accept every base, and both reject ea
     assert.deepEqual(disagree, []);
 });
 
-test("a rule enumerated per key: every key of every level is covered by an unknown-key case, a type case or a rule case", () => {
+test("the schema lists exactly the validator's keys, at every level", () => {
     // Enumerate, do not sample: the validator's key sets are read from its source, and each must appear in INVALID.
     const src = fs.readFileSync(here("src/shell/program-manifest.ts"), "utf8");
     const sets = Object.fromEntries([...src.matchAll(/const (\w+_KEYS) = new Set\(\[([^\]]*)\]/g)].map((m) => [m[1], [...m[2].matchAll(/"([^"]+)"/g)].map((x) => x[1])]));
-    assert.deepEqual(Object.keys(sets).sort(), ["COMMAND_KEYS", "FLAG_KEYS", "MANIFEST_KEYS", "PRIMARY_KEYS"]);
-    const props = { COMMAND_KEYS: PROGRAM_SCHEMA.$defs.CommandSpec.properties, FLAG_KEYS: PROGRAM_SCHEMA.$defs.FlagSpec.properties, PRIMARY_KEYS: PROGRAM_SCHEMA.$defs.PrimarySpec.properties, MANIFEST_KEYS: PROGRAM_SCHEMA.properties };
+    assert.deepEqual(Object.keys(sets).sort(), ["COMMAND_KEYS", "FLAG_KEYS", "MANIFEST_KEYS", "PRIMARY_KEYS", "VERSION_KEYS"]);
+    const props = { COMMAND_KEYS: PROGRAM_SCHEMA.$defs.CommandSpec.properties, FLAG_KEYS: PROGRAM_SCHEMA.$defs.FlagSpec.properties, PRIMARY_KEYS: PROGRAM_SCHEMA.$defs.PrimarySpec.properties, VERSION_KEYS: PROGRAM_SCHEMA.$defs.ManifestVersion.properties, MANIFEST_KEYS: PROGRAM_SCHEMA.properties };
     for (const [set, keys] of Object.entries(sets)) assert.deepEqual(Object.keys(props[set]).sort(), [...keys].sort(), `${set}: the schema lists exactly the validator's keys`);
 });
 
@@ -263,6 +264,18 @@ test("the rules the schema cannot express are named, and are real", () => {
     }
 });
 
+test("every message validateManifest can give is produced by an INVALID or SCHEMA_GAPS case", () => {
+    // Enumerate, do not sample: each `errs.push` in the validator's source is a rule. Its message's fixed tail (after
+    // the last interpolation) must end some error the listed cases produce, so a new rule with no case fails here.
+    const src = fs.readFileSync(here("src/shell/program-manifest.ts"), "utf8");
+    const fn = src.slice(src.indexOf("export function validateManifest"));
+    const tails = [...fn.matchAll(/errs\.push\((`[^`]*`|"(?:[^"\\]|\\.)*")\)/g)].map((x) => x[1].slice(1, -1).replace(/\\"/g, '"').split("}").pop());
+    assert.ok(tails.length > 30, `found the validator's rules (${tails.length})`);
+    const got = [...INVALID, ...SCHEMA_GAPS].flatMap(([, base, mut]) => { const m = base(); mut(m); return validateManifest(m); });
+    const uncovered = [...new Set(tails)].filter((t) => !got.some((e) => e.endsWith(t)));
+    assert.deepEqual(uncovered, []);
+});
+
 /** The other direction: the schema is STRICTER than the validator here (the validator checks the truthiness of a flag's booleans and not its type). A hand-edited file gets the underline; the validator still loads it. */
 const SCHEMA_STRICTER = [
     ["a flag's value is not a boolean", BIN, (m) => flag(m, { value: "yes" })],
@@ -277,6 +290,8 @@ const SCHEMA_STRICTER = [
     ["a primary's argIsPath is outside read/write", FIND, (m) => prim(m, { args: 1, argIsPath: "execute" })],
     ["a primary's runner is not a boolean", FIND, (m) => prim(m, { args: 1, runner: "yes", effects: ["runs-code"] })],
     ["a command's harden has a non-string", BIN, (m) => cmd(m, { harden: [1] })],
+    ["a version's args has a non-string", BIN, (m) => { m.version.args = ["--version", 1]; }],
+    ["a primary's until has a non-string", FIND, (m) => prim(m, { args: 1, until: [1] })],
 ];
 
 test("where the schema is stricter than validateManifest it says so: the validator loads it, the editor underlines it", () => {
