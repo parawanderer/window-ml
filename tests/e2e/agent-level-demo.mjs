@@ -7,7 +7,9 @@
 //   PACE=2500 node --import tsx tests/e2e/agent-level-demo.mjs            # slower narration (ms per beat)
 // Screenshots land in tests/e2e/artifacts/agent-level-demo/ (gitignored).
 //
-// THE BEATS, on one site (forum.test) the person allowed to use window.ml:
+// THE BEATS, on one site (forum.test). It starts HIDDEN (no window.ml: docs/spec/SITE_PRESENCE.md), then the person allows it
+// and window.ml appears in the open page with no reload:
+//   0. the site is not allowed: `typeof window.ml` is "undefined"; allowing it makes window.ml appear without a reload.
 //   1. agents "ask": the site starts an agent, and the start card appears in the sidebar. Its lines, walked.
 //   2. the person allows it, and the run goes.
 //   3. the site sends the agent another turn: the transcript names the site, never "you".
@@ -45,12 +47,11 @@ const ext = await launchExtension({ headful: !HEADLESS, args: HOSTILE_RESOLVER_A
 await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", debugMode: "overlay" });
 const ORIGIN = site.origin("forum.test");
 const HOST = ORIGIN.replace(/^https?:\/\//, "");
-await approveOrigin(ext.sw, ORIGIN, { agents: "ask" });
 
 const page = await ext.context.newPage();
 await page.setViewportSize({ width: 1400, height: 900 });
 await page.goto(site.url("forum.test", "/"));
-await waitForMl(page, { approve: false });
+await waitForMl(page, { approve: false });   // the person has allowed nothing yet: the page is hidden, and this returns
 
 /** The sidebar frame, open on the session whose task matches: as it is when it already shows it, else back to the list
  *  (out of a session or Settings) and into it. */
@@ -66,6 +67,15 @@ async function sidebar(task) {
 const shown = async (frame, sel, timeout = 15000) => { await frame.waitForSelector(sel, { timeout }); };
 
 try {
+    // --- 0. hidden, then allowed ---
+    const before = await page.evaluate(() => typeof window.ml);
+    must(before === "undefined", `an unallowed site has no window.ml: ${before}`);
+    await say(page, `${HOST} is not allowed yet: typeof window.ml is "${before}"`, "the page cannot call anything, and nothing it posts is answered");
+    await shot(page, "hidden");
+    await approveOrigin(ext.sw, ORIGIN, { agents: "ask" });
+    await page.waitForFunction(() => !!(window.ml && window.ml.ready), null, { timeout: 15000 });
+    await say(page, `The person allowed ${HOST}: typeof window.ml is now "${await page.evaluate(() => typeof window.ml)}"`, "the page script was injected into the open tab, no reload");
+
     // --- 1. the start card ---
     await say(page, `${HOST} may use window.ml, and its agents are set to "Ask each time"`, "the person allowed the site; starting an agent is a second permission");
     fake.setScript([{ tool: "findByText", args: { text: "code" } }, { content: "The thread says the code is 4417." }]);
