@@ -45,8 +45,9 @@ export function syncPresence(): Promise<void> {
 
 /**
  * A registration applies from the next navigation, so a page already open on an origin just allowed would wait for a
- * reload. Each such tab whose content script says it was told the page is hidden gets the page scripts now, and then
- * its gate opened. Asked of the content script, which only the worker reaches: no state of ours to lose on eviction.
+ * reload. Each such tab whose page script is not there gets it now, and then its gate opened: one told it was hidden,
+ * and one that loaded while this sync ran (told it is visible, before the registration covered it, so no page script
+ * said hello). Asked of the content script, which only the worker reaches: no state of ours to lose on eviction.
  * @param origins the visible origins
  * @returns once every such tab has been seen to
  */
@@ -57,8 +58,8 @@ async function showInOpenTabs(origins: string[]): Promise<void> {
     await Promise.all(tabs.map(async (tab) => {
         if (tab.id == null || !origins.includes(originOf(tab.url) ?? "")) return;
         try {
-            const r = await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_CHECK" }, { frameId: 0 }) as { gate?: string } | undefined;
-            if (r?.gate !== "closed") return;
+            const r = await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_CHECK" }, { frameId: 0 }) as { gate?: string; alive?: boolean } | undefined;
+            if (!(r?.gate === "closed" || (r?.gate === "open" && r.alive === false))) return;
             await injectPageScripts(tab.id);
             await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_OPEN" }, { frameId: 0 });
         } catch { /* no content script there (a reload will bring the registered scripts) */ }

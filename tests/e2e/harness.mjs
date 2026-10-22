@@ -182,6 +182,13 @@ export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
         const levels = /** @type {Record<string, string>} */ (got.ml_site_agents && typeof got.ml_site_agents === "object" ? got.ml_site_agents : {});
         if (level && levels[o] !== level) await chrome.storage.local.set({ ml_site_agents: { ...levels, [o]: level } });
         if (!level && o in levels) { const { [o]: _drop, ...rest } = levels; await chrome.storage.local.set({ ml_site_agents: rest }); }
+        // The worker registers the page scripts for the origin on the change (sw-presence.ts); wait for it, so a page
+        // opened next is covered from its first navigation.
+        const u = new URL(o), pattern = `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
+        for (let i = 0; i < 150; i++) {
+            if ((await chrome.scripting.getRegisteredContentScripts()).some((r) => r.matches?.includes(pattern))) break;
+            await new Promise((r) => setTimeout(r, 20));
+        }
     }, [origin, agents]);
 }
 
