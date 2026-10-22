@@ -472,7 +472,7 @@ test("describeCall marks mv's and git mv's operands as walked (the host only ans
         "mv always moves a whole directory, so it is recursive like rm -r");
 });
 
-test("git --icase-pathspecs rm Secret.ts is not free: it matches the secret on a case-sensitive host", { todo: "--icase-pathspecs is an allowed empty flag, so a case-mismatched pathspec is claimed as the name the caller spelled while git removes the on-disk secret (Linux; macOS realpath usually folds case)" }, () => {
+test("git --icase-pathspecs rm Secret.ts is not free: it matches the secret on a case-sensitive host", () => {
     // Guards: the host resolves the LITERAL path the caller spelled. `--icase-pathspecs` makes git match
     // `secret.ts` when given `Secret.ts`. On a case-sensitive host those are two names: the claim is on the
     // non-secret one, the secret is removed. Residual beside the glob fix (2c3b47a7), found on the recheck.
