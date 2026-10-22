@@ -250,7 +250,7 @@ listed as remaining is DONE unless named below.
   fact is sent as `null`": the lifter first, then the number is measured on policies models propose, nothing else of the
   tree before that; both consumers' proposals are measured as text from a bench prompt, no tool widened; widening
   `propose_policy` to `sh` is a later decision of Shane's); lane 3 the per-run wrapper's wasm number. Lanes 6 to 9 took the rest of the old list (2026-10-19 to
-  2026-10-20, above). Nothing is unassigned.
+  2026-10-20, above). Nothing was unassigned then; the three findings of 2026-10-22 at the end of this section are.
   Lane 10 is closed: #909 (1c3a30da), #910 (96f823ce), #911 (e9c95c81), the seam complete with host #20;
   [`LANE_10_RESULT.md`](LANE_10_RESULT.md) (#923, d6ccae00). Lane 11's round-4 items are closed: host #20, #21, #22
   (the `ended` record, five causes; the private-sweep fix), #913, #920, #921; [`LANE_11_RESULT.md`](LANE_11_RESULT.md)
@@ -260,6 +260,19 @@ listed as remaining is DONE unless named below.
   its column-shapes PR (the red team's); the superseded fork branch `ml/wasm32-wrappers-per-run` (Shane's to delete); the
   mechanism of the slowdown without per-run unwrapping, since settled by the janitor (2026-10-21, one extra indirect call per allocation, about 40 ns; in the memory row). Fork #7 merged with no review on it
   (lane 3 reports Shane allowed merging without review mid-round; relayed, so Shane confirms).
+- **Open findings with no lane (2026-10-22).** Catalogued by the janitor as `{ todo }` tests on main, brought by the
+  site-access session (`2dfb7129`), which is taking the MAIN-world group itself. Every REPL lane is closed, so these have
+  no owner; who takes one is Shane's call. Whoever does: the finder neither builds nor reviews the fix, and the fix
+  lands with its todo test turned on, failing first.
+  1. `tests/redteam-python-sandbox.test.mjs:302` (P2-handle): the cancel at the end of `wrapUserScript`
+     (`python-runtime.ts`) walks `asyncio.all_tasks()`; a `call_soon`/`call_later` Handle is not a task, so its callback
+     runs after the result has returned. Python side of window-ml, not the fork; lane 3 or 12 would have held it.
+  2. `tests/redteam-python-sandbox.test.mjs:315` (P2-escape): `_ml_dumps`'s `default=` calls `str()` on the cell's object
+     under `except Exception`; a `BaseException` raised there ends `wrapUserScript` before the cancel runs.
+  3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
+     on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
+     an input cap tied to the pattern's quantifiers. The readonly dialect has no REPL lane; the site-access session has
+     offered to take it after its presence step 2.
 
 ## The lanes
 
