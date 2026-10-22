@@ -26,6 +26,16 @@ test("every CI job reads .nvmrc; the unit leg's matrix, which names the required
     assert.match(read(".github/workflows/tests.yml"), new RegExp(`\\n\\s*node: \\[${PINNED}\\]\\n`), "test (node N) must be the pinned N");
 });
 
+test("every CI job that runs node sets the pinned one up first, rather than taking the runner's", () => {
+    for (const f of readdirSync(new URL("../.github/workflows/", import.meta.url)).filter((n) => /\.ya?ml$/.test(n))) {
+        const jobs = read(`.github/workflows/${f}`).split(/\n(?=  [\w-]+:\n)/).slice(1);
+        for (const job of jobs) {
+            const name = job.split(":")[0].trim();
+            if (/(?:^|\s|")(?:node|npm|npx) /m.test(job)) assert.match(job, /setup-node@/, `${f}: job ${name} runs node without actions/setup-node`);
+        }
+    }
+});
+
 test("the test runner refuses a Node older than the pin", () => {
     assert.match(read("scripts/test.mjs"), /readFileSync\(path\.join\(ROOT, "\.nvmrc"\)/);
 });

@@ -279,6 +279,10 @@ jobs:
       # fetch-depth: 0 so the CSS ratchet below can diff against the merge base. Without it the checkout is
       # shallow, the base ref is missing, and the check SKIPS — quietly, which is the worst of both.
       - uses: actions/checkout@v7
+      # The pinned Node (.nvmrc), not the runner's own: test.mjs refuses an older one.
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
         with:
           fetch-depth: 0
       - run: python3 -m unittest discover -s openwebui/tests -v
