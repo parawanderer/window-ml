@@ -860,13 +860,13 @@ test("the run state panel folds a group to a count, and copies a member's value,
         const grants = panel.locator('[data-group="grants"]');
         await grants.locator(".rstate-group-head").click();
         await expect(grants.locator(".rstate-group-head")).toHaveAttribute("aria-expanded", "false");
-        await expect(grants.locator(".rstate-count")).toHaveText("4 members · 0 holding something");
+        await expect(grants.locator(".rstate-count")).toHaveText("5 members · 0 holding something");
         await expect(grants.locator(".rstate-member")).toHaveCount(0);
         // Remembered on this device: a reload leaves it folded.
         await chat.reload();
         await expect(panel.locator('[data-group="grants"] .rstate-count')).toBeVisible({ timeout: 10_000 });
         await panel.locator('[data-group="grants"] .rstate-group-head').click();
-        await expect(panel.locator('[data-group="grants"] .rstate-member')).toHaveCount(4);
+        await expect(panel.locator('[data-group="grants"] .rstate-member')).toHaveCount(5);
         await recordCopies();
 
         // COPY: the whole value from the button on the member's line (shown on hover)...
