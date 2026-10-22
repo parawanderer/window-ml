@@ -161,3 +161,26 @@ test("on a visible page what the page posted before the worker answered is relay
     await flush(30);
     assert.ok(w.runtimeCalls.some((c) => c.type === "GET_INFO" || c.requestId === "early" || JSON.stringify(c).includes("early")), JSON.stringify(w.runtimeCalls));
 });
+
+// --- the card's replay across a navigation ---
+
+for (const shown of ["visible", "hidden"])
+test(`a finished run's history is replayed to the shell of the tab's next document only on a ${shown === "visible" ? "visible origin (positive control)" : "visible origin: a hidden one is told nothing"}`, T, async () => {
+    const origin = "https://site.example";
+    const bg = worker({ local: shown === "visible" ? { ml_site_always: [origin] } : {}, extra: {
+        openTabs: [{ id: 7, url: `${origin}/page` }],
+        onTabMessage: async (_tab, msg) => msg.type === "ADOPT_RUN_NOW" ? (msg.payload.injected === true || shown === "visible" ? { pageInfo: "here" } : { needInject: true }) : undefined,
+    } });
+    const r = plain(await bg.send({ type: "USER_START_RUN", keep: false, payload: { task: "read it", surface: "hud" } }, sender(origin)));
+    assert.ok(r?.data?.hash, JSON.stringify(r));
+    await flush(40);
+    const replays = () => bg.tabMessages.filter(([t, m]) => t === 7 && m?.type === "ML_DEBUG_TO_PAGE").length;
+    const before = replays();
+    assert.ok(before > 0, "positive control: the run sent its events to the tab");
+    const next = sender(origin, "doc-2");
+    await bg.send({ type: "CONTENT_READY" }, next);
+    void bg.send({ type: "SHELL_LISTENING" }, next);   // no answer: fire and forget, as the shell sends it
+    await flush(20);
+    if (shown === "visible") assert.ok(replays() > before, "the visible page's card got the finished run's history");
+    else assert.equal(replays(), before, "a hidden page's shell was sent a finished run's history");
+});

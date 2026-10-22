@@ -515,13 +515,14 @@ test("a page cannot make the worker replay a run's history to its tab again and 
     for (let i = 0; i < 20 && !release; i++) await tick();
     const replays = () => bg.tabMessages.filter(([tabId, m]) => tabId === 9 && m?.type === "ML_DEBUG_TO_PAGE").length;
     const sender = { ...hostilePage(9), documentId: "doc-1" };
-    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    // The replay now waits for the shell to say it is listening (SHELL_LISTENING), since the content script answers
+    // CONTENT_READY at document_start; both are sent again here, as a page that reloads its scripts would make them.
+    await bg.send({ type: "CONTENT_READY" }, sender); void bg.send({ type: "SHELL_LISTENING" }, sender); await tick();
     const first = replays();
-    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
-    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    for (let i = 0; i < 2; i++) { await bg.send({ type: "CONTENT_READY" }, sender); void bg.send({ type: "SHELL_LISTENING" }, sender); await tick(); }
     release();
     assert.ok(first > 0, "positive control: the run's history was buffered and the tab gets ML_DEBUG_TO_PAGE");
-    assert.equal(replays(), first, `the same document got the history again: ${first} events after one CONTENT_READY, ${replays()} after three`);
+    assert.equal(replays(), first, `the same document got the history again: ${first} events after one ask, ${replays()} after three`);
 });
 
 // ── (g) PART 5: no page-started type for a page a run is on (docs/spec/SITE_ACCESS.md slice 2 part 5) ─────────────

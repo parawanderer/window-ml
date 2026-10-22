@@ -1646,3 +1646,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // shell-session-relay.ts, which owns the waiter map that joins the two. `true` keeps the reply channel open.
     else if (msg?.type === "ML_SESSION_TO_PAGE") { if (relaySessionToPage(msg, sendResponse)) return true; }
 });
+// Listening now: ask the worker for the tab's run history (the card's replay across a navigation). Not CONTENT_READY's
+// job any more: the content script runs at document_start, before this script exists to hear it.
+try { void chrome.runtime.sendMessage({ type: "SHELL_LISTENING" }).catch(() => {}); } catch { /* context gone */ }

@@ -481,25 +481,35 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 navBarrier.noteNavigating(tabId, null);   // the sender is the document about to re-adopt, not one being left
                 for (const runId of resumeIds) hostRun({ type: "RESUME_RUN", payload: { runId, task: "" } }, tabId, () => { /* reported through its events */ });
             }
-            // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
-            // rebuilds MID-run (start + every step so far), not just post-nav events. The shell buffers these
-            // events while its iframe mounts, absorbing an ordering race against the handshake.
-            // Fires for a LIVE run (every nav) AND — the on-click/late-injection fix — for a page that loads
-            // AFTER the run finished: a completed run re-adopted from bgRuns replays its history ONCE so the
-            // destination page still gets its card + final answer (else the corner card is blank there).
-            const hasActive = !!(ids && ids.size);
-            if (tabId != null && adopt.length && (doc === undefined || replayedTo.get(tabId) !== doc)) {
-                const history = runReplayBuffer.get(tabId) || [];
-                if (doc !== undefined) replayedTo.set(tabId, doc);   // once per document: a page can ask again at will
-                if (history.length) {
-                    for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
-                    // A COMPLETED-only re-adopt (no live run) has served its purpose — drop the buffer so a later
-                    // reload doesn't re-show a finished card. A live run keeps its buffer for the next nav.
-                    if (!hasActive) runReplayBuffer.delete(tabId);
-                }
-            }
+            // The run's history for the card is streamed when the shell says it is listening (SHELL_LISTENING, below): this
+            // content script runs at document_start, before the shell exists to hear it.
         });
         return true;   // async: sendResponse fires after hydration resolves
+    }
+    if (message.type === "SHELL_LISTENING") {
+        // Overlay/off HUD replay-across-nav: the shell (sidebar/shell.ts, loaded at document_idle) is listening, so stream
+        // the tab's run history and the fresh card/overlay rebuilds MID-run (start + every step so far), not just
+        // post-nav events. For a LIVE run (every nav) AND for a page that loads AFTER the run finished: a completed run
+        // replays its history ONCE so the destination page still gets its card + final answer. A hidden origin
+        // (SITE_PRESENCE.md step 2) gets it for a live run only, as CONTENT_READY decided; a finished one leaves it hidden.
+        const tabId = sender.tab?.id;
+        if (tabId == null || (sender.frameId ?? 0) !== 0) return;
+        const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
+        void hydrationDone.then(async () => {
+            const ids = activeRuns.get(tabId);
+            const hasActive = !!(ids && ids.size);
+            const hasDone = [...bgRuns.values()].some((snap) => snap.tabId === tabId && !!snap.p.rebuild);
+            if (!hasActive && !(hasDone && await isVisible(sender.url ?? sender.tab?.url).catch(() => false))) return;
+            if (doc !== undefined && replayedTo.get(tabId) === doc) return;
+            const history = runReplayBuffer.get(tabId) || [];
+            if (doc !== undefined) replayedTo.set(tabId, doc);   // once per document: a page can ask again at will
+            if (!history.length) return;
+            for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }, { frameId: 0 }).catch(() => {});
+            // A COMPLETED-only replay (no live run) has served its purpose: drop the buffer so a later reload doesn't
+            // re-show a finished card. A live run keeps its buffer for the next nav.
+            if (!hasActive) runReplayBuffer.delete(tabId);
+        });
+        return;
     }
     if (message.type === "RUN_READOPTED") {
         // The fresh document re-registered a run's toolset → release the navigation barrier so the held
