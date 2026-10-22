@@ -55,13 +55,6 @@
       "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
       "why": "_csv is C; ruled in as a leaf 2026-10-15"
     },
-    "csv.writer": {
-      "effects": "pure",
-      "returns": "fresh",
-      "cost": "input length",
-      "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
-      "why": "_csv is C; ruled in as a leaf 2026-10-15"
-    },
     "decimal.Decimal": {
       "effects": "pure",
       "returns": "fresh",

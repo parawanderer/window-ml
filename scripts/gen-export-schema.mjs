@@ -33,6 +33,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
+import { refineProgramManifest } from "./manifest-schema-overlay.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -62,7 +63,7 @@ function jsdocText(lines) {
  * Collect `export interface X { … }` blocks from a source file, with each member's JSDoc.
  * Returns a Map of name → { doc, members: [{ name, optional, type, doc }] }.
  */
-function scanInterfaces(src, file) {
+function scanInterfaces(src, file, local = false) {
     const out = new Map();
     const lines = src.split("\n");
     let pending = [];
@@ -74,7 +75,12 @@ function scanInterfaces(src, file) {
             while (!/\*\//.test(lines[i]) && i < lines.length - 1) pending.push(lines[++i]);
             continue;
         }
-        const m = line.match(/^export interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>]+?)\s*)?\{/);
+        let m = line.match(/^export interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>]+?)\s*)?\{/);
+        // LOCAL mode (a `closed` spec's own source): an object-literal type alias and an unexported interface are
+        // shapes too. Only for the normative file: in the contract's modules an `export type X = {` is read as the
+        // inline alias it always was, and widening that would change the published export schemas.
+        if (!m && local) m = line.match(/^(?:export )?interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>]+?)\s*)?\{/)
+            || line.match(/^export type (\w+)\s*()=\s*\{/);
         if (!m) { if (line.trim()) pending = []; continue; }
         const name = m[1];
         // `extends` was MATCHED and thrown away, which made an extended interface publish only its own members
@@ -217,6 +223,16 @@ function typeToSchema(type, ctx) {
         return interfaceToSchema("(inline)", { doc: "", members: inlineMembers(t.slice(1, -1).trim().replace(/;\s*$/, "")) }, ctx);
     }
 
+    // An intersection is every part at once. (`closed` specs flatten the result in their `refine`: an allOf of closed
+    // objects would reject each other's members.)
+    const parts = splitTop(t, "&");
+    if (parts.length > 1) return { allOf: parts.map((x) => typeToSchema(x, ctx)) };
+    // `readonly`-ness is not a JSON Schema concept.
+    const ro = /^Readonly<(.+)>$/.exec(t);
+    if (ro) return typeToSchema(ro[1], ctx);
+    // An optional member typed `undefined` (`entrypoint?: undefined`) is one that must be ABSENT.
+    if (t === "undefined") return { not: {} };
+
     // A union of string literals is an enum — the most useful thing the scanner can recognise.
     const literals = splitTop(t, "|");
     if (literals.length > 1 && literals.every((x) => /^"[^"]*"$/.test(x))) {
@@ -237,6 +253,9 @@ function typeToSchema(type, ctx) {
     }
     if (literals.length > 1 && bare.length > 1) {
         const branches = bare.map((x) => typeToSchema(x, ctx));
+        // `string | number | boolean | null`: keep the null as a branch. (It was once dropped for the published export
+        // schemas, which then rejected a null the exporter can write; fixed 2026-10-22 for every schema.)
+        if (nullable) branches.push({ type: "null" });
         // An UNSTABLE union gets one more branch that accepts anything. Without it, `anyOf` over the
         // variants known today REJECTS a variant added tomorrow — so an old consumer's validator would
         // start failing on new exports, which is the opposite of what a published schema should do.
@@ -359,8 +378,10 @@ function interfaceToSchema(name, iface, ctx) {
         ...(unstable ? { "x-unstable": true } : {}),
         properties,
         ...(required.length ? { required } : {}),
-        // Additive changes are free by the version rule, so an older consumer must tolerate new fields.
-        additionalProperties: true,
+        // Additive changes are free by the version rule, so an older consumer must tolerate new fields. A `closed`
+        // spec is the opposite: a hand-edited file where an unknown key is a typo (`runer`), which the validator
+        // refuses and the editor should underline.
+        additionalProperties: !ctx.closed,
     };
 }
 
@@ -404,6 +425,19 @@ export const SCHEMAS = [
         title: "window.ml execution log export",
         versionConst: "RUN_LOG_SCHEMA_VERSION",
         blurb: "What the machinery did underneath one agent run",
+    },
+    {
+        // A program manifest is HAND-EDITED JSON, so this one is CLOSED (an unknown key is a typo) and carries an overlay
+        // of the validator's rules the types cannot state. `validateManifest` stays the authority: the agreement test
+        // (tests/manifest-schemas.test.mjs) names every rule the schema cannot express.
+        key: "program-manifest",
+        source: "src/shell/program-manifest.ts",
+        root: "ProgramManifest",
+        out: "docs/spec/program-manifest.schema.json",
+        title: "window.ml program manifest",
+        blurb: "A program manifest (docs/spec/PROGRAM_MANIFEST.md): how window.ml describes a call to one program, per subcommand and flag",
+        closed: true,
+        refine: refineProgramManifest,
     },
     {
         key: "tool-protocol",
@@ -466,7 +500,7 @@ export function buildSchema(key = "export") {
     const schemaSrc = readFileSync(join(ROOT, spec.source), "utf8");
     const contractSrc = readFileSync(join(ROOT, "src/contract.ts"), "utf8");
 
-    const own = scanInterfaces(schemaSrc, spec.source);
+    const own = scanInterfaces(schemaSrc, spec.source, !!spec.closed);
     // contract.ts is one CONTRACT; it does not have to be one FILE. Reading only that file meant a type moved to
     // a themed module vanished from a NORMATIVE document, silently — the same failure gen-api-docs.mjs had, where
     // moving one interface out cut the model-facing reference by 10.7%. So the scan follows contract.ts's own
@@ -493,14 +527,15 @@ export function buildSchema(key = "export") {
     }
     for (const [k, v] of scanAliases(schemaSrc)) aliases.set(k, v);
 
-    const version = (schemaSrc.match(new RegExp(`${spec.versionConst}\\s*=\\s*(\\d+)`)) || [])[1];
-    if (!version) throw new Error(`gen-export-schema: ${spec.versionConst} not found in ${spec.source}`);
+    const version = spec.versionConst ? (schemaSrc.match(new RegExp(`${spec.versionConst}\\s*=\\s*(\\d+)`)) || [])[1] : undefined;
+    if (spec.versionConst && !version) throw new Error(`gen-export-schema: ${spec.versionConst} not found in ${spec.source}`);
 
     const ctx = {
         // The normative file wins a name clash with contract.ts.
         ifaces: new Map([...contract, ...own]),
         aliases,
         unstable: new Set(unstableSrc.flatMap((t) => [...scanUnstable(t)])),
+        closed: !!spec.closed,
         resolving: new Set(),
         defs: {},
     };
@@ -518,15 +553,20 @@ export function buildSchema(key = "export") {
     const $defs = ctx.defs;
     delete $defs[spec.root];
     const file = spec.source.replace(/^src\//, "");
-    return {
+    const doc = {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         $id: `https://raw.githubusercontent.com/parawanderer/window-ml/main/${spec.out}`,
         title: spec.title,
-        description: `${spec.blurb}, schema version ${version}. GENERATED from ${file} by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.`,
-        "x-schemaVersion": Number(version),
+        description: spec.closed
+            ? `${spec.blurb}. GENERATED from ${file} by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative for the fields and the validator in it is the authority for what is accepted; this schema is the editor's view of both (hints, and the rules JSON Schema can state).`
+            : `${spec.blurb}, schema version ${version}. GENERATED from ${file} by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.`,
+        ...(version ? { "x-schemaVersion": Number(version) } : {}),
         ...root,
         $defs,
     };
+    // A spec's own overlay: the rules the types cannot state (patterns, cross-field requirements), applied to the
+    // generated document so the fields and their JSDoc still come from the source.
+    return spec.refine ? spec.refine(doc) : doc;
 }
 
 /** Write one document, or every document when called with no key. Returns the text of the last one. */

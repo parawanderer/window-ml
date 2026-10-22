@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/library-manifest.schema.json",
+  "title": "window.ml library manifest (read-only Python dialect)",
+  "description": "A library manifest of the read-only Python dialect (notebooks/python-dialect/data/manifest-*.json, imported by src/python/dialect-data.ts, read by the fork's `restricted.load_manifests`): the functions and methods a library may be called by, each with its effect, what its return value aliases, and its cost (docs/spec/READONLY_LIBRARY_MANIFEST.md). HAND-MAINTAINED, unlike program-manifest.schema.json: there is no TypeScript type or validator for this format in this repository (its reader is the CPython fork), so this is the narrowest shape the four shipped files and their consumer justify. The files are written by notebooks/python-dialect (leafpass.py) and the fork is the authority on what it accepts. Two layouts: a LIBRARY file (numpy, pandas, PIL) names one `module` and the `functions` it exposes; the STDLIB file names several `modules`.",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string", "description": "An editor hint (a JSON Schema URL or path) and nothing else. The shipped files do not carry one." },
+    "module": { "type": "string", "description": "The library's import name (`numpy`, `PIL`). Library layout only." },
+    "version_counted_against": { "type": "string", "description": "The library version the corpus counts and the leaf pass were taken against. A manifest for one version never silently applies to another." },
+    "min_cells": { "type": "integer", "minimum": 0, "description": "A name is admitted only when at least this many corpus cells use it." },
+    "functions": { "type": "array", "items": { "type": "string" }, "description": "Module-level functions the dialect admits, unqualified (`mean`; `Image.open` for a submodule). Each has a row in `leaves` under `<module>.<name>`. Library layout only." },
+    "modules": {
+      "type": "object",
+      "description": "Standard-library modules and the functions the dialect admits from each (`csv: [reader]`). Each has a row in `leaves` under `<module>.<name>`. Stdlib layout only.",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "kinds": {
+      "type": "object",
+      "description": "Methods the dialect admits per receiver kind (`ndarray: [sum]`). Each has a row in `leaves` under `<kind>.<method>`.",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "leaves": {
+      "type": "object",
+      "description": "One row per admitted name: a listed name is admitted only with its row.",
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$" },
+      "additionalProperties": { "$ref": "#/$defs/Leaf" }
+    },
+    "dynamic": {
+      "type": "object",
+      "description": "Names a kind resolves at run time rather than listing (a DataFrame's column attributes), by kind.",
+      "additionalProperties": { "$ref": "#/$defs/Dynamic" }
+    },
+    "cells": { "type": "integer", "minimum": 0, "description": "How many corpus cells the library was counted over." },
+    "observed": { "type": "object", "description": "The corpus counts the manifest was derived from (`functions`/`modules` and `kinds`, name to count). Evidence, not read by the dialect." },
+    "note": { "type": "string", "description": "How the file was produced." }
+  },
+  "required": ["kinds", "leaves"],
+  "additionalProperties": false,
+  "oneOf": [
+    { "required": ["module", "version_counted_against", "functions"], "not": { "required": ["modules"] } },
+    { "required": ["modules"], "not": { "required": ["module"] } }
+  ],
+  "$defs": {
+    "Leaf": {
+      "type": "object",
+      "description": "One admitted function or method.",
+      "properties": {
+        "effects": {
+          "type": "string",
+          "pattern": "^(?:pure|cache|mutates|reads-external|external|read|write)\\b",
+          "description": "What it does, led by one of the authoring terms (READONLY_LIBRARY_MANIFEST.md, \"Effects\"): `pure`, `cache`, `mutates(i)`, `reads-external`, `external`, or `read(...)`/`write(...)` of a buffer argument; a clause may follow after `;` (`pure; mutates(0) when inplace`)."
+        },
+        "returns": {
+          "type": "string",
+          "pattern": "^(?:fresh|alias|internal|None)\\b",
+          "description": "What the return value aliases: `fresh` (the dialect may treat it as owned), `alias(i)` (owned exactly when argument i is), `internal` (never owned), or `None`; a clause may follow (`fresh; alias(0) when copy=False`)."
+        },
+        "cost": { "type": "string", "minLength": 1, "description": "The cost's SHAPE in a size measure (`size`, `rows`, `cells`, `chars`, `pixels`, `input length`, `digits`, `O(1)`, `n log n in rows`); the host measures the constant." },
+        "over": { "type": "string", "description": "What it may be applied to, where narrower than the name says (`an in-memory buffer the cell owns (a BytesIO), never a path`)." },
+        "why": { "type": "string", "minLength": 1, "description": "The evidence for the row, for the person reviewing it." }
+      },
+      "required": ["effects", "returns", "cost", "why"],
+      "additionalProperties": false
+    },
+    "Dynamic": {
+      "type": "object",
+      "description": "A rule resolving a kind's names at run time.",
+      "properties": {
+        "rule": { "type": "string" },
+        "predicate": { "type": "string" },
+        "returns": { "type": "string", "pattern": "^(?:fresh|alias|internal|None)\\b" },
+        "never": { "type": "array", "items": { "type": "string" }, "description": "Names this rule never resolves." },
+        "why": { "type": "string" }
+      },
+      "required": ["rule", "predicate", "returns", "never", "why"],
+      "additionalProperties": false
+    }
+  }
+}

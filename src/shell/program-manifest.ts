@@ -38,9 +38,11 @@ export type PrimarySpec = {
     args?: number;
     /** Consumes arguments up to and including one of these (`-exec … ;` or `+`). */
     until?: readonly string[];
+    /** Effects the primary adds, in the program-manifest vocabulary. */
     effects?: readonly ProgramEffect[];
     /** Its (first) argument is a path the program reads or writes (`-newer f`, `-fprint f`). */
     argIsPath?: "read" | "write";
+    /** It starts another program (`-exec`, `-ok`): its effects include `runs-code` or `unknown`. */
     runner?: boolean;
 };
 
@@ -60,6 +62,7 @@ export type CommandSpec = {
     clusters?: boolean;
     /** At most this many operands; more makes the call `unknown` (`git branch` lists with none, creates with one). */
     maxOperands?: number;
+    /** Every flag the command accepts, by its spelling (`-r`, `--recursive`, `-name`). One absent here makes the call `unknown`. */
     flags: Readonly<Record<string, FlagSpec>>;
     /** The first operand selects one; an unlisted one makes the call `unknown`. */
     subcommands?: Readonly<Record<string, CommandSpec>>;
@@ -67,7 +70,9 @@ export type CommandSpec = {
     syntax?: "find";
     /** For `syntax: "find"`: every primary and operator; an unlisted one makes the call `unknown`. */
     primaries?: Readonly<Record<string, PrimarySpec>>;
+    /** Exit codes that are answers, not failures, for this command (`grep`-style: 1 is "no match"). Added to the program's own. */
     okCodes?: readonly number[];
+    /** It prints the environment or its inputs back. */
     echoes?: boolean;
     /** It walks its directory arguments (`rg`, `find`): the host checks what is beneath them for secrets. */
     recursive?: boolean;
@@ -91,22 +96,42 @@ export type CommandSpec = {
 
 /** What every program manifest says: the program, how it exits, and its command tree. */
 interface ManifestBase {
+    /** An editor hint (a JSON Schema URL or path) and nothing else: ignored by `describeCall` and by the host's reader
+     *  (window-ml-host's `manifest.rs` denies unknown fields and would refuse a file carrying it). The shipped manifests
+     *  do not have one; a manifest you write for your own use may. */
+    $schema?: string;
+    /** The program's name: the basename of `argv[0]` must equal it. */
     program: string;
+    /** Exit codes that count as success besides 0, for every command of the program. */
     okCodes?: readonly number[];
+    /** The program prints the environment or its inputs back (`curl -v`). */
     echoes?: boolean;
     /** Environment variables that change what the program does: a call setting one is not described. */
     env?: readonly string[];
+    /** The program's top-level command: its effects, path operands, flags and subcommands. */
     command: CommandSpec;
 }
 
 /** The version range a binary's manifest was written against (`>=2.30.0 <3`) and how the host reads the version
  *  (`args`, a regex whose group 1 is it). `"*"` with no `args` is a program that reports no version (BSD `ls`,
  *  `find`): its manifest then lists only flags whose meaning is the same in every implementation. */
-export type ManifestVersion = { range: string; args: readonly string[]; pattern: string };
+export type ManifestVersion = {
+    /** Space-separated comparators that must all hold (`>=2.30.0 <3`), or `"*"` for a program that reports no version. */
+    range: string;
+    /** The arguments that make the program print its version; empty for `"*"`. */
+    args: readonly string[];
+    /** A regex whose group 1 is the version in that output; empty for `"*"`. */
+    pattern: string;
+};
 
 /** An interpreted script's pin (`node scripts/index.mjs`): `path` relative to a workspace root, `sha256` of the
  *  resolved file. */
-export type ManifestEntrypoint = { path: string; sha256: string };
+export type ManifestEntrypoint = {
+    /** The script, relative to a workspace root: no leading `/` or `-`, no `.`, `..` or empty segment. */
+    path: string;
+    /** The lowercase hex SHA-256 of the resolved file. */
+    sha256: string;
+};
 
 /**
  * A program manifest: a standalone binary pinned by a `version` range, or an interpreted script pinned by its
@@ -451,7 +476,8 @@ function notLiteralPathspec(a: string): boolean {
 }
 
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]);
-const MANIFEST_KEYS = new Set(["program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
+const VERSION_KEYS = new Set(["range", "args", "pattern"]);
+const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
 
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
  *  problems, so a misspelt `runer` cannot silently drop a runner flag. */
@@ -518,11 +544,13 @@ export function validateManifest(m: unknown): string[] {
     };
     if (!isObj(m)) return ["a manifest is an object"];
     keys(m, MANIFEST_KEYS, "$");
+    if (m.$schema !== undefined && typeof m.$schema !== "string") errs.push("$.$schema: a string");
     if (typeof m.program !== "string" || !/^[A-Za-z0-9._+-]+$/.test(m.program)) errs.push("$.program: a program name");
     const v = m.version;
     if (m.entrypoint !== undefined && v === undefined) { /* pinned by its hash, checked below */ }
     else if (!isObj(v) || typeof v.range !== "string" || !Array.isArray(v.args) || typeof v.pattern !== "string") errs.push("$.version: {range, args, pattern}");
     else {
+        keys(v, VERSION_KEYS, "$.version");
         if (v.range === "*") { if (v.args.length || v.pattern) errs.push("$.version: a \"*\" range reads no version (args [], pattern \"\")"); }
         else if (!v.range.trim().split(/\s+/).every((c) => /^(>=|<=|>|<|=)?\d+(\.\d+)*$/.test(c))) errs.push("$.version.range: comparators like >=2.30.0 <3");
         try { new RegExp(v.pattern); } catch { errs.push("$.version.pattern: a regex"); }

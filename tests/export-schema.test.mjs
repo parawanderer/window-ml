@@ -147,6 +147,35 @@ test("$schema is still emitted for a DIRTY build — best effort, flagged beside
     assert.equal(doc.generator.build.dirty, true);
 });
 
+// --- a null the exporter can write is a value the schema accepts ---
+
+test("null survives a union of two or more other members (a NaN cell, an auto vision option)", () => {
+    // The generator once dropped `null` from `string | number | boolean | null`, so the published schema rejected a
+    // pandas NaN (`to_json` writes null) and `vision: null` (= auto). The permissive trailing branch of the unstable
+    // render/config unions would hide that from a whole-document check, so each shape is validated against its OWN
+    // definition, and the whole documents are checked too.
+    const schema = buildSchema();
+    const node = (ref) => ({ $ref: `#/$defs/${ref}` });
+    const rows = [["a", 1, true, null], [null, null, null, null]];
+    assert.deepEqual(validate({ name: "t", source: { kind: "fetch", label: "t.csv" }, rows, columns: ["a", "b", "c", "d"] }, node("TablePreview"), schema), [], "TablePreview cell");
+    const tableBranch = (d) => d.anyOf.find((b) => b.properties?.type?.const === "table");
+    const dfBranch = (d) => d.anyOf.find((b) => b.properties?.type?.const === "python-out");
+    for (const side of ["renderIn", "renderOut"]) {
+        const def = schema.$defs.ExportStep.properties[side];
+        assert.deepEqual(validate({ type: "table", columns: ["a", "b", "c", "d"], rows }, tableBranch(def), schema), [], `${side} table cell`);
+        assert.deepEqual(validate({ type: "python-out", df: { columns: ["a", "b"], rows: [[1, null], [null, "x"]] } }, dfBranch(def), schema), [], `${side} df cell`);
+    }
+    assert.deepEqual(validate({ vision: null }, { ...schema.$defs.DebugAgentConfig, required: [] }, schema), [], "DebugAgentConfig.vision null (auto)");
+
+    const doc = sessionToJson(agentSession({
+        agentConfig: { vision: null },
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "python_exec", result: "ok",
+            renderOut: { type: "table", columns: ["a", "b", "c", "d"], rows },
+            renderIn: { type: "python-in", mode: "script", code: "1", tables: [{ name: "t", source: { kind: "fetch", label: "t.csv" }, columns: ["a"], rows: [[null]] }] } }],
+    }));
+    assert.deepEqual(validate(doc, schema), [], "a whole export carrying nulls validates");
+});
+
 // --- every published schema, including the ones added after this was written ---
 
 test("EVERY checked-in schema is what the generator produces, not just the ones someone listed", () => {

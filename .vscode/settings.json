@@ -8,6 +8,21 @@
   // this repo. Turn it off if you would rather the editor made no network requests.
   "json.schemaDownload.enable": true,
 
+  // Hand-edited manifests get validation and field hints from their schemas (docs/spec/PROGRAM_MANIFEST.md,
+  // docs/spec/READONLY_LIBRARY_MANIFEST.md). The program one is generated from the TypeScript types; the
+  // library one is hand-maintained. Neither file carries a `$schema` key of its own: the shipped manifests'
+  // bytes are pinned and copied to window-ml-host, so the association lives here.
+  "json.schemas": [
+    {
+      "fileMatch": ["src/shell/manifests/*.json"],
+      "url": "./docs/spec/program-manifest.schema.json"
+    },
+    {
+      "fileMatch": ["notebooks/python-dialect/data/manifest-*.json"],
+      "url": "./docs/spec/library-manifest.schema.json"
+    }
+  ],
+
   // The unit tests (.mjs) import the .ts sources directly, which needs the tsx loader — same as
   // `npm test` (`node --import tsx …`). The Node.js Testing extension runs the worker from cwd `/`, so
   // a bare `tsx` doesn't resolve — point at tsx's loader by ${workspaceFolder}-absolute path.

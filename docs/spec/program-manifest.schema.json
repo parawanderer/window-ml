@@ -1,0 +1,593 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/program-manifest.schema.json",
+  "title": "window.ml program manifest",
+  "description": "A program manifest (docs/spec/PROGRAM_MANIFEST.md): how window.ml describes a call to one program, per subcommand and flag. GENERATED from shell/program-manifest.ts by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative for the fields and the validator in it is the authority for what is accepted; this schema is the editor's view of both (hints, and the rules JSON Schema can state).",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "An editor hint (a JSON Schema URL or path) and nothing else: ignored by `describeCall` and by the host's reader (window-ml-host's `manifest.rs` denies unknown fields and would refuse a file carrying it). The shipped manifests do not have one; a manifest you write for your own use may.",
+      "type": "string"
+    },
+    "program": {
+      "description": "The program's name: the basename of `argv[0]` must equal it.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._+-]+$"
+    },
+    "okCodes": {
+      "description": "Exit codes that count as success besides 0, for every command of the program.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 255
+      }
+    },
+    "echoes": {
+      "description": "The program prints the environment or its inputs back (`curl -v`).",
+      "type": "boolean"
+    },
+    "env": {
+      "description": "Environment variables that change what the program does: a call setting one is not described.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "command": {
+      "description": "The program's top-level command: its effects, path operands, flags and subcommands.",
+      "$ref": "#/$defs/CommandSpec"
+    },
+    "version": {
+      "description": "A standalone binary's pin: the version range the manifest was written against, and how the host reads the program's version. Exclusive with `entrypoint`.",
+      "$ref": "#/$defs/ManifestVersion"
+    },
+    "entrypoint": {
+      "description": "An interpreted script's pin: its path under a workspace root and the sha256 of the resolved file; `program` is then the interpreter. Exclusive with `version`.",
+      "$ref": "#/$defs/ManifestEntrypoint"
+    }
+  },
+  "required": [
+    "program",
+    "command"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "version"
+      ],
+      "not": {
+        "required": [
+          "entrypoint"
+        ]
+      }
+    },
+    {
+      "required": [
+        "entrypoint"
+      ],
+      "not": {
+        "required": [
+          "version"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "CommandSpec": {
+      "type": "object",
+      "description": "A program or one of its subcommands.",
+      "properties": {
+        "effects": {
+          "description": "What the command does with no flags, applied to its path targets.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProgramEffect"
+          }
+        },
+        "paths": {
+          "description": "Which operands are paths: none, all, all from an index on, or the repository (the cwd, or a `valueIsDir` flag's value).",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "none",
+                "operands",
+                "repo"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operandsFrom": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "operandsFrom"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "noPaths": {
+          "description": "What the command touches when it is given no path operand: the cwd (`ls`, `rg`), or nothing (stdin: `cat`).",
+          "type": "string",
+          "enum": [
+            "cwd",
+            "nothing"
+          ]
+        },
+        "terminator": {
+          "description": "The end-of-options marker the command honours, where the host puts it before a value from a variable.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "--",
+                "--end-of-options"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "numericFlag": {
+          "description": "Accepts `-<n>` as a number (`head -20`, `git log -5`).",
+          "type": "boolean"
+        },
+        "clusters": {
+          "description": "Short flags combine (`ls -la`).",
+          "type": "boolean"
+        },
+        "maxOperands": {
+          "description": "At most this many operands; more makes the call `unknown` (`git branch` lists with none, creates with one).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "flags": {
+          "description": "Every flag the command accepts, by its spelling (`-r`, `--recursive`, `-name`). One absent here makes the call `unknown`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/FlagSpec"
+          },
+          "propertyNames": {
+            "pattern": "^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$"
+          }
+        },
+        "subcommands": {
+          "description": "The first operand selects one; an unlisted one makes the call `unknown`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CommandSpec"
+          }
+        },
+        "syntax": {
+          "description": "A grammar other than options-then-operands.",
+          "type": "string",
+          "const": "find"
+        },
+        "primaries": {
+          "description": "For `syntax: \"find\"`: every primary and operator; an unlisted one makes the call `unknown`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PrimarySpec"
+          }
+        },
+        "okCodes": {
+          "description": "Exit codes that are answers, not failures, for this command (`grep`-style: 1 is \"no match\"). Added to the program's own.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "echoes": {
+          "description": "It prints the environment or its inputs back.",
+          "type": "boolean"
+        },
+        "recursive": {
+          "description": "It walks its directory arguments (`rg`, `find`): the host checks what is beneath them for secrets.",
+          "type": "boolean"
+        },
+        "optionsFirst": {
+          "description": "GNU permutes options and operands (`rm a -r` is recursive); BSD stops at the first operand (`rm a -r` removes two files). An argument starting with `-` after an operand, `--` included, makes the call `unknown`.",
+          "type": "boolean"
+        },
+        "dashIsPath": {
+          "description": "A lone `-` is a FILE NAME here (`rm -` removes the file `-`), not stdin: it stays a path operand.",
+          "type": "boolean"
+        },
+        "repoWide": {
+          "description": "The command may reach anything in its repository, whatever its operands say (`git rm` removes the parent directories it empties; `git mv` creates names under a directory): its effects also fall on the directory it acts in and on the repository's root (`resolve({arg: \"repo\"})`).",
+          "type": "boolean"
+        },
+        "pathspecs": {
+          "description": "Operands are git pathspecs: one that starts with `:` (magic; `:/x` is relative to the repository root, not to the cwd), or holds `*`, `?`, `[` or `\\` (a glob git expands to every match, or an escape), is not one path the host can resolve, so the call is `unknown`.",
+          "type": "boolean"
+        },
+        "harden": {
+          "description": "Arguments the caller inserts right after this command's name, turning off what the repository's own config could make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "effects",
+        "paths",
+        "flags"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "syntax"
+            ]
+          },
+          "then": {
+            "required": [
+              "primaries"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "primaries"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "FlagSpec": {
+      "type": "object",
+      "description": "One flag of a command: whether it takes a value, and what it adds to the call. A flag absent from its command's table makes the call `unknown`.",
+      "properties": {
+        "value": {
+          "description": "Takes one value: `--f=v`, `--f v`, `-fv` or `-f v`.",
+          "type": "boolean"
+        },
+        "optionalValue": {
+          "description": "Takes a value only in the attached form (`--color=always`); the bare flag is also valid.",
+          "type": "boolean"
+        },
+        "effects": {
+          "description": "Effects the flag adds, in the program-manifest vocabulary.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProgramEffect"
+          }
+        },
+        "valueIsPath": {
+          "description": "The flag's value is a path the program reads or writes (`--output=f`, `--contents f`).",
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "valueIsDir": {
+          "description": "The flag's value is the directory the command acts in, instead of the cwd (`git -C dir`).",
+          "type": "boolean"
+        },
+        "pathsFrom": {
+          "description": "With this flag, path operands start at this index instead of the command's own (`rg -e pat a b`: 0).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "runner": {
+          "description": "It starts another program (`find -exec`, `git -c core.pager=…`): never free on the program's word.",
+          "type": "boolean"
+        },
+        "echoes": {
+          "description": "It prints the environment or its inputs back (`curl -v`).",
+          "type": "boolean"
+        },
+        "okCodes": {
+          "description": "Exit codes that become answers with this flag (`git diff --exit-code`: 1).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "recursive": {
+          "description": "With this flag the command walks its directory arguments (`ls -R`).",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "value",
+              "optionalValue"
+            ],
+            "properties": {
+              "value": {
+                "const": true
+              },
+              "optionalValue": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "valueIsPath"
+                ]
+              },
+              {
+                "required": [
+                  "valueIsDir"
+                ],
+                "properties": {
+                  "valueIsDir": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "runner"
+            ],
+            "properties": {
+              "runner": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "effects"
+            ],
+            "properties": {
+              "effects": {
+                "contains": {
+                  "enum": [
+                    "runs-code",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PrimarySpec": {
+      "type": "object",
+      "description": "A `find`-style expression primary: how many arguments it consumes (or up to which terminator), and what it adds.",
+      "properties": {
+        "args": {
+          "description": "Arguments consumed after the primary.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "until": {
+          "description": "Consumes arguments up to and including one of these (`-exec … ;` or `+`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "effects": {
+          "description": "Effects the primary adds, in the program-manifest vocabulary.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProgramEffect"
+          }
+        },
+        "argIsPath": {
+          "description": "Its (first) argument is a path the program reads or writes (`-newer f`, `-fprint f`).",
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "runner": {
+          "description": "It starts another program (`-exec`, `-ok`): its effects include `runs-code` or `unknown`.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "argIsPath"
+            ]
+          },
+          "then": {
+            "required": [
+              "args"
+            ],
+            "properties": {
+              "args": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "runner"
+            ],
+            "properties": {
+              "runner": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "effects"
+            ],
+            "properties": {
+              "effects": {
+                "contains": {
+                  "enum": [
+                    "runs-code",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ManifestVersion": {
+      "type": "object",
+      "description": "The version range a binary's manifest was written against (`>=2.30.0 <3`) and how the host reads the version (`args`, a regex whose group 1 is it). `\"*\"` with no `args` is a program that reports no version (BSD `ls`, `find`): its manifest then lists only flags whose meaning is the same in every implementation.",
+      "properties": {
+        "range": {
+          "description": "Space-separated comparators that must all hold (`>=2.30.0 <3`), or `\"*\"` for a program that reports no version.",
+          "type": "string"
+        },
+        "args": {
+          "description": "The arguments that make the program print its version; empty for `\"*\"`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pattern": {
+          "description": "A regex whose group 1 is the version in that output; empty for `\"*\"`.",
+          "type": "string",
+          "format": "regex"
+        }
+      },
+      "required": [
+        "range",
+        "args",
+        "pattern"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "range"
+            ],
+            "properties": {
+              "range": {
+                "const": "*"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "maxItems": 0
+              },
+              "pattern": {
+                "maxLength": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "range": {
+                "pattern": "^\\s*(?:>=|<=|>|<|=)?\\d+(?:\\.\\d+)*(?:\\s+(?:>=|<=|>|<|=)?\\d+(?:\\.\\d+)*)*\\s*$"
+              },
+              "args": {
+                "minItems": 1
+              },
+              "pattern": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ManifestEntrypoint": {
+      "type": "object",
+      "description": "An interpreted script's pin (`node scripts/index.mjs`): `path` relative to a workspace root, `sha256` of the resolved file.",
+      "properties": {
+        "path": {
+          "description": "The script, relative to a workspace root: no leading `/` or `-`, no `.`, `..` or empty segment.",
+          "type": "string",
+          "pattern": "^(?![/-])(?!\\.\\.?(?:/|$))[^/]+(?:/(?!\\.\\.?(?:/|$))[^/]+)*$"
+        },
+        "sha256": {
+          "description": "The lowercase hex SHA-256 of the resolved file.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "ProgramEffect": {
+      "description": "A program manifest's effect term: what a command, flag or primary does to its path targets (docs/spec/PROGRAM_MANIFEST.md).",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "read",
+            "write",
+            "write-names",
+            "runs-code",
+            "unknown"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "network": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "write",
+                    "both"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "network"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
