@@ -9,9 +9,15 @@ export const UNCHARGED_SEARCH_STEPS = STEP_BUDGET;
 
 /** Bound units (see {@link regexWork}) that cost one evaluation step. Measured (Node 22 and 26, M-series laptop) over
  *  twenty worst-case shapes, each on the input that makes it backtrack most (`a+b`, `a*a*b`, `.*b.*c`, `a{1,5000}b`,
- *  `(?=a+b)`, `(a*)\1b`, alternation, `i`/`u` flags, `split`, `replace`, lookbehind, a long literal tail): the slowest
- *  was `a{1,5000}b` at 0.6 ns a unit, so at ~3.2M steps a second 520 units a step; the rest were 0.4 ns or less. */
+ *  `(?=a+b)`, `(a*)\1b`, alternation, `i`/`u` flags, `split`, `replace`, lookbehind, a long literal tail), then over
+ *  random patterns that pass `riskyRegex` on inputs of 2 million characters: with counted repeats weighted
+ *  ({@link COUNTED_LOOP_WEIGHT}) the slowest is about 0.6 ns a unit, so at ~3.2M steps a second 520 units a step. */
 export const REGEX_UNITS_PER_STEP = 512;
+
+/** How much more a step of a COUNTED repeat (`{m,n}` with a finite n) costs than one of `*` or `+`: V8 keeps a counter
+ *  for it. Measured at scale: `[ab]{2,300}c` with `gi` 1.29 ns a unit unweighted, `a{0,500}a{0,500}b` 1.03, against 0.4 for
+ *  the unbounded shapes. */
+const COUNTED_LOOP_WEIGHT = 3;
 
 type Node =
     | { t: "char"; src: string }
@@ -222,7 +228,8 @@ export function regexWork(source: string, flags: string, input: string, charge?:
                 if (inner.paths !== 1) return { paths: Infinity, work: Infinity };
                 const reps = Math.min(x.max, longestRun(charAtoms(x.atom)));
                 const choices = Math.max(1, reps - x.min + 1);
-                return { paths: choices, work: Math.max(reps, x.min) * inner.work + choices };
+                const own = Math.max(reps, x.min) * inner.work + choices;
+                return { paths: choices, work: Number.isFinite(x.max) ? COUNTED_LOOP_WEIGHT * own : own };
             }
             default: return { paths: 1, work: 1 };
         }

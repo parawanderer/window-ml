@@ -1343,12 +1343,12 @@
     "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
   },
   {
-    "name": "a chain of optionals: thirty a? then thirty a",
-    "js": "\"a\".repeat(30).match(/a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/)",
+    "name": "a chain of optionals: thirty-four a? then thirty-four a, on 33 characters",
+    "js": "\"a\".repeat(33).match(/a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/)",
     "env": "none",
     "expect": "refused",
     "budget": 3000000,
-    "reason": "each a? doubles the paths: exponential in the PATTERN, on a 30-character input, which riskyRegex does not see",
+    "reason": "each a? doubles the paths, and on an input one short of a match the engine tries them all: exponential in the PATTERN (about 35 s), which riskyRegex does not see",
     "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
   },
   {
@@ -1361,12 +1361,12 @@
     "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
   },
   {
-    "name": "a lookbehind: /(?<=a+)b/",
-    "js": "\"a\".repeat(300000).match(/(?<=a+)b/)",
+    "name": "a lookbehind: /(?<=ba+)/",
+    "js": "\"a\".repeat(300000).match(/(?<=ba+)/)",
     "env": "none",
     "expect": "refused",
     "budget": 3000000,
-    "reason": "a lookbehind runs its quantifier backwards at every start",
+    "reason": "a lookbehind runs its quantifier backwards from every start, over the whole run before it",
     "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
   },
   {

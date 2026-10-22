@@ -45,7 +45,7 @@ test("a lookaround is atomic; an alternation adds its branches; a backreference 
 });
 
 test("a bounded quantifier is capped by its maximum and a chain of optionals by its paths", () => {
-    assert.ok(regexWork("a{1,10}b", "", A(100000)) < 40 * 100000, "a small maximum is linear");
+    assert.ok(regexWork("a{1,10}b", "", A(100000)) < 100 * 100000, "a small maximum is linear");
     assert.ok(regexSteps("a{1,60000}b", "", A(300000)) > STEP_BUDGET, "a large maximum is not");
     assert.ok(regexSteps("a?".repeat(30) + "a".repeat(30), "", A(30)) > STEP_BUDGET, "2^30 paths on a 30-character input");
 });
