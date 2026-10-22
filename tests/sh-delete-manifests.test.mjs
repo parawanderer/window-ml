@@ -416,7 +416,7 @@ test("a call the manifest cannot describe stays unknown and is never free", () =
 // answers `containsSecret` only for a walked path (window-ml-host session.rs), and a repository can sit nested
 // inside a workspace root.
 
-test("mv of a directory that holds a secret is not free: the move renames every name beneath it", { todo: "mv never marks its operands walked, so the host never answers containsSecret and a secret under the moved directory is renamed free" }, () => {
+test("mv of a directory that holds a secret is not free: the move renames every name beneath it", () => {
     // Guards: `mv` needs no -r to move a tree. describeCall never sets walk on its operands, so the host never
     // answers containsSecret and the secret's name is renamed under a free judgment. Ruled shape: a directory
     // operand of mv means everything beneath it (PROGRAM_MANIFEST.md, `recursive`), so the host must check it.
@@ -432,7 +432,7 @@ test("mv of a directory that holds a secret is not free: the move renames every 
         "mv src/keep src/ moves the tree under src/");
 });
 
-test("git mv of a directory that holds a secret is not free: same move, same walk gap", { todo: "git mv never marks its operands walked; a directory operand moves everything beneath it" }, () => {
+test("git mv of a directory that holds a secret is not free: same move, same walk gap", () => {
     // Guards: git mv has no recursive flag either; a directory operand moves everything beneath it.
     // Repo at /w/a/b (nested: parent /w/a is not a root), so repoWide's claim does not already make it ask.
     const repo = { root: "/w/a/b", reasons: ["git"] };
@@ -441,7 +441,7 @@ test("git mv of a directory that holds a secret is not free: same move, same wal
         "git mv keep src/keep2 renames keep/.env with it");
 });
 
-test("git rm of a pathspec glob whose matches include a secret is not free: the literal path is not the names it removes", { todo: "a pathspec with *, ? or [ is described as one literal path; git removes every match, a secret among them, under a claim that never named it" }, () => {
+test("git rm of a pathspec glob whose matches include a secret is not free: the literal path is not the names it removes", () => {
     // Guards: ml.sh passes argv with no shell, so git receives the glob as a pathspec. Only a :-leading pathspec is
     // magic today; `*.ts`, `**/*.ts`, `*`, `a?.ts`, `[ab].ts` stay described as ONE path whose name literally
     // contains `*`. git removes every match — a secret among them — under a claim that never named it.
@@ -451,12 +451,12 @@ test("git rm of a pathspec glob whose matches include a secret is not free: the 
     assert.equal(free(run(["git", "rm", "secret.ts"], base).effects, SANDBOX), false, "the secret file itself (control)");
     for (const spec of ["*.ts", "src/*.ts", "**/*.ts", "*", "a?.ts", "[ab].ts", "foo*bar"]) {
         const f = run(["git", "rm", spec], base);
-        assert.equal(f.described, true, `${spec}: a glob is not one path, so the call is unknown (or claims every match)`);
+        assert.equal(f.described, false, `${spec}: a glob is not one path, so the call is unknown`);
         assert.equal(free(f.effects, SANDBOX), false, `git rm ${spec} removes secret.ts among its matches`);
     }
 });
 
-test("describeCall marks mv's and git mv's operands as walked (the host only answers containsSecret for those)", { todo: "recursive is never set for a command whose directory operand means everything beneath it (PROGRAM_MANIFEST.md, recursive)" }, () => {
+test("describeCall marks mv's and git mv's operands as walked (the host only answers containsSecret for those)", () => {
     // Guards: the two holes above share one root: `recursive` is never set for a command whose directory operand
     // means everything beneath it. PROGRAM_MANIFEST.md's `recursive` row names exactly that property.
     for (const argv of [["mv", "keep", "src/keep2"], ["git", "mv", "keep", "src/keep2"]]) {

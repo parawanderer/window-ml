@@ -81,7 +81,8 @@ export type CommandSpec = {
      *  acts in and on the repository's root (`resolve({arg: "repo"})`). */
     repoWide?: boolean;
     /** Operands are git pathspecs: one that starts with `:` (magic; `:/x` is relative to the repository root, not to
-     *  the cwd) is not a path the host can resolve, so the call is `unknown`. */
+     *  the cwd), or holds `*`, `?`, `[` or `\` (a glob git expands to every match, or an escape), is not one path the
+     *  host can resolve, so the call is `unknown`. */
     pathspecs?: boolean;
     /** Arguments the caller inserts right after this command's name, turning off what the repository's own config could
      *  make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call. */
@@ -282,7 +283,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
     for (let i = start; i < argv.length; i++) {
         const a = argv[i];
         if (afterTerminator) {
-            if (cmd.pathspecs && a.startsWith(":")) unknown(`pathspec ${JSON.stringify(a)} is magic, not a path`);
+            if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
             operands.push(i);
             continue;
         }
@@ -297,7 +298,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
         }
         if (a === "-" || !a.startsWith("-")) {
             if (cmd.subcommands && operands.length === 0) return { operands, pathsFrom, sub: i };
-            if (cmd.pathspecs && a.startsWith(":")) unknown(`pathspec ${JSON.stringify(a)} is magic, not a path`);
+            if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
             operands.push(i);
             continue;
         }
@@ -442,6 +443,11 @@ function compareVersions(a: number[], b: number[]): number {
 const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "write-names", "runs-code", "unknown"]);
 const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive"]);
 const PRIMARY_KEYS = new Set(["args", "until", "effects", "argIsPath", "runner"]);
+/** Whether git may read a pathspec as something other than the one path it spells: `:` magic, or a glob or escape git expands. */
+function notLiteralPathspec(a: string): boolean {
+    return a.startsWith(":") || /[*?[\\]/.test(a);
+}
+
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]);
 const MANIFEST_KEYS = new Set(["program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
 
