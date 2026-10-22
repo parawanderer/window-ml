@@ -387,7 +387,7 @@ function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: 
     return { operands };
 }
 
-/** After parsing a command: its path operands (returned; `-` is stdin, not a path), what it acts on without them, and its
+/** After parsing a command: its path operands (returned; `-` is stdin, not a path unless `dashIsPath`), what it acts on without them, and its
  *  own effects over those targets. */
 function finishCommand(argv: readonly string[], cmd: CommandSpec, operands: number[], pathsFrom: number | undefined, d: CallDescription,
     terms: Terms, unknown: (w: string) => void): number[] {
@@ -401,6 +401,8 @@ function finishCommand(argv: readonly string[], cmd: CommandSpec, operands: numb
     for (const i of paths) d.pathArgs.push({ arg: i, role: "read" });
     d.actsOnDir = cmd.paths === "repo" || (paths.length === 0 && cmd.noPaths === "cwd" && cmd.paths !== "none");
     if (d.dirArg !== null && cmd.paths !== "repo" && !cmd.repoWide) unknown("a directory flag on a command that does not act on a repository");
+    // The host resolves operands against the cwd; git resolves them against the -C directory (and composes repeated -C).
+    if (d.dirArg !== null && cmd.repoWide && paths.length) unknown("a directory flag moves where the operands resolve");
     if (cmd.effects.includes("unknown")) unknown(`${[d.program, ...d.subcommand].join(" ")} is described as unknown`);
     for (const t of cmd.effects) terms.push({ term: t, targets: "command" });
     return paths;

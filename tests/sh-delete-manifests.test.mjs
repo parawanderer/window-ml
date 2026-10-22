@@ -2,8 +2,8 @@
 //
 // Why a new file and not tests/program-manifest.test.mjs / tests/fixtures/program-calls/: those fixtures and
 // src/shell/manifests/ are hashed into VECTOR_PIN (shared with window-ml-host), and "every manifest has a fixture" /
-// "the first set ships" there pin the program list. This file adds no pinned fixture; the builder adds the pinned
-// fixtures (rm.json, mv.json, ...) and the pin update on top of it. These vectors are the stricter ones, over shFacts.
+// "the first set ships" there pin the program list. The pinned fixtures (rm.json, mv.json, ...) live there;
+// these vectors are the stricter ones, over shFacts.
 //
 // Platforms assumed (macOS BSD, GNU coreutils). On BOTH: rm -f -i -r -R -d -v, `--`; mv -f -i -n -v, `--`; rmdir -p -v,
 // `--`; unlink takes one operand and no option. GNU only: rm -I --interactive --one-file-system --preserve-root
@@ -100,7 +100,7 @@ const GITS = [
     [["git", "mv", "a", "b", "dir"], ["/w/a", "/w/b", "/w/dir"]],
 ];
 
-// --- 1. positive: each is described, a names write on exactly the right resolved path(s) (these FAIL until the manifests exist) ---
+// --- 1. positive: each is described, a names write on exactly the right resolved path(s) ---
 
 for (const [argv, want] of EXACT) test(`${argv.join(" ")}: described, write-names on exactly ${want.join(", ")}`, () => {
     // Guards: a delete or rename is a names write (not an in-place write, not unknown) on every entry it removes or creates, and on nothing else.
@@ -136,7 +136,7 @@ test("a secret below a recursively deleted directory, or a secret file removed, 
     assert.equal(free(run(["mv", "dir/.env", "dir/x"], { secret: ["/w/dir/.env"] }).effects, SANDBOX), false, "renaming a secret away");
 });
 
-// --- 2a. unlisted flags: unknown, never a narrower answer (pass today because unknown is today's answer) ---
+// --- 2a. unlisted flags: unknown, never a narrower answer ---
 
 for (const argv of [["rm", "--made-up", "a"], ["rm", "-Z", "a"], ["mv", "--made-up", "a", "b"], ["rmdir", "--made-up", "d"], ["unlink", "--made-up", "a"],
     ["git", "rm", "--made-up", "a"], ["git", "mv", "--made-up", "a", "b"], ["rm", "-rf", "-x-"]]) {
@@ -314,8 +314,11 @@ test("git rm / git mv of a root, or of an operand outside the roots, are not fre
 });
 
 test("git rm removes emptied parent directories, so a nested git rm may remove a top-level name: unknown or not free under the sandbox", () => {
-    // Guards: `git rm src/only.ts` deletes src/ when it becomes empty. NARROW reading chosen (see report): it asks.
+    // Guards: `git rm src/only.ts` deletes src/ when it becomes empty. NARROW reading chosen: it asks.
     for (const argv of [["git", "rm", "src/gen/only.ts"], ["git", "rm", "-f", "src/only.ts"]]) assert.equal(free(run(argv).effects, SANDBOX), false, argv.join(" "));
+    // From a nested cwd inside a repository, the cwd is no longer a top-level name: the repository claim must carry it.
+    const nested = { cwd: "/w/src/gen", repo: { root: "/w", reasons: [] } };
+    for (const argv of [["git", "rm", "only.ts"], ["git", "mv", "only.ts", "x.ts"]]) assert.equal(free(run(argv, nested).effects, SANDBOX), false, `${argv.join(" ")} from /w/src/gen`);
 });
 
 test("git rm with pathspecs that are not one path (glob, magic, a list from a file or stdin, `:/` from a subdirectory) is unknown or covers what they can reach", () => {
@@ -334,11 +337,23 @@ test("git rm with pathspecs that are not one path (glob, magic, a list from a fi
     atLeast(["git", "mv", "*.ts", "dir"], ["/w/src", "/w/src/dir"]);
 });
 
-test("git -C sub rm a.txt names the file in sub, not in the cwd", () => {
-    // Guards: -C moves the repository; the pathspec is relative to it. A claim on /w/a.txt would be the wrong file.
-    const f = run(["git", "-C", "sub", "rm", "a.txt"]);
-    if (f.effects === "unknown") return;
-    assert.ok(covered(f, "/w/sub/a.txt"), JSON.stringify(names(f)));
+test("git -C <dir> rm / mv with operands is unknown: git resolves them against <dir>, the host against the cwd", () => {
+    // Guards: the host resolves and walks <cwd>/keep while git removes <dir>/keep; a secret under <dir>/keep was never checked (review of #990, 2026-10-22).
+    const o = { cwd: "/w/a/b", repo: { root: "/w/a/x", reasons: [] }, beneath: ["/w/a/x/keep"] };
+    for (const argv of [["git", "-C", "../x", "rm", "-r", "keep"], ["git", "-C", "../x", "mv", "keep", "k2"], ["git", "-C", "sub", "rm", "a.txt"], ["git", "-C", "a", "-C", "b", "rm", "x"]]) {
+        const f = run(argv, o);
+        assert.equal(f.described, false, `${argv.join(" ")}: ${f.why.join("; ")}`);
+        assert.equal(free(f.effects, SANDBOX), false, argv.join(" "));
+    }
+    assert.equal(run(["git", "-C", "sub", "status"]).described, true, "a read subcommand acts on the -C directory itself (control)");
+});
+
+test("git rm walks its operands: a submodule (a gitlink) goes with its whole worktree without -r", () => {
+    // Guards: only -r marked the walk, so `git rm sub` removed a submodule's worktree with no containsSecret answer (review of #990).
+    // A repository nested below the root, so the repository and cwd claims are not top-level names and the walk decides.
+    const o = { cwd: "/w/p/q/r", repo: { root: "/w/p/q", reasons: [] } };
+    assert.equal(free(run(["git", "rm", "sub"], o).effects, SANDBOX), true, "nothing secret beneath it (control)");
+    assert.equal(free(run(["git", "rm", "sub"], { ...o, beneath: ["/w/p/q/r/sub"] }).effects, SANDBOX), false, "a secret beneath the operand");
 });
 
 test("git rm / git mv with a flag that runs another program or an option before the subcommand that does, is unknown", () => {
@@ -364,7 +379,7 @@ test("xargs/env/sudo/nice/command rm: not described (the program is another one)
 
 test("a program named rm that lives inside a workspace root is not the system rm: not described, or not free", () => {
     // Guards: `./rm a.txt` where ./rm is a script the model wrote is matched by basename; the description of rm must not run an arbitrary script as a nested names write.
-    // (A cat/ls manifest has the same exposure today; if this needs a change in shFacts, not in a manifest, see the report.)
+    // (A cat/ls manifest has the same exposure today; the guard is in shFacts, not in a manifest.)
     const f = run(["./rm", "a.txt"], { program: { path: "/w/rm", inRoot: true } });
     assert.ok(f.described === false || f.effects === "unknown" || free(f.effects, PLAIN) === false);
     assert.equal(f.described, false, "an in-root program is not described by a binary's manifest");

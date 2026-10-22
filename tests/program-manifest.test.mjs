@@ -324,7 +324,7 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
     assert.deepEqual(names, ["/repo", "/repo/src", "/repo/src/a"]);
     for (const a of [":/x", ":(glob)*.ts", ":!x"]) assert.equal(describeCall(["git", "rm", a], git, V).described, false, a);
     assert.equal(describeCall(["git", "rm", "--", ":/x"], git, V).described, false, "after -- too");
-    assert.equal(describeCall(["git", "-C", "sub", "rm", "a"], git, V).described, true, "-C is allowed with a repo-wide command");
+    assert.equal(describeCall(["git", "-C", "sub", "rm", "a"], git, V).described, false, "-C with operands: git resolves them against sub, the host against the cwd");
 });
 
 // --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
@@ -332,7 +332,7 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "619eccd1a8f0fa1654170d0a38cfd6943c410368e543f14273b343b8a0c1c991";
+const VECTOR_PIN = "9deeb830d82eefec2674eb6e2bcc48dbc8c90a8c14503de8b9260b9d60bd1b7c";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
