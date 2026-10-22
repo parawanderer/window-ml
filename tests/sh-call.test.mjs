@@ -48,7 +48,7 @@ test("the options are cwd, env and timeoutMs, each checked; an unknown one is re
 // --- what the host is asked ---
 
 test("the manifests are found by the program's basename, and only the shipped ones", () => {
-    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "git", "head", "jq", "ls", "rg", "tail", "wc"]);
+    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
     assert.equal(manifestFor(["/usr/bin/git"])?.program, "git");
     assert.equal(manifestFor(["python3"]), undefined);
     assert.equal(manifestFor(["constructor"]), undefined, "a prototype name is not a manifest");

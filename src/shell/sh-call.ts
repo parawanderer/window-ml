@@ -17,15 +17,19 @@ import git from "./manifests/git.json";
 import head from "./manifests/head.json";
 import jq from "./manifests/jq.json";
 import ls from "./manifests/ls.json";
+import mv from "./manifests/mv.json";
 import rg from "./manifests/rg.json";
+import rm from "./manifests/rm.json";
+import rmdir from "./manifests/rmdir.json";
 import tail from "./manifests/tail.json";
+import unlink from "./manifests/unlink.json";
 import wc from "./manifests/wc.json";
 import type { ShCallSpan, ShUnasked, StepAsk } from "../contract";
 
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
 export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Object.freeze(Object.fromEntries(
-    ([cat, find, git, head, jq, ls, rg, tail, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
+    ([cat, find, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
 /** The manifests a call is described by: the shipped ones, unless the caller names its own. */
@@ -253,7 +257,13 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     if (!m) why.push(`${facts.argv[0]} has no program manifest`);
     else {
         const byArg = new Map(facts.paths.map((p) => [p.arg, p]));
-        const resolve = (p: { arg: number | "cwd"; given: string }): Resource => {
+        const resolve = (p: { arg: number | "cwd" | "repo"; given: string }): Resource => {
+            // The repository's root, when the host found one; else the cwd (a call outside a repository fails in git).
+            if (p.arg === "repo") {
+                if (!facts.repo) return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
+                const r = normalPath(facts.repo.root);
+                return { kind: "fs", path: r, inRoot: (place?.roots ?? []).some((x) => r === normalPath(x) || r.startsWith(normalPath(x) + "/")), secret: false, exists: true, ...placeAmongRoots(r, place?.roots) };
+            }
             if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
             const f = byArg.get(p.arg);
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.

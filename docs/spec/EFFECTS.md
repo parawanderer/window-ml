@@ -121,6 +121,7 @@ objection building K3c): it projects onto `write` with `names: true` on the `fs`
 in-place write so the two never de-duplicate. A separate operation would make a person's policy fail open: `has("write")`
 would never fire for `rm`, `mv` or `sed -i`, and a universal over `writes` would be vacuously true for `rm .envrc`.
 The operations table stays as it is; `covers` reads `names` the way it reads `secret`.
+Ruled 2026-10-22: a `write-names` NESTED inside a root (`rm -rf src/gen`) stays inside `B` under the sandbox, the same as `find -delete` and as overwriting a file with `>`; there is no per-program "always ask" for `rm` (see the delete family in [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)).
 
 So "the sandbox widens the free tier" in [`SHELL.md`](SHELL.md) is a definition, not a rule to hand-write per mode: a
 write inside the roots is free under Seatbelt because Seatbelt publishes it in `B`, and asks on the plain host because
