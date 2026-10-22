@@ -152,6 +152,8 @@ repository, where the host sent `null`. Net: 27 right of 53, unchanged, and no f
 rule now sends `false` when no repository encloses the call, which gives the two back once the host does it.
 The host does it as of window-ml-host #23 (fb436349), and the scorer's calls outside a repository now carry `false`: rescored with nothing rerun, opus's S2 and sonnet's S1 are right again, 29 right of 53 (`sh` right among lifted 16/24, among those that stayed code 13/29), still no fail-open. The interview's fact table says the same from here on (`false` when there is no repository, `null` only when the host could not tell); no sweep has read that wording yet.
 
+Rescored again with nothing rerun (2026-10-22, #990): `rm`, `mv`, `rmdir`, `unlink` and `git rm`/`git mv` now have manifests, so the five S4 vectors that were "(no manifest)" are described as `write-names`, and the 8 effects answers catch all five. A sixth vector, `rm -P a.txt`, keeps them wrong on one: a flag the manifest does not model makes the call undescribed, every resource is `{ kind: "unknown" }`, and a deny that needs `r.names === true` does not fire, which is fail-safe (the person is asked). Net: 29 right of 53, unchanged; the 8 answers each miss 1 vector where they missed 5.
+
 ## With `propose_policy`'s details (2026-10-21)
 
 The `fetch` interview then read `propose_policy`'s details too (`TOOL_DETAILS.propose_policy`, the text
