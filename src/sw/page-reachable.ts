@@ -32,8 +32,27 @@ export type TabState = "awake" | "asleep" | "gone";
 export interface WatchOpts {
     capMs?: number;
     probeMs?: number;
-    /** injectable for tests; defaults to the host's setTimeout */
+    /** injectable for tests; defaults to the host's setTimeout, unref'd (see {@link defaultSleep}) */
     sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * The host's timer, marked so it does not keep a Node process alive. The watch outlives its caller whenever the
+ * caller stops waiting first: `ask()` races the send against the pageRead bound and abandons the race when the
+ * bound fires, and `delegateSend`'s `send().catch(() => {})` swallows the late rejection without stopping the
+ * loop. In a browser that is free (the SW is evicted on its own terms). In the test suite it was not: every
+ * abandoned watch kept its 4s probe timer ref'd for the full four-minute cap, and the two files that leave a
+ * page unanswered sat on the event loop for 225s AFTER their last test had passed (run-start 4.7s of tests,
+ * 242s of wall clock). `unref` says the watch is no longer work the process is waiting on — it is the same
+ * distinction the jsdom helpers make when they leave timeouts alone and compress intervals. A caller that is
+ * still awaiting the watch keeps the process alive through its own `await` and the runner's pending test; the
+ * timers still fire as long as anything else is holding the loop.
+ */
+function defaultSleep(ms: number): Promise<void> {
+    return new Promise<void>((r) => {
+        const t = setTimeout(r, ms) as unknown as { unref?: () => void };
+        t.unref?.();
+    });
 }
 
 /** Raised instead of letting a delegated call hang. The loop turns it into the tool's result, so the model is
@@ -70,7 +89,7 @@ export function reachabilityNote(state: TabState | "silent", waitedMs: number): 
 export async function watchWhileWaiting<T>(send: Promise<T>, probe: () => Promise<TabState>, opts: WatchOpts = {}): Promise<T> {
     const capMs = opts.capMs ?? PAGE_SILENCE_CAP_MS;
     const probeMs = opts.probeMs ?? TAB_PROBE_MS;
-    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleep = opts.sleep ?? defaultSleep;
     let settled = false;
     // Whatever the send does, it wins: a tool that answered is never second-guessed by a probe that was already
     // in flight when it did.
