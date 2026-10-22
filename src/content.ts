@@ -110,6 +110,10 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         whenDecided(() => { onWorkerMessage(message, _sender, sendResponse); });
         return true;
     }
+    // The worker asking whether this page was told it is hidden (an origin allowed since it loaded), and then opening
+    // the gate once it has put the page script in (sw-presence.ts `showInOpenTabs`). Only the worker reaches this listener.
+    if (message && message.type === "PRESENCE_CHECK") { sendResponse({ gate: gateState(), alive: pageAlive() }); return undefined; }
+    if (message && message.type === "PRESENCE_OPEN") { setGate(true); sendResponse(true); return undefined; }
     // A debug event from a background-hosted run is the SHELL's (sidebar/shell.ts receives ML_DEBUG_TO_PAGE itself). It
     // is not re-posted on the page window: this used to, and the page read every step of every run that reached the
     // tab, and posted its own as the worker's (docs/spec/SITE_ACCESS.md, attack 15).

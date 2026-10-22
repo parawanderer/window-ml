@@ -106,16 +106,17 @@ const clickLastPoint = (body) => { const t = JSON.stringify(body.messages).match
 /** What a VISIBLE page sees with no run (an origin allowed to use window.ml; SITE_PRESENCE.md step 2). */
 function expectInstalledTrace(load) {
     expect(load.mlClosedRootsAtLoad, "no `__mlClosedRoots` global: the captured roots are in shadow-patch's closure").toBe(false);
-    expect(load.closedRootReaderAtLoad, "but any page that dispatches the DOM tools' ask gets the reader back").toBe(true);
+    expect(load.closedRootReaderAtLoad, "injected.js runs at document_start right after the patch and claims the reader before any page script can ask").toBe(false);
     expect(load.attachShadowNative, "Element.prototype.attachShadow is not native code").toBe(false);
     expect(load.attachShadowName).toBe("patched");
     expect(load.domAdded.filter((d) => /chrome-extension/.test(d)), "the page scripts are registered content scripts: no <script> tag").toEqual([]);
-    expect(load.extIdLearnedBy).toEqual(expect.arrayContaining(["stack:dispatchEvent"]));
-    expect(load.extIdLearnedBy).not.toContain("dom");
-    expect(load.extensionCallers, "injected.js dispatches its ready event through the page's own dispatchEvent").toContain("dispatchEvent");
+    expect(load.extIdLearnedBy, "injected.js runs before any page script, so no page wrapper sees its stack at load").toEqual([]);
+    expect(load.extensionCallers, "nor its ready event's dispatchEvent").toEqual([]);
     expect(load.messages).toEqual(expect.arrayContaining(["PAGE_ADOPT_HELLO"]));
-    expect(load.warFetch, "injected.js is no longer web-accessible; the sidebar's files still answer a page that knows the id (no use_dynamic_url yet)").toEqual({ injected: "Failed to fetch", sidebar: 200, manifest: "Failed to fetch", bogus: "Failed to fetch" });
-    expect(load.globalsAdded).toContain("ml");
+    // The probe fetches by the id it learned, and it learns none now. A page that knows the id already (a web store
+    // build's is fixed) can still fetch the sidebar's files until use_dynamic_url (detection-surface.md row 5).
+    expect(load.warFetch, "nothing on the page names the id, so the probe has nothing to fetch by").toBe(null);
+    // Not in `globalsAdded`: window.ml is there before the page's first script takes its snapshot.
     expect(typeof load.final.windowMl, "window.ml, with its members").toBe("number");
 }
 
@@ -130,7 +131,7 @@ function expectHiddenTrace(load) {
     expect(load.messages, "no window message of ours").toEqual([]);
     expect(load.extIdLearnedBy, "nothing on the page names the extension's id").toEqual([]);
     expect(load.extensionCallers).toEqual([]);
-    expect(load.warFetch.injected).toBe("Failed to fetch");
+    expect(load.warFetch, "the probe never learns the id, so it has nothing to fetch by").toBe(null);
 }
 
 /** What every run adds to the page it acts on, whatever its tool (observed today). */
@@ -465,7 +466,7 @@ test.describe("navigation and requests", () => {
         expect(first.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "cors", cookie: "session=api.test-secret" });
     });
 
-    test("rendered fetch: a real tab on the site, focus emulated, visibility set, window.ml injected there", async () => {
+    test("rendered fetch: a real tab on the site, focus emulated, visibility set, and nothing of window.ml there", async () => {
         const row = await scenario("fetch-url-rendered", { script: (site) => [{ tool: "fetch_url", args: { url: site.url("api.test", "/?via=rendered"), rendered: true, credentials: true } }] });
         // observed today: the ONLY Emulation.* command the extension sends, on the render tab only.
         expect(row.cdp).toEqual(["(attach)", "Emulation.setFocusEmulationEnabled", "Page.setWebLifecycleState", "(detach)"]);
@@ -486,7 +487,7 @@ test.describe("navigation and requests", () => {
         expect(tab.rafHz.length, "the probe measured at least one frame-rate window").toBeGreaterThan(0);
         expect(tab.rafHz.filter((h) => h === "0" || h === "1-4"),
             "not throttled: the render tab is made visible, so focused-but-hidden never happens").toEqual([]);
-        expect(tab.final.windowMl, "the rendered site gets window.ml like any page").toEqual(expect.any(Number));
+        expect(tab.final.windowMl, "the rendered site is not one the person allowed, so it is hidden").toBe("absent");
         const nav = row.requests.find((r) => r.path === "/?via=rendered");
         expect(nav.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate", cookie: "session=api.test-secret" });
         expect(nav.headers["sec-fetch-user"]).toBeUndefined();

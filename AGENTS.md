@@ -36,8 +36,8 @@ A new file goes in the folder of what it is for. Move files with `node scripts/m
 ## Architecture
 
 Requests flow **page → content script → service worker → OpenWebUI/Ollama** and back, to get around CORS: only the
-worker has host permissions. `injected.ts` defines `window.ml` in the page's MAIN world (a real `<script>`, so page
-scripts and userscripts reach it); `content.ts` is a dumb relay (`HANDLE_MAP`); `background.ts` is the message ROUTER
+worker has host permissions. `injected.ts` defines `window.ml` in the page's MAIN world (a registered content script,
+so page scripts and userscripts reach it, only on origins that may use it); `content.ts` is a dumb relay (`HANDLE_MAP`); `background.ts` is the message ROUTER
 and the print/nav spine, owning config and every privileged fetch, with each cohesive leaf layer its own `sw-*.ts`;
 `popup.ts` is the settings popup. Both module tables, with what each owns: `docs/dev/architecture.md`.
 
@@ -277,6 +277,9 @@ assuming a resource-panel field is broken.** Hints go through `wireHint`; **an a
 
 - **A page uses `window.ml` only once its ORIGIN is approved**: the router refuses every page-started type from an
   unapproved origin, reading `sender`, never anything the page says; a run the USER starts works on any page. → site-access.md
+- **A page whose origin may not use `window.ml` gets NOTHING of ours** until the person starts a run there: no page
+  script, no window message, no answer to what it posts; the content script speaks only on the worker's word
+  (`page-gate.ts`), never on anything the page can post. → site-access.md, "Presence"
 - **An error's text never carries the server URL, the API key or the model filter to a page or the model**: it goes
   through `sw-scrub.ts`; only extension pages and the run log's `key` keep the raw text. → site-access.md
 - **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`,
