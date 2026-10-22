@@ -471,3 +471,25 @@ test("describeCall marks mv's and git mv's operands as walked (the host only ans
     assert.equal(describeCall(["mv", "a", "b"], manifestFor(["mv"]), {}).recursive, true,
         "mv always moves a whole directory, so it is recursive like rm -r");
 });
+
+test("git --icase-pathspecs rm Secret.ts is not free: it matches the secret on a case-sensitive host", { todo: "--icase-pathspecs is an allowed empty flag, so a case-mismatched pathspec is claimed as the name the caller spelled while git removes the on-disk secret (Linux; macOS realpath usually folds case)" }, () => {
+    // Guards: the host resolves the LITERAL path the caller spelled. `--icase-pathspecs` makes git match
+    // `secret.ts` when given `Secret.ts`. On a case-sensitive host those are two names: the claim is on the
+    // non-secret one, the secret is removed. Residual beside the glob fix (2c3b47a7), found on the recheck.
+    // Positive control: the same secret spelled exactly is flagged and not free; without the flag git does not
+    // match, so the free judgment on a non-existent name is harmless.
+    const base = { cwd: "/w/a/b/src", repo: { root: "/w/a/b", reasons: ["git"] }, secret: ["/w/a/b/src/secret.ts"] };
+    assert.equal(free(run(["git", "rm", "secret.ts"], base).effects, SANDBOX), false, "the secret file itself (control)");
+    assert.equal(free(run(["git", "rm", "Secret.ts"], base).effects, SANDBOX), true,
+        "without --icase-pathspecs git does not match secret.ts, so a free claim on a name that is not there is harmless (control)");
+    for (const argv of [
+        ["git", "--icase-pathspecs", "rm", "Secret.ts"],
+        ["git", "--icase-pathspecs", "mv", "Secret.ts", "other.ts"],
+    ]) {
+        const f = run(argv, base);
+        assert.equal(f.described, false, `${argv.join(" ")}: --icase-pathspecs changes which name a pathspec matches, so the call is unknown`);
+        assert.equal(free(f.effects, SANDBOX), false, `${argv.join(" ")} removes or renames secret.ts`);
+    }
+    // A glob is still unknown with the flag on (2c3b47a7 holds).
+    assert.equal(run(["git", "--icase-pathspecs", "rm", "*.ts"], base).described, false, "*.ts stays unknown");
+});
