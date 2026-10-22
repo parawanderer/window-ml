@@ -30,8 +30,8 @@ export const calm = signal(true);
 /** Is the session list pane open? Only a wide layout asks: a phone shows one pane at a time either way. */
 export const listOpen = signal(true);
 
-/** Fold EVERY run of tool calls into one row, not only a run of the same tool. Off by default — the ordinary rule
- *  is what someone who has not asked should get. Mirrored onto the shared signal the session views read. */
+/** Fold EVERY run of tool calls into one row, not only a run of the same tool. On unless this device turned it off
+ *  (`installViewPrefs` says why). Mirrored onto the shared signal the session views read. */
 export function setGroupAll(on: boolean): void {
     groupAllTools.value = on;
     store?.set(GROUP_ALL_KEY, on);

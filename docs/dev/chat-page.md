@@ -797,8 +797,9 @@ ENDED, where nothing was said and nothing revised (`step-streak.tsx`, every clau
 apart", and in this view — where a collapsed row's output preview is hidden as spam — the tool's name is exactly
 that set.
 
-**"Group all tool calls" (the ⋮ menu, under Calm view, off by default, `view.groupAll`) is the reader answering
-every one of those arguments at once.** So the clauses that protect a legible row go: a different tool, fewer than
+**"Group all tool calls" (the ⋮ menu, under Calm view, `view.groupAll`) is the reader answering every one of those
+arguments at once, and it is ON unless a device turned it off** (`installViewPrefs`: an absent answer means on, a
+stored `false` stays off; `tests/chat-core.test.mjs`). So the clauses that protect a legible row go: a different tool, fewer than
 three, a tail still growing, a revision's header. Two do not, and neither is about legibility —
 
 - **a gate is never grouped.** A decision waiting on a human is not machinery, and no display preference may hide

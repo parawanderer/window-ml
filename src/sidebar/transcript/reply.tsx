@@ -281,7 +281,7 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>
             <ArrivingMsg ts={t.ts}>
-                <div class={`msg user${t.user ? "" : " no-text"}`}>
+                <div class={`msg user${t.user ? "" : " no-text"}`} data-prompt={`t${t.id}`}>
                     <div class="mrow"><span class="who">user</span><span class="sp" />{t.user ? <UserActions text={t.user} /> : null}<Stamp ts={t.ts} /></div>
                     {t.user ? <UserText text={t.user} /> : null}
                 </div>

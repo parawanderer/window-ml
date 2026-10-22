@@ -54,14 +54,28 @@ export function UserText({ text }: { text: string }) {
         return () => ro?.disconnect();
     }, [text]);
     const folded = long && !open;
+    const wrap = useRef<HTMLDivElement>(null);
+    // OPENED, a long message is a scroll box of bounded height (`.utext.opened`) and not its whole length: a pasted
+    // log opened in full is the screens of transcript the fold was there to save, and the button that closes it again
+    // would be at the end of them. CLOSING puts the box back at its first line, which is what a fold shows (an
+    // `overflow: hidden` box keeps its scroll offset, so it would fold onto the middle), and brings the message back
+    // into view if its top had scrolled away while it was open.
+    const toggle = (): void => {
+        if (!open) { setOpen(true); return; }
+        setOpen(false);
+        if (el.current) el.current.scrollTop = 0;
+        // The whole bubble, its header included, and not only the text; `nearest` does nothing to one already in view,
+        // whichever scroller it is drawn in.
+        requestAnimationFrame(() => (wrap.current?.closest(".msg") ?? wrap.current)?.scrollIntoView({ block: "nearest" }));
+    };
     return (
-        <div class={`utext-wrap${long ? " long" : ""}`}>
-            <div ref={el} class={`utext${folded ? " folded" : ""}`} style={folded ? `--fold-lines:${FOLD_LINES}` : undefined}>{text}</div>
+        <div class={`utext-wrap${long ? " long" : ""}`} ref={wrap}>
+            <div ref={el} class={`utext${folded ? " folded" : long && open ? " opened" : ""}`} style={folded ? `--fold-lines:${FOLD_LINES}` : undefined}>{text}</div>
             {long ? (
                 // Gemini's control: a round chevron at the text's bottom right, over the fade it explains. Named for a
                 // screen reader and a keyboard, since the glyph alone says nothing to either.
                 <button type="button" class={`utext-more${open ? " open" : ""}`} aria-expanded={open}
-                    aria-label={open ? "Show less of this message" : "Show all of this message"} onClick={() => setOpen((v) => !v)}>
+                    aria-label={open ? "Show less of this message" : "Show all of this message"} onClick={toggle}>
                     <IconChevron />
                 </button>
             ) : null}
