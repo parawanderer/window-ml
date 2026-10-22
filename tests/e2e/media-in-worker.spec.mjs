@@ -251,7 +251,7 @@ test("a worker-built run's look, locate, verified click and type, answer media a
 
 // --- the ratchet: a page-built run, once it is handed to the worker ---
 
-test("a page-built run handed to the worker (an eviction's durable resume): after the hand-over its page sends nothing but the in-run probe and its reload's own two messages", async () => {
+test("a page-built run handed to the worker (an eviction's durable resume): after the hand-over its page sends nothing but the in-run probe and its reload's own three messages", async () => {
     test.setTimeout(150000);
     const r = await setup();
     let stopApprover = null;
@@ -273,13 +273,13 @@ test("a page-built run handed to the worker (an eviction's durable resume): afte
         const result = await untilResult(events);
         await watch.close();
         await expectTheRun(r, page, result);
-        expectNothingSent((await counted(r.ext.sw, tabId)).slice(before), ["CONTENT_READY", "RUN_READOPTED"]);
+        expectNothingSent((await counted(r.ext.sw, tabId)).slice(before), ["CONTENT_READY", "SHELL_LISTENING", "RUN_READOPTED"]);
     } finally { await stopApprover?.(); await r.close(); }
 });
 
 // --- the ratchet: a page-built run handed to the worker when it navigates onto a site nobody approved ---
 
-test("a page-built run that navigates onto an unapproved site is handed to the worker there: that page sends nothing but the in-run probe and its own two messages", async () => {
+test("a page-built run that navigates onto an unapproved site is handed to the worker there: that page sends nothing but the in-run probe and its own three messages", async () => {
     test.setTimeout(150000);
     const r = await setup();
     const stopApprover = approveAll(r.ext);
@@ -301,7 +301,7 @@ test("a page-built run that navigates onto an unapproved site is handed to the w
         await expectTheRun(r, page, result, 1);
         // Counted from the unapproved document only: what the builder page sent before the navigation is its own.
         const sent = (await counted(r.ext.sw, tabId)).filter((m) => m.url && new URL(m.url).origin === thereOrigin);
-        expectNothingSent(sent, ["CONTENT_READY", "RUN_READOPTED"]);
+        expectNothingSent(sent, ["CONTENT_READY", "SHELL_LISTENING", "RUN_READOPTED"]);
         // And the run was the worker's from the commit on: its execution log says why.
         const log = await r.ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).filter((x) => x.kind === "handed-to-worker").map((x) => x.reason));
         expect(log).toEqual(["navigated-to-unapproved-site"]);

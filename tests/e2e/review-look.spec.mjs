@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell, waitForMl } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -743,6 +743,7 @@ for (const [what, rule] of [
 // own `all: initial !important`: the hide is `!important` too, and the show takes it off again.
 test("the page's own hide handshake still hides our pinned host, and its show brings the UI back where it was", async () => {
     await withShell(async (s) => {
+        await waitForMl(s.page);   // a page-built run, so an allowed page: a hidden one's hide is dropped
         const before = await paintBox(s.page, (await s.bare()).dataUrl);
         await s.page.evaluate(() => new Promise((ok) => {
             addEventListener("message", (e) => { if (e.data?.__mlSidebarShot === "hidden") ok(); });

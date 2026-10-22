@@ -195,7 +195,9 @@ export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
 /**
  * Resolve when `window.ml` is live in the page's MAIN world (injected.js has fired ml:ready). By default it also
  * APPROVES the page's origin first, because a spec that calls `window.ml` from its page is testing what happens once
- * a person has allowed that site. `{ approve: false }` leaves the page unapproved, for a spec about the gate itself.
+ * a person has allowed that site. `{ approve: false }` leaves the page unapproved, for a spec about the gate itself or
+ * a run the person starts there. An unapproved page is HIDDEN (docs/spec/SITE_PRESENCE.md): it has no `window.ml`,
+ * so this waits for the content script's gate to be decided instead, and for `window.ml` only if it opened.
  * @param {any} page the page
  * @param {{ approve?: boolean }} [opts]
  */
@@ -210,6 +212,10 @@ export async function waitForMl(page, { approve = true } = {}) {
     // by injected.js at runtime, and no ambient declaration in this project covers it (the extension's own
     // types describe the API's shape, not its presence on a page's window). A type here would be a claim
     // about another realm either way.
+    if (!approve) {
+        const state = await waitInShell(page, () => { const s = /** @type {any} */ (globalThis).__mlPageGate?.state; return s && s !== "pending" ? s : null; });
+        if (state !== "open") return;
+    }
     await page.waitForFunction(() => { const w = /** @type {any} */ (window); return !!(w.ml && w.ml.ready); }, null, { timeout: 15000 });
 }
 
