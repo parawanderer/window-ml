@@ -1,13 +1,14 @@
 /**
  * Page↔background/shell transport for window.ml. Every window.ml method that
  * needs the service worker's privileges posts a message here and awaits the matching
- * response (correlated by a random requestId); streaming rides a Port instead.
+ * response (correlated by a random requestId), over the page channel (page-channel.ts), never the page's window.
  * Extracted from injected.ts — these close over only window/document globals.
  */
 
 import type { TokenUsage } from "./contract/contract-chat";
 import type { FetchLlmPayload } from "./contract/contract-messages";
 import { SB_ROOT } from "./ids";
+import { toIsolated, onIsolated, offIsolated, type ChannelMessage } from "./page-channel";
 
 /**
  * Ask the debug sidebar shell to hide its overlay for a screenshot (so it
@@ -21,15 +22,15 @@ export const hideSidebarForShot = (): Promise<void> => new Promise(resolve => {
     const mounted = typeof document.getElementById === "function" && document.getElementById(SB_ROOT);
     if (!mounted) return resolve();   // sidebar off → nothing to hide, no wait
     let done = false;
-    const finish = () => { if (done) return; done = true; window.removeEventListener("message", onAck); clearTimeout(timer); resolve(); };
-    const onAck = (e: MessageEvent) => { if (e.data && e.data.__mlSidebarShot === "hidden") finish(); };
-    window.addEventListener("message", onAck);
+    const finish = () => { if (done) return; done = true; offIsolated(onAck); clearTimeout(timer); resolve(); };
+    const onAck = (e: ChannelMessage) => { if (e.data && e.data.__mlSidebarShot === "hidden") finish(); };
+    onIsolated(onAck);
     const timer = setTimeout(finish, 200);   // safety net if the shell never acks
-    window.postMessage({ __mlSidebarShot: "hide" }, "*");
+    toIsolated({ __mlSidebarShot: "hide" });
 });
 
 /**
- * Make a background task promise that communicates with the content script via postMessage.
+ * Make a background task promise that communicates with the content script over the page channel.
  * Posts a request and waits for the matching response, resolving with the result or rejecting with an error.
  *
  * @param {string} requestType The type of request to send.
@@ -52,11 +53,11 @@ export const makeBackgroundTaskPromise = <T = unknown>(
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
         const cleanup = () => {
-            window.removeEventListener("message", handleResponse);
+            offIsolated(handleResponse);
             if (signal) signal.removeEventListener("abort", onAbort);
         };
 
-        function handleResponse(event: MessageEvent) {
+        function handleResponse(event: ChannelMessage) {
             // A progress push for THIS request → hand it over, keep listening (don't resolve/cleanup).
             if (progress && event.data?.type === progress.type && event.data.requestId === requestId) {
                 try { progress.onProgress(event.data); } catch { /* a bad progress handler must not break the task */ }
@@ -78,7 +79,7 @@ export const makeBackgroundTaskPromise = <T = unknown>(
         // awaiting caller unblocks immediately rather than waiting for a slow generation to finish.
         function onAbort() {
             cleanup();
-            window.postMessage({ type: "ABORT_REQUEST", requestId }, "*");
+            toIsolated({ type: "ABORT_REQUEST", requestId });
             const e = new Error("Aborted"); e.name = "AbortError"; reject(e);
         }
 
@@ -86,8 +87,8 @@ export const makeBackgroundTaskPromise = <T = unknown>(
             if (signal.aborted) { onAbort(); return; }
             signal.addEventListener("abort", onAbort);
         }
-        window.addEventListener("message", handleResponse);
-        window.postMessage({ type: requestType, requestId, payload }, "*");
+        onIsolated(handleResponse);
+        toIsolated({ type: requestType, requestId, payload });
     });
 };
 
@@ -102,10 +103,10 @@ export const makeChatRequest = (payload: FetchLlmPayload, signal?: AbortSignal |
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
         const cleanup = () => {
-            window.removeEventListener("message", handle);
+            offIsolated(handle);
             if (signal) signal.removeEventListener("abort", onAbort);
         };
-        function handle(event: MessageEvent) {
+        function handle(event: ChannelMessage) {
             const d = event.data;
             if (!d || d.type !== "LLM_RESPONSE" || d.requestId !== requestId) return;
             cleanup();
@@ -115,15 +116,15 @@ export const makeChatRequest = (payload: FetchLlmPayload, signal?: AbortSignal |
         // Abort → kill the in-flight fetch (ABORT_REQUEST → ABORT_TASK) and reject now.
         function onAbort() {
             cleanup();
-            window.postMessage({ type: "ABORT_REQUEST", requestId }, "*");
+            toIsolated({ type: "ABORT_REQUEST", requestId });
             const e = new Error("Aborted"); e.name = "AbortError"; reject(e);
         }
         if (signal) {
             if (signal.aborted) { onAbort(); return; }
             signal.addEventListener("abort", onAbort);
         }
-        window.addEventListener("message", handle);
-        window.postMessage({ type: "LLM_REQUEST", requestId, payload }, "*");
+        onIsolated(handle);
+        toIsolated({ type: "LLM_REQUEST", requestId, payload });
     });
 };
 
@@ -145,11 +146,11 @@ export const makeStreamingTaskPromise = (
         const requestId = Math.random().toString(36).substring(7);
         let full = "";
         const cleanup = () => {
-            window.removeEventListener("message", handle);
+            offIsolated(handle);
             if (signal) signal.removeEventListener("abort", onAbort);
         };
 
-        function handle(event: MessageEvent) {
+        function handle(event: ChannelMessage) {
             const d = event.data;
             if (!d || d.requestId !== requestId) return;
             if (d.type === "LLM_STREAM_CHUNK") {
@@ -169,7 +170,7 @@ export const makeStreamingTaskPromise = (
         // reject now so the caller unblocks — no waiting on the rest of a slow generation.
         function onAbort() {
             cleanup();
-            window.postMessage({ type: "ABORT_REQUEST", requestId }, "*");
+            toIsolated({ type: "ABORT_REQUEST", requestId });
             const e = new Error("Aborted"); e.name = "AbortError"; reject(e);
         }
 
@@ -177,7 +178,7 @@ export const makeStreamingTaskPromise = (
             if (signal.aborted) { onAbort(); return; }
             signal.addEventListener("abort", onAbort);
         }
-        window.addEventListener("message", handle);
-        window.postMessage({ type: "LLM_STREAM_REQUEST", requestId, payload }, "*");
+        onIsolated(handle);
+        toIsolated({ type: "LLM_STREAM_REQUEST", requestId, payload });
     });
 };
