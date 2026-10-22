@@ -10,14 +10,14 @@
 /** The gate's state. `pending` until the worker has answered, so an early message is held rather than refused. */
 export type GateState = "pending" | "open" | "closed";
 
-interface PageGate { state: GateState; alive: boolean; waiting: (() => void)[] }
+interface PageGate { state: GateState; alive: boolean; waiting: (() => void)[]; deciding: (() => void)[] }
 
 const KEY = "__mlPageGate";   // a property of the isolated world's global, which no page script reaches
 
 /** The one gate of this document, made on first use. */
 function gate(): PageGate {
     const g = globalThis as unknown as Record<string, PageGate | undefined>;
-    return (g[KEY] ??= { state: "pending", alive: false, waiting: [] });   // state: plumbing
+    return (g[KEY] ??= { state: "pending", alive: false, waiting: [], deciding: [] });   // state: plumbing
 }
 
 /** The gate's state now. */
@@ -34,8 +34,20 @@ export function setGate(open: boolean): void {
     const g = gate();
     if (g.state === "open") return;   // once open, open for this document: a run's page script is in it
     g.state = open ? "open" : "closed";
-    const held = g.waiting.splice(0);
+    const held = g.waiting.splice(0), decided = g.deciding.splice(0);
     if (open) for (const f of held) f();
+    for (const f of decided) f();
+}
+
+/**
+ * Run `f` once the worker has answered either way: now if it has, later if it is still pending. For what must be
+ * answered whichever way it goes (a worker's request, which `f` then serves or refuses by `gateOpen()`).
+ * @param f what to run
+ */
+export function whenDecided(f: () => void): void {
+    const g = gate();
+    if (g.state !== "pending") f();
+    else g.deciding.push(f);   // only the worker's own requests come here, so no cap is needed
 }
 
 /**

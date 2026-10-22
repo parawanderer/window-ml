@@ -5,7 +5,7 @@
 // says nothing to the page and answers nothing it posts (page-gate.ts, docs/spec/SITE_PRESENCE.md step 2).
 import type { PageRequestType, BackgroundMessageType } from "./contract/contract-messages";
 import { HANDLE_MAP } from "./page-relay";
-import { gateOpen, gateState, setGate, whenOpen, markAlive, pageAlive } from "./page-gate";
+import { gateOpen, gateState, setGate, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
 
 // 1. Whether injected.js is up in the main world. If it never comes up (a `sandbox` CSP blocks script EXECUTION in the
 // page), a delegated agent tool would post into the void and HANG, so the waits below are bounded: `pageAlive()` is set
@@ -93,7 +93,23 @@ interface PageMessage { type?: string; requestId?: string; payload?: unknown; }
 // lands here. We relay it to the main world as a PAGE_TOOL_RUN window message, await the matching
 // PAGE_TOOL_RESULT (correlated by a locally-minted callId), and hand the envelope back via
 // sendResponse. Returning true keeps the message channel open for that async reply.
-chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener(onWorkerMessage);
+
+/** What the worker asks of this page, held while the gate is pending so the answer follows the worker's own word. */
+const HELD_WHILE_PENDING = new Set(["ADOPT_RUN_NOW", "RUN_STATE_IN_PAGE", "CANCEL_TOOL_IN_PAGE", "RUN_TOOL_IN_PAGE", "SERVER_TOOL_STREAM", "PYTHON_STREAM"]);
+
+/**
+ * One message from the worker to this tab.
+ * @param message the message
+ * @param _sender who sent it (the worker)
+ * @param sendResponse the answer
+ * @returns true when the answer comes later
+ */
+function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: chrome.runtime.MessageSender, sendResponse: (r?: unknown) => void): true | undefined {
+    if (message && HELD_WHILE_PENDING.has(message.type ?? "") && gateState() === "pending" && (message.payload as { injected?: unknown } | undefined)?.injected !== true) {
+        whenDecided(() => { onWorkerMessage(message, _sender, sendResponse); });
+        return true;
+    }
     // A debug event from a background-hosted run is the SHELL's (sidebar/shell.ts receives ML_DEBUG_TO_PAGE itself). It
     // is not re-posted on the page window: this used to, and the page read every step of every run that reached the
     // tab, and posted its own as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
@@ -197,7 +213,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     window.addEventListener("message", onResult);
     window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
-});
+}
 
 // 2. Listen for messages from injected.js (main world). A hello only marks the page script alive; everything else waits
 // for the gate, so a hidden page that posts our types is neither answered nor relayed (it is held while the worker has
@@ -274,17 +290,26 @@ function onPageMessage(data: PageMessage): void {
     sendRuntimeMessage(entry.type, requestId, data.payload, entry.responseType);
 }
 
-// 4. Ask the worker what this document is, once, as it starts: whether its origin may see window.ml (which opens the
-// gate; its page script is registered and has run or is about to), and whether this tab still hosts background runs
+// 4. Ask the worker what this document is, as it starts: whether its origin may see window.ml (which opens the gate; its
+// page script is registered and has run or is about to), and whether this tab still hosts background runs
 // mid-navigation. For a hidden page with runs, the worker has put the page script in before it answers. Each run is
 // re-adopted once injected is up: an ADOPT_RUN makes it re-register the toolset. Sent from here, not on injected's
 // hello, because a hidden page has no injected to say hello.
-chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { open?: boolean; adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
-    void chrome.runtime.lastError;   // SW asleep → no answer: the gate stays pending, and nothing is posted
-    if (!resp) return;
-    setGate(resp.open === true);
-    const adopt = (resp.adopt || []).filter((a) => a && typeof a.runId === "string");
-    if (!adopt.length || !gateOpen()) return;
-    const post = () => { for (const a of adopt) window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*"); };
-    if (pageAlive()) post(); else onAlive.push(post);
-});
+
+/**
+ * Ask, and ask again a few times if the worker did not answer (it was restarting): until it does, the gate stays
+ * pending, so the page's own window.ml calls wait and nothing is posted to the page.
+ * @param tries how many asks are left
+ */
+function contentReady(tries = 4): void {
+    chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { open?: boolean; adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
+        void chrome.runtime.lastError;
+        if (!resp) { if (tries > 1) setTimeout(() => contentReady(tries - 1), 500); return; }
+        setGate(resp.open === true);
+        const adopt = (resp.adopt || []).filter((a) => a && typeof a.runId === "string");
+        if (!adopt.length || !gateOpen()) return;
+        const post = () => { for (const a of adopt) window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*"); };
+        if (pageAlive()) post(); else onAlive.push(post);
+    });
+}
+contentReady();
