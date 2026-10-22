@@ -281,9 +281,8 @@ LEAVES: dict[str, dict[str, Any]] = {
     "csv.reader": {"effects": "pure", "returns": "fresh", "cost": "input length",
                    "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
                    "why": "_csv is C; ruled in as a leaf 2026-10-15"},
-    "csv.writer": {"effects": "pure", "returns": "fresh", "cost": "input length",
-                   "over": "an in-memory iterable (a StringIO or a list of lines), never a file",
-                   "why": "_csv is C; ruled in as a leaf 2026-10-15"},
+    # No `csv.writer` row (removed 2026-10-22): nothing lists it, and a writer exists to write into the buffer it
+    # holds, so `pure`/`fresh` were untrue; admitting it needs a row that says `mutates`/`alias(0)`.
 
     # --- PIL ---
     "PIL.Image.fromarray": {"effects": "pure", "returns": "alias(0)", "cost": "pixels",

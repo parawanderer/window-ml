@@ -61,15 +61,14 @@ test("a library manifest admits a name only with its row, and carries no row nob
         for (const [mod, fns] of Object.entries(m.modules ?? {})) for (const f of fns) listed.add(`${mod}.${f}`);
         for (const [kind, ms] of Object.entries(m.kinds)) for (const f of ms) listed.add(`${kind}.${f}`);
         const rows = new Set(Object.keys(m.leaves));
-        // The stdlib file lists `PIL: [Image.open]` for the import's sake; its row lives in the PIL manifest (a finding:
-        // two files share one name, and the stdlib one cannot admit it alone).
+        // The stdlib file lists `PIL: [Image.open]` on purpose: the fork's `load_manifests` admits PIL's names from the
+        // stdlib file's `modules` and never reads manifest-pil.json, whose row is the evidence for it (ruled 2026-10-22).
         if (name === "stdlib") for (const x of ["PIL.Image.open"]) { listed.delete(x); assert.ok(libraries.pil.leaves[x], `${x} has its row in manifest-pil.json`); }
         // PIL's Image functions are listed as `Image.open` and keyed `PIL.Image.open`; its kinds as `Image.save`.
         assert.deepEqual([...listed].filter((x) => !rows.has(x)), [], `${name}: listed without a row`);
-        // And `csv.writer` has a row (ruled in as a leaf 2026-10-15) while `modules.csv` lists only reader and DictReader:
-        // a finding for whoever owns the data, named here so a THIRD such row fails.
-        const orphans = [...rows].filter((x) => !listed.has(x));
-        assert.deepEqual(orphans, name === "stdlib" ? ["csv.writer"] : [], `${name}: a row nobody lists`);
+        // A row nobody lists is evidence for nothing, and reads as if the name were admitted (the `csv.writer` row, removed
+        // 2026-10-22, said `pure` of a writer).
+        assert.deepEqual([...rows].filter((x) => !listed.has(x)), [], `${name}: a row nobody lists`);
     }
 });
 
