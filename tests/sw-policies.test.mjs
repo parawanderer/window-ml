@@ -344,3 +344,160 @@ test("the run log keeps a lapsed record: its reason is the cause slug, never the
     assert.equal(rec("removed")?.reason, "removed");
     assert.equal(rec("Asking because the policy was removed.")?.reason, undefined, "a sentence would be dropped");
 });
+
+// --- an `ask` policy: the third answer (POLICIES.md, "A policy may also answer ask") ---
+
+const ANSWERS = ["deny", "ask", "allow", undefined];
+/** Strictest first: deny, ask, allow, nothing. */
+const strictest = (...as) => ANSWERS.find((a) => as.includes(a));
+const PREC_URL = "https://prec.example/";
+const precPolicy = (effect, url = PREC_URL) => ({ consumer: "fetch", effect, source: `(c) => c.url === ${JSON.stringify(url)}`, label: `prec ${effect}`, origin: "person" });
+/** A fetch call the built-in default frees (no effects), and the same URL as a real fetch (never free). */
+const FREE_FETCH = { kind: "fetch", url: PREC_URL, host: "prec.example", effects: [] };
+
+test("precedence over every pair of {deny, ask, allow, none} across the global and the run's scope, with and without the built-in default", () => {
+    let n = 0;
+    for (const g of ANSWERS) for (const r of ANSWERS) for (const free of [false, true]) {
+        const run = `h-prec-${n++}`;
+        const added = [];
+        if (g) added.push(P.addGlobalPolicy(precPolicy(g)));
+        if (r) P.addRunPolicy(run, precPolicy(r));
+        const j = P.judgeCall(run, "fetch", free ? FREE_FETCH : facts(PREC_URL));
+        const want = strictest(g, r, free ? "allow" : undefined);
+        const tag = `global ${g}, run ${r}, builtin ${free ? "free" : "none"}`;
+        assert.equal(j.decision, want, tag);
+        if (want === "ask" || want === "deny") assert.ok(j.by && j.by !== "builtin" && j.by.effect === want, `${tag}: the policy that decided is named`);
+        if (want === "allow" && !g && !r) assert.equal(j.by, "builtin", tag);
+        for (const a of added) P.removePolicy(a.id);
+    }
+    assert.equal(n, 32);
+});
+
+test("precedence among policies of ONE scope, in both orders: the strictest answer wins whatever the list order", () => {
+    let n = 0;
+    for (const a of ANSWERS.filter(Boolean)) for (const b of ANSWERS.filter(Boolean)) for (const free of [false, true]) {
+        const run = `h-prec2-${n++}`;
+        P.addRunPolicy(run, { ...precPolicy(a), label: "first" });
+        P.addRunPolicy(run, { ...precPolicy(b), label: "second", source: `(c) => c.url === ${JSON.stringify(PREC_URL)} || false` });
+        const j = P.judgeCall(run, "fetch", free ? FREE_FETCH : facts(PREC_URL));
+        assert.equal(j.decision, strictest(a, b), `${a} then ${b}`);
+    }
+});
+
+test("a deny and an ask that both match: the deny wins, and the ask never turns a refusal into a card", () => {
+    P.addRunPolicy("h-da", precPolicy("ask"));
+    P.addGlobalPolicy({ ...precPolicy("deny"), label: "d" });
+    const j = P.judgeCall("h-da", "fetch", facts(PREC_URL));
+    assert.equal(j.decision, "deny");
+    assert.equal(j.by.label, "d");
+    for (const p of P.globalPolicies().filter((x) => x.label === "d")) P.removePolicy(p.id);
+});
+
+test("an ask beats a remembered allow (a card's \"remember\"), a stored allow and the built-in default, and it carries the policy", () => {
+    P.rememberFetchUrls("h-rem", [PREC_URL]);
+    assert.equal(P.judgeCall("h-rem", "fetch", facts(PREC_URL)).decision, "allow", "the control: the remembered URL runs");
+    const a = P.addRunPolicy("h-rem", precPolicy("ask"));
+    const j = P.judgeCall("h-rem", "fetch", facts(PREC_URL));
+    assert.equal(j.decision, "ask");
+    assert.equal(j.by.id, a.id);
+    assert.equal(P.judgeCall("h-rem", "fetch", FREE_FETCH).decision, "ask", "and the built-in default");
+    P.removePolicy(a.id);
+    assert.equal(P.judgeCall("h-rem", "fetch", facts(PREC_URL)).decision, "allow", "removed, the allow runs again");
+});
+
+test("an ask asks only about what it matches, and only for its own consumer and run", () => {
+    P.addRunPolicy("h-scope", precPolicy("ask"));
+    assert.equal(P.judgeCall("h-scope", "fetch", facts("https://other.example/")).decision, undefined);
+    assert.equal(P.judgeCall("h-other-run", "fetch", facts(PREC_URL)).decision, undefined);
+    assert.equal(P.judgeCall(undefined, "fetch", facts(PREC_URL)).decision, undefined);
+    assert.equal(P.judgeCall("h-scope", "sh", { argv: ["ls"], url: PREC_URL, effects: [] }).decision, "allow", "an ask over fetch never asks about sh");
+});
+
+test("an ASK that read a null fact still fires, as a DENY does; an ALLOW over the same fact does not (rule 1, the narrow direction)", () => {
+    const git = (repoConfigRunsCode) => ({ argv: ["git", "status"], repoConfigRunsCode, effects: [{ op: "exec", res: { kind: "process" } }] });
+    const src = '(c) => c.argv[0] === "git" && !c.repoConfigRunsCode';
+    P.addRunPolicy("h-null-ask", { consumer: "sh", effect: "ask", source: src, label: "git asks", origin: "person" });
+    assert.equal(P.judgeCall("h-null-ask", "sh", git(false)).decision, "ask", "known fact: fires");
+    assert.equal(P.judgeCall("h-null-ask", "sh", git(null)).decision, "ask", "unknown: fires too");
+    P.addRunPolicy("h-null-allow", { consumer: "sh", effect: "allow", source: src, label: "git allows", origin: "person" });
+    assert.equal(P.judgeCall("h-null-allow", "sh", git(null)).decision, undefined, "the control: an allow over null is no opinion");
+    // Both stored: the ask fires on the null, so the call asks rather than runs.
+    P.addRunPolicy("h-null-allow", { consumer: "sh", effect: "ask", source: src, label: "git asks", origin: "person" });
+    assert.equal(P.judgeCall("h-null-allow", "sh", git(null)).decision, "ask");
+});
+
+test("over an undescribed call (effects: unknown) an ask that needs a resource's field does not fire, one that tests an absence does", () => {
+    const unknownCall = { argv: ["rm", "x"], effects: "unknown" };
+    // Needs a field of a resource to hold: unknown has no such resource, so the policy is silent and the call asks anyway.
+    P.addRunPolicy("h-unk-field", { consumer: "sh", effect: "ask", source: "(c) => c.effects.writes.some((r) => r.inRoot === true)", label: "writes in a root", origin: "person" });
+    const field = P.judgeCall("h-unk-field", "sh", unknownCall, "host-sandbox");
+    assert.equal(field.decision, undefined, "no opinion: the policy did not fire");
+    assert.equal(field.broken.length, 0, "and it is not broken");
+    // Tests an absence ("no secret is written"): unknown cannot show one, so the ask fires.
+    P.addRunPolicy("h-unk-abs", { consumer: "sh", effect: "ask", source: "(c) => c.effects.writes.every((r) => !r.secret)", label: "no secret write", origin: "person" });
+    const abs = P.judgeCall("h-unk-abs", "sh", unknownCall, "host-sandbox");
+    assert.equal(abs.decision, "ask");
+    assert.equal(abs.by.label, "no secret write");
+    // The same two as allows: neither runs the call.
+    P.addRunPolicy("h-unk-allow", { consumer: "sh", effect: "allow", source: "(c) => c.effects.writes.every((r) => !r.secret)", label: "allow", origin: "person" });
+    assert.notEqual(P.judgeCall("h-unk-allow", "sh", unknownCall, "host-sandbox").decision, "deny");
+});
+
+test("a broken ask is no opinion, recorded as broken, and does not stop the others; the call still asks where nothing frees it", () => {
+    const b = P.addRunPolicy("h-bask", { consumer: "fetch", effect: "ask", source: "(c) => c.hots === 1", label: "typo ask", origin: "person" });
+    const j = P.judgeCall("h-bask", "fetch", facts("https://x.example/"));
+    assert.equal(j.decision, undefined, "no opinion: a fetch is never free, so the tiers above decide, which is the card");
+    assert.equal(j.broken.length, 1);
+    assert.match(P.brokenReason(b.id), /no field 'hots'/);
+    P.addRunPolicy("h-bask", { consumer: "fetch", effect: "deny", source: '(c) => c.host === "x.example"', label: "deny x", origin: "person" });
+    assert.equal(P.judgeCall("h-bask", "fetch", facts("https://x.example/")).decision, "deny", "a live deny still decides past it");
+});
+
+test("an edit may make a policy an ask, and an ask back into an allow; the edit that narrows an allow is reasoned as narrowed", () => {
+    const p = P.addRunPolicy("h-edit-ask", { ...precPolicy("allow"), label: "editable" });
+    assert.equal(P.judgeCall("h-edit-ask", "fetch", facts(PREC_URL)).decision, "allow");
+    const e = P.editPolicy(p.id, { effect: "ask" });
+    assert.equal(e.effect, "ask");
+    assert.equal(P.judgeCall("h-edit-ask", "fetch", facts(PREC_URL)).decision, "ask");
+    P.editPolicy(p.id, { effect: "allow" });
+    assert.equal(P.judgeCall("h-edit-ask", "fetch", facts(PREC_URL)).decision, "allow");
+    P.editPolicy(p.id, { effect: "ask" });
+    P.removePolicy(p.id);
+    const j = P.judgeCall("h-edit-ask", "fetch", facts(PREC_URL));
+    assert.equal(j.decision, undefined);
+    assert.equal(j.lapsed?.cause, "narrowed", "allow to ask is a narrowing: the allow's source is remembered as lapsed");
+    assert.equal(P.lapsedLine(j.lapsed), 'Asking because the policy "editable" was edited and no longer covers this call.');
+});
+
+test("a removed ask leaves no lapsed reason (it allowed nothing), and an added one is on the policy page and in what the model reads", () => {
+    const own = "https://own.example/";   // a URL no allow in the file above ever covered, so no other reason is in play
+    const a = P.addGlobalPolicy({ ...precPolicy("ask", own), label: "listed ask" });
+    assert.ok(P.policyView().global.some((p) => p.id === a.id && p.effect === "ask"));
+    assert.ok(P.policiesForModel("h-x").some((p) => p.effect === "ask" && p.label === "listed ask"));
+    P.removePolicy(a.id);
+    assert.equal(P.judgeCall("h-x", "fetch", facts(own)).lapsed, undefined);
+});
+
+test("askWhyOf names the ask policy for the card and the model, says nothing for an unloaded or unanswered call, and speaks a hostile label safely", () => {
+    const own = "https://why.example/";
+    const a = P.addRunPolicy("h-why", { ...precPolicy("ask", own), label: 'evil "x" \nsecond line' });
+    const why = P.askWhyOf(P.judgeCall("h-why", "fetch", facts(own)));
+    assert.equal(why.cause, P.ASK_POLICY_CAUSE);
+    assert.ok(P.askedByPolicy(why));
+    assert.match(why.line, /^Asking because the policy "evil 'x' second line" asks about calls like this\.$/);
+    assert.match(why.detail, /asks the person about calls like it; the call itself did not change/);
+    assert.equal(why.policy, "evil 'x' second line");
+    assert.equal(P.askWhyOf(P.judgeCall("h-why-none", "fetch", facts(own))), undefined, "no policy involved: no reason");
+    assert.equal(P.askWhyOf({ decision: "ask", broken: [] }), undefined, "an unloaded store names no policy");
+    assert.equal(P.askedByPolicy({ line: "", detail: "", cause: "removed" }), false);
+    P.removePolicy(a.id);
+});
+
+test("an ask never allows: no combination with a matching ask returns allow, whatever else holds", () => {
+    for (const eff of ["allow", "deny", "ask"]) for (const free of [false, true]) {
+        const run = `h-never-${eff}-${free}`;
+        P.addRunPolicy(run, precPolicy("ask"));
+        P.addRunPolicy(run, { ...precPolicy(eff), source: `(c) => c.url === ${JSON.stringify(PREC_URL)} && true` });
+        assert.notEqual(P.judgeCall(run, "fetch", free ? FREE_FETCH : facts(PREC_URL)).decision, "allow", `${eff}, free ${free}`);
+    }
+});

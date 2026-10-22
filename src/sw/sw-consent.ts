@@ -82,7 +82,8 @@ export function resolveApproval(key: string, decision: ApprovalDecision): boolea
  * Judge every card still showing again, after a policy changed (POLICIES.md, "A change takes effect at once"): a new
  * `deny` refuses it and a new `allow` answers it, and the card closes saying which policy did. Only a card whose
  * descriptor carries `consumer` and `facts` is judged, the facts the worker resolved when it opened. A store not yet
- * loaded, the built-in default and no answer leave the card for the person.
+ * loaded, an `ask` policy (it resolves nothing, and it beats an `allow`), the built-in default and no answer leave the
+ * card for the person.
  * @returns how many cards a policy answered
  */
 export function rejudgePending(): number {

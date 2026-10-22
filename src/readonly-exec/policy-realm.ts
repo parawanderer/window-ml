@@ -12,8 +12,9 @@ import { Parser, Node } from "./parser";
 import { Evaluator, runSync } from "./evaluator";
 import { effectSet, EffectsData } from "../effects";
 
-/** What a policy says about a call when it holds. */
-export type PolicyEffect = "allow" | "deny";
+/** What a policy says about a call when it holds: run it, refuse it, or put it to the person (`ask`, which never runs or
+ *  refuses a call itself). */
+export type PolicyEffect = "allow" | "deny" | "ask";
 
 /** One evaluation: the decision, or `undefined` for no opinion, why the policy is broken when it is, and, for an ALLOW
  *  that held over a fact that is `null` (unknown) and so did not fire, which fact. */
@@ -137,7 +138,7 @@ export function evalPolicy(source: string, facts: Record<string, unknown>, effec
         const fn = runSync(ev.eval(ast, Object.create(policyRoot())));
         const out = runSync(ev.callOwn(fn, [c]));
         if (typeof out !== "boolean") return { decision: undefined, broken: `returned ${out === null ? "null" : typeof out}, not true or false` };
-        // A fact that is null is UNKNOWN, and an ALLOW over an unknown never fires; a DENY over one does, the narrow
+        // A fact that is null is UNKNOWN, and an ALLOW over an unknown never fires; a DENY or an ASK over one does, the narrow
         // direction (POLICIES.md, the tree's ruling of 2026-10-21). The deciding layer's rule, not one a writer must remember.
         if (out && effect === "allow" && ev.nullRead !== undefined) return { decision: undefined, unknown: ev.nullRead };
         return { decision: out ? effect : undefined };

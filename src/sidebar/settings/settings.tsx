@@ -1062,11 +1062,13 @@ function SelfApprovalList() {
 // --- the policy page: every policy, one line each, editable and deletable (docs/dev/policies.md) ---
 
 /** A stored policy as the worker's `POLICIES` answer carries it (`StoredPolicy`, src/sw/sw-policies.ts; worker code, so not imported here). */
-interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh"; effect: "allow" | "deny"; source: string; label: string; origin: "person" | "card" | "proposed"; created: number }
+interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh"; effect: "allow" | "deny" | "ask"; source: string; label: string; origin: "person" | "card" | "proposed"; created: number }
 /** What the worker's `POLICIES` answers (`policyView`, src/sw/sw-policies.ts). */
 interface PolicyView { global: PolicyRecord[]; runs: { hash: string; policies: PolicyRecord[] }[]; builtin: { label: string; source: string }; broken: Record<string, string> }
+/** The effect a selector's value names; anything else is `allow`, the policy page's default. */
+const policyEffectOf = (v: string): PolicyRecord["effect"] => (v === "deny" || v === "ask" ? v : "allow");
 /** The fields an Edit may change. */
-type PolicyPatch = { effect?: "allow" | "deny"; label?: string; source?: string };
+type PolicyPatch = { effect?: "allow" | "deny" | "ask"; label?: string; source?: string };
 /** The storage keys the policy store lives under, re-read on change. Defined as GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY and ARCHIVED_POLICIES_KEY in src/sw/sw-policies.ts (worker code, not imported into this bundle). */
 const POLICY_STORAGE_KEYS = ["ml_policies_global", "ml_policies_run", "ml_policies_archived"];
 
@@ -1108,6 +1110,7 @@ function usePolicies(): [PolicyView | null, (v: PolicyView) => void] {
  * @group settings
  * @gallery broken card allow {"policy": {"id": "p1a2b3c", "scope": "run", "consumer": "fetch", "effect": "allow", "source": "(c) => c.kind === \"fetch\" && c.uurl === \"https://example.com/data.json\"", "label": "fetch https://example.com/data.json", "origin": "card", "created": 1760000000000}, "broken": "not allowed in a policy: the call has no field 'uurl'"}
  * @gallery proposed allow {"policy": {"id": "p7a8b9c", "scope": "run", "consumer": "fetch", "effect": "allow", "source": "(c) => c.host === \"docs.python.org\" && !c.credentials", "label": "Read docs.python.org", "origin": "proposed", "created": 1760000000000}}
+ * @gallery person ask {"policy": {"id": "p5e6f7a", "scope": "global", "consumer": "sh", "effect": "ask", "source": "(c) => c.argv[0] === \"rm\"", "label": "ask before any rm", "origin": "person", "created": 1760000000000}}
  * @gallery person deny {"policy": {"id": "p4d5e6f", "scope": "global", "consumer": "fetch", "effect": "deny", "source": "(c) => c.kind === \"fetch\" && c.host === \"tracker.example\"", "label": "never reach tracker.example", "origin": "person", "created": 1760000000000}}
  */
 export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: PolicyRecord; broken?: string; onEdit: (patch: PolicyPatch) => void; onRemove: () => void }) {
@@ -1127,7 +1130,7 @@ export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: Policy
     return (
         <div class="pol-row" data-policy-id={policy.id}>
             <div class="pol-head">
-                <span class={`pol-effect pol-${policy.effect}`}>{policy.effect === "allow" ? "allows" : "refuses"}</span>
+                <span class={`pol-effect pol-${policy.effect}`}>{policy.effect === "allow" ? "allows" : policy.effect === "ask" ? "asks" : "refuses"}</span>
                 <span class="pol-label">{policy.label}</span>
                 {policy.consumer !== "fetch" ? <span class="pol-tag">{policy.consumer}</span> : null}
                 {policy.origin === "card" ? <span class="pol-tag">from a card</span> : null}
@@ -1138,8 +1141,9 @@ export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: Policy
             {broken ? <div class="set-err pol-broken">Broken: {broken}. It decides nothing until fixed.</div> : null}
             {editing
                 ? <div class="pol-edit">
-                    <select aria-label="Effect" value={effect} onChange={(e: any) => setEffect(e.target.value === "deny" ? "deny" : "allow")}>
+                    <select aria-label="Effect" value={effect} onChange={(e: any) => setEffect(policyEffectOf(e.target.value))}>
                         <option value="allow">allows</option>
+                        <option value="ask">asks</option>
                         <option value="deny">refuses</option>
                     </select>
                     <input class="perm-input" type="text" aria-label="Label" value={label} onInput={(e: any) => setLabel(e.target.value)} />
@@ -1165,7 +1169,7 @@ const POLICY_STARTER = '(c) => c.kind === "fetch" && c.host === "example.com"';
 function Policies() {
     const [view, setView] = usePolicies();
     const [err, setErr] = useState("");
-    const [effect, setEffect] = useState<"allow" | "deny">("allow");
+    const [effect, setEffect] = useState<PolicyRecord["effect"]>("allow");
     const [label, setLabel] = useState("");
     const [source, setSource] = useState(POLICY_STARTER);
     if (!view) return null;
@@ -1184,13 +1188,14 @@ function Policies() {
     };
     return (
         <Section id="policies" title="Policies">
-            <div class="set-note">A policy is a short script over one call that allows or refuses it without asking you. A refusal wins over an allowance. A broken policy decides nothing. Run policies come from "remember" on an approval card and go when their session is deleted or archived.</div>
+            <div class="set-note">A policy is a short script over one call that allows it or refuses it without asking you, or makes sure you are asked. A refusal wins over a policy that asks, which wins over an allowance. A broken policy decides nothing. Run policies come from "remember" on an approval card and go when their session is deleted or archived.</div>
             {err ? <div class="set-err">{err}</div> : null}
             <div class="set-hint">Global: apply to every run.</div>
             {view.global.length ? <div class="pol-rows">{rows(view.global)}</div> : <div class="set-hint">No global policy.</div>}
             <div class="pol-add">
-                <select aria-label="New policy effect" value={effect} onChange={(e: any) => setEffect(e.target.value === "deny" ? "deny" : "allow")}>
+                <select aria-label="New policy effect" value={effect} onChange={(e: any) => setEffect(policyEffectOf(e.target.value))}>
                     <option value="allow">allows</option>
+                    <option value="ask">asks</option>
                     <option value="deny">refuses</option>
                 </select>
                 <input class="perm-input" type="text" placeholder="Label" aria-label="New policy label" value={label} onInput={(e: any) => setLabel(e.target.value)} />

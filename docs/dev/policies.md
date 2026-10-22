@@ -1,7 +1,7 @@
 # Policies
 
 A policy is a short script in the read-only dialect's policy realm that looks at one gated call's resolved facts and
-answers allow, deny, or nothing. The store (`sw-policies.ts`) keeps them by scope and judges a call against them; a
+answers allow, deny, ask, or nothing. The store (`sw-policies.ts`) keeps them by scope and judges a call against them; a
 consumer asks it before it asks the person. This file is how that is built and where it can go wrong. What a policy
 is FOR, and the design around it: [`../spec/POLICIES.md`](../spec/POLICIES.md). The effect algebra behind the built-in
 default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is written in, and why it cannot do harm:
@@ -71,7 +71,8 @@ dropped.
    after reading a fact that is `null` is no opinion too, with `unknown` naming the fact, and is not broken (see
    "A null fact is unknown" below).
 3. A `deny` from any policy, in either scope, returns at once. Deny wins across scopes.
-4. Otherwise the first `allow` returns, with the policy that gave it in `by`.
+4. Otherwise the first `ask` returns `decision: "ask"` with the policy in `by`, ahead of any `allow` and of the built-in
+   default ("The `ask` answer" below). Otherwise the first `allow` returns, with the policy that gave it in `by`.
 5. With no answer from the person, the built-in default applies: `free(facts.effects, boundFor(placement))` from
    `src/effects.ts` allows the call when its effects are inside what the placement bounds, and `by` is `"builtin"`.
    That never allows a network fetch, so for `fetch_url` the default is always "nothing".
@@ -103,6 +104,31 @@ How the realm knows (`nullRead` on the `Evaluator`, read by `evalPolicy`):
 The read follows evaluation order: `c.argv[0] === "git" || c.repoConfigRunsCode !== true` allows `git` without reading
 the fact; the same terms the other way round ask. Tested by `tests/readonly-policy.test.mjs`, "a fact that is null is
 unknown", including a red-team pass's routes; the tree evaluator obeys the same rule (`treeVerdict`, "The lifter").
+
+## The `ask` answer
+
+`ask` is the third effect (`PolicyEffect`): across policies `deny` > `ask` > `allow` > nothing (`POLICIES.md`, "What a
+policy decides"). It never refuses and never runs a call; it only takes away the tiers that would have run it.
+
+- **Two asks, told apart by `by`.** `decision: "ask"` with no `by` is the unloaded store; with `by` it is a policy. A
+  consumer treats both the same (the card, no free tier answering) and says which only for the second (`askWhyOf`).
+- **The realm** needs nothing new: `evalPolicy` suppresses only an `allow` over a `null` read, so an `ask` fires over
+  one, like a `deny`. Over `effects: "unknown"` an `ask` that needs a resource's field is silent and one that asks the
+  set (`has`, `unknown`) or tests an absence (`every(...)`) fires. A broken `ask` is no opinion, recorded as broken.
+- **Consumers.** `sh`: `decide` and the version probe (`sw-shell-call.ts`); the nested ask carries `why` with cause
+  `ask-policy`. `fetch_url`: `fetchPolicy` returns `{ decision: "ask", label }` and `autoApprove` returns `null` right
+  after the `deny` check, before the current page, same origin, self-source, the remembered approval and an `allow`.
+  The choke point is unchanged: a card the person approved mints the consent that lets that one fetch through, and the
+  next call asks again. `rejudgePending` leaves a pending card alone for an `ask`, and an `ask` stored beside an `allow`
+  keeps the `allow` from answering it.
+- **No "remember" on its card.** `askedByPolicy(why)` empties the grants of a gate an `ask` raised, and `withoutAsked`
+  drops the fetch URLs an `ask` matches from an exec card's "Keep" (and names the policy), so no `allow` is made that
+  the `ask` would override. The nested `sh` ask card never offers one.
+- **The upgrade.** The load filter (`validList`) and `editPolicy` take `ask`. A build before this one drops a stored
+  `ask` on read (a downgrade loses the ask, never a refusal); this one reads an old store unchanged
+  (`tests/sw-policies-upgrade.test.mjs`).
+- **Not covered.** An exec's inline `ml.fetch` does not go through the `fetch_url` gate (`autoApprove`): the person
+  approves the exec's code on its own card, where an `ask` over `fetch` shows only as the missing "Keep".
 
 ## The first consumer: remembered URLs
 
@@ -182,7 +208,7 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   card opened (the `fetch_url` card of a run whose fetch the worker runs, and lane 4's nested `sh` asks). Only consumer
   `fetch` or `sh`, and only when `facts.effects` is present: a card whose effects nobody resolved is left to the person,
   since an `allow` that never reads `c.effects` would otherwise answer it (repl-specs, #719). A new `deny` closes it as refused, a
-  new `allow` as answered, both with `source: "policy"` on the decision, which only the worker sets (every resolver
+  new `allow` as answered (an `ask` matching leaves the card to the person, whatever else matches), both with `source: "policy"` on the decision, which only the worker sets (every resolver
   that takes a person's or an orchestrator's answer builds its own decision). The model reads "Denied by a policy the
   person set while the card was showing: the policy "…" refuses it".
 - **What an archive took is said, never silent.** Archiving a session removes its run policies and records which and
@@ -190,7 +216,7 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   names them with the time, and the model reads them as `ml.current.policiesRemoved`. Deleting the session drops the
   record too.
 
-## Why a call asks (a policy that covered it is gone)
+## Why a call asks (a policy that covered it is gone, or an `ask` matched)
 
 Built by REPL lane 9 (2026-10-19), `POLICIES.md` "A change takes effect at once". Text only: the reason is never an input
 to the decision, and a call's payload cannot name a policy to claim it.
@@ -205,7 +231,8 @@ to the decision, and a call's payload cannot name a policy to claim it.
 - **The card and the model.** `askWhy` on `AgentHostDeps`/`AgentLoopDeps` (built over `lapsed` for a worker-run uncredentialed
   `fetch_url`, `sw-run-host.ts`) gives `{ line, detail }`. The loop hands it to `approve`, which puts it on the pending
   step (`askWhy`, `AskWhyLine` in `agent-detail.tsx` and the HUD card; the tooltip is the model's sentence), and appends
-  `detail` to the tool result, so the export's `result` is what the model read. A nested `sh` ask carries it as
+  `detail` to the tool result, so the export's `result` is what the model read. An `ask` policy that matched says so the
+  same way (`askWhyOf`, cause `ask-policy`, the policy's label), for any `fetch_url` the loop gates and any `sh` call. A nested `sh` ask carries it as
   `StepAsk.why` (the ask card) and its refusal text. Both write a `policy`/`lapsed` run log record.
 - **Told on resume.** `takeArchiveNotice` returns once a sentence naming the policies an archive removed; the worker
   pushes it as a SYSTEM message (the worker's note, marked as the extension's, never the person's words) before a resumed run's first model call (`sw-run-host.ts`), logs `policy`/`archive-told`,
@@ -222,7 +249,7 @@ The model never adds a policy; it asks for one, and the person answers a card (`
   `pageStartPayload` drops a page's descriptor of that name, `markWorkerRun` strips it from a page-built run handed to
   the worker, and `offersProposals` in `sw-run-host.ts` (built by the worker, handed to it, and offering the tool) guards
   the precheck, the card and the add, because within the turn of a hand-over `p` is still the page's.
-- **Checked before any card** (`checkProposal`, the gate's precheck): `effect` is `allow` or `deny`, `when` a source of
+- **Checked before any card** (`checkProposal`, the gate's precheck): `effect` is `allow`, `deny` or `ask`, `when` a source of
   at most `POLICY_SOURCE_MAX` that runs over a probe call without breaking, `label` at most `POLICY_LABEL_MAX`. A
   proposal that fails is said to the model and never shown to the person. Fetch only for now (`consumer: "fetch"`).
 - **The card leads with the breadth, which the worker measures.** `recordedFetches` reads the run's `fetch_url` calls

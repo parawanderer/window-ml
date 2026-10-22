@@ -134,10 +134,10 @@ export interface CurrentSnapshot {
     /** What the runtime this run executes in can do, read now: the same description it gives every client, with each
      *  capability a boolean. Present only where the host adds it (a worker-hosted run). */
     runtime?: CurrentRuntime;
-    /** The policies that decide some of your calls without asking: each allows or refuses the calls its `source` (a
-     *  function over the call) holds for. `run` ones are this run's, from a card's "remember"; `global` ones the
+    /** The policies that decide some of your calls without asking: each allows, refuses or (`ask`) always puts to the
+     *  person the calls its `source` (a function over the call) holds for. `run` ones are this run's, from a card's "remember"; `global` ones the
      *  person set. Absent when there are none. */
-    policies?: { scope: "global" | "run"; effect: "allow" | "deny"; label: string; source: string }[];
+    policies?: { scope: "global" | "run"; effect: "allow" | "deny" | "ask"; label: string; source: string }[];
     /** This run's own policies that were REMOVED when its session was archived, and when: they no longer apply, so
      *  those calls ask again. Absent when none were. */
     policiesRemoved?: { at: string; labels: string[] };

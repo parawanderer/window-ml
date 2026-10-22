@@ -150,6 +150,23 @@ test("ACCEPTANCE: a proposal the person approves becomes a run policy, and the r
     assert.equal(pols[0].source, NARROW.when);
 });
 
+test("an ASK is the one answer a model may propose with the least at stake: it is accepted, measured, shown as an ask, and the next matching fetch_url asks again", T, async () => {
+    const ASK = { ...NARROW, effect: "ask", label: "Check with me about other.example" };
+    assert.ok("proposal" in PP.checkProposal(ASK));
+    assert.match(PP.checkProposal({ ...ASK, effect: "maybe" }).error, /"allow", "deny" or "ask"/);
+    const { bg, cards, results, fetched } = await workerRun([
+        { name: "propose_policy", args: ASK },
+        { name: "fetch_url", args: { url: OTHER } },
+        { name: "fetch_url", args: { url: OTHER } },
+    ]);
+    assert.deepEqual(cards.map((c) => c.tool), ["propose_policy", "fetch_url", "fetch_url"], "each fetch went to the person");
+    assert.match(cards[0].renderIn.note, /^Proposed by the model for this run: ask the person before every fetch/);
+    assert.match(results[0], /^Added for this run: "Check with me about other\.example"\. Matching fetch_url calls now always ask the person\./);
+    assert.equal(fetched.length, 2);
+    const pols = await runPolicies(bg);
+    assert.equal(JSON.stringify(pols.map((q) => [q.effect, q.origin])), JSON.stringify([["ask", "proposed"]]));   // JSON: the objects come from the vm
+});
+
 test("RED TEAM: a proposal's breadth is the worker's measure, never what the model says about it", T, async () => {
     const { cards } = await workerRun([
         { name: "fetch_url", args: { url: OTHER } },

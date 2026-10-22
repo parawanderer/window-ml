@@ -25,14 +25,14 @@ export interface ProposePolicyDeps {
 export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolicyDeps): MlTool {
     return define({
         name: "propose_policy",
-        summary: "Asks the person for a rule that answers matching fetch_url calls of this run without a card.",
-        description: "Ask the person to let matching fetch_url calls of this run go without asking (allow), or be refused without asking (deny). " +
+        summary: "Asks the person for a rule that answers matching fetch_url calls of this run without a card, or always shows one.",
+        description: "Ask the person to let matching fetch_url calls of this run go without asking (allow), be refused without asking (deny), or always be put to them (ask). " +
             "They see your code, with which of this run's calls it matches and whether it matches other sites, and approve or refuse it. " +
             "Use it only after several approvals of similar fetches; keep it narrow, e.g. one host.",
         parameters: {
             type: "object",
             properties: {
-                effect: { type: "string", enum: ["allow", "deny"] },
+                effect: { type: "string", enum: ["allow", "deny", "ask"] },
                 when: {
                     type: "string",
                     description: "A read-only JS function over the call returning a boolean, e.g. (c) => c.host === \"docs.python.org\" && !c.credentials. " +
@@ -48,7 +48,7 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
             const r = deps.check(args);
             if ("error" in r) return r.error;
             return deps.added(r.proposal)
-                ? `Added for this run: "${r.proposal.label}". Matching fetch_url calls are now ${r.proposal.effect === "allow" ? "fetched" : "refused"} without asking.`
+                ? `Added for this run: "${r.proposal.label}". ${r.proposal.effect === "ask" ? "Matching fetch_url calls now always ask the person." : `Matching fetch_url calls are now ${r.proposal.effect === "allow" ? "fetched" : "refused"} without asking.`}`
                 : "Not added: the person did not approve it. Matching calls still ask.";
         },
     });

@@ -2259,11 +2259,11 @@
           "type": "string"
         },
         "cause": {
-          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), or `outside-dialect`.",
+          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, or `ask-policy` (an `ask` policy matched, and the card offers no \"remember\").",
           "type": "string"
         },
         "policy": {
-          "description": "The gone policy's label; absent when no policy is involved.",
+          "description": "The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved.",
           "type": "string"
         }
       },

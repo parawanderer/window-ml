@@ -102,7 +102,7 @@ export function relatedProbes(matched: readonly string[]): { siblings: string[];
  */
 export function checkProposal(args: Record<string, unknown>): { proposal: PolicyProposal } | { error: string } {
     const { effect, when, label } = args;
-    if (effect !== "allow" && effect !== "deny") return { error: `Error: "effect" must be "allow" or "deny".` };
+    if (effect !== "allow" && effect !== "deny" && effect !== "ask") return { error: `Error: "effect" must be "allow", "deny" or "ask".` };
     if (typeof when !== "string" || !when.trim()) return { error: `Error: "when" must be the policy's code, a function (c) => boolean.` };
     if (when.length > POLICY_SOURCE_MAX) return { error: `Error: "when" is longer than ${POLICY_SOURCE_MAX} characters; a policy is a predicate, not a program.` };
     if (typeof label !== "string" || !label.trim()) return { error: `Error: "label" must be a short sentence saying what the policy does.` };
@@ -170,7 +170,7 @@ export function measureBreadth(p: PolicyProposal, calls: readonly RecordedFetch[
  * @returns one paragraph for the card's note
  */
 export function breadthNote(p: PolicyProposal, b: ProposalBreadth): string {
-    const verb = p.effect === "allow" ? "fetch without asking" : "refuse without asking";
+    const verb = p.effect === "allow" ? "fetch without asking" : p.effect === "ask" ? "ask the person before every fetch" : "refuse without asking";
     const head = `Proposed by the model for this run: ${verb} when this code returns true. "${p.label}".`;
     const hosts = [...new Set(b.matched.map((c) => hostOf(c.url)))];
     const shown = hosts.slice(0, 3).join(", ") + (hosts.length > 3 ? `, and ${hosts.length - 3} more` : "");

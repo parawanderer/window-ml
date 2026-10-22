@@ -150,6 +150,55 @@ test("a saved deny refuses the call without a card, naming the policy; the host 
     assert.ok(host.names().includes("discard") && !host.names().includes("start"));
 });
 
+// --- an `ask` policy (POLICIES.md, "A policy may also answer ask") ---
+
+const pol = (effect, source, label) => ({ id: `p-${label}`, scope: "global", consumer: "sh", effect, source, label, origin: "person", created: 1 });
+const LS = '(c) => c.argv[0] === "ls"';
+
+test("an ask policy puts a call the built-in default would run to the person; the card names the policy; approved, it runs", T, async () => {
+    const host = fakeNativeHost();
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep, localExtra: { ml_policies_global: [pol("ask", LS, "ask before ls")] } });
+    assert.equal(ask.asked.length, 1, "ls is free under the sandbox, so only the ask raised this card");
+    assert.equal(ask.asked[0].why.cause, "ask-policy");
+    assert.equal(ask.asked[0].why.policy, "ask before ls");
+    assert.match(ask.asked[0].why.line, /ask before ls/);
+    const r = valueOf(results[0]);
+    assert.deepEqual([r.ok, r.approvedBy], [true, "person"]);
+    assert.ok(host.names().includes("start"));
+});
+
+test("an ask policy beats a stored allow, and a decline refuses the call: the host discards it and starts nothing", T, async () => {
+    const host = fakeNativeHost();
+    const ask = answering(false);
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep,
+        localExtra: { ml_policies_global: [pol("allow", LS, "allow ls"), pol("ask", LS, "ask before ls")] } });
+    assert.equal(ask.asked.length, 1, "the allow did not answer for the person");
+    const r = valueOf(results[0]);
+    assert.equal(r.code, "Denied");
+    assert.match(r.threw, /declined/);
+    assert.match(r.threw, /the policy "ask before ls" asks the person about calls like it/, "the script is told which policy asked");
+    assert.ok(host.names().includes("discard") && !host.names().includes("start"));
+});
+
+test("a deny and an ask that both match: refused with no card", T, async () => {
+    const host = fakeNativeHost();
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep,
+        localExtra: { ml_policies_global: [pol("ask", LS, "ask before ls"), pol("deny", LS, "never ls")] } });
+    assert.equal(ask.asked.length, 0);
+    assert.match(valueOf(results[0]).threw, /never ls/);
+    assert.ok(!host.names().includes("start"));
+});
+
+test("an ask matches only what it says: another program still runs unasked", T, async () => {
+    const host = fakeNativeHost();
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["cat", "a.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep, localExtra: { ml_policies_global: [pol("ask", LS, "ask before ls")] } });
+    assert.equal(ask.asked.length, 0);
+    assert.equal(valueOf(results[0]).approvedBy, "builtin");
+});
+
 // --- the version probe (the coordinator's ruling) ---
 
 test("git under the sandbox: its version is probed once with the manifest's own args, the call is described, and the probe is cached", T, async () => {
