@@ -145,8 +145,9 @@ as in AGENTS.md — they are all under `src/`.
   (fake-LLM, no model/key). Pace it with `PACE`/`HOLD` (ms). The automated assertions of the same flow
   are `approval.spec.mjs`.
 - **`agent-level-demo.mjs`** — a **narrated demo, not a test** of a site starting the extension's agent (site access
-  slice 3, PR 2): `npm run build && node --import tsx tests/e2e/agent-level-demo.mjs`. Seven beats on one site
-  (`forum.test`, the hostile-site fixture) in the overlay: the start card on "Ask each time", its lines walked; Allow,
+  slice 3, PR 2): `npm run build && node --import tsx tests/e2e/agent-level-demo.mjs`. Eight beats on one site
+  (`forum.test`, the hostile-site fixture) in the overlay: the site hidden (`typeof window.ml` is "undefined"), then allowed, and window.ml
+  appears in the open page with no reload; the start card on "Ask each time", its lines walked; Allow,
   and the run goes; a page-sent turn named with the site; the page turn budget's "keep going" card, declined, then the
   site waiting for the person; DevTools Settings set to "Always" and a start with no card; "Denied" and the page's
   refusal; a page the agent's own navigation reached, refused and recorded in the run's steps. Fake LLM, headful;
@@ -311,14 +312,16 @@ as in AGENTS.md — they are all under `src/`.
   Two things this demo found that the specs did not: the log's story ended at "discarded, reloaded" with nothing
   saying whether the run went on (so a retry that works now says so), and the tab id, identical on every line,
   was spending exactly the width that wrapped each record into two.
-- **`site-refusal-demo.mjs`** — a **narrated demo, not a test** of a website being REFUSED by site access
-  (`docs/dev/site-access.md`): `npm run build && node tests/e2e/site-refusal-demo.mjs` (`BEAT=`, `HOLD=0`,
+- **`site-refusal-demo.mjs`** — a **narrated demo, not a test** of a website that may not use window.ml, which is HIDDEN
+  (`docs/dev/site-access.md`, "Presence"): `npm run build && node tests/e2e/site-refusal-demo.mjs` (`BEAT=`, `HOLD=0`,
   `HEADLESS=1` for the screenshots; they land in `tests/e2e/artifacts/site-refusal-demo/`). Six beats: an unknown
-  site's `ml.chat` is refused and a readout drawn IN the page shows exactly what the page received, with the backend's
-  request count (the demo throws if the URL, host or key is in it) · the toolbar popup for that site · Deny, and the
-  next call refused with no reload · `https://host:port` allowed, its plain-http copy refused · the person starts an
-  agent on the still-denied site from the Commander and it works, while the page's own call is refused beside it
-  (`openRunInSidebar`) · Settings → Permissions, allow the site there, and the page's call works. Hostnames come
+  site's `typeof window.ml` is "undefined" and a readout drawn IN the page shows it, with the backend's request count
+  · the toolbar popup for that site · Deny, and the page still has no window.ml · `https://host:port` allowed, its
+  plain-http copy hidden · the person starts an agent on the still-denied site from the Commander and it works (the
+  Commander card shows the answer; the run's page scripts are in that document until a reload, which the demo shows
+  both ways; the overlay of a hidden page lists no runs, so the run is not opened in the sidebar) · Settings →
+  Permissions, allow the site there, window.ml appears in the open page with no reload, and the page's call works
+  (the demo throws if the URL, host or key is in what the page receives). Hostnames come
   from `fixtures/hostile/server.mjs`, as in `site-access.spec.mjs`, whose assertions this is the watchable twin of.
   Two things to copy: the popup reads its OWN window's active tab, so the demo opens `popup.html` as a page with
   `chrome.tabs.query` answered by an init script (the buttons and worker messages are real); and the Commander is
@@ -504,7 +507,7 @@ thing. The parts:
   outstanding when its tab is discarded, then reloaded in place and retried — and a trap, measured: a real
   `chrome.tabs.discard` DESTROYS the target and takes Playwright's connection to the WHOLE browser with it, so a
   spec cannot stage one and this demo patches Chrome's own `discarded` flag once instead),
-  `site-refusal-demo` (an unapproved, a denied and an http-copy site refused, a run the person starts working anyway),
+  `site-refusal-demo` (an unapproved, a denied and an http-copy site hidden, a run the person starts working anyway),
   `touch-tips-demo` (reading a tooltip with no pointer, on a PHONE context — and a trap for the next demo author:
   a synthetic hover cannot be held in a HEADFUL window, because the real cursor is elsewhere and Chromium corrects
   the pointer straight back out; it holds fine headless, which is why a spec can assert one and a watched demo
