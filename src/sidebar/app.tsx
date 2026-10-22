@@ -47,6 +47,7 @@ import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconToo
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings/settings";
 import { DetailView } from "./transcript/session-detail";
+import { PromptPin } from "./transcript/prompt-pin";
 import { awaitHost, onHostMessage, toHost } from "./parent-channel";
 
 
@@ -429,6 +430,9 @@ function App() {
                 `overflow-y: auto` column resolves to the content's own height and the divider then has
                 nothing to divide. Every other view is a document and keeps the scroller. */}
             <div class={`view${v.name === "bench" || inHousekeeping ? " view-bench" : ""}`} data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
+                {/* The message the transcript below is answering, once it has scrolled away (prompt-pin.tsx). First in
+                    the scroller, because it is a sticky row of no height: it stays at the top and takes no room. */}
+                {v.name === "detail" ? <PromptPin key={v.hash} hash={v.hash} /> : null}
                 <div ref={contentRef}>
                     {v.name === "settings" ? <Settings />
                         : v.name === "bench" ? <PythonBench />

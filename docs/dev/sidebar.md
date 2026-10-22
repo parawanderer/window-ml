@@ -291,6 +291,14 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
   in a layout effect of the commit that adds the items, never from a timer. On the chat page the window drains
   before the store is asked for older pages (`onWindowDrained`), so two holders never restore the position at once.
   The measurements, and why `content-visibility: auto` is NOT shipped: `docs/dev/chat-page.md`, "A long transcript".
+- **The prompt pin** (`prompt-pin.tsx`, the panel and the overlay only; `app.tsx` mounts it first in `.view`): the
+  message the transcript is answering, as a zero-height sticky row once it has scrolled out. It names the message ABOVE
+  where you read, not the newest, and that message may be held back by the window, so the ORDER comes from the
+  session's data (`promptsOf`, keyed like the bubbles' `data-prompt`) and only the positions from the DOM
+  (`pinnedPrompt`, pure). A click goes through `reveal`. The chat page has none: calm view folds the machinery
+  instead. A LONG message folds by its drawn height (`UserText`, every surface), and opened it is a scroll box of
+  bounded height, so the button that closes it never ends up screens below; closing puts the box back at its first
+  line (an `overflow: hidden` box keeps its scroll offset). `tests/e2e/prompt-pin.spec.mjs`.
 
 ## Tooltips: the panel's, not the browser's `title`
 

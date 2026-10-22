@@ -2266,6 +2266,25 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .utext-more.open svg { transform: rotate(-90deg); }
 /* Open, the chevron sits under the last line rather than on it. */
 .utext-more.open { position: static; display: flex; margin: 6px 0 0 auto; }
+/* OPENED, a long message scrolls inside a box of bounded height, so the chevron that closes it is always just under
+   it (user-text.tsx says why). */
+.utext.opened { max-height: 60vh; overflow-y: auto; }
+/* THE PROMPT PIN (prompt-pin.tsx): the message the transcript is answering, held at the top of the panel once it has
+   scrolled away. A sticky row of NO height, so it lies over the top of the transcript instead of pushing it down; the
+   message is clipped to two lines (its whole text is the tip), and the whole bar is the way back to it. `top` and the
+   margins undo the scroller's 8px padding, so it meets the panel's edges. */
+.prompt-pin { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: flex-start; gap: 8px; padding: 6px 12px;
+    border: 0; border-bottom: 1px solid var(--border); background: linear-gradient(var(--user-bg), var(--user-bg)), var(--bg);
+    color: var(--fg); font: inherit; text-align: left; cursor: pointer; box-shadow: 0 6px 12px -8px rgb(0 0 0 / .45); }
+.prompt-pin-row { position: sticky; top: -8px; height: 0; z-index: 6; margin: -8px -8px 8px; }
+.prompt-pin:hover { background: linear-gradient(var(--panel), var(--panel)), var(--bg); }
+.prompt-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.prompt-pin .who { flex: 0 0 auto; }
+.prompt-pin-text { flex: 1 1 auto; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    white-space: pre-wrap; word-break: break-word; color: var(--fg-dim); }
+.prompt-pin-go { flex: 0 0 auto; display: inline-flex; color: var(--fg-faint); }
+.prompt-pin-go svg { width: 14px; height: 14px; transform: rotate(-90deg); }
+.prompt-pin-tip { max-width: 420px; white-space: pre-wrap; word-break: break-word; }
 @media (prefers-reduced-motion: reduce) { .utext-more svg { transition: none; } }
 /* THE IMAGES YOU SENT, as tiles under your message (`SentImages`): square, cropped to fill, rounded like a phone's
    own photo tiles. A message that is only images keeps its time row and drops the empty bubble. */
