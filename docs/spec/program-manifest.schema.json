@@ -206,7 +206,7 @@
           "type": "boolean"
         },
         "pathspecs": {
-          "description": "Operands are git pathspecs: one that starts with `:` (magic; `:/x` is relative to the repository root, not to the cwd) is not a path the host can resolve, so the call is `unknown`.",
+          "description": "Operands are git pathspecs: one that starts with `:` (magic; `:/x` is relative to the repository root, not to the cwd), or holds `*`, `?`, `[` or `\\` (a glob git expands to every match, or an escape), is not one path the host can resolve, so the call is `unknown`.",
           "type": "boolean"
         },
         "harden": {
