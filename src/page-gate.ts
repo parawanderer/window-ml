@@ -10,14 +10,14 @@
 /** The gate's state. `pending` until the worker has answered, so an early message is held rather than refused. */
 export type GateState = "pending" | "open" | "closed";
 
-interface PageGate { state: GateState; alive: boolean; waiting: (() => void)[]; deciding: (() => void)[] }
+interface PageGate { state: GateState; alive: boolean; waiting: (() => void)[]; deciding: (() => void)[]; opening: (() => void)[] }
 
 const KEY = "__mlPageGate";   // a property of the isolated world's global, which no page script reaches
 
 /** The one gate of this document, made on first use. */
 function gate(): PageGate {
     const g = globalThis as unknown as Record<string, PageGate | undefined>;
-    return (g[KEY] ??= { state: "pending", alive: false, waiting: [], deciding: [] });   // state: plumbing
+    return (g[KEY] ??= { state: "pending", alive: false, waiting: [], deciding: [], opening: [] });   // state: plumbing
 }
 
 /** The gate's state now. */
@@ -34,8 +34,8 @@ export function setGate(open: boolean): void {
     const g = gate();
     if (g.state === "open") return;   // once open, open for this document: a run's page script is in it
     g.state = open ? "open" : "closed";
-    const held = g.waiting.splice(0), decided = g.deciding.splice(0);
-    if (open) for (const f of held) f();
+    const held = g.waiting.splice(0), decided = g.deciding.splice(0), opening = open ? g.opening.splice(0) : [];
+    if (open) for (const f of [...opening, ...held]) f();
     for (const f of decided) f();
 }
 
@@ -58,6 +58,18 @@ export function whenOpen(f: () => void): void {
     const g = gate();
     if (g.state === "open") f();
     else if (g.state === "pending" && g.waiting.length < 256) g.waiting.push(f);
+}
+
+/**
+ * Run `f` once the gate is open, even if it closed first: a closed page opens when its origin is allowed while it is
+ * open, or when a run starts there. For the extension's own setup (the shell's handshake), never for what the page
+ * posted, which a closed gate drops so a hidden page's posts are not replayed later.
+ * @param f what to run
+ */
+export function whenEverOpen(f: () => void): void {
+    const g = gate();
+    if (g.state === "open") f();
+    else if (g.opening.length < 16) g.opening.push(f);
 }
 
 /** Note that the page script said hello (forgeable: it only bounds a wait). */

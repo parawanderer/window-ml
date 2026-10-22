@@ -23,7 +23,7 @@ import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission
 import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
-import { gateOpen, whenOpen } from "../page-gate";
+import { gateOpen, whenOpen, whenEverOpen } from "../page-gate";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -1276,7 +1276,7 @@ function startResize(e: PointerEvent): void {
 // Only once the worker has said this page may hear from us (page-gate.ts): a hidden page has no injected.js to tell, and
 // the post itself would tell it the extension is there (SITE_PRESENCE.md step 2).
 function handshake(): void {
-    whenOpen(() => {
+    whenEverOpen(() => {
         window.postMessage({ __mlSidebar: "present" }, "*");
         // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once.
         if (mode !== "overlay") window.postMessage({ __mlSidebar: "ready" }, "*");
