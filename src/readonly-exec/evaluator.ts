@@ -5,6 +5,7 @@ import type { CurrentSnapshot } from "../agent/current-context";
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
+import { regexSteps } from "./regex-cost";
 import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
@@ -31,6 +32,12 @@ type Ev<T = unknown> = Generator<unknown, T, unknown>;
 
 /** String methods that read a fixed slice, whatever the receiver's length: free up to FIXED_SLICE_FREE_CHARS. */
 const FIXED_SLICE_STRING = new Set(["charAt", "charCodeAt", "codePointAt", "at", "slice", "substring", "substr", "startsWith", "endsWith"]);
+
+/** String methods that run a regex when handed one (regex-cost.ts prices the search). */
+const REGEX_STRING = new Set(["match", "matchAll", "search", "replace", "replaceAll", "split"]);
+
+/** The String methods that also COMPILE a pattern handed as anything other than a RegExp. */
+const COMPILES_PATTERN = new Set(["match", "matchAll", "search"]);
 
 /** String methods that only scan, hash or compare (HOST_SCAN_CHARS_PER_STEP); every other one builds (HOST_CHARS_PER_STEP). */
 const SCANNING_STRING = new Set(["includes", "indexOf", "lastIndexOf", "search", "localeCompare", "normalize", "trim", "trimStart", "trimEnd", "test"]);
@@ -155,6 +162,34 @@ export class Evaluator {
         const risk = typeof p === "string" ? riskyRegex(p) : null;
         if (risk) throw new NotInDialect(`a regex that could backtrack without end (${risk})`);
     }
+    /** The text a host call coerces a pattern or a searched value to. A string, a String object or a primitive is its
+     *  `String()`; anything else is refused, since the host would coerce it by running its `toString`, and an array
+     *  or an object with a `toString` arrow handed `match` a backtracking pattern no check had read. */
+    private regexText(v: unknown, what: string): string {
+        if (v === null || typeof v !== "object" || kindOf(v) === "string") return String(v);
+        throw new NotInDialect(`a regex ${what} that is not a string or a regex`);
+    }
+    /** The regex a host call is about to run and the text it searches, or null when it runs none: a String method
+     *  handed a RegExp (or, for `match`/`matchAll`/`search`, a pattern it compiles), or a RegExp's `test`/`exec`. */
+    private regexSearch(obj: unknown, key: string, args: unknown[], str: string | null): [string, string, string] | null {
+        if (str !== null && REGEX_STRING.has(key)) {
+            const p = args[0];
+            if (isRegExp(p)) return [String(p.source), String(p.flags), str];
+            if (!COMPILES_PATTERN.has(key)) return null;
+            return [p === undefined ? "(?:)" : this.regexText(p, "pattern"), key === "matchAll" ? "g" : "", str];
+        }
+        if (isRegExp(obj) && (key === "test" || key === "exec")) return [String(obj.source), String(obj.flags), this.regexText(args[0], "search over a value")];
+        return null;
+    }
+    /** Charge a regex search for the backtracking it can do on THIS input (regex-cost.ts), before it runs: one host
+     *  call, unbounded by anything else (`/a+b/` on a long run of "a" is quadratic). Over what is left of the budget,
+     *  the survey goes to the person. */
+    private regexCharge(search: [string, string, string]): void {
+        const [source, flags, input] = search;
+        const steps = regexSteps(source, flags, input, (n) => this.tick(n), HOST_SCAN_CHARS_PER_STEP);
+        if (steps > this.fuel) throw new NotInDialect(`a regex search that could backtrack for too long on this input (/${source.length > 40 ? source.slice(0, 40) + "…" : source}/ over ${input.length.toLocaleString("en-US")} characters)`);
+        this.tick(steps);
+    }
     /** How many parts `v` expands to when walked whole, counting a part as often as a walk would visit it (so an array
      *  that shares its parts counts at its expanded size), and how many characters its strings hold. Throws past
      *  {@link MAX_EXPANDED}: that walk is what `JSON.stringify`, `flat` and every coercion of an array would do, and an
@@ -243,7 +278,7 @@ export class Evaluator {
         if (str !== null) {
             if (key === "repeat" && str.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
             if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big();
-            if (key === "match" || key === "matchAll" || key === "search") this.patternArg(args[0]);
+            if (COMPILES_PATTERN.has(key) && args[0] !== undefined && !isRegExp(args[0])) this.patternArg(this.regexText(args[0], "pattern"));
             if (FIXED_SLICE_STRING.has(key)) { if (str.length > FIXED_SLICE_FREE_CHARS) this.scans(str); }
             else if (SCANNING_STRING.has(key)) this.scans(str);
             else this.tick(Math.floor(str.length / HOST_CHARS_PER_STEP));
@@ -277,6 +312,9 @@ export class Evaluator {
         // a wide `records()` over a big one does.)
         // A STORED table's reads cover every row (its `shape`), not the preview in `rows`, and each is a request the
         // step budget cannot see, so their total across the run is bounded too.
+        // Last, once the arguments are walked: the search's own backtracking, which nothing above bounds.
+        const search = this.regexSearch(obj, key, args, str);
+        if (search) this.regexCharge(search);
         if (isTable(obj)) {
             const t = obj as { rows: unknown[]; columns: unknown[]; shape: [number, number] };
             const stored = isStoredTable(obj);

@@ -182,12 +182,33 @@ test("the charge leaves an ordinary survey alone: a filter-and-map over 20,000 r
     assert.match(String(r.value), /^\d+\|20000\|true\|true$/);
 });
 
+// --- HALTING: a regex search is charged for the backtracking it can do on its input --------------------------------
+
 // Polynomial backtracking: ONE unbounded quantifier followed by something that can fail is quadratic on an unanchored
-// search. `riskyRegex` refuses the exponential shapes only. Measured in Node 22: /a+b/ on 100,000 "a"s takes 3.7 s, so a
-// million is minutes and MAX_STRING hours. Not fixed here: a sound bound needs a linear-time matcher, or a cap on the
-// input length tied to the pattern's quantifiers (docs/dev/readonly-exec.md, "Threat questions answered", item 4).
-test("HALTING: a single-quantifier pattern on a long input cannot backtrack quadratically", { todo: "riskyRegex refuses exponential shapes only; /a+b/ on 10^6 characters runs for minutes in one host call" }, async () => {
+// search, and `riskyRegex` refuses the exponential shapes only. Measured in Node 22: /a+b/ on 100,000 "a"s took 3.7 s,
+// so a million is minutes and MAX_STRING hours, in one host call the step count never saw. Each search is now priced
+// before it runs, from its pattern and the runs of its input (regex-cost.ts), and charged to the step budget.
+test("HALTING: a single-quantifier pattern on a long input cannot backtrack quadratically", async () => {
     await fallsBack(`"a".repeat(300000).match(/a+b/)`, "quadratic backtracking", { ms: 1500 });
+});
+
+test("HALTING: a regex search is charged for the backtracking it can do on its input, through every way a script searches", async () => {
+    for (const v of lifted("halting", "a regex search is charged for the backtracking it can do on its input")) {
+        assert.equal(v.budget, STEP_BUDGET, "the vector carries the shipped budget");
+        await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+    }
+});
+
+test("HALTING: a pattern is checked as the text the host compiles: an array or an object is not a way past riskyRegex", async () => {
+    // `patternArg` read only a string, and `match`/`search`/`matchAll` coerce anything else with its `toString`.
+    for (const v of lifted("halting", "a pattern is checked as the text the host compiles")) await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+});
+
+test("the regex charge leaves ordinary searches alone: words, delimiters, log lines, a backreference, an anchored match", async () => {
+    for (const v of lifted("halting", "the regex charge leaves ordinary searches alone")) {
+        const r = await inWorker(v.js, { stepBudget: v.budget });
+        assert.deepEqual(r, { value: v.expect.value, logs: 0 }, v.name);
+    }
 });
 
 // --- FAILURE: a survey refused by a new check leaves nothing behind ---------------------------------------------------
