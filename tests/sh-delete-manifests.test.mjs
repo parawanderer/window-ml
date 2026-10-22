@@ -519,7 +519,7 @@ test("git --icase-pathspecs rm Secret.ts is not free: it matches the secret on a
     assert.equal(run(["git", "--icase-pathspecs", "rm", "*.ts"], base).described, false, "*.ts stays unknown");
 });
 
-test("an absent `link` fact is not read as \"not a symlink\": rm top of a top-level link is not free without it", { todo: "placeBoth only widens when the host sends `link`, so an older host (or any host that omits the optional field) reopens rm top → free while removing a top-level name. Absent must mean unknown, or the worker must also place the given spelling" }, () => {
+test("an absent `link` fact is not read as \"not a symlink\": rm top of a top-level link is not free without it", () => {
     // Guards: `link` is optional on HostPathFact ("an older host sends none and nothing changes"). The same
     // argv with the same resolved target is judged free when the field is missing and not free when it is
     // present — an absent field must not shrink the claim. Residual of the link fact (review of #990,

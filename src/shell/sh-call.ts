@@ -211,13 +211,16 @@ function placeAmongRoots(path: string, roots: readonly string[] | undefined): { 
     return { topLevel: parent !== null && rs.includes(parent), isRoot: rs.includes(p) };
 }
 
-/** {@link placeAmongRoots} of a path fact, and of its symlink when it is one: `rm top` removes the link `top` while its
- *  target may be nested, so the place is the wider of the two (review of #990, 2026-10-22). */
-function placeBoth(f: { path: string; link?: string }, roots: readonly string[] | undefined): { topLevel?: boolean; isRoot?: boolean } {
+/** {@link placeAmongRoots} of a path fact, of its symlink when the host names one, and of the argument as spelled
+ *  against the cwd: `rm top` removes the link `top` while its target may be nested, so the place is the widest of them
+ *  (review of #990, 2026-10-22). The spelling covers a host that omits `link` (an older one), since an absent field must
+ *  not shrink the claim; ORing only widens, so a nested link to a nested target stays free. */
+function placeBoth(f: { given: string; path: string; link?: string }, roots: readonly string[] | undefined, cwd: string): { topLevel?: boolean; isRoot?: boolean } {
     const a = placeAmongRoots(f.path, roots);
-    if (f.link === undefined || a.topLevel === undefined) return a;
-    const b = placeAmongRoots(f.link, roots);
-    return { topLevel: a.topLevel || b.topLevel === true, isRoot: a.isRoot === true || b.isRoot === true };
+    if (a.topLevel === undefined) return a;
+    const spelled = f.given.startsWith("/") ? f.given : cwd + "/" + f.given;
+    const others = [spelled, ...(f.link !== undefined ? [f.link] : [])].map((x) => placeAmongRoots(x, roots));
+    return { topLevel: a.topLevel || others.some((b) => b.topLevel === true), isRoot: a.isRoot === true || others.some((b) => b.isRoot === true) };
 }
 
 /**
@@ -280,7 +283,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
             if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
             const f = byArg.get(p.arg);
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
-            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots) } : { kind: "fs", path: p.given };
+            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots, facts.cwd.path) } : { kind: "fs", path: p.given };
         };
         const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
         effects = d.effects;
@@ -303,7 +306,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeBoth(p, place?.roots), ...(p.link !== undefined ? { link: p.link } : {}), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeBoth(p, place?.roots, facts.cwd.path), ...(p.link !== undefined ? { link: p.link } : {}), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,

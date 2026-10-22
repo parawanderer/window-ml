@@ -177,14 +177,14 @@ test("K3c: find -delete is a names write, so deleting under a root itself or a t
     assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);
 });
 
-// --- place resolution: the markers follow the host's RESOLVED path, never the lexical `given` ---
+// --- place resolution: the markers follow the host's RESOLVED path, widened by the lexical `given` ---
 
-test("a symlink's place is what it RESOLVED to: markers off `path`, never `given`, whatever the script typed", async () => {
+test("a symlink's place is what it RESOLVED to, widened by the name as typed: markers off `path` and `given`", async () => {
     // The host resolves symlinks (realpath) and reports `path`; sh-call.ts builds topLevel/isRoot TEXTUALLY over that
-    // path and its roots (placeAmongRoots), never over `given`. So a symlink that resolves OUT of the roots is not
-    // top-level in-root (an in-place write to it asks, because inRoot is the host's realpath answer), and one that
-    // resolves TO a root is a root (a names-write under it asks). The host's own symlink defect is #12's; this pins
-    // the extension's half: the markers follow `path`.
+    // path and its roots (placeAmongRoots), and over `given` against the cwd, taking the wider (#990). So a symlink that
+    // resolves OUT of the roots is covered by nothing (an in-place write to it asks, because inRoot is the host's
+    // realpath answer), and one that resolves TO a root is a root (a names-write under it asks). The host's own symlink
+    // defect is #12's; this pins the extension's half: the markers follow `path`, widened by the typed name.
     const { free, boundFor } = await import("../src/effects.ts");
     const B = boundFor("host-sandbox");
     const at = (paths, argv, cwd = { path: "/w", inRoot: true }) =>
@@ -195,7 +195,9 @@ test("a symlink's place is what it RESOLVED to: markers off `path`, never `given
         ["git", "diff", "--output=.envrc"]);
     assert.equal(out.described, true, out.why.join("; "));
     assert.equal(out.paths[0].path, "/tmp/x", "the fact carries the resolved target, not the typed name");
-    assert.deepEqual([out.paths[0].topLevel, out.paths[0].isRoot], [false, false], "place markers off the resolved path: /tmp/x's parent is not a root");
+    // Since #990 (2026-10-22) the place is also read off the name as typed, which the call writes through: /w/.envrc is
+    // top-level even though /tmp/x is not. That only widens the claim; inRoot stays the host's realpath answer.
+    assert.deepEqual([out.paths[0].topLevel, out.paths[0].isRoot], [true, false], "the typed name .envrc is a top-level entry; /tmp/x's parent is not a root");
     assert.equal(free(out.effects, B), false, "a write to a symlink whose target is outside the roots is covered by nothing");
     // b: src/link is a symlink to /w (the root). A names-write under it removes the root's top-level names.
     const via = at([{ arg: 1, given: "src/link", path: "/w", inRoot: true, secret: false, exists: true }],
