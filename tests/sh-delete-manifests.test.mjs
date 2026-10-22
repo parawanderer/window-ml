@@ -518,3 +518,25 @@ test("git --icase-pathspecs rm Secret.ts is not free: it matches the secret on a
     // A glob is still unknown with the flag on (2c3b47a7 holds).
     assert.equal(run(["git", "--icase-pathspecs", "rm", "*.ts"], base).described, false, "*.ts stays unknown");
 });
+
+test("an absent `link` fact is not read as \"not a symlink\": rm top of a top-level link is not free without it", { todo: "placeBoth only widens when the host sends `link`, so an older host (or any host that omits the optional field) reopens rm top → free while removing a top-level name. Absent must mean unknown, or the worker must also place the given spelling" }, () => {
+    // Guards: `link` is optional on HostPathFact ("an older host sends none and nothing changes"). The same
+    // argv with the same resolved target is judged free when the field is missing and not free when it is
+    // present — an absent field must not shrink the claim. Residual of the link fact (review of #990,
+    // 2026-10-22): the default bound reads topLevel/inRoot/secret, and only the link widens topLevel.
+    // Positive control: the same call WITH the link asks; a real top-level file (no symlink) asks without one.
+    const facts = (link) => ({
+        id: "c1", argv: ["rm", "top"],
+        program: { path: "/bin/rm", inRoot: false },
+        cwd: { path: "/w", inRoot: true },
+        env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+        paths: [{ arg: 1, given: "top", path: "/w/src/gen", inRoot: true, secret: false, exists: true, ...(link ? { link: "/w/top" } : {}) }],
+        effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox", expiresInMs: 1,
+    });
+    assert.equal(free(shFacts(facts("/w/top"), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "with the link fact, rm top is a top-level name and asks (control)");
+    assert.equal(free(shFacts(facts(undefined), null, { roots: ["/w"] }).effects, SANDBOX), false,
+        "without the link fact the same rm top still removes the top-level name /w/top");
+    // A real top-level file is caught with no link at all (control that the place still reaches the judge).
+    assert.equal(free(run(["rm", "top"], { cwd: "/w" }).effects, SANDBOX), false, "a real top-level name asks with no symlink involved");
+});
