@@ -1,18 +1,16 @@
-// Content script (isolated world): injects injected.js into the page's main world
-// and relays messages between it and the background worker (window.postMessage ⇄
-// chrome.runtime), bridging CORS. Streaming rides a long-lived Port instead.
+// Content script (isolated world, document_start): relays messages between injected.js in the page's main world and
+// the background worker (window.postMessage ⇄ chrome.runtime), bridging CORS. Streaming rides a long-lived Port instead.
+// It no longer puts injected.js into the page: the worker registers it for the origins that may see window.ml and
+// injects it into a hidden page only for a run the person starts there (sw-presence.ts). On a hidden page this script
+// says nothing to the page and answers nothing it posts (page-gate.ts, docs/spec/SITE_PRESENCE.md step 2).
 import type { PageRequestType, BackgroundMessageType } from "./contract/contract-messages";
 import { HANDLE_MAP } from "./page-relay";
+import { gateOpen, gateState, setGate, whenOpen, markAlive, pageAlive } from "./page-gate";
 
-// 1. Inject injected.js into the main world.
-// If the page's Content-Security-Policy refuses the main-world script — e.g. raw.githubusercontent.com serves
-// everything with `default-src 'none'; sandbox`, which disables injected scripts — then window.ml never comes
-// up, so a delegated agent tool would post into the void and HANG (the round-trip below has no answerer). Two
-// signals catch it: `injectedBlocked` (an `error` event on the element — fires when the fetch is refused, e.g.
-// script-src 'none') and `injectedAlive` (set when injected posts its load-time PAGE_ADOPT_HELLO — the
-// reliable positive signal, since a `sandbox` CSP LOADS the script but blocks EXECUTION, firing neither error).
-let injectedBlocked = false;
-let injectedAlive = false;
+// 1. Whether injected.js is up in the main world. If it never comes up (a `sandbox` CSP blocks script EXECUTION in the
+// page), a delegated agent tool would post into the void and HANG, so the waits below are bounded: `pageAlive()` is set
+// when injected posts its load-time PAGE_ADOPT_HELLO, the reliable positive signal. Whether we speak to the page at all
+// is the gate's (page-gate.ts), set only by the worker.
 // How long to wait for injected to prove it's alive before declaring a delegated tool dead on a page that
 // blocks it. Short — injected posts its hello the instant it runs; if it hasn't by now, it never will here.
 const INJECTED_ABSENT_GRACE_MS = 4_000;
@@ -24,11 +22,10 @@ const PAGE_STATE_RELAY_MS = 1200;
 const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Better: don't navigate here at all — if you just need this URL's CONTENT, navigate BACK to a working page and use \`fetch_url\` (or \`ml.fetch(url)\`) to read it directly (a background GET, no injected script needed). Otherwise open a normal page (e.g. the github.com "…/blob/…" view, not the raw host).`;
 /** Why a run cannot start on a page whose CSP keeps the extension's page script from running. */
 const CSP_START_MSG = "this page blocks the extension's page script (its Content-Security-Policy disables injected scripts), so an agent cannot run on it. Open an ordinary page and start the run there.";
-const s = document.createElement("script");
-s.src = chrome.runtime.getURL("injected.js");
-s.onload = () => s.remove();
-s.onerror = () => { injectedBlocked = true; s.remove(); };
-(document.head || document.documentElement).appendChild(s);
+/** Why a delegated tool cannot run: the worker never let this document hear from us (a hidden page with no run). */
+const SHUT_MSG = "Error: the extension's page script is not in this page.";
+/** What waits for injected's hello in this document. */
+const onAlive: (() => void)[] = [];
 
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; messages?: unknown; stepCount?: unknown; seqCount?: unknown; error?: string; }
 
@@ -107,11 +104,11 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         // A live frame from a running server-side tool → the page's awaiting call (keyed by requestId), which
         // hands it to the tool's ctx.stream. Same one-way shape as PYTHON_STREAM.
         const m = message as { requestId?: string; frame?: unknown; at?: number };
-        window.postMessage({ type: "SERVER_TOOL_STREAM", requestId: m.requestId, frame: m.frame, at: m.at }, "*");
+        if (gateOpen()) window.postMessage({ type: "SERVER_TOOL_STREAM", requestId: m.requestId, frame: m.frame, at: m.at }, "*");
         return;
     }
     if (message && message.type === "PYTHON_STREAM") {
-        window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts }, "*");
+        if (gateOpen()) window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts }, "*");
         return undefined;
     }
     // A run the WORKER is starting on this tab (sw-run-start.ts): register its builtin toolset here, exactly as a
@@ -119,7 +116,10 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     // only what it is (its context) and, later, the tool executions.
     if (message && message.type === "ADOPT_RUN_NOW") {
         const { runId, rebuild } = (message.payload || {}) as { runId?: string; rebuild?: unknown };
-        if (injectedBlocked) { sendResponse({ error: CSP_START_MSG }); return true; }
+        // A hidden page has no page script until the worker puts one in: ask for it, and the worker sends this again with
+        // `injected` once it has (sw-run-start.ts `adoptOnTab`). Decided by the gate, never by a hello the page can forge.
+        if ((message.payload as { injected?: unknown } | undefined)?.injected === true) setGate(true);
+        if (!gateOpen()) { sendResponse({ needInject: true }); return true; }
         const reply = Math.random().toString(36).slice(2);
         let done = false;
         const finish = (r: { pageInfo?: string; error?: string }) => {
@@ -133,8 +133,8 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
             finish({ pageInfo: typeof event.data.pageInfo === "string" ? event.data.pageInfo : "" });
         };
         // Same two bounds as a delegated tool: short while the page script has not proved it is alive, long once it has.
-        const timer = setTimeout(() => finish({ error: injectedAlive ? "the page did not answer while the run was starting" : CSP_START_MSG }),
-            injectedAlive ? TOOL_RELAY_TIMEOUT_MS : INJECTED_ABSENT_GRACE_MS);
+        const timer = setTimeout(() => finish({ error: pageAlive() ? "the page did not answer while the run was starting" : CSP_START_MSG }),
+            pageAlive() ? TOOL_RELAY_TIMEOUT_MS : INJECTED_ABSENT_GRACE_MS);
         window.addEventListener("message", onAdopted);
         window.postMessage({ type: "ADOPT_RUN", runId, rebuild, reply }, "*");
         return true;
@@ -143,7 +143,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     // worker asks again in two seconds, and a page that cannot answer is reported as such rather than waited on.
     if (message && message.type === "RUN_STATE_IN_PAGE") {
         const { runId } = (message.payload || {}) as { runId?: string };
-        if (injectedBlocked || typeof runId !== "string") { sendResponse(null); return true; }
+        if (!gateOpen() || typeof runId !== "string") { sendResponse(null); return true; }
         const callId = Math.random().toString(36).slice(2);
         const finish = (r: unknown) => { clearTimeout(timer); window.removeEventListener("message", onState); sendResponse(r); };
         const onState = (event: MessageEvent) => {
@@ -158,13 +158,13 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     // The run was stopped while its read-only survey ran here (sw-run-host.ts): the main world halts it. No answer.
     if (message && message.type === "CANCEL_TOOL_IN_PAGE") {
         const { runId } = (message.payload || {}) as { runId?: unknown };
-        if (typeof runId === "string") window.postMessage({ type: "PAGE_TOOL_CANCEL", runId }, "*");
+        if (typeof runId === "string" && gateOpen()) window.postMessage({ type: "PAGE_TOOL_CANCEL", runId }, "*");
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
     const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, reads, answerShape, answerSelect, geometry, pageRead } = (message.payload || {}) as { pageRead?: unknown; verifyInWorker?: boolean; runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
-    // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
-    if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
+    // Nothing of ours is in this page, so nothing will ever answer. Fail fast, and post nothing to it.
+    if (!gateOpen()) { sendResponse({ result: SHUT_MSG }); return true; }
     const callId = Math.random().toString(36).slice(2);
     let done = false;
     const finish = (envelope: unknown, clearAll = true) => {
@@ -183,7 +183,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     // signal is what catches it. Fail the tool fast + actionable instead of wedging the run. If injected IS
     // alive (just slow), let the long backstop govern. A stray race (result already in flight) is guarded by `done`.
     const graceTimer = setTimeout(() => {
-        if (done || injectedAlive) return;   // alive-but-slow → the backstop below owns it
+        if (done || pageAlive()) return;   // alive-but-slow → the backstop below owns it
         clearTimeout(backstop);
         finish({ result: CSP_BLOCK_MSG(name) }, false);
     }, INJECTED_ABSENT_GRACE_MS);
@@ -199,10 +199,26 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     return true;   // async sendResponse (the window round-trip completes later)
 });
 
-// 2. Listen for messages from injected.js (main world).
+// 2. Listen for messages from injected.js (main world). A hello only marks the page script alive; everything else waits
+// for the gate, so a hidden page that posts our types is neither answered nor relayed (it is held while the worker has
+// not answered yet, and dropped once it says the page is hidden).
 window.addEventListener("message", (event: MessageEvent) => {
     if (event.source !== window || !event.data) return;
     const data = event.data as PageMessage;
+    if (data.type === "PAGE_ADOPT_HELLO") {
+        markAlive();   // injected ran → window.ml is up on this page (the signal the delegation grace checks)
+        for (const f of onAlive.splice(0)) f();
+        return;
+    }
+    if (gateState() === "open") onPageMessage(data);
+    else whenOpen(() => onPageMessage(data));
+});
+
+/**
+ * One message from the main world, once the gate is open.
+ * @param data what the page posted
+ */
+function onPageMessage(data: PageMessage): void {
     const requestId = data.requestId ?? "";
 
     if (data.type === "LLM_STREAM_REQUEST") {
@@ -218,19 +234,6 @@ window.addEventListener("message", (event: MessageEvent) => {
         // Its own type, not CANCEL_RUN: the shell's Stop sends CANCEL_RUN from this same world, and the background
         // has to be able to gate the PAGE's cancel by the page's origin without gating the person's Stop.
         chrome.runtime.sendMessage({ type: "PAGE_CANCEL_RUN", payload: data.payload });
-        return;
-    }
-    if (data.type === "PAGE_ADOPT_HELLO") {
-        injectedAlive = true;   // injected ran → window.ml is up on this page (the signal the delegation grace checks)
-        // Cross-page persistence: injected.js just went live on a fresh document. Ask the background whether
-        // this tab still hosts any background-run(s) mid-navigation; for each, relay the rebuild-config back
-        // to the main world as an ADOPT_RUN so injected re-registers the toolset. Empty on a normal page.
-        chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
-            void chrome.runtime.lastError;   // SW asleep / no active run → no adopt; swallow the "no response" noise
-            for (const a of (resp && resp.adopt) || []) {
-                window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*");
-            }
-        });
         return;
     }
     if (data.type === "RUN_READOPTED") {
@@ -269,4 +272,19 @@ window.addEventListener("message", (event: MessageEvent) => {
     const entry = HANDLE_MAP[data.type as PageRequestType];
     if (!entry) return;
     sendRuntimeMessage(entry.type, requestId, data.payload, entry.responseType);
+}
+
+// 4. Ask the worker what this document is, once, as it starts: whether its origin may see window.ml (which opens the
+// gate; its page script is registered and has run or is about to), and whether this tab still hosts background runs
+// mid-navigation. For a hidden page with runs, the worker has put the page script in before it answers. Each run is
+// re-adopted once injected is up: an ADOPT_RUN makes it re-register the toolset. Sent from here, not on injected's
+// hello, because a hidden page has no injected to say hello.
+chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { open?: boolean; adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
+    void chrome.runtime.lastError;   // SW asleep → no answer: the gate stays pending, and nothing is posted
+    if (!resp) return;
+    setGate(resp.open === true);
+    const adopt = (resp.adopt || []).filter((a) => a && typeof a.runId === "string");
+    if (!adopt.length || !gateOpen()) return;
+    const post = () => { for (const a of adopt) window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*"); };
+    if (pageAlive()) post(); else onAlive.push(post);
 });

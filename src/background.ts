@@ -37,6 +37,7 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
+import { syncPresence, isVisible, injectPageScripts } from "./sw/sw-presence";
 import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/sw-policies";
 
@@ -194,7 +195,10 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
 // local origins, and the agent level, in slice 3 (sw-site-access.ts `migrateSiteAccess`). Every reader waits for it too.
 void siteSchemaReady();
 if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
-    chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) { void handOverOnRevoke(); void dropRevoked(); } });
+    chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) { void syncPresence(); void handOverOnRevoke(); void dropRevoked(); } });
+    // Which pages get the main-world scripts follows the lists (sw-presence.ts): once at startup too, for a change made
+    // while this worker was evicted, and for a session grant the browser forgot on restart along with its registration.
+    void syncPresence().catch(() => undefined);
     // And once at startup, for a change this worker never heard: made while it was evicted, its runs then restored.
     void handOverOnRevoke().catch(() => []);
 }
@@ -429,13 +433,14 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // And the hand-over of a page-built run whose tab is now on a site that may not use window.ml (nav-handover.ts):
         // the commit started it; asked again here from the sender's own URL, in case this worker never saw the commit.
         const handOver = tabId != null && (sender.frameId ?? 0) === 0 ? handOverOnCommit(tabId, sender.url ?? sender.tab?.url) : Promise.resolve([]);
-        void Promise.all([hydrationDone, handOver.catch(() => [])]).then(() => {
+        void Promise.all([hydrationDone, handOver.catch(() => [])]).then(async () => {
             const ids = tabId != null ? activeRuns.get(tabId) : undefined;
             // An INTERRUPTED (evicted) run is continued by the WORKER once the page has re-registered its tools, never by
             // the page. It always meets a fresh document, so nothing page-side is left to own it: it becomes the worker's.
             const adopt: { runId: string; rebuild: import("./contract").RebuildConfig }[] = [];
             const resumeIds: string[] = [];
             const seen = new Set<string>();
+            const live = new Set<string>();   // still going: running here, or resumed from storage just now
             const addAdopt = (runId: string, rebuild: import("./contract").RebuildConfig): void => {
                 if (seen.has(runId)) return;
                 seen.add(runId);
@@ -445,6 +450,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                     makeWorkerRun(runId);
                     resumeIds.push(runId);
                 }
+                if (resume || runControllers.has(runId) || ids?.has(runId)) live.add(runId);
                 // content.ts posts this to the page's window: a worker's run sends only what the page still needs.
                 adopt.push({ runId, rebuild: pageRebuild(resume ? { ...rebuild, builtBy: "worker" } : rebuild) });
             };
@@ -457,7 +463,18 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             if (tabId != null) for (const [runId, snap] of bgRuns) {
                 if (snap.tabId === tabId && snap.p.rebuild) addAdopt(runId, snap.p.rebuild);
             }
-            sendResponse({ adopt });
+            // Presence (SITE_PRESENCE.md step 2): a visible origin's page has its page script already and may hear from us.
+            // A hidden one gets it only for a run still going on this tab, put in now, before the answer; a finished run
+            // is not reason enough, so its page stays hidden.
+            const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
+            let open = await isVisible(sender.url ?? sender.tab?.url).catch(() => false);
+            if (!open) {
+                adopt.splice(0, adopt.length, ...adopt.filter((a) => live.has(a.runId)));
+                if (adopt.length && tabId != null && (sender.frameId ?? 0) === 0) {
+                    try { await injectPageScripts(tabId, doc); open = true; } catch { adopt.length = 0; }
+                } else adopt.length = 0;
+            }
+            sendResponse({ adopt, open });
             // Durable resume, driven from here. The barrier holds the run's first tool call until the page answers the
             // adopt (RUN_READOPTED), so the call cannot reach a page whose toolset is not registered yet.
             if (tabId != null && resumeIds.length) {
@@ -471,7 +488,6 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             // AFTER the run finished: a completed run re-adopted from bgRuns replays its history ONCE so the
             // destination page still gets its card + final answer (else the corner card is blank there).
             const hasActive = !!(ids && ids.size);
-            const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
             if (tabId != null && adopt.length && (doc === undefined || replayedTo.get(tabId) !== doc)) {
                 const history = runReplayBuffer.get(tabId) || [];
                 if (doc !== undefined) replayedTo.set(tabId, doc);   // once per document: a page can ask again at will

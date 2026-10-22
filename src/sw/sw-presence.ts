@@ -1,0 +1,69 @@
+// sw-presence.ts — which pages get window.ml's main-world scripts: registering them for the visible origins only.
+//
+// docs/spec/SITE_PRESENCE.md, step 2. A page sees window.ml only when its origin may use it (`visibleOrigins`); every
+// other page is HIDDEN and gets nothing of ours in its main world until the person starts a run there, when the worker
+// injects the same two files into that one document (`injectPageScripts`). The scripts are registered, never named in
+// the manifest, so the list follows the person's grants: re-synced when the worker starts and whenever the site lists
+// change. A session grant's scripts are registered for the session only, so a browser restart forgets them with it.
+
+import { visibleOrigins, originMatchPattern, originOf, levelsFor } from "../site-access";
+import { readSiteLists } from "./sw-site-access";
+
+/** The main-world files, in order: the closed-root capture first, so it records roots before window.ml claims its reader. */
+export const PAGE_SCRIPT_FILES = ["shadow-patch.js", "injected.js"];   // state: fixed
+
+/** The registration ids: one for grants that last, one for the session's. */
+const REGISTRATION = { lasting: "ml-main-lasting", session: "ml-main-session" } as const;   // state: fixed
+
+let syncing: Promise<void> = Promise.resolve();   // state: plumbing
+
+/**
+ * Register the main-world scripts for exactly the visible origins, replacing what was registered. Runs one at a time,
+ * and a caller that awaits it knows the next navigation uses the new list (measured: an awaited update applies to the
+ * next navigation, an unawaited one may not).
+ * @returns once the registrations match the lists
+ */
+export function syncPresence(): Promise<void> {
+    syncing = syncing.catch(() => undefined).then(async () => {
+        if (typeof chrome === "undefined" || !chrome.scripting?.registerContentScripts) return;
+        const v = visibleOrigins(await readSiteLists());
+        const have = new Set((await chrome.scripting.getRegisteredContentScripts()).map((s) => s.id));
+        for (const scope of ["lasting", "session"] as const) {
+            const id = REGISTRATION[scope];
+            const matches = [...new Set(v[scope].map(originMatchPattern).filter((m): m is string => !!m))];
+            if (have.has(id)) await chrome.scripting.unregisterContentScripts({ ids: [id] });
+            if (!matches.length) continue;
+            await chrome.scripting.registerContentScripts([{
+                id, matches, js: PAGE_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false,
+                persistAcrossSessions: scope === "lasting",
+            }]);
+        }
+    });
+    return syncing;
+}
+
+/**
+ * Whether an origin's pages get the main-world scripts on their own (registered), as the lists say now.
+ * @param url the page's URL
+ * @returns true for a visible origin
+ */
+export async function isVisible(url: string | undefined): Promise<boolean> {
+    const origin = originOf(url);
+    if (!origin) return false;
+    const use = levelsFor(await readSiteLists(), origin).use;
+    return use === "always" || use === "session";
+}
+
+/**
+ * Put the main-world scripts into the document a tab shows now, for a run the person started on a hidden page. The page
+ * has been running its own code, so it can watch this happen: from here on it sees what a page with window.ml sees.
+ * A closed shadow root the page attached before this is not captured.
+ * @param tabId the tab
+ * @param documentId the document to put them in, when known, so a tab that navigated meanwhile is not given them
+ * @returns once both files have run in the top frame
+ * @throws when the extension may not script the tab or the document is gone
+ */
+export async function injectPageScripts(tabId: number, documentId?: string): Promise<void> {
+    const target = documentId ? { tabId, documentIds: [documentId] } : { tabId };
+    await chrome.scripting.executeScript({ target, world: "MAIN", files: PAGE_SCRIPT_FILES });
+}

@@ -9,6 +9,8 @@
 // roots as the page makes them. Injected after the page has loaded it only sees roots attached from then on, so a
 // closed root created before this point stays unreachable until the tab is reloaded.
 
+import { isVisible, injectPageScripts } from "./sw-presence";
+
 /** Chrome's own words for "that tab has nothing listening", which is not an error about the message. */
 export const NO_RECEIVER = /Receiving end does not exist|Could not establish connection/i;
 
@@ -33,6 +35,12 @@ export async function restoreContentScripts(tabId: number): Promise<boolean> {
             ...(cs.world === "MAIN" ? { world: "MAIN" as const } : {}),
         });
     }
+    // The main-world scripts are no longer in the manifest (sw-presence.ts): a visible page gets them back here, after
+    // the content script, so it hears their hello. A hidden page gets nothing; a run started on it asks for them itself
+    // (`adoptOnTab`), and the content script's listener is all the caller needs until then.
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!await isVisible(tab?.url)) return true;
+    await injectPageScripts(tabId);
     // Wait for the MAIN world, not for the content script: the content script registers its listener before
     // `injected.js` has run, so a message sent on that signal reaches a page whose own handler is not there yet.
     // This is the same thing `openTab` waits for, for the same reason.
