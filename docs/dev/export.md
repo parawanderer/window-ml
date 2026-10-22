@@ -123,7 +123,8 @@ otherwise. `ExportPhaseKind` is open for the same reason; the variant in sight i
 (in process vs an HTTP evaluation endpoint) — a fact about OUR dispatch, never a claim about where the work
 ended up, since an in-process tool can reach a VM/container over IPC unobservably. When that endpoint ships
 it must report its own measured eval time, or the span is the tool plus the network as one number — the trap
-`promptEvalMs` was added to close for model calls.
+
+**Schema widening, 2026-10-22 (no version bump).** `scripts/gen-export-schema.mjs` used to drop `null` from a union of two or more other members, so `export.schema.json` rejected a value the exporter writes: a table cell that is `null` (`TablePreview.rows`, the `table` and `python-out.df` render descriptors, in `renderIn` and `renderOut`; pandas `to_json` writes NaN as null) and `DebugAgentConfig.vision` of `null` (auto). Those unions now carry a `null` branch in every generated schema. It only accepts more, so `x-schemaVersion` stays 1 (additive changes are free by the version rule); a consumer that generated models from the old file should regenerate, since those fields become nullable. `tests/export-schema.test.mjs`, section "a null the exporter can write is a value the schema accepts".
 
 **A resume is in every surface, and it is not a step.** A session picked up again on a different page
 (`session.resume`) shows as a divider in the log, a `---` + `**→ resumed on …**` in `run.md`, and

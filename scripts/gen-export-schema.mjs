@@ -253,10 +253,9 @@ function typeToSchema(type, ctx) {
     }
     if (literals.length > 1 && bare.length > 1) {
         const branches = bare.map((x) => typeToSchema(x, ctx));
-        // `"a" | "b" | null`: the null is dropped here, silently, for the published export schemas (several members
-        // are `string | number | boolean | null`; fixing it would change a published contract, so it is left, and a
-        // finding). A `closed` spec has a value that is null (`terminator`), and keeps it.
-        if (nullable && ctx.closed) branches.push({ type: "null" });
+        // `string | number | boolean | null`: keep the null as a branch. (It was once dropped for the published export
+        // schemas, which then rejected a null the exporter can write; fixed 2026-10-22 for every schema.)
+        if (nullable) branches.push({ type: "null" });
         // An UNSTABLE union gets one more branch that accepts anything. Without it, `anyOf` over the
         // variants known today REJECTS a variant added tomorrow — so an old consumer's validator would
         // start failing on new exports, which is the opposite of what a published schema should do.

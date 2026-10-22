@@ -333,6 +333,9 @@
             },
             {
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ]
         },
@@ -1152,6 +1155,9 @@
                           "type": "boolean"
                         },
                         {
+                          "type": "null"
+                        },
+                        {
                           "type": "object",
                           "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
                         }
@@ -1416,6 +1422,9 @@
                             },
                             {
                               "type": "number"
+                            },
+                            {
+                              "type": "null"
                             },
                             {
                               "type": "object",
@@ -1724,6 +1733,9 @@
                           "type": "boolean"
                         },
                         {
+                          "type": "null"
+                        },
+                        {
                           "type": "object",
                           "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
                         }
@@ -1988,6 +2000,9 @@
                             },
                             {
                               "type": "number"
+                            },
+                            {
+                              "type": "null"
                             },
                             {
                               "type": "object",
@@ -2513,6 +2528,9 @@
                 },
                 {
                   "type": "boolean"
+                },
+                {
+                  "type": "null"
                 },
                 {
                   "type": "object",
