@@ -11,6 +11,10 @@
 // --no-target-directory --update --strip-trailing-slashes, rmdir --parents --ignore-fail-on-non-empty. BSD only: rm
 // -P -W -x, mv -h. GNU permutes options and operands (`rm a -r` is recursive); BSD getopt stops at the first operand
 // (`rm a -r` removes files "a" and "-r"). A flag on one platform only is "described correctly or unknown".
+//
+// Section 4 (redteam-e3, 2026-10-22) is the under-claim pass: a call judged free that touches more than the
+// manifest claims. Its `run()` reports `containsSecret` only for a walked path, matching the real host — an earlier
+// fake that always answered it hid both holes.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -27,17 +31,25 @@ const PLAIN = boundFor("host-plain");
 
 const norm = (p) => { const out = []; for (const c of p.split("/")) { if (c === "" || c === ".") continue; if (c === "..") out.pop(); else out.push(c); } return "/" + out.join("/"); };
 
-/** shFacts over a fake host answer. `secret`/`beneath` are resolved paths that are a secret / hold one below them. */
+/** shFacts over a fake host answer. `secret`/`beneath` are resolved paths that are a secret / hold one below them.
+ *  `containsSecret` is reported ONLY for a walked path, matching window-ml-host (session.rs: the host walks and
+ *  answers `containsSecret` only when the pathArg carries `walk`): a fake that always answers it hides an
+ *  under-claim, because the real host never asks. */
 function run(argv, o = {}) {
     const cwd = o.cwd ?? "/w", roots = o.roots ?? ["/w"];
     const inRoot = (p) => roots.some((r) => p === r || p.startsWith(r + "/"));
+    const m = manifestFor(argv, { cwd, roots });
+    const walked = new Set(m ? describeCall(argv, m, {}).pathArgs.filter((p) => p.walk).map((p) => p.arg) : []);
     const paths = argv.map((given, arg) => ({ given, arg })).slice(1).map(({ given, arg }) => {
         const path = norm(given.startsWith("/") ? given : `${cwd}/${given}`);
-        return { arg, given, path, inRoot: inRoot(path), secret: !!o.secret?.includes(path), exists: true, containsSecret: !!o.beneath?.includes(path) };
+        return {
+            arg, given, path, inRoot: inRoot(path), secret: !!o.secret?.includes(path), exists: true,
+            ...(walked.has(arg) ? { containsSecret: !!o.beneath?.includes(path) } : {}),
+        };
     });
     return shFacts({
         id: "c1", argv, program: o.program ?? { path: `/bin/${argv[0].split("/").pop()}`, inRoot: false }, cwd: { path: cwd, inRoot: inRoot(cwd) },
-        env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null, paths,
+        env: { set: [], secrets: [], free: true }, repo: o.repo === undefined ? null : o.repo, repoConfigRunsCode: null, paths,
         effects: "unknown", mode: "host", sandboxed: true, placement: o.placement ?? "host-sandbox", expiresInMs: 1,
     }, o.version ?? (argv[0] === "git" ? GIT : null), { roots });
 }
@@ -395,4 +407,67 @@ test("a call the manifest cannot describe stays unknown and is never free", () =
         assert.equal(free(f.effects, SANDBOX), false);
         assert.equal(s4(f), false);
     }
+});
+
+// --- 4. under-claims: a call judged free that touches more than the manifest claims (red-team-e3, 2026-10-22) ---
+//
+// Two shapes the adversary section above cannot see, because its fake host answered `containsSecret` for every
+// path and because every git call ran with repo: null at a root (so repoWide made them all ask). The real host
+// answers `containsSecret` only for a walked path (window-ml-host session.rs), and a repository can sit nested
+// inside a workspace root.
+
+test("mv of a directory that holds a secret is not free: the move renames every name beneath it", { todo: "mv never marks its operands walked, so the host never answers containsSecret and a secret under the moved directory is renamed free" }, () => {
+    // Guards: `mv` needs no -r to move a tree. describeCall never sets walk on its operands, so the host never
+    // answers containsSecret and the secret's name is renamed under a free judgment. Ruled shape: a directory
+    // operand of mv means everything beneath it (PROGRAM_MANIFEST.md, `recursive`), so the host must check it.
+    // Every path below is nested (parent is not a root), so the only reason to ask is the secret.
+    // Positive control first: the harness frees a plain nested move and refuses the secret when it is spelled out.
+    assert.equal(free(run(["mv", "src/a", "src/b"], { cwd: "/w/a" }).effects, SANDBOX), true, "plain nested move is free (control)");
+    assert.equal(free(run(["mv", "src/keep/.env", "src/keep/x"], { cwd: "/w/a", secret: ["/w/a/src/keep/.env"] }).effects, SANDBOX), false, "the secret file itself (control)");
+    assert.equal(free(run(["rm", "-r", "src/keep"], { cwd: "/w/a", beneath: ["/w/a/src/keep"] }).effects, SANDBOX), false, "rm -r walks, so the host reports containsSecret (control)");
+    // The hole: the same directory, moved whole. The host is not asked, so the claim is silent about the secret.
+    assert.equal(free(run(["mv", "src/keep", "src/keep2"], { cwd: "/w/a", beneath: ["/w/a/src/keep"] }).effects, SANDBOX), false,
+        "mv src/keep src/keep2 renames src/keep/.env with it");
+    assert.equal(free(run(["mv", "src/keep", "src/"], { cwd: "/w/a", beneath: ["/w/a/src/keep"] }).effects, SANDBOX), false,
+        "mv src/keep src/ moves the tree under src/");
+});
+
+test("git mv of a directory that holds a secret is not free: same move, same walk gap", { todo: "git mv never marks its operands walked; a directory operand moves everything beneath it" }, () => {
+    // Guards: git mv has no recursive flag either; a directory operand moves everything beneath it.
+    // Repo at /w/a/b (nested: parent /w/a is not a root), so repoWide's claim does not already make it ask.
+    const repo = { root: "/w/a/b", reasons: ["git"] };
+    const o = { cwd: "/w/a/b", repo, roots: ["/w"], beneath: ["/w/a/b/keep"] };
+    assert.equal(free(run(["git", "mv", "keep", "src/keep2"], o).effects, SANDBOX), false,
+        "git mv keep src/keep2 renames keep/.env with it");
+});
+
+test("git rm of a pathspec glob whose matches include a secret is not free: the literal path is not the names it removes", { todo: "a pathspec with *, ? or [ is described as one literal path; git removes every match, a secret among them, under a claim that never named it" }, () => {
+    // Guards: ml.sh passes argv with no shell, so git receives the glob as a pathspec. Only a :-leading pathspec is
+    // magic today; `*.ts`, `**/*.ts`, `*`, `a?.ts`, `[ab].ts` stay described as ONE path whose name literally
+    // contains `*`. git removes every match — a secret among them — under a claim that never named it.
+    // Positive control: the same secret spelled exactly is flagged and not free. Repo nested at /w/a/b.
+    const repo = { root: "/w/a/b", reasons: ["git"] };
+    const base = { cwd: "/w/a/b/src", repo, roots: ["/w"], secret: ["/w/a/b/src/secret.ts"] };
+    assert.equal(free(run(["git", "rm", "secret.ts"], base).effects, SANDBOX), false, "the secret file itself (control)");
+    for (const spec of ["*.ts", "src/*.ts", "**/*.ts", "*", "a?.ts", "[ab].ts", "foo*bar"]) {
+        const f = run(["git", "rm", spec], base);
+        assert.equal(f.described, true, `${spec}: a glob is not one path, so the call is unknown (or claims every match)`);
+        assert.equal(free(f.effects, SANDBOX), false, `git rm ${spec} removes secret.ts among its matches`);
+    }
+});
+
+test("describeCall marks mv's and git mv's operands as walked (the host only answers containsSecret for those)", { todo: "recursive is never set for a command whose directory operand means everything beneath it (PROGRAM_MANIFEST.md, recursive)" }, () => {
+    // Guards: the two holes above share one root: `recursive` is never set for a command whose directory operand
+    // means everything beneath it. PROGRAM_MANIFEST.md's `recursive` row names exactly that property.
+    for (const argv of [["mv", "keep", "src/keep2"], ["git", "mv", "keep", "src/keep2"]]) {
+        const m = manifestFor(argv);
+        assert.ok(m, argv.join(" "));
+        const d = describeCall(argv, m, { version: argv[0] === "git" ? GIT : undefined });
+        assert.equal(d.described, true, `${argv.join(" ")}: ${d.why.join("; ")}`);
+        assert.ok(d.pathArgs.some((p) => p.walk), `${argv.join(" ")}: no operand is walked, so the host never checks what is beneath it`);
+    }
+    // Control: rm without -r walks nothing; mv must be recursive the way rm -r is, because it always moves a tree.
+    assert.equal(describeCall(["rm", "a"], manifestFor(["rm"]), {}).recursive, false, "rm without -r walks nothing (control)");
+    assert.equal(describeCall(["mv", "a", "b"], manifestFor(["mv"]), {}).recursive, true,
+        "mv always moves a whole directory, so it is recursive like rm -r");
 });
