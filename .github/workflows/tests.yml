@@ -165,7 +165,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       # The pinned tag's published binaries, checksum-verified and run once before anything trusts them
@@ -209,6 +209,7 @@ jobs:
         # while each leg was the slowest job in a run (about 16 min) and held a runner slot that queued every
         # other PR's CI behind it. Dropped 2026-10-15, approved by Shane. Kept as a matrix so the check keeps its
         # name, `test (node 26)`, which the repository ruleset requires.
+        # It must equal .nvmrc, which every other job reads (tests/node-pin.test.mjs).
         node: [26]
     steps:
       - if: env.CODE != 'true'
@@ -378,7 +379,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       # The gradient renderer's shaders, through Khronos's reference compiler as GLSL ES 3.00: the browser-free check
@@ -459,7 +460,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Install Playwright Chromium
@@ -480,7 +481,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Install Playwright Chromium
@@ -557,7 +558,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Install Playwright Chromium
@@ -598,7 +599,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm ci
@@ -623,7 +624,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       # 17 is the JDK React Native's gradle plugin targets; a newer default breaks the build before it compiles.
       - uses: actions/setup-java@v6
@@ -717,7 +718,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm ci
@@ -749,7 +750,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Gate on a configured key

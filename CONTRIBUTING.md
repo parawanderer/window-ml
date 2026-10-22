@@ -11,7 +11,7 @@ If you just want to **use** the extension rather than work on it, you want
 
 ## 1. Prerequisites
 
-- **Node 20 or newer.** CI runs 22, 24 and 26. `node --version` to check.
+- **Node 26 or newer**, pinned in `.nvmrc` and `engines`; `npm ci` and `npm test` refuse an older one. CI runs 26. `node --version` to check.
 - **Google Chrome** (or any Chromium: Edge, Brave). Manifest V3, so Firefox will not load it.
 - **git**.
 

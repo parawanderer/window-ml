@@ -63,7 +63,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       # 17, as in `tests.yml`'s `mobile-android`: the JDK React Native's gradle plugin targets.
       - uses: actions/setup-java@v6
