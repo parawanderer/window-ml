@@ -158,15 +158,16 @@ export function visibleOrigins(lists: Partial<SiteLists>): { lasting: string[]; 
 }
 
 /**
- * The content-script match pattern that covers an origin's pages. A pattern cannot name a port, so it covers every port
- * of the host: the page script checks the exact origin before it does anything.
+ * The content-script match pattern that covers exactly an origin's pages. The port is always written, the default one
+ * included: a pattern with no port matches every port of the host, and `:443` matches only the default (measured in
+ * Chromium 151, SITE_PRESENCE.md step 2), so another port of an allowed host stays hidden.
  * @param origin an origin, as `originOf` writes it
  * @returns the pattern, or null for anything that is not an http(s) origin
  */
 export function originMatchPattern(origin: string): string | null {
     if (originOf(origin) !== origin) return null;
     const u = new URL(origin);
-    return `${u.protocol}//${u.hostname}/*`;
+    return `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
 }
 
 /**

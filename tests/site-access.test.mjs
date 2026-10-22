@@ -303,10 +303,12 @@ test("visible origins are sorted and listed once, and another origin of the same
     assert.deepEqual(v, { lasting: ["https://a.com", "https://b.com"], session: ["http://a.com:8080"] });
 });
 
-test("a match pattern covers the host on every port, and only an origin as the browser writes it gets one", () => {
-    assert.equal(originMatchPattern("https://example.com"), "https://example.com/*");
-    assert.equal(originMatchPattern("http://127.0.0.1:8123"), "http://127.0.0.1/*", "a pattern cannot name a port");
-    assert.equal(originMatchPattern("http://[::1]:3000"), "http://[::1]/*");
+test("a match pattern names the origin's port, the default one included, and only an origin as the browser writes it gets one", () => {
+    // A pattern with no port matches every port of the host; an explicit default port matches only it (Chromium 151).
+    assert.equal(originMatchPattern("https://example.com"), "https://example.com:443/*");
+    assert.equal(originMatchPattern("http://example.com"), "http://example.com:80/*");
+    assert.equal(originMatchPattern("http://127.0.0.1:8123"), "http://127.0.0.1:8123/*");
+    assert.equal(originMatchPattern("http://[::1]:3000"), "http://[::1]:3000/*");
     for (const bad of ["https://example.com/", "https://Example.com", "file:///x", "chrome://newtab", "", "*://example.com"])
         assert.equal(originMatchPattern(bad), null, bad);
 });
