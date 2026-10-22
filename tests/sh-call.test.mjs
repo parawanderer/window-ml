@@ -254,9 +254,12 @@ test("in-root program: a file in a root named like a shipped program is undescri
 });
 
 test("in-root program: a name with no manifest stays unknown for the old reason; a link the host reports in-root is refused too", () => {
+    const none = shFacts(inRootFacts(["./frob", "x"], "/w/frob", true), null, { roots: ["/w"] });
+    assert.equal(none.effects, "unknown");
+    assert.deepEqual(none.why, ["./frob has no program manifest"]);
+    // rm has a shipped manifest since 2026-10-22: an in-root ./rm is refused for being in a root.
     const rm = shFacts(inRootFacts(["./rm", "x"], "/w/rm", true), null, { roots: ["/w"] });
-    assert.equal(rm.effects, "unknown");
-    assert.deepEqual(rm.why, ["./rm has no program manifest"]);
+    assert.deepEqual([rm.effects, rm.why], ["unknown", ["/w/rm is inside a workspace root, so no shipped manifest describes it"]]);
     const link = shFacts(inRootFacts(["link-to-cat", "x"], "/w/link-to-cat", true), null, { roots: ["/w"] });
     assert.equal(link.effects, "unknown", "inRoot is the host's word about the resolved file");
     assert.equal(link.described, false);

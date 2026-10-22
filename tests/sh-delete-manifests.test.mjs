@@ -200,7 +200,6 @@ test("after `--` an operand starting with - is a FILE: rm -- -rf removes the fil
         [["rm", "-f", "--", "-rf"], P("/w/-rf")],
         [["rm", "-f", "--", "-r", "-f", "x"], P("/w/-r", "/w/-f", "/w/x")],
         [["rm", "--", "--made-up"], P("/w/--made-up")],
-        [["rm", "a", "--", "-b"], P("/w/a", "/w/-b")],
         [["mv", "--", "-a", "-b"], P("/w/-a", "/w/-b")],
         [["mv", "-f", "--", "-a", "b"], P("/w/-a", "/w/b")],
         [["rmdir", "--", "-d"], P("/w/-d")],
@@ -210,6 +209,9 @@ test("after `--` an operand starting with - is a FILE: rm -- -rf removes the fil
         assert.equal(f.described, true, `${argv.join(" ")}: ${f.why.join("; ")}`);
         assert.deepEqual(names(f), want, argv.join(" "));
     }
+    // After an OPERAND, BSD rm reads `--` as a file name too (`rm a -- -b` removes a, -- and -b on macOS, checked
+    // 2026-10-22), GNU does not: exactly {a, -b} would under-claim on BSD, so the call is undescribed.
+    assert.equal(call(["rm", "a", "--", "-b"]).f.described, false, "rm a -- -b: GNU and BSD disagree");
     const d = describeCall(["rm", "--", "-rf"], manifestFor(["rm"]) ?? assert.fail("no rm manifest"), {});
     assert.equal(d.recursive, false, "-rf after -- is not -r");
     assert.equal(d.terminator, "--", "the host puts `--` before a computed operand");
