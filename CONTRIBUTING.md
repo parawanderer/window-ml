@@ -141,8 +141,8 @@ performance), or checking a change the way a phone draws it. No Android Studio; 
 
 ```bash
 brew install --cask android-commandlinetools   # sdkmanager, avdmanager
-brew install --cask temurin@17                 # gradle builds with JDK 17, which React Native's plugin targets
-node scripts/android.mjs setup                 # platform-tools, the emulator, an arm64 API 35 image, one device
+brew install --cask temurin@21                 # the script runs gradle with JDK 21 (`java_home -v 21`)
+node scripts/android.mjs setup                 # platform-tools, the emulator, an arm64 API 37 image, one device
 node scripts/android.mjs doctor                # what is there and what is missing, with the command for each
 ```
 
