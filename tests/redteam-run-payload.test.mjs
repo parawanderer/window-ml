@@ -108,7 +108,9 @@ test("a malformed START_RUN from an approved page is refused with an error, reac
         assert.ok(!/[—]/.test(res.error), `${what}: no em-dash in the page's error`);
         assert.deepEqual(unhandled, [], `${what}: nothing threw past the answer`);
         assert.equal(bg.calls.length, 0, `${what}: nothing reached the backend`);
-        assert.equal(bg.tabMessages.length, 0, `${what}: nothing reached the tab`);
+        // The worker's start-up presence sync asks the open tab on an approved origin whether its page script is there
+        // (sw-presence.ts `showInOpenTabs`): the worker's own, not anything this START_RUN caused.
+        assert.equal(bg.tabMessages.filter(([, m]) => m?.type !== "PRESENCE_CHECK").length, 0, `${what}: nothing reached the tab`);
         assert.deepEqual(held(), EMPTY_RUN_STATE, `${what}: the worker holds nothing for it`);
     }
 });
