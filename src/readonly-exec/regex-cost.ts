@@ -11,7 +11,8 @@ export const UNCHARGED_SEARCH_STEPS = STEP_BUDGET;
  *  twenty worst-case shapes, each on the input that makes it backtrack most (`a+b`, `a*a*b`, `.*b.*c`, `a{1,5000}b`,
  *  `(?=a+b)`, `(a*)\1b`, alternation, `i`/`u` flags, `split`, `replace`, lookbehind, a long literal tail), then over
  *  random patterns that pass `riskyRegex` on inputs of 2 million characters: with counted repeats weighted
- *  ({@link COUNTED_LOOP_WEIGHT}) the slowest is about 0.6 ns a unit, so at ~3.2M steps a second 520 units a step. */
+ *  ({@link COUNTED_LOOP_WEIGHT}) the slowest is about 0.44 ns a unit, so at ~3.2M steps a second 713 units a step would
+ *  hold; 512 leaves 1.39x. The measurements, and how to re-run them: `notebooks/readonly/regex-cost.ipynb`. */
 export const REGEX_UNITS_PER_STEP = 512;
 
 /** How much more a step of a COUNTED repeat (`{m,n}` with a finite n) costs than one of `*` or `+`: V8 keeps a counter
