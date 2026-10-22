@@ -108,6 +108,8 @@ compiled to a standalone binary. Keying a manifest solely on `argv[0]` fails on 
 
 A program manifest therefore matches a **command prefix** `(program, entrypoint?)` rather than `argv[0]` alone:
 
+**A shipped manifest never describes a program inside a workspace root** (ruled 2026-10-22): when the host reports `program.inRoot` for the resolved file, `shFacts` leaves the call `unknown` and undescribed, whatever `argv[0]` is spelled (`./cat`, `bin/ls`); a workspace-registered entrypoint manifest is unaffected.
+
 | Field | For a standalone binary (`rg`, `git`) | For an interpreted script (`node scripts/index.mjs`) |
 | --- | --- | --- |
 | `program` | `"rg"` (`argv[0]` basename, resolved on `PATH`) | `"node"` or `"python3"` (`argv[0]` resolved on `PATH`) |

@@ -37,7 +37,7 @@ and the step's seq the worker already knows (`delegateTool`'s `call`), never any
 1. `spawn`: the host resolves the argv into facts (program, cwd, paths, repo, sandbox) and starts nothing.
 2. **The version probe**, for a manifest written against a version range (git, rg): an ordinary call of the manifest's
    own version args with effects empty, judged like any other. Free only under the sandbox, so on the plain host it
-   is never raised; refused for a program inside the roots; 2 s, 4 KiB; cached by the program file's fingerprint
+   is never raised; refused for a program inside the roots (and, since 2026-10-22, `shFacts` describes no in-root program by a shipped manifest, so `./cat` asks: PROGRAM_MANIFEST.md); 2 s, 4 KiB; cached by the program file's fingerprint
    (`shell.versions`). Its `start` carries the envelope `envelopeFor` derives from that same judged object, so on a
    K3 host every probe is sent `write: "none"`, `git --version` (an option git's manifest does not list) included
    (ruled 2026-10-19 on the red team's K3 audit, #827).

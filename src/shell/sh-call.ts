@@ -255,7 +255,11 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     let described = false;
     let runner = false;
     if (!m) why.push(`${facts.argv[0]} has no program manifest`);
-    else {
+    else if (facts.program.inRoot && SHIPPED_LIST.includes(m)) {
+        // Keyed on the host's resolved file, never on the argv spelling: a program a workspace file named `cat` is not cat
+        // (PROGRAM_MANIFEST.md, ruled 2026-10-22). A manifest the workspace registered for its own entrypoint is not shipped.
+        why.push(`${facts.program.path} is inside a workspace root, so no shipped manifest describes it`);
+    } else {
         const byArg = new Map(facts.paths.map((p) => [p.arg, p]));
         const resolve = (p: { arg: number | "cwd" | "repo"; given: string }): Resource => {
             // The repository's root, when the host found one; else the cwd (a call outside a repository fails in git).

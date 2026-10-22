@@ -237,6 +237,47 @@ test("a `..` operand from a nested cwd resolves to its target: find .. -delete u
     assert.equal(free(deep.effects, B), true, "a removal two levels down is free");
 });
 
+// --- a program inside a workspace root is never described by a shipped manifest (ruled 2026-10-22) ---
+
+/** Facts for `argv` whose program the host resolved to `path`, with `inRoot` as the host reports it. */
+const inRootFacts = (argv, path, inRoot) => facts({ argv, program: { path, inRoot }, paths: argv.slice(1).map((a, i) => ({ arg: i + 1, given: a, path: `/w/${a}`, inRoot: true, secret: false, exists: true })) });
+
+test("in-root program: a file in a root named like a shipped program is undescribed, whatever the argv spelling", () => {
+    for (const [argv, path] of [[["./cat", "x"], "/w/cat"], [["bin/ls", "x"], "/w/bin/ls"], [["cat", "x"], "/w/cat"], [["/w/head", "x"], "/w/head"]]) {
+        const f = shFacts(inRootFacts(argv, path, true), null, { roots: ["/w"] });
+        assert.equal(f.effects, "unknown", argv[0]);
+        assert.equal(f.described, false, argv[0]);
+        assert.deepEqual(f.why, [`${path} is inside a workspace root, so no shipped manifest describes it`], argv[0]);
+        assert.equal(f.program.inRoot, true, "the fact itself is unchanged");
+        assert.equal(shFacts(inRootFacts(argv, path, true)).effects, "unknown", "with no place given either");
+    }
+});
+
+test("in-root program: a name with no manifest stays unknown for the old reason; a link the host reports in-root is refused too", () => {
+    const rm = shFacts(inRootFacts(["./rm", "x"], "/w/rm", true), null, { roots: ["/w"] });
+    assert.equal(rm.effects, "unknown");
+    assert.deepEqual(rm.why, ["./rm has no program manifest"]);
+    const link = shFacts(inRootFacts(["link-to-cat", "x"], "/w/link-to-cat", true), null, { roots: ["/w"] });
+    assert.equal(link.effects, "unknown", "inRoot is the host's word about the resolved file");
+    assert.equal(link.described, false);
+});
+
+test("in-root program: a program the host resolved outside the roots is described exactly as before (the default)", () => {
+    for (const [argv, path] of [[["cat", "x"], "/bin/cat"], [["/bin/cat", "x"], "/bin/cat"], [["ls", "x"], "/usr/bin/ls"]]) {
+        const f = shFacts(inRootFacts(argv, path, false), null, { roots: ["/w"] });
+        assert.equal(f.described, true, argv[0]);
+        assert.notEqual(f.effects, "unknown", argv[0]);
+        assert.deepEqual(f.why, [], argv[0]);
+    }
+});
+
+test("in-root program: a registered entrypoint manifest still applies (the refusal is for the shipped ones)", () => {
+    const f = shFacts(scriptFacts({ program: { path: "/w/bin/node", inRoot: true } }), null, placeOf);
+    assert.equal(f.described, true);
+    assert.notEqual(f.effects, "unknown");
+    assert.deepEqual(f.why, []);
+});
+
 // --- interpreted scripts: (program, entrypoint) pinned by sha256 (PROGRAM_MANIFEST.md, rulings of 2026-10-19) ---
 
 const PIN = "a".repeat(64);

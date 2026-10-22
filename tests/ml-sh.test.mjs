@@ -117,6 +117,25 @@ test("reads inside the roots are free even on the plain host (EFFECTS.md: effect
     assert.equal(valueOf(results[0]).approvedBy, "builtin");
 });
 
+test("an in-root file named like a shipped program asks under the sandbox, where the same call to the real one is free (2026-10-22)", T, async () => {
+    const inRoot = (args) => {
+        const local = args.argv[0].startsWith("./");
+        return {
+            argv: args.argv, program: { path: local ? `/w/proj/${args.argv[0].slice(2)}` : `/usr/bin/${args.argv[0]}`, inRoot: local, fingerprint: "1:2:3:4" },
+            cwd: { path: args.cwd, inRoot: true }, env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+            paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true })),
+            effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox",
+        };
+    };
+    for (const [argv, asks] of [[["cat", "a.txt"], 0], [["./cat", "a.txt"], 1]]) {
+        const host = fakeNativeHost({ facts: inRoot });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(argv)], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+        assert.equal(ask.asked.length, asks, argv[0]);
+        assert.equal(valueOf(results[0]).approvedBy, asks ? "person" : "builtin", argv[0]);
+    }
+});
+
 // --- policies ---
 
 test("a saved deny refuses the call without a card, naming the policy; the host discards it", T, async () => {
