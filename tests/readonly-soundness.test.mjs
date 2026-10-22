@@ -201,7 +201,12 @@ test("HALTING: a regex search is charged for the backtracking it can do on its i
 
 test("HALTING: a pattern is checked as the text the host compiles: an array or an object is not a way past riskyRegex", async () => {
     // `patternArg` read only a string, and `match`/`search`/`matchAll` coerce anything else with its `toString`.
-    for (const v of lifted("halting", "a pattern is checked as the text the host compiles")) await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+    // Each is refused by THIS check, not by another one that happens to fire first: each takes its own path into the
+    // engine (an array, a `toString` arrow, `matchAll`'s, a searched value), and a fix to one leaves the others open.
+    for (const v of lifted("halting", "a pattern is checked as the text the host compiles")) {
+        const r = await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+        assert.match(r.message, /that is not a string or a regex/, v.name);
+    }
 });
 
 test("the regex charge leaves ordinary searches alone: words, delimiters, log lines, a backreference, an anchored match", async () => {
