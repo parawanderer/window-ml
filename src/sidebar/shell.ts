@@ -23,6 +23,7 @@ import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission
 import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
+import { gateOpen, whenOpen, whenEverOpen } from "../page-gate";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -770,7 +771,7 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
         return drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
     } else if (ref.token) {
         hlTokenSeq = seq;
-        window.postMessage({ type: "ML_HL_RESOLVE", token: ref.token, seq }, "*");   // injected replies with the coords
+        if (gateOpen()) window.postMessage({ type: "ML_HL_RESOLVE", token: ref.token, seq }, "*");   // injected replies with the coords
     } else hideHighlight();
 }
 /** The sequence number of the token highlight waiting on injected's ML_HL_AT, or 0: no other highlight takes one. */
@@ -877,7 +878,7 @@ function onWindowMessage(e: MessageEvent): void {
     // `look`). Hide, then ack after two frames so the hidden state has painted before the capture fires; the hide
     // lifts itself if no "show" comes (shell-shot.ts). Only from this window: a subframe's post is not injected.js's.
     // A shot the WORKER takes hides nothing: it masks the rects SHOT_RECTS reports.
-    if (d.__mlSidebarShot === "hide" && e.source === window) { shot.pageHide(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")); return; }
+    if (d.__mlSidebarShot === "hide" && e.source === window && gateOpen()) { shot.pageHide(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")); return; }
     if (d.__mlSidebarShot === "show" && e.source === window) { shot.pageShow(); return; }
     // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
     // a newer hover superseded it, or the token was stale and didn't resolve).
@@ -1066,7 +1067,7 @@ function fromApp(d: any): void {
         if (d.text.trim() || cleanImages(d.images) || elementContext) {
             const body = { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() };
             // The worker drives a run it built; anything else (a run or chat this page built) is the page's.
-            workerFirst({ ...body, action: "send" }, () => window.postMessage({ __mlSessionSend: body }, "*"));
+            workerFirst({ ...body, action: "send" }, () => whenOpen(() => window.postMessage({ __mlSessionSend: body }, "*")));
         }
         return;
     }
@@ -1075,7 +1076,7 @@ function fromApp(d: any): void {
         // the person picked rides along; anything that is not a number is simply not forwarded, as with startRun.
         const steps = stepBudget(d.maxSteps);
         const body = { hash: d.hash, ...(steps ? { maxSteps: steps } : {}) };
-        workerFirst({ ...body, action: "continue" }, () => window.postMessage({ __mlContinueRun: body }, "*"));
+        workerFirst({ ...body, action: "continue" }, () => whenOpen(() => window.postMessage({ __mlContinueRun: body }, "*")));
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && typeof d.hash === "string") {
@@ -1084,7 +1085,7 @@ function fromApp(d: any): void {
         // (__mlCancelSession → injected) can't resolve the hash (a re-adopt that didn't re-register it). Harmless
         // no-op if it's not a live run. The page message still handles a page-hosted chat/handle session.
         chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: d.hash } });
-        window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*");
+        whenOpen(() => window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*"));
         return;
     }
     // The card app posts its AUTHORITATIVE resolved theme (config.theme, auto→OS, resolved inside the
@@ -1231,8 +1232,9 @@ function fromApp(d: any): void {
             if (addToRunPending !== undefined) { toApp({ __mlAddToCurrentRun: { ctx: addToRunPending } }); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
-        window.postMessage({ __mlSidebar: "ready" }, "*");
         overlayReady = true;
+        // Once the gate opens, even if it opens later: an app that loaded first must not leave the bus un-live.
+        whenEverOpen(() => window.postMessage({ __mlSidebar: "ready" }, "*"));
         // Flush debug events buffered while the overlay iframe loaded (the replayed history of a re-adopted
         // run) — in order, so the fresh sidebar rebuilds the whole session, not an empty list.
         for (const ev of bgRing) toApp(ev);
@@ -1272,10 +1274,16 @@ function startResize(e: PointerEvent): void {
 // has no iframe app to hand back `ready` — `ready` right away so it goes live. Re-sent on
 // injected's `hello` too, so a page-load race (injected's async <script> not yet listening
 // when we first post) can't strand it un-live. Idempotent (bus guards a double replay).
+// Only once the worker has said this page may hear from us (page-gate.ts): a hidden page has no injected.js to tell, and
+// the post itself would tell it the extension is there (SITE_PRESENCE.md step 2).
 function handshake(): void {
-    window.postMessage({ __mlSidebar: "present" }, "*");
-    // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once.
-    if (mode !== "overlay") window.postMessage({ __mlSidebar: "ready" }, "*");
+    whenEverOpen(() => {
+        window.postMessage({ __mlSidebar: "present" }, "*");
+        // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once. An overlay
+        // whose app is already up says `ready` again too: injected.js put in after the page loaded (an origin allowed
+        // since, a person's run) missed the one the app's handshake sent.
+        if (mode !== "overlay" || overlayReady) window.postMessage({ __mlSidebar: "ready" }, "*");
+    });
 }
 
 /**
@@ -1498,7 +1506,7 @@ function teardown(): void {
     chartKeys = [];
     // Only a live bus needs switching off (off mode leaves it dormant unless `listPageSessions`). `mode` is
     // still the OLD surface here (applyMode tears down before advancing).
-    if (busLive()) window.postMessage({ __mlSidebar: "gone" }, "*");
+    if (busLive() && gateOpen()) window.postMessage({ __mlSidebar: "gone" }, "*");
 }
 
 // The single entry point for the three debug surfaces. `off` draws nothing up-front and leaves
@@ -1585,7 +1593,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
                 try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
                 handshake();
             } else {
-                window.postMessage({ __mlSidebar: "gone" }, "*");
+                if (gateOpen()) window.postMessage({ __mlSidebar: "gone" }, "*");
             }
         }
         listPageSessions = next;
@@ -1641,3 +1649,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // shell-session-relay.ts, which owns the waiter map that joins the two. `true` keeps the reply channel open.
     else if (msg?.type === "ML_SESSION_TO_PAGE") { if (relaySessionToPage(msg, sendResponse)) return true; }
 });
+// Listening now: ask the worker for the tab's run history (the card's replay across a navigation). Not CONTENT_READY's
+// job any more: the content script runs at document_start, before this script exists to hear it.
+try { void chrome.runtime.sendMessage({ type: "SHELL_LISTENING" }).catch(() => {}); } catch { /* context gone */ }

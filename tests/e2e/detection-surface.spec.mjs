@@ -61,6 +61,11 @@ async function scenario(name, { extension = true, host = "probe.test", path: p =
         if (extension) {
             await b.sw((c) => chrome.storage.sync.set(c), { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", autoApproveReadonly: false, defaultModelVision: "yes", ...config });
             await b.sw((o) => chrome.storage.local.set({ ml_site_always: o }), [site.origin("probe.test")]);
+            // The approval registers the page scripts for probe.test (sw-presence.ts); wait for it, so the page opened
+            // next is the first navigation under the new list, as the measured awaited update guarantees.
+            await b.sw(async () => {
+                for (let i = 0; i < 100 && !(await chrome.scripting.getRegisteredContentScripts()).length; i++) await new Promise((r) => setTimeout(r, 20));
+            });
             await b.sw(CDP_RECORDER);
         }
         // A cookie on api.test, as a site the person is logged in to: what the worker's requests carry of it.
@@ -98,19 +103,35 @@ const clickLastPoint = (body) => { const t = JSON.stringify(body.messages).match
 
 
 /** What every page shows with the extension merely installed (observed today, on approved and unapproved pages alike). */
+/** What a VISIBLE page sees with no run (an origin allowed to use window.ml; SITE_PRESENCE.md step 2). */
 function expectInstalledTrace(load) {
     expect(load.mlClosedRootsAtLoad, "no `__mlClosedRoots` global: the captured roots are in shadow-patch's closure").toBe(false);
-    expect(load.closedRootReaderAtLoad, "but any page that dispatches the DOM tools' ask gets the reader back").toBe(true);
+    expect(load.closedRootReaderAtLoad, "injected.js runs at document_start right after the patch and claims the reader before any page script can ask").toBe(false);
     expect(load.attachShadowNative, "Element.prototype.attachShadow is not native code").toBe(false);
     expect(load.attachShadowName).toBe("patched");
-    expect(load.domAdded, "the content script appends a <script> naming the extension's id").toContain("head>script[src=chrome-extension://<id>/injected.js]");
-    expect(load.domRemoved).toContain("head>script");
-    expect(load.extIdLearnedBy).toEqual(expect.arrayContaining(["dom", "stack:dispatchEvent"]));
-    expect(load.extensionCallers, "injected.js dispatches its ready event through the page's own dispatchEvent").toContain("dispatchEvent");
-    expect(load.messages).toEqual(expect.arrayContaining(["__mlSidebar", "PAGE_ADOPT_HELLO"]));
-    expect(load.warFetch, "web_accessible_resources answer any page that knows the id (no use_dynamic_url)").toEqual({ injected: 200, sidebar: 200, manifest: "Failed to fetch", bogus: "Failed to fetch" });
-    expect(load.globalsAdded).toContain("ml");
+    expect(load.domAdded.filter((d) => /chrome-extension/.test(d)), "the page scripts are registered content scripts: no <script> tag").toEqual([]);
+    expect(load.extIdLearnedBy, "injected.js runs before any page script, so no page wrapper sees its stack at load").toEqual([]);
+    expect(load.extensionCallers, "nor its ready event's dispatchEvent").toEqual([]);
+    expect(load.messages).toEqual(expect.arrayContaining(["PAGE_ADOPT_HELLO"]));
+    // The probe fetches by the id it learned, and it learns none now. A page that knows the id already (a web store
+    // build's is fixed) can still fetch the sidebar's files until use_dynamic_url (detection-surface.md row 5).
+    expect(load.warFetch, "nothing on the page names the id, so the probe has nothing to fetch by").toBe(null);
+    // Not in `globalsAdded`: window.ml is there before the page's first script takes its snapshot.
     expect(typeof load.final.windowMl, "window.ml, with its members").toBe("number");
+}
+
+/** What a HIDDEN page sees with no run: nothing of window.ml (SITE_PRESENCE.md step 2). The sidebar's files stay
+ *  web-accessible, so a page that already knows the id can still fetch one (detection-surface.md row 5, open). */
+function expectHiddenTrace(load) {
+    expect(load.final.windowMl).toBe("absent");
+    expect(load.globalsAdded).not.toContain("ml");
+    expect(load.closedRootReaderAtLoad, "no closed-root reader answers the ask").toBe(false);
+    expect(load.attachShadowNative, "attachShadow is the browser's own").toBe(true);
+    expect(load.domAdded.filter((d) => /ml-|chrome-extension/.test(d))).toEqual([]);
+    expect(load.messages, "no window message of ours").toEqual([]);
+    expect(load.extIdLearnedBy, "nothing on the page names the extension's id").toEqual([]);
+    expect(load.extensionCallers).toEqual([]);
+    expect(load.warFetch, "the probe never learns the id, so it has nothing to fetch by").toBe(null);
 }
 
 /** What every run adds to the page it acts on, whatever its tool (observed today). */
@@ -213,26 +234,28 @@ test.describe("baselines", () => {
 // --- the extension installed, no run ---
 
 test.describe("installed, no run", () => {
-    test("an UNAPPROVED page sees window.ml, its script, its id and its patched attachShadow", async () => {
+    test("an UNAPPROVED page sees nothing of window.ml: no global, no script, no id, the browser's own attachShadow", async () => {
         const row = await scenario("idle-unapproved", { host: "other.test" });
-        expectInstalledTrace(row.load);
+        expectHiddenTrace(row.load);
         expect(row.cdp).toEqual([]);
         expect(row.during).toMatchObject({ domAdded: [], messages: [], ...NO_CDP });
     });
 
-    test("an approved page sees the same, and nothing more until a run starts", async () => {
+    test("an approved page sees window.ml and its patched attachShadow, and nothing more until a run starts", async () => {
         const row = await scenario("idle-approved");
         expectInstalledTrace(row.load);
         expect(row.cdp).toEqual([]);
         expect(row.during).toMatchObject({ domAdded: [], messages: [], ...NO_CDP });
     });
 
-    test.fixme("a page cannot tell that window.ml is installed", async () => {
-        // FINDING (security/privacy): any page identifies the extension, and learns its id, with no run and no approval:
-        // `'ml' in window` (slice 4 of SITE_ACCESS.md is open), the closed-root reader shadow-patch.js hands to any page that asks (`wml-closed-roots`), attachShadow's source,
-        // the <script src="chrome-extension://<id>/injected.js"> a MutationObserver sees, the stack of injected.js's
-        // dispatchEvent, and `fetch("chrome-extension://<id>/injected.js")` answering 200 (no use_dynamic_url). See
-        // docs/dev/detection-surface.md, rows 1-6.
+    test("a page the person never allowed or ran on cannot tell that window.ml is installed", async () => {
+        // Was a fixme: any page identified the extension and learned its id with no run and no approval (rows 1-6 of
+        // docs/dev/detection-surface.md). Hidden by default since SITE_PRESENCE.md step 2. Open: the sidebar's files
+        // answer a page that already knows the id (row 5), until use_dynamic_url.
+        const row = await scenario("idle-hidden", { host: "other.test" });
+        expectHiddenTrace(row.load);
+        expect(row.cdp).toEqual([]);
+        expect(row.during).toMatchObject({ domAdded: [], messages: [], ...NO_CDP });
     });
 });
 
@@ -443,7 +466,7 @@ test.describe("navigation and requests", () => {
         expect(first.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "cors", cookie: "session=api.test-secret" });
     });
 
-    test("rendered fetch: a real tab on the site, focus emulated, visibility set, window.ml injected there", async () => {
+    test("rendered fetch: a real tab on the site, focus emulated, visibility set, and nothing of window.ml there", async () => {
         const row = await scenario("fetch-url-rendered", { script: (site) => [{ tool: "fetch_url", args: { url: site.url("api.test", "/?via=rendered"), rendered: true, credentials: true } }] });
         // observed today: the ONLY Emulation.* command the extension sends, on the render tab only.
         expect(row.cdp).toEqual(["(attach)", "Emulation.setFocusEmulationEnabled", "Page.setWebLifecycleState", "(detach)"]);
@@ -464,7 +487,7 @@ test.describe("navigation and requests", () => {
         expect(tab.rafHz.length, "the probe measured at least one frame-rate window").toBeGreaterThan(0);
         expect(tab.rafHz.filter((h) => h === "0" || h === "1-4"),
             "not throttled: the render tab is made visible, so focused-but-hidden never happens").toEqual([]);
-        expect(tab.final.windowMl, "the rendered site gets window.ml like any page").toEqual(expect.any(Number));
+        expect(tab.final.windowMl, "the rendered site is not one the person allowed, so it is hidden").toBe("absent");
         const nav = row.requests.find((r) => r.path === "/?via=rendered");
         expect(nav.headers).toMatchObject({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate", cookie: "session=api.test-secret" });
         expect(nav.headers["sec-fetch-user"]).toBeUndefined();

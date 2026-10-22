@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { SITE_ACCESS_KEYS, originOf, grantableOrigin, levelsFor, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, migrateSiteLists } = await import("../src/site-access.ts");
+const { SITE_ACCESS_KEYS, originOf, grantableOrigin, levelsFor, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, migrateSiteLists, visibleOrigins, originMatchPattern } = await import("../src/site-access.ts");
 
 const empty = { always: [], session: [], denied: [], agents: {}, selfApprove: [] };
 /** Lists with some fields set, the rest empty. */
@@ -275,6 +275,42 @@ test("UPGRADE: an allowed http or port origin of a host whose https site self-ap
     // A denied origin, or an approval of an unrelated host, is never listed.
     assert.deepEqual(uncoveredApprovals(L({ always: ["http://mlbox.lan:8080", "http://other.lan"], denied: ["http://mlbox.lan:8080"], selfApprove: ["https://mlbox.lan"] })), []);
     assert.deepEqual(uncoveredApprovals(L({ session: ["http://mlbox.lan:9000"], selfApprove: ["https://mlbox.lan"] })), ["http://mlbox.lan:9000"], "a session approval too");
+});
+
+// --- presence: which origins see window.ml (docs/spec/SITE_PRESENCE.md, step 2) ---
+
+test("an origin is visible exactly when it may use window.ml, over every combination of the four lists", () => {
+    const o = "https://example.com";
+    for (let bits = 0; bits < 16; bits++) {
+        const lists = L({
+            always: bits & 1 ? [o] : [], session: bits & 2 ? [o] : [], denied: bits & 4 ? [o] : [], selfApprove: bits & 8 ? [o] : [],
+        });
+        const v = visibleOrigins(lists);
+        const decision = use(lists, o);
+        assert.deepEqual(v.lasting.includes(o), decision === "always", `lasting, bits ${bits}`);
+        assert.deepEqual(v.session.includes(o), decision === "session", `session, bits ${bits}`);
+        if (decision === "denied" || decision === "unknown") assert.deepEqual(v, { lasting: [], session: [] }, `hidden, bits ${bits}`);
+    }
+});
+
+test("the default is hidden: empty lists make nothing visible", () => {
+    assert.deepEqual(visibleOrigins(L()), { lasting: [], session: [] });
+    assert.deepEqual(visibleOrigins({}), { lasting: [], session: [] }, "a store from an older build, fields missing");
+});
+
+test("visible origins are sorted and listed once, and another origin of the same host is not made visible", () => {
+    const v = visibleOrigins(L({ always: ["https://b.com", "https://a.com", "https://a.com"], session: ["http://a.com:8080"] }));
+    assert.deepEqual(v, { lasting: ["https://a.com", "https://b.com"], session: ["http://a.com:8080"] });
+});
+
+test("a match pattern names the origin's port, the default one included, and only an origin as the browser writes it gets one", () => {
+    // A pattern with no port matches every port of the host; an explicit default port matches only it (Chromium 151).
+    assert.equal(originMatchPattern("https://example.com"), "https://example.com:443/*");
+    assert.equal(originMatchPattern("http://example.com"), "http://example.com:80/*");
+    assert.equal(originMatchPattern("http://127.0.0.1:8123"), "http://127.0.0.1:8123/*");
+    assert.equal(originMatchPattern("http://[::1]:3000"), "http://[::1]:3000/*");
+    for (const bad of ["https://example.com/", "https://Example.com", "file:///x", "chrome://newtab", "", "*://example.com"])
+        assert.equal(originMatchPattern(bad), null, bad);
 });
 
 // --- how an edit changes them ---

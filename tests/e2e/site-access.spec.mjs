@@ -50,13 +50,26 @@ async function setup({ debugMode = "off", ...config } = {}) {
 }
 
 /** Open `url` and wait for the extension's page half to come up on it. The page stays UNAPPROVED unless asked: the
- *  hostile site is never one the person allowed. */
+ *  hostile site is never one the person allowed. An approved or registered origin is waited on until window.ml is
+ *  ready; any other is HIDDEN (docs/spec/SITE_PRESENCE.md), so the wait is for the content script to have heard the
+ *  worker's answer, which is the moment a page with window.ml would have it. */
 async function open(ext, url, { approve = false } = {}) {
     const page = await ext.context.newPage();
     await page.goto(url);
-    await waitForMl(page, { approve });
+    if (approve || await visibleIn(ext, page)) await waitForMl(page, { approve });
+    else await waitInShell(page, () => globalThis.__mlPageGate?.state === "closed");
     return page;
 }
+
+/** Whether `page`'s origin is one the worker registered the page scripts for. */
+async function visibleIn(ext, page) {
+    const origin = new URL(page.url()).origin;
+    const u = new URL(origin), pattern = `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
+    return ext.sw.evaluate(async (m) => (await chrome.scripting.getRegisteredContentScripts()).some((r) => r.matches?.includes(m)), pattern);
+}
+
+/** What a page's own scripts see of window.ml: "undefined" on a hidden page. */
+const mlSeen = (page) => page.evaluate(() => typeof (/** @type {any} */ (window)).ml);
 
 /** An extension page holding the `ml-sessions` port: issues commands as the chat page does, and reads the index. */
 async function sessions(ext) {
@@ -114,72 +127,33 @@ test.describe("@security an unapproved page", () => {
         } finally { await close(); }
     });
 
-    test("gets no API beyond requestAccess", async () => {
-        const { site, ext, close } = await setup();
+    test("attack 1: is hidden: its scripts see no window.ml to spend the model or read the backend through", async () => {
+        // SITE_PRESENCE step 2. Before it, every page got window.ml with requestAccess as its one working member
+        // (slice 4's hole); now a page whose origin may not use window.ml gets nothing in its main world.
+        const { fake, site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test"));
-            const members = await page.evaluate(() => Object.entries(Object.getOwnPropertyDescriptors(window.ml))
-                .filter(([, d]) => typeof d.value === "function").map(([k]) => k));   // descriptors: some members are getters that throw outside a run
-            if (holeOpen("slice4", "every page gets the full window.ml")) { expect(members).toContain("chat"); return; }
-            expect(members).toEqual(["requestAccess"]);
+            expect(await mlSeen(page)).toBe("undefined");
+            expect(await page.evaluate(() => typeof (/** @type {any} */ (window)).__raw), "positive control: the page's own toolkit loaded").toBe("function");
         } finally { await close(); }
     });
 
-    test("attack 1: cannot spend the user's model through window.ml", async () => {
+    test("attack 2: raw relay requests that skip window.ml are never answered and never reach the backend", async () => {
         const { fake, site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test"));
             fake.setScript([{ content: "spent" }]);
-            const out = await page.evaluate(() => window.ml.chat("EVIL: a request nobody approved").then((r) => ({ ok: r }), (e) => ({ err: String(e) })));
-            if (holeOpen("slice1", "ml.chat from any page reaches the backend")) {
-                expect(out.ok).toBe("spent");
-                expect(JSON.stringify(fake.calls())).toContain("EVIL: a request nobody approved");
-                return;
-            }
-            expect(out.err, JSON.stringify(out)).toMatch(/refused|not approved/i);
-            expect(fake.calls()).toEqual([]);
-        } finally { await close(); }
-    });
-
-    test("attack 1: cannot read what the backend has", async () => {
-        const { fake, site, ext, close } = await setup();
-        try {
-            const page = await open(ext, site.url("evil.test"));
             const before = backendHits(fake).length;
             const out = await page.evaluate(async () => {
-                const attempt = (p) => p.then((r) => ({ ok: r }), (e) => ({ err: String(e) }));
-                return { models: await attempt(window.ml.models()), config: await attempt(window.ml.config()), ps: await attempt(window.ml.ps()) };
+                const raw = /** @type {any} */ (window).__raw;
+                const [chat, models, config, ps, info] = await Promise.all([
+                    raw("LLM_REQUEST", { messages: [{ role: "user", content: "EVIL raw" }] }, 3000),
+                    raw("LIST_MODELS_REQUEST", {}, 3000), raw("CONFIG_REQUEST", {}, 3000), raw("PS_REQUEST", {}, 3000), raw("INFO_REQUEST", {}, 3000),
+                ]);
+                return { chat, models, config, ps, info };
             });
-            if (holeOpen("slice1", "ml.models / ml.config / ml.ps answer any page")) {
-                expect(out.models.ok).toEqual(expect.arrayContaining(["fake-model"]));
-                expect(out.config.ok?.model).toBe("fake-model");
-                expect(backendHits(fake).slice(before)).toContain("GET /api/models");
-                return;
-            }
-            for (const [name, r] of Object.entries(out)) expect(r.err, `${name}: ${JSON.stringify(r)}`).toBeTruthy();
-            expect(backendHits(fake).slice(before)).toEqual([]);
-        } finally { await close(); }
-    });
-
-    test("attack 2: raw relay requests that skip window.ml are refused", async () => {
-        const { fake, site, ext, close } = await setup();
-        try {
-            const page = await open(ext, site.url("evil.test"));
-            fake.setScript([{ content: "spent" }]);
-            const before = backendHits(fake).length;
-            const out = await page.evaluate(async () => ({
-                chat: await window.__raw("LLM_REQUEST", { messages: [{ role: "user", content: "EVIL raw" }] }),
-                models: await window.__raw("LIST_MODELS_REQUEST", {}),
-                config: await window.__raw("CONFIG_REQUEST", {}),
-                ps: await window.__raw("PS_REQUEST", {}),
-            }));
-            if (holeOpen("slice1", "the content script relays any page's raw request")) {
-                expect(out.chat.result).toBe("spent");
-                expect(out.config.result?.model).toBe("fake-model");
-                expect(backendHits(fake).slice(before)).toContain("GET /api/models");
-                return;
-            }
-            for (const [name, r] of Object.entries(out)) expect(r.error, `${name}: ${JSON.stringify(r)}`).toMatch(/refused|not approved/i);
+            // A refusal would itself say the extension is here; a hidden page gets silence, the same as a browser without it.
+            for (const [name, r] of Object.entries(out)) expect(r, `${name}: ${JSON.stringify(r)}`).toEqual({ timeout: true });
             expect(fake.calls()).toEqual([]);
             expect(backendHits(fake).slice(before)).toEqual([]);
         } finally { await close(); }
@@ -385,8 +359,7 @@ test.describe("@security approval", () => {
             fake.setScript([{ content: "allowed" }]);
             expect(await ok.evaluate(() => window.ml.chat("hello"))).toBe("allowed");
             const sub = await open(ext, site.url("s01.approved.test"));
-            const out = await sub.evaluate(() => window.ml.chat("hello").then((r) => ({ ok: r }), (e) => ({ err: String(e) })));
-            expect(out.err, JSON.stringify(out)).toMatch(/not approved/);
+            expect(await mlSeen(sub), "a sub-domain of an approved site is hidden").toBe("undefined");
             expect(fake.calls().length).toBe(1);
         } finally { await close(); }
     });
@@ -436,9 +409,13 @@ test.describe("@security approval", () => {
 // tab (ML_DEBUG_TO_PAGE), and the content script re-posted each onto the PAGE's window so the shell (another content
 // script) could hand them to the corner card. The page's own scripts read that window. Both directions are tested.
 test.describe("@security attack 15: the run's event stream and the page", () => {
-    test("15a: a page a run arrives on cannot read what the run did before it got there", async () => {
+    for (const shown of ["visible", "hidden"])
+    test(`15a (${shown}): a page a run arrives on cannot read what the run did before it got there`, async () => {
         const { fake, site, ext, close } = await setup();
         try {
+            // Visible: the person allowed the next site to use window.ml (not to start agents), so its card is the positive
+            // control for the route. Hidden (SITE_PRESENCE step 2): the run is over, so the page gets no card either.
+            if (shown === "visible") await approveOrigin(ext.sw, site.origin("evil.test"), { agents: null });
             const start = await open(ext, site.url("approved.test"));
             const idx = await sessions(ext);
             fake.setScript([{ tool: "findByText", args: { text: "code" } }, { content: "the code is 4417" }]);
@@ -446,16 +423,24 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             expect(await idx.settled(hash)).toBe("done");
             // The tab moves on to the hostile site, which logs every window message from before the extension loads.
             await start.goto(site.url("evil.test"));
-            await waitForMl(start, { approve: false });
+            if (shown === "visible") await waitForMl(start, { approve: false });
+            else await waitInShell(start, () => globalThis.__mlPageGate?.state === "closed");
             const leaked = () => start.evaluate(() => window.__seen.some((m) => { try { return JSON.stringify(m).includes("approved.test is 4417"); } catch { return false; } }));
             if (holeOpen("slice2stream", "a run's step results are re-posted onto the page's window, so the next page reads them")) {
                 await expect.poll(leaked, { timeout: 15000 }).toBe(true);
                 return;
             }
-            // Secure: the run's history still reaches the card on the new page, and the page saw none of it. The card
-            // showing the answer is what makes "the page did not see it" a statement about the route, not the timing.
             const card = () => { const f = start.frames().find((x) => x.url().includes("sidebar.html")); return f ? f.locator("body").innerText().catch(() => "") : ""; };
-            await expect.poll(card, { timeout: 15000 }).toContain("the code is 4417");
+            if (shown === "visible") {
+                // The run's history still reaches the card on the new page, and the page saw none of it. The card showing
+                // the answer is what makes "the page did not see it" a statement about the route, not the timing.
+                await expect.poll(card, { timeout: 15000 }).toContain("the code is 4417");
+            } else {
+                await start.waitForTimeout(3000);
+                expect(await start.evaluate(() => !!document.getElementById("ml-sb-card")), "a hidden page was given the card").toBe(false);
+                expect(await card()).toBe("");
+                expect(await start.evaluate(() => window.__seen.filter((m) => JSON.stringify(m ?? null).includes("ml")).length), "a hidden page heard from us").toBe(0);
+            }
             expect(await leaked(), "the page read the run's earlier steps").toBe(false);
         } finally { await close(); }
     });
@@ -1012,6 +997,10 @@ test.describe("@security attack 18: the approval highlight", () => {
     test(`18 (${where === "light" ? "light DOM" : `the page's own ${where} shadow root`}): the page neither hears the selector being approved nor moves its highlight`, async () => {
         const { fake, site, ext, close } = await setup();
         try {
+            // A closed root needs the shadow patch there before the page makes it, which only an allowed origin has
+            // (SITE_PRESENCE step 2; a hidden page's earlier closed roots are unreadable to a run). Allowed to USE
+            // window.ml, not to start agents, so the click still waits at its gate.
+            if (where === "closed") await approveOrigin(ext.sw, site.origin("evil.test"), { agents: null });
             const page = await open(ext, site.url("evil.test"));
             await addTarget(page, where);
             const idx = await sessions(ext);

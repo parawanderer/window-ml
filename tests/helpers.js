@@ -138,6 +138,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     // chrome.userScripts, present only when a test passes `userScripts: { execute(injection) }` (an isolated exec's world).
     // `available: false` makes it throw on use, as Chrome does while the person's "Allow User Scripts" toggle is off.
     const userScriptCalls = [];
+    // chrome.scripting: what the worker registered for the visible origins and injected into a hidden page for a run
+    // (sw-presence.ts, SITE_PRESENCE.md step 2). `registered` is the live registration list, by id.
+    const scriptingCalls = [];
+    const registered = new Map();
     const userScriptListeners = [];
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
@@ -347,6 +351,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             },
             // CDP surface for reserved-element clicks. Records attach/sendCommand/detach so tests assert the
             // press+release sequence and that we always detach.
+            scripting: {
+                executeScript: async (injection) => { scriptingCalls.push(["executeScript", injection]); return [{ frameId: 0, result: undefined }]; },
+                registerContentScripts: async (list) => { scriptingCalls.push(["registerContentScripts", list]); for (const r of list) { if (registered.has(r.id)) throw new Error(`Duplicate script ID '${r.id}'`); registered.set(r.id, r); } },
+                unregisterContentScripts: async (filter) => { scriptingCalls.push(["unregisterContentScripts", filter]); for (const id of filter?.ids ?? [...registered.keys()]) registered.delete(id); },
+                getRegisteredContentScripts: async () => [...registered.values()],
+            },
             ...(userScripts ? { userScripts: {
                 getWorldConfigurations: async () => { if (userScripts.available === false) throw new Error("The userScripts API is not available"); return []; },
                 configureWorld: async (props) => { userScriptCalls.push(["configureWorld", props]); },
@@ -454,6 +464,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         debuggerEventListeners,
         /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */
         userScriptCalls,
+        scriptingCalls,
+        registered,
         /** Deliver a message from a user-script world. Resolves with the answer a listener sent, or undefined when none
          *  kept the channel open (as Chrome's `runtime.sendMessage` resolves when no one answers). */
         emitUserScriptMessage: (msg, sender) => new Promise((resolve) => {
@@ -558,7 +570,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -639,12 +651,12 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
                 sendMessage: (message, cb) => {
                     // The callback is OPTIONAL in the real API — fire-and-forget messages
                     // (e.g. ABORT_TASK) pass none, so never assume `cb` exists.
-                    // Cross-page housekeeping: injected posts PAGE_ADOPT_HELLO on load → content sends
-                    // CONTENT_READY on EVERY page. It carries no run to adopt in these node:vm tests, so
-                    // answer it empty and keep it OUT of runtimeCalls (like the config/caps probes) — else it
-                    // shifts every relay/agent test's message indices. (The handler itself is tested in
+                    // content.js sends CONTENT_READY as it starts, on EVERY page. It carries no run to adopt in these node:vm
+                    // tests, so answer it empty and keep it OUT of runtimeCalls (like the config/caps probes) — else it
+                    // shifts every relay/agent test's message indices. `open` is the page's presence (SITE_PRESENCE.md
+                    // step 2): visible unless the test says hidden. (The handler itself is tested in
                     // tests/background.test.js against the real background.)
-                    if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [] })); return; }
+                    if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [], open: visible })); return; }
                     // The Pyodide pre-warm a run with python_exec sends at start: a side call, answered here and kept
                     // out of runtimeCalls, or it eats a scripted model turn. Recorded in `prewarms` for the tests of it.
                     if (message && message.type === "PYTHON_PREWARM") { prewarms.push(message.payload); queueMicrotask(() => cb && cb({ data: "started" })); return; }

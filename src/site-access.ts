@@ -142,6 +142,35 @@ export function selfApproves(lists: Partial<SiteLists>, sender: SenderFacts): bo
 }
 
 /**
+ * The origins whose pages see window.ml (docs/spec/SITE_PRESENCE.md, step 2): until a page can be marked visible on its
+ * own, exactly the origins `levelsFor` lets use it. Split by how long the grant lasts, so the main-world scripts for a
+ * session grant are registered for the session only. Every other origin is hidden: nothing of ours enters its pages
+ * until the person starts a run there.
+ * @param lists the lists
+ * @returns the origins, sorted, each once; an origin both granted for good and for the session is in `lasting` only
+ */
+export function visibleOrigins(lists: Partial<SiteLists>): { lasting: string[]; session: string[] } {
+    const l = full(lists);
+    const all = [...new Set([...l.always, ...l.session, ...l.selfApprove])];
+    const lasting = all.filter((o) => levelsFor(l, o).use === "always").sort();
+    const session = all.filter((o) => levelsFor(l, o).use === "session").sort();
+    return { lasting, session };
+}
+
+/**
+ * The content-script match pattern that covers exactly an origin's pages. The port is always written, the default one
+ * included: a pattern with no port matches every port of the host, and `:443` matches only the default (measured in
+ * Chromium 151, SITE_PRESENCE.md step 2), so another port of an allowed host stays hidden.
+ * @param origin an origin, as `originOf` writes it
+ * @returns the pattern, or null for anything that is not an http(s) origin
+ */
+export function originMatchPattern(origin: string): string | null {
+    if (originOf(origin) !== origin) return null;
+    const u = new URL(origin);
+    return `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
+}
+
+/**
  * The origins a person allowed to use window.ml whose host self-approves over https on the default port, but which
  * are not on the self-approval list themselves: plain http or another port of that host, loopback included. Before the
  * whitelist was read by origin (#628), those self-approved by host; now each needs its own entry. Settings lists them

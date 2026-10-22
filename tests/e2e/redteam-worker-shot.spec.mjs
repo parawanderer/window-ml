@@ -10,7 +10,7 @@
 
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitForMl } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server. */
 async function greenSite() {
@@ -70,11 +70,17 @@ const blockSoon = (page, ms) => page.evaluate((ms) => {
 
 // --- the oracle of worker-shot.spec.mjs is not vacuous ---
 
-test("the page's own window handshake still reaches the shell for a page-built run's shot, from the page's own window only", async () => {
+test("the page's own window handshake still reaches the shell for a page-built run's shot, from an allowed page's own window only", async () => {
     const { page, close } = await setup();
     try {
         const vis = () => page.evaluate(() => document.getElementById("ml-sb-root").style.visibility);
         const shown = await vis();
+        // A page nobody allowed is hidden and builds no run, so its hide is dropped (docs/spec/SITE_PRESENCE.md).
+        await page.evaluate(() => window.postMessage({ __mlSidebarShot: "hide" }, "*"));
+        await page.waitForTimeout(300);
+        expect(await vis(), "a hidden page's hide hid the sidebar").toBe(shown);
+        // A page-built run needs an allowed page: allow this one, and its hide is heard.
+        await waitForMl(page);
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "hide" }, "*"));
         await expect.poll(vis).toBe("hidden");
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "show" }, "*"));

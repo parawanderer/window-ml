@@ -19,6 +19,7 @@ import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
+import { injectPageScripts } from "./sw-presence";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { hostRun } from "./sw-run-host";
 import { delegateSend } from "./delegate-send";
@@ -48,14 +49,22 @@ export async function adoptOnTab(tabId: number, runId: string, rebuild: RebuildC
     const msg = { type: "ADOPT_RUN_NOW", payload: { runId, rebuild: pageRebuild(rebuild) } };
     const why = (e: unknown): string => String((e as Error)?.message || e);
     const silent = { error: "the page did not answer; it may still be loading, or the extension cannot run there", unanswered: true as const };
+    // A hidden page (SITE_PRESENCE.md step 2) has no page script: the content script asks for one, the worker puts it in
+    // this document, and sends the adopt again saying so, which is what lets the content script speak to the page.
+    const send = async (): Promise<{ pageInfo?: string; error?: string; unanswered?: true } | undefined> => {
+        const r = await delegateSend(tabId, msg) as { pageInfo?: string; error?: string; needInject?: boolean } | undefined;
+        if (!r?.needInject) return r;
+        await injectPageScripts(tabId);
+        return await delegateSend(tabId, { ...msg, payload: { ...msg.payload, injected: true } }) as { pageInfo?: string; error?: string } | undefined;
+    };
     try {
-        return (await delegateSend(tabId, msg)) ?? silent;
+        return (await send()) ?? silent;
     } catch (e) {
         if (!NO_RECEIVER.test(why(e))) return { error: why(e), unanswered: true };
     }
     try {
         if (!await restoreContentScripts(tabId)) return silent;
-        return (await delegateSend(tabId, msg)) ?? silent;
+        return (await send()) ?? silent;
     } catch { return silent; }
 }
 

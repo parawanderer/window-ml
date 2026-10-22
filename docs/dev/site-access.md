@@ -240,6 +240,30 @@ notice in `tests/sidebar-settings.test.js`, drawn from the real bundle's answers
 `tests/popup-whitelist.test.js`. That first test also pins every line of `src/` that names the old setting, so a new
 reader of it fails there.
 
+## Presence: which pages see window.ml
+
+[SITE_PRESENCE.md](../spec/SITE_PRESENCE.md), step 2. A page sees `window.ml` only when its origin may use it
+(`visibleOrigins`, the same rule as `levelsFor`); every other page is HIDDEN, a denied origin and an unknown one alike.
+
+- **The page scripts are registered, not in the manifest.** `sw-presence.ts` registers `shadow-patch.js` then
+  `injected.js` (MAIN world, `document_start`, top frame) for the visible origins: `ml-main-lasting` (persists) and
+  `ml-main-session` (does not, so a browser restart forgets a session grant's scripts with it). Re-synced at worker start
+  and on every change to the lists, always awaited: an awaited update applies to the next navigation (measured).
+- **Each match pattern names the origin's port, the default one included** (`originMatchPattern`): a pattern with no
+  port matches every port of the host, and `:443` matches only the default one (measured in Chromium 151).
+- **`injected.js` is not web-accessible**: registered and `executeScript` files need no listing.
+- **A hidden page gets the page scripts only for a run still going on its tab**, put into that one document by the
+  worker: at the run's start (`adoptOnTab`: the content script answers `needInject`, the worker injects and asks again
+  with `injected`), and on a navigation mid-run (`CONTENT_READY` injects before it answers). A finished run is not
+  reason enough. From then on that page sees what a visible page sees; a closed root it attached before is not captured.
+- **The content script runs at `document_start` and speaks only on the worker's word.** `page-gate.ts` holds one gate per
+  document, in the isolated world: `pending` until the worker answers `CONTENT_READY` (the page's early posts and the
+  worker's requests wait), then `open` or `closed`. A closed gate relays nothing the page posts, answers nothing, and
+  posts nothing (the sidebar shell's handshake included). The page script's hello only marks it alive, for how long to
+  wait: a hidden page can forge a hello, and gets nothing for it.
+- **Residuals:** a run on a hidden page exposes what it did before step 2 (rows 4 and 6 of detection-surface.md); the
+  sidebar's files stay web-accessible until `use_dynamic_url` (row 5).
+
 ## Starting agents
 
 A site that may use window.ml starts, continues and steers the extension's agent only at its agent level
