@@ -437,6 +437,9 @@ test("UPGRADE: a site allowed before the agent level existed is asked on its fir
         onFetch: (call) => { if (call.url.includes("/chat/completions")) models.push(1); return jsonResponse({ choices: [{ message: { content: "done" } }] }); },
         onTabMessage: async (_t, msg) => { if (msg.type === "ML_DEBUG_TO_PAGE") events.push(plain(msg.event)); return msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined; },
     });
+    // The card this test raises is never answered (that is the point). Shorten the ask's backstop the way `world()`
+    // does: what is under test is that a card went up and nothing ran, not how long an unanswered card waits.
+    bg.context.__mlStartAskTimeoutMsForTest = 4000;
     const r = await send(bg, { type: "START_RUN", payload: payload() }, page(), 500);
     assert.equal(r.pending, true, `the pre-upgrade site's start was answered without a card: ${JSON.stringify(r)}`);
     assert.ok(events.some((e) => e.kind === "agent-start-ask"), "no card");

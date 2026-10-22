@@ -535,11 +535,17 @@ function askPerson(ask: StartAsk, t: PageTurn): Promise<StartDecision> {
     return new Promise<StartDecision>((resolve) => {
         // TEST-ONLY: a vm test shortens the wait through a worker global no page can reach (like `__mlApprovals`).
         const wait = (globalThis as { __mlStartAskTimeoutMsForTest?: number }).__mlStartAskTimeoutMsForTest ?? START_ASK_TIMEOUT_MS;
-        const timer = setTimeout(() => settle("timeout"), wait);
+        // Unref'd: this is a BACKSTOP (an unanswered card counts as Deny), not work the process is waiting on.
+        // A test that raises a card and leaves it pending used to hold the Node process for the full three minutes
+        // after its last assertion (redteam-agent-level: 1.8s of tests, 181s of wall clock, one uncleared timer).
+        // Same distinction as page-reachable's `defaultSleep`. A caller still awaiting the decision keeps the
+        // process alive through the runner's pending test; the timer still fires if anything else holds the loop.
+        const timer = setTimeout(() => settle("timeout"), wait) as unknown as { unref?: () => void };
+        timer.unref?.();
         const settle = (d: StartDecision): void => {
             if (!pending.has(ask.requestId)) return;
             pending.delete(ask.requestId);
-            clearTimeout(timer);
+            clearTimeout(timer as Parameters<typeof clearTimeout>[0]);
             fan(t.tabId, { kind: "agent-start-decided", id: t.runId, ts: Date.now(), save: false, session: { hash: t.runId, turn: 0 }, requestId: ask.requestId,
                 outcome: d === "allow" || d === "always" ? "allowed" : d === "deny" ? "denied" : "expired" });
             resolve(d);

@@ -199,7 +199,13 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     let timer: ReturnType<typeof setTimeout> | undefined;
     const restored = Promise.race([
         hydrationDone.then(() => true, () => true),
-        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), RESTORE_WAIT_MS); }),
+        new Promise<false>((resolve) => {
+            // Unref'd: this is a BACKSTOP (a start refused as RESTORE_PENDING when hydration is slow), not work
+            // the process is waiting on. Every START_RUN raced it and a test that left hydration unsettled held
+            // the Node process for the full ten seconds per start. Same as page-reachable's `defaultSleep`.
+            timer = setTimeout(() => resolve(false), RESTORE_WAIT_MS) as unknown as ReturnType<typeof setTimeout> & { unref?: () => void };
+            (timer as unknown as { unref?: () => void }).unref?.();
+        }),
     ]);
     void restored.then((done) => {
         clearTimeout(timer);

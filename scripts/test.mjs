@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// RUN A GENRE OF TESTS, not all of them. The suite is ~40s in parallel and its floor is its slowest FILE
-// (background 22s, cdp-stream 20s) — which is the right cost in CI, where everything runs
-// anyway, and the wrong one in a loop where you just changed one pure module.
+// RUN A GENRE OF TESTS, not all of them. The suite is minutes in parallel and its floor is its slowest FILE
+// — which is the right cost in CI, where everything runs anyway, and the wrong one in a loop where you just
+// changed one pure module.
 //
 //   node scripts/test.mjs                # everything (what `npm test` does)
 //   node scripts/test.mjs core           # the fast majority: pure logic, no jsdom, no node:vm world
@@ -162,20 +162,62 @@ if (args.includes("--list")) {
 }
 
 // HOW MANY FILES AT ONCE. `node --test` already gives each file its own process, so the only thing that was
-// stopping them overlapping was this being pinned to 1 — and the suite is dominated by its slowest files
-// (background 22s, cdp-stream 20s), so overlapping them takes the wall clock down to
-// roughly the slowest one. That is also why a 400-test file is worth splitting: it is the floor, and while it
-// is resident it contends for memory with every file beside it (see the trap in AGENTS.md).
+// stopping them overlapping was this being pinned to 1 — and the suite is dominated by its slowest files,
+// so overlapping them takes the wall clock down to roughly the slowest one. That is also why a 400-test file
+// is worth splitting: it is the floor, and while it is resident it contends for memory with every file beside
+// it (see the trap in AGENTS.md).
 //
-// NOT unbounded, and not `cores`: about ten files here drive real timers (a debounce, an easing, "stays
-// quiet for the first half second"), and those are exactly the assertions that go wrong when every core is
-// busy. Leaving headroom is the difference between a suite that is fast and one that is fast and flaky.
+// NOT unbounded, and not `cores` LOCALLY: about ten files here drive real timers (a debounce, an easing,
+// "stays quiet for the first half second"), and those are exactly the assertions that go wrong when every core
+// is busy. Leaving headroom is the difference between a suite that is fast and one that is fast and flaky.
 // `--jobs 1` puts it back to serial, which is what you want when a failure might be interference.
+//
+// ON CI there is no "leave a core for the desktop": the runner is a 4-core VM whose only job is this suite,
+// and `cores - 2` threw half of it away (JOBS=2 on ubuntu-24.04). `CI` / `GITHUB_ACTIONS` (GitHub sets both)
+// buys the full core count back. If a timer assertion starts flaking on CI only, this is the knob that got
+// turned — pull it to `CORES - 1` before touching the assertion.
 const CORES = (() => { try { return require("node:os").cpus().length; } catch { return 4; } })();
+const ON_CI = !!(process.env.CI || process.env.GITHUB_ACTIONS);
 const jobsArg = process.argv.find((a) => a.startsWith("--jobs"));
 const JOBS = Math.max(1, Number(jobsArg?.split("=")[1] ?? process.argv[process.argv.indexOf("--jobs") + 1])
-    || Math.min(8, Math.max(1, CORES - 2)));
+    || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
 const NODE_ARGS = ["--import", "tsx", "--test", `--test-concurrency=${JOBS}`];
+
+// SLOWEST FIRST. `node --test --test-concurrency=N` starts the files in the order they are listed, and a
+// long file that starts last is the one that decides the wall clock while every other slot has gone idle.
+// Alphabetical order does the opposite of what we want: `run-start` and `redteam-agent-level` were queued
+// behind dozens of 200ms files. This list is a hand-kept head of the slow files (the jsdom / node:vm /
+// real-CPython ones), refreshed with `--timings` when one moves — it is an ordering heuristic, not a
+// measurement, so being a place or two out costs nothing. Files not listed keep alphabetical order after
+// the listed ones, so a new slow file is not dropped — it just does not jump the queue until someone runs
+// `--timings` again.
+const SLOWEST_FIRST = [
+    "session-store.test.mjs",
+    "redteam.test.js",
+    "worker-page-read.test.mjs",
+    "python-dialect-inside.test.mjs",
+    "python.test.mjs",
+    "background.test.js",
+    "cdp-stream.test.mjs",
+    "agent.test.js",
+    "worker-vision.test.mjs",
+    "readonly-soundness.test.mjs",
+    "python-matplotlib.test.mjs",
+    "redteam-python-sandbox.test.mjs",
+    "redteam-agent-level-2.test.mjs",
+    "worker-vision-host.test.mjs",
+    "run-start.test.mjs",
+    "redteam-agent-level.test.mjs",
+];
+const slowRank = new Map(SLOWEST_FIRST.map((f, i) => [f, i]));
+/** Listed files first (slowest first), everything else alphabetical after them. */
+function orderSlowestFirst(files) {
+    return [...files].sort((a, b) => {
+        const ra = slowRank.has(a) ? slowRank.get(a) : SLOWEST_FIRST.length;
+        const rb = slowRank.has(b) ? slowRank.get(b) : SLOWEST_FIRST.length;
+        return ra !== rb ? ra - rb : a < b ? -1 : a > b ? 1 : 0;
+    });
+}
 
 if (args.includes("--timings")) {
     // One process per file, so the numbers are per file. Costs a node start each (~0.3s), which is why this
@@ -230,7 +272,9 @@ if (args.includes("--check-genres")) {
  * stopped over a bundle nothing is about to open.
  */
 function runFiles(list) {
-    const needsBundle = list.filter((f) => /loadSidebarWorld/.test(readFileSync(path.join(ROOT, "tests", f), "utf8")));
+    // Slowest first: a long file that starts last decides the wall clock while every other slot has gone idle.
+    const ordered = orderSlowestFirst(list);
+    const needsBundle = ordered.filter((f) => /loadSidebarWorld/.test(readFileSync(path.join(ROOT, "tests", f), "utf8")));
     if (needsBundle.length) {
         const report = stalenessReport(["dist"]);
         if (report) {
@@ -238,7 +282,7 @@ function runFiles(list) {
             process.exit(1);
         }
     }
-    spawn(process.execPath, [...NODE_ARGS, ...list.map((f) => `tests/${f}`)],
+    spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
         { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
 }
 
