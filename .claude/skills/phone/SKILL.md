@@ -11,7 +11,7 @@ script name.
 
 ```bash
 node scripts/android.mjs doctor          # what is installed and missing, with the command for each; lists devices
-node scripts/android.mjs setup           # once: platform-tools, emulator, arm64 API 35 image, the `wml-phone` device
+node scripts/android.mjs setup           # once: platform-tools, emulator, arm64 API 37 image, the `wml-phone` device
 node scripts/android.mjs boot            # headless; --window to watch it. Returns once Android has booted
 node scripts/android.mjs install         # build-web → sync-embed → expo prebuild → gradle assembleRelease → adb install
 node scripts/android.mjs launch          # cold start (force-stop first)
