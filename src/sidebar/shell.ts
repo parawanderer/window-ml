@@ -1232,8 +1232,9 @@ function fromApp(d: any): void {
             if (addToRunPending !== undefined) { toApp({ __mlAddToCurrentRun: { ctx: addToRunPending } }); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
-        if (gateOpen()) window.postMessage({ __mlSidebar: "ready" }, "*");
         overlayReady = true;
+        // Once the gate opens, even if it opens later: an app that loaded first must not leave the bus un-live.
+        whenEverOpen(() => window.postMessage({ __mlSidebar: "ready" }, "*"));
         // Flush debug events buffered while the overlay iframe loaded (the replayed history of a re-adopted
         // run) — in order, so the fresh sidebar rebuilds the whole session, not an empty list.
         for (const ev of bgRing) toApp(ev);
@@ -1278,8 +1279,10 @@ function startResize(e: PointerEvent): void {
 function handshake(): void {
     whenEverOpen(() => {
         window.postMessage({ __mlSidebar: "present" }, "*");
-        // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once.
-        if (mode !== "overlay") window.postMessage({ __mlSidebar: "ready" }, "*");
+        // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once. An overlay
+        // whose app is already up says `ready` again too: injected.js put in after the page loaded (an origin allowed
+        // since, a person's run) missed the one the app's handshake sent.
+        if (mode !== "overlay" || overlayReady) window.postMessage({ __mlSidebar: "ready" }, "*");
     });
 }
 
