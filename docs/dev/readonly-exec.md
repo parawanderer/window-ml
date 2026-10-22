@@ -604,7 +604,9 @@ one there (facts that carry a function, or anything but plain objects and arrays
 Every resource carries every field any resource kind has (`RESOURCE_FIELDS`), the absent ones `undefined`, so
 `c.effects.reads.every((r) => r.inRoot)` over a network read is `false`, not broken, while `r.inroot` still is. On an
 undescribed call (`effects: "unknown"`) `has` and `uses` answer `true`, `reads`/`writes` hold the `unknown` resource and
-`pairs` holds every operation on it, so a predicate that would allow answers in the direction that asks. `has` and
+`pairs` holds every operation on it, so a predicate that would allow answers in the direction that asks. A DENY gets
+no such direction: the `unknown` resource has no field but `kind`, so `writes.some((r) => r.names === true)` does not
+fire on `rm` while no manifest describes it, and the call asks (the policy-sh interview's S4, 2026-10-22). `has` and
 `uses` throw on an operation or kind outside the algebra (`has("wirte")`), so a misspelt name is a broken policy and not
 a `deny` that never fires.
 

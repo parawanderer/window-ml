@@ -36,7 +36,9 @@ export const ANY_HOST = "*";
 
 /** The read-only view of a call's effects a policy reads (`c.effects`): set predicates, never a string compare. On the
  *  top element every question answers in the direction that asks: `has` and `uses` are true, and `reads`/`writes`/
- *  `resources` hold the `unknown` resource, so `.every((r) => r.inRoot)` is false. */
+ *  `resources` hold the `unknown` resource, so `.every((r) => r.inRoot)` is false. That direction is an ALLOW's: the
+ *  unknown resource has no field but `kind`, so a DENY that tests one (`.some((r) => r.names === true)`) does not fire
+ *  and the call asks; refusing an undescribed program takes its name in `argv`. */
 export type EffectSet = {
     readonly unknown: boolean;
     readonly pairs: readonly Effect[];

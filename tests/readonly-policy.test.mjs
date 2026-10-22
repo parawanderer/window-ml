@@ -114,6 +114,13 @@ test("on an undescribed call every effect question answers in the direction that
     assert.deepEqual(run("(c) => c.effects.pairs.length === 0", facts), { decision: undefined });
 });
 
+test("on an undescribed call a DENY over a resource's field does not fire, so the call asks; a DENY over has() does", () => {
+    const facts = { ...FACTS, effects: "unknown" };
+    assert.deepEqual(run("(c) => c.effects.writes.some((r) => r.names === true)", facts, "deny"), { decision: undefined }, "the unknown resource has no names");
+    assert.deepEqual(run('(c) => c.effects.pairs.some((e) => e.op === "write" && e.res.kind === "fs")', facts, "deny"), { decision: undefined }, "nor an fs kind");
+    assert.deepEqual(run('(c) => c.effects.has("write")', facts, "deny"), { decision: "deny" });
+});
+
 test("a question about an operation or kind the algebra does not have is broken, not a quiet false", () => {
     assert.match(broken('(c) => !c.effects.has("wirte")', "a misspelt operation"), /no operation 'wirte'/);
     assert.match(broken('(c) => !c.effects.has("write", "files")', "a misspelt kind"), /no resource kind 'files'/);
