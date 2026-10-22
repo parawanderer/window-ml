@@ -17,15 +17,19 @@ import git from "./manifests/git.json";
 import head from "./manifests/head.json";
 import jq from "./manifests/jq.json";
 import ls from "./manifests/ls.json";
+import mv from "./manifests/mv.json";
 import rg from "./manifests/rg.json";
+import rm from "./manifests/rm.json";
+import rmdir from "./manifests/rmdir.json";
 import tail from "./manifests/tail.json";
+import unlink from "./manifests/unlink.json";
 import wc from "./manifests/wc.json";
 import type { ShCallSpan, ShUnasked, StepAsk } from "../contract";
 
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
 export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Object.freeze(Object.fromEntries(
-    ([cat, find, git, head, jq, ls, rg, tail, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
+    ([cat, find, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
 /** The manifests a call is described by: the shipped ones, unless the caller names its own. */
@@ -196,7 +200,7 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
  *  tell. */
-export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null; sha256?: string | null }
+export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null; sha256?: string | null; link?: string }
 
 /** Where a resolved path sits among the roots: a root itself, or a top-level entry of one (its parent is a root).
  *  Both are textual over the host's realpaths, which the roots are too. Unset when the roots are not known. */
@@ -205,6 +209,28 @@ function placeAmongRoots(path: string, roots: readonly string[] | undefined): { 
     const p = normalPath(path), rs = roots.map(normalPath);
     const parent = p === "/" ? null : normalPath(p.slice(0, p.lastIndexOf("/")) || "/");
     return { topLevel: parent !== null && rs.includes(parent), isRoot: rs.includes(p) };
+}
+
+/** {@link placeAmongRoots} of a path fact, of its symlink when the host names one, and of the argument as spelled
+ *  against the cwd: `rm top` removes the link `top` while its target may be nested, so the place is the widest of them
+ *  (review of #990, 2026-10-22). The spelling covers a host that omits `link` (an older one), since an absent field must
+ *  not shrink the claim; ORing only widens, so a nested link to a nested target stays free. */
+function placeBoth(f: { given: string; path: string; link?: string }, roots: readonly string[] | undefined, cwd: string): { topLevel?: boolean; isRoot?: boolean } {
+    const a = placeAmongRoots(f.path, roots);
+    if (a.topLevel === undefined) return a;
+    const spelled = f.given.startsWith("/") ? f.given : cwd + "/" + f.given;
+    const others = [spelled, ...(f.link !== undefined ? [f.link] : [])].map((x) => placeAmongRoots(x, roots));
+    return { topLevel: a.topLevel || others.some((b) => b.topLevel === true), isRoot: a.isRoot === true || others.some((b) => b.isRoot === true) };
+}
+
+/** Whether the argument's last name changed under resolution while the host sent no `link`: the final component was
+ *  then a symlink the host did not name (an older host), which folded only the target into `inRoot` and `secret`, so
+ *  the name a delete or rename acts on is unchecked and `inRoot` is taken as false (red-team recheck of #990,
+ *  2026-10-22). An unchanged last name (only a directory on the way moved it, `/tmp` → `/private/tmp`) is not. */
+function unnamedLink(f: { given: string; path: string; link?: string }, cwd: string): boolean {
+    if (f.link !== undefined) return false;
+    const last = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+    return last(normalPath(f.given.startsWith("/") ? f.given : cwd + "/" + f.given)) !== last(normalPath(f.path));
 }
 
 /**
@@ -251,13 +277,23 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     let described = false;
     let runner = false;
     if (!m) why.push(`${facts.argv[0]} has no program manifest`);
-    else {
+    else if (facts.program.inRoot && SHIPPED_LIST.includes(m)) {
+        // Keyed on the host's resolved file, never on the argv spelling: a program a workspace file named `cat` is not cat
+        // (PROGRAM_MANIFEST.md, ruled 2026-10-22). A manifest the workspace registered for its own entrypoint is not shipped.
+        why.push(`${facts.program.path} is inside a workspace root, so no shipped manifest describes it`);
+    } else {
         const byArg = new Map(facts.paths.map((p) => [p.arg, p]));
-        const resolve = (p: { arg: number | "cwd"; given: string }): Resource => {
+        const resolve = (p: { arg: number | "cwd" | "repo"; given: string }): Resource => {
+            // The repository's root, when the host found one; else the cwd (a call outside a repository fails in git).
+            if (p.arg === "repo") {
+                if (!facts.repo) return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
+                const r = normalPath(facts.repo.root);
+                return { kind: "fs", path: r, inRoot: (place?.roots ?? []).some((x) => r === normalPath(x) || r.startsWith(normalPath(x) + "/")), secret: false, exists: true, ...placeAmongRoots(r, place?.roots) };
+            }
             if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
             const f = byArg.get(p.arg);
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
-            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeAmongRoots(f.path, place?.roots) } : { kind: "fs", path: p.given };
+            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot && !unnamedLink(f, facts.cwd.path), secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots, facts.cwd.path) } : { kind: "fs", path: p.given };
         };
         const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
         effects = d.effects;
@@ -280,7 +316,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeAmongRoots(p.path, place?.roots), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot && !unnamedLink(p, facts.cwd.path), secret: p.secret, exists: p.exists, ...placeBoth(p, place?.roots, facts.cwd.path), ...(p.link !== undefined ? { link: p.link } : {}), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,
@@ -432,7 +468,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
     if (applied !== undefined) lines.push(sandboxAppliedLine(applied, asked));
     if (f.env.set.length) lines.push({ label: "Sets", value: f.env.set.join(", "), ...(f.env.free ? {} : { warn: true }) });
     for (const p of f.paths) {
-        const notes = [!p.inRoot && "outside the roots", p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
+        const notes = [!p.inRoot && (unnamedLink(p, f.cwd.path) ? "a symlink the host did not name, so where the name is was not checked" : "outside the roots"), p.secret && "looks like a secret", p.containsSecret === true && "has secret-looking files beneath it",
             p.containsSecret === null && "too large to check for secrets", !p.exists && "does not exist yet"].filter(Boolean);
         // A hashed argument is the script that runs: where it was named, the file it resolved to, and its hash, which
         // stands where a binary's version does.

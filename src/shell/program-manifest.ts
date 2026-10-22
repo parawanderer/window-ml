@@ -71,6 +71,19 @@ export type CommandSpec = {
     echoes?: boolean;
     /** It walks its directory arguments (`rg`, `find`): the host checks what is beneath them for secrets. */
     recursive?: boolean;
+    /** GNU permutes options and operands (`rm a -r` is recursive); BSD stops at the first operand (`rm a -r` removes two
+     *  files). An argument starting with `-` after an operand, `--` included, makes the call `unknown`. */
+    optionsFirst?: boolean;
+    /** A lone `-` is a FILE NAME here (`rm -` removes the file `-`), not stdin: it stays a path operand. */
+    dashIsPath?: boolean;
+    /** The command may reach anything in its repository, whatever its operands say (`git rm` removes the parent
+     *  directories it empties; `git mv` creates names under a directory): its effects also fall on the directory it
+     *  acts in and on the repository's root (`resolve({arg: "repo"})`). */
+    repoWide?: boolean;
+    /** Operands are git pathspecs: one that starts with `:` (magic; `:/x` is relative to the repository root, not to
+     *  the cwd), or holds `*`, `?`, `[` or `\` (a glob git expands to every match, or an escape), is not one path the
+     *  host can resolve, so the call is `unknown`. */
+    pathspecs?: boolean;
     /** Arguments the caller inserts right after this command's name, turning off what the repository's own config could
      *  make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call. */
     harden?: readonly string[];
@@ -144,10 +157,10 @@ export type DescribeOptions = {
     version?: string;
     /** The call's environment changes, by name. */
     envSet?: readonly string[];
-    resolve?: (p: { arg: number | "cwd"; given: string }) => Resource;
+    resolve?: (p: { arg: number | "cwd" | "repo"; given: string }) => Resource;
 };
 
-const unresolved = (p: { arg: number | "cwd"; given: string }): Resource => ({ kind: "fs", path: p.given });
+const unresolved = (p: { arg: number | "cwd" | "repo"; given: string }): Resource => ({ kind: "fs", path: p.given });
 
 /** Describes one argv by its program's manifest. `argv[0]` is the program as the caller wrote it; its basename must
  *  name the manifest's program. */
@@ -191,10 +204,12 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
 
     if (!d.described) { d.effects = "unknown"; return d; }
     const resolve = opts.resolve ?? unresolved;
+    const repoWide = cmd.repoWide === true;
     const dirRes = (): Resource => d.dirArg !== null ? resolve({ arg: d.dirArg, given: argv[d.dirArg] }) : resolve({ arg: "cwd", given: "." });
     const commandTargets: Resource[] = [
         ...operandPaths.map((i) => resolve({ arg: i, given: argv[i] })),
         ...(d.actsOnDir ? [dirRes()] : []),
+        ...(repoWide ? [dirRes(), resolve({ arg: "repo", given: "." })] : []),
     ];
     const sets: EffectsData[] = [];
     for (const t of terms) {
@@ -267,7 +282,15 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
     };
     for (let i = start; i < argv.length; i++) {
         const a = argv[i];
-        if (afterTerminator) { operands.push(i); continue; }
+        if (afterTerminator) {
+            if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
+            operands.push(i);
+            continue;
+        }
+        if (cmd.optionsFirst && operands.length > 0 && a !== "-" && a.startsWith("-")) {
+            unknown(`${a} follows an operand: GNU reads it as an option, BSD as a file name`);
+            continue;
+        }
         if (a === "--" || a === "--end-of-options") {
             if (cmd.terminator === a || (a === "--" && cmd.terminator === "--end-of-options")) { afterTerminator = true; continue; }
             unknown(`${a} is not a terminator this command honours`);
@@ -275,6 +298,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
         }
         if (a === "-" || !a.startsWith("-")) {
             if (cmd.subcommands && operands.length === 0) return { operands, pathsFrom, sub: i };
+            if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
             operands.push(i);
             continue;
         }
@@ -363,7 +387,7 @@ function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: 
     return { operands };
 }
 
-/** After parsing a command: its path operands (returned; `-` is stdin, not a path), what it acts on without them, and its
+/** After parsing a command: its path operands (returned; `-` is stdin, not a path unless `dashIsPath`), what it acts on without them, and its
  *  own effects over those targets. */
 function finishCommand(argv: readonly string[], cmd: CommandSpec, operands: number[], pathsFrom: number | undefined, d: CallDescription,
     terms: Terms, unknown: (w: string) => void): number[] {
@@ -373,10 +397,12 @@ function finishCommand(argv: readonly string[], cmd: CommandSpec, operands: numb
     let paths: number[] = [];
     if (cmd.paths === "operands") paths = operands;
     else if (typeof cmd.paths === "object") paths = operands.slice(pathsFrom ?? cmd.paths.operandsFrom);
-    paths = paths.filter((i) => argv[i] !== "-");
+    if (!cmd.dashIsPath) paths = paths.filter((i) => argv[i] !== "-");
     for (const i of paths) d.pathArgs.push({ arg: i, role: "read" });
     d.actsOnDir = cmd.paths === "repo" || (paths.length === 0 && cmd.noPaths === "cwd" && cmd.paths !== "none");
-    if (d.dirArg !== null && cmd.paths !== "repo") unknown("a directory flag on a command that does not act on a repository");
+    if (d.dirArg !== null && cmd.paths !== "repo" && !cmd.repoWide) unknown("a directory flag on a command that does not act on a repository");
+    // The host resolves operands against the cwd; git resolves them against the -C directory (and composes repeated -C).
+    if (d.dirArg !== null && cmd.repoWide && paths.length) unknown("a directory flag moves where the operands resolve");
     if (cmd.effects.includes("unknown")) unknown(`${[d.program, ...d.subcommand].join(" ")} is described as unknown`);
     for (const t of cmd.effects) terms.push({ term: t, targets: "command" });
     return paths;
@@ -419,7 +445,12 @@ function compareVersions(a: number[], b: number[]): number {
 const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "write-names", "runs-code", "unknown"]);
 const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive"]);
 const PRIMARY_KEYS = new Set(["args", "until", "effects", "argIsPath", "runner"]);
-const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden"]);
+/** Whether git may read a pathspec as something other than the one path it spells: `:` magic, or a glob or escape git expands. */
+function notLiteralPathspec(a: string): boolean {
+    return a.startsWith(":") || /[*?[\\]/.test(a);
+}
+
+const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]);
 const MANIFEST_KEYS = new Set(["program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
 
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
@@ -451,7 +482,7 @@ export function validateManifest(m: unknown): string[] {
         if (![undefined, null, "--", "--end-of-options"].includes(c.terminator as string)) errs.push(`${at}.terminator`);
         if (c.harden !== undefined && !(Array.isArray(c.harden) && c.harden.every((a) => typeof a === "string" && isObj(c.flags) && a in (c.flags as object))))
             errs.push(`${at}.harden: flags this command lists, so hardening never makes a call unknown`);
-        for (const b of ["numericFlag", "clusters", "echoes", "recursive"]) if (c[b] !== undefined && typeof c[b] !== "boolean") errs.push(`${at}.${b}: boolean`);
+        for (const b of ["numericFlag", "clusters", "echoes", "recursive", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]) if (c[b] !== undefined && typeof c[b] !== "boolean") errs.push(`${at}.${b}: boolean`);
         if (c.maxOperands !== undefined && !(Number.isInteger(c.maxOperands) && (c.maxOperands as number) >= 0)) errs.push(`${at}.maxOperands`);
         if (c.okCodes !== undefined) codes(c.okCodes, `${at}.okCodes`);
         if (!isObj(c.flags)) errs.push(`${at}.flags: an object`);

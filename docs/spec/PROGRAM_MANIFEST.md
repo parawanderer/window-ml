@@ -25,6 +25,17 @@ Per program, subcommand and flag:
 survey that calls `ml.sh` waits on a promise, and the dialect's steps measure interpreter work, not the person or the
 host. (The earlier sentence in `SHELL.md` charging a process to the step budget was wrong for that reason.)
 
+### The delete family (`rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; 2026-10-22)
+
+A delete, a rename and a create of a directory entry are `write-names` on the operand: `rm`, `rmdir`, `unlink` on each operand, `mv` on EVERY operand (the sources, and the destination operand itself: the narrow reading, since a manifest cannot know that `mv a dir` creates `dir/a`). A recursive flag (`rm -r`, `-R`) walks the operand, so the host answers `containsSecret`; `mv` and `git mv` are `recursive` at the command level, since moving a directory renames everything beneath it with no flag (the same red-team pass: `mv src/keep src/keep2` renamed `src/keep/.env` free). Flags that exist on one platform only (`rm -I -P -W -x`, GNU long options, `mv -t -T -b -S -u`, `rmdir -p`) are not listed, so the call is `unknown`. Four command keys carry what `cat` and `ls` never needed:
+
+- `optionsFirst`: GNU permutes options and operands (`rm a -r` is recursive), BSD stops at the first operand (`rm a -r` removes two files; `rm a -- -b` removes a file named `--` as well). An argument starting with `-` after an operand, `--` included, makes the call `unknown`.
+- `dashIsPath`: a lone `-` is a file name (`rm -` removes the file `-`), so it stays a path operand instead of meaning stdin.
+- `repoWide` (git): the command's effects also fall on the directory it acts in (`-C`, else the cwd) and on the repository's root (`resolve({ arg: "repo" })`, the host's `repo.root`; the cwd when none was found). `git rm` removes the parent directories it empties, so `git rm src/gen/only.ts` can remove the top-level `src`; a claim on the operand alone would be free under the sandbox. With `-C` and operands it is `unknown`: git resolves the operands against the `-C` directory (composing a repeated `-C`), the host against the cwd, so the host would walk the wrong path (review of #990, 2026-10-22).
+- `pathspecs` (git): an operand starting with `:` is pathspec magic (`:/x` is relative to the repository root), and one holding `*`, `?`, `[` or `\` is a glob git expands to every match (or an escape: `a\*` names `a*`); neither is one path the host can resolve: `unknown`. Found by the red-team pass on #990 (2026-10-22): `git rm *.ts` removed a secret among its matches under a claim that named only `*.ts`. `--icase-pathspecs` is `unknown` for the same reason: on a case-sensitive host `Secret.ts` matches `secret.ts`, a name the host never resolved (red-team recheck, 2026-10-22). A repository with `core.ignoreCase=true` does the same without the flag; that is not caught yet.
+
+A nested `rm` inside a root stays free under `host-sandbox` (ruled 2026-10-22): the built-in default is one algebra over effects, as it is for `find -delete` and for overwriting a file with `>`, never a per-program exception, so deleting a top-level name, a root, a secret or anything outside the roots asks and a nested delete does not; a person who wants stricter or wider writes a policy, and stored policies are judged before the built-in.
+
 ## Pinning
 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the
@@ -49,8 +60,8 @@ person may never call.
 ## Trust
 
 As for library manifests: shipped with the extension or installed by the person; never from a page, never from the
-program. A first set covers `git` (the read subcommands without their writing flags), `rg`, `ls`, `cat`, `wc`, `head`,
-`tail`, `find` without its effectful flags, `jq`.
+program. A first set covers `git` (the read subcommands without their writing flags, and `rm`/`mv`), `rg`, `ls`, `cat`, `wc`, `head`,
+`tail`, `find` without its effectful flags, `jq`, `rm`, `mv`, `rmdir`, `unlink`.
 
 ## Registering a program (2026-10-15)
 
@@ -96,6 +107,8 @@ compiled to a standalone binary. Keying a manifest solely on `argv[0]` fails on 
 `"python3"`, which as a bare binary is an un-describable universal code runner (`effects: ["unknown"]`, `runner: true`).
 
 A program manifest therefore matches a **command prefix** `(program, entrypoint?)` rather than `argv[0]` alone:
+
+**A shipped manifest never describes a program inside a workspace root** (ruled 2026-10-22): when the host reports `program.inRoot` for the resolved file, `shFacts` leaves the call `unknown` and undescribed, whatever `argv[0]` is spelled (`./cat`, `bin/ls`); a workspace-registered entrypoint manifest is unaffected.
 
 | Field | For a standalone binary (`rg`, `git`) | For an interpreted script (`node scripts/index.mjs`) |
 | --- | --- | --- |

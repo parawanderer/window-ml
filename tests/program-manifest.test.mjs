@@ -27,7 +27,7 @@ const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.
 // --- the shipped manifests ---
 
 test("the first set from PROGRAM_MANIFEST.md ships, one file per program", () => {
-    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "find", "git", "head", "jq", "ls", "rg", "tail", "wc"]);
+    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "find", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
     for (const [file, m] of Object.entries(manifests)) assert.equal(m.program, file, `${file}.json names ${m.program}`);
 });
 
@@ -301,12 +301,38 @@ test("write-names on a path-valued flag or find primary lands on the value, not 
     assert.ok(keys(f.effects).some((k) => k.startsWith("write-names:fs:/w/g:")), "primary: write-names on the value");
 });
 
+// --- the delete family: optionsFirst, dashIsPath, repoWide, pathspecs (docs/spec/PROGRAM_MANIFEST.md) ---
+
+test("optionsFirst: an option after an operand, `--` included, is unknown; before it, or after `--`, it is not", () => {
+    const m = manifests.rm;
+    assert.equal(describeCall(["rm", "a", "-r"], m).described, false, "GNU: recursive; BSD: two files");
+    assert.equal(describeCall(["rm", "a", "--", "-b"], m).described, false, "BSD removes a file named --");
+    assert.equal(describeCall(["rm", "-r", "a"], m).recursive, true);
+    assert.equal(describeCall(["rm", "--", "-r"], m).recursive, false);
+    assert.equal(describeCall(["rm", "a", "-"], m).described, true, "a lone - is a file name, not an option");
+});
+
+test("dashIsPath: a lone - is claimed as a name; a command without it still reads it as stdin", () => {
+    assert.deepEqual(describeCall(["rm", "-"], manifests.rm).pathArgs.map((p) => p.arg), [1]);
+    assert.deepEqual(describeCall(["cat", "-"], manifests.cat).pathArgs, []);
+});
+
+test("repoWide + pathspecs: git rm / mv also claim the directory and the repository root; a `:` pathspec is unknown", () => {
+    const at = (arg) => ({ kind: "fs", path: arg === "repo" ? "/repo" : arg === "cwd" ? "/repo/src" : `/repo/src/${arg}` });
+    const d = describeCall(["git", "rm", "a"], git, { ...V, resolve: ({ arg, given }) => arg === "repo" || arg === "cwd" ? at(arg) : { kind: "fs", path: `/repo/src/${given}` } });
+    const names = d.effects.filter((e) => e.res.names).map((e) => e.res.path).sort();
+    assert.deepEqual(names, ["/repo", "/repo/src", "/repo/src/a"]);
+    for (const a of [":/x", ":(glob)*.ts", ":!x"]) assert.equal(describeCall(["git", "rm", a], git, V).described, false, a);
+    assert.equal(describeCall(["git", "rm", "--", ":/x"], git, V).described, false, "after -- too");
+    assert.equal(describeCall(["git", "-C", "sub", "rm", "a"], git, V).described, false, "-C with operands: git resolves them against sub, the host against the cwd");
+});
+
 // --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
 
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "18075fc660564baa5db258a2a7279cdb4def08fdf403b3247501e3abb2b6bcba";
+const VECTOR_PIN = "9deeb830d82eefec2674eb6e2bcc48dbc8c90a8c14503de8b9260b9d60bd1b7c";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");

@@ -48,7 +48,7 @@ test("the options are cwd, env and timeoutMs, each checked; an unknown one is re
 // --- what the host is asked ---
 
 test("the manifests are found by the program's basename, and only the shipped ones", () => {
-    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "git", "head", "jq", "ls", "rg", "tail", "wc"]);
+    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
     assert.equal(manifestFor(["/usr/bin/git"])?.program, "git");
     assert.equal(manifestFor(["python3"]), undefined);
     assert.equal(manifestFor(["constructor"]), undefined, "a prototype name is not a manifest");
@@ -177,14 +177,14 @@ test("K3c: find -delete is a names write, so deleting under a root itself or a t
     assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);
 });
 
-// --- place resolution: the markers follow the host's RESOLVED path, never the lexical `given` ---
+// --- place resolution: the markers follow the host's RESOLVED path, widened by the lexical `given` ---
 
-test("a symlink's place is what it RESOLVED to: markers off `path`, never `given`, whatever the script typed", async () => {
+test("a symlink's place is what it RESOLVED to, widened by the name as typed: markers off `path` and `given`", async () => {
     // The host resolves symlinks (realpath) and reports `path`; sh-call.ts builds topLevel/isRoot TEXTUALLY over that
-    // path and its roots (placeAmongRoots), never over `given`. So a symlink that resolves OUT of the roots is not
-    // top-level in-root (an in-place write to it asks, because inRoot is the host's realpath answer), and one that
-    // resolves TO a root is a root (a names-write under it asks). The host's own symlink defect is #12's; this pins
-    // the extension's half: the markers follow `path`.
+    // path and its roots (placeAmongRoots), and over `given` against the cwd, taking the wider (#990). So a symlink that
+    // resolves OUT of the roots is covered by nothing (an in-place write to it asks, because inRoot is the host's
+    // realpath answer), and one that resolves TO a root is a root (a names-write under it asks). The host's own symlink
+    // defect is #12's; this pins the extension's half: the markers follow `path`, widened by the typed name.
     const { free, boundFor } = await import("../src/effects.ts");
     const B = boundFor("host-sandbox");
     const at = (paths, argv, cwd = { path: "/w", inRoot: true }) =>
@@ -195,7 +195,9 @@ test("a symlink's place is what it RESOLVED to: markers off `path`, never `given
         ["git", "diff", "--output=.envrc"]);
     assert.equal(out.described, true, out.why.join("; "));
     assert.equal(out.paths[0].path, "/tmp/x", "the fact carries the resolved target, not the typed name");
-    assert.deepEqual([out.paths[0].topLevel, out.paths[0].isRoot], [false, false], "place markers off the resolved path: /tmp/x's parent is not a root");
+    // Since #990 (2026-10-22) the place is also read off the name as typed, which the call writes through: /w/.envrc is
+    // top-level even though /tmp/x is not. That only widens the claim; inRoot stays the host's realpath answer.
+    assert.deepEqual([out.paths[0].topLevel, out.paths[0].isRoot], [true, false], "the typed name .envrc is a top-level entry; /tmp/x's parent is not a root");
     assert.equal(free(out.effects, B), false, "a write to a symlink whose target is outside the roots is covered by nothing");
     // b: src/link is a symlink to /w (the root). A names-write under it removes the root's top-level names.
     const via = at([{ arg: 1, given: "src/link", path: "/w", inRoot: true, secret: false, exists: true }],
@@ -235,6 +237,50 @@ test("a `..` operand from a nested cwd resolves to its target: find .. -delete u
     const deep = del(["find", ".", "-delete"], [dir(1, ".", "/w/src/gen")], "/w/src/gen");
     assert.deepEqual([deep.paths[0].topLevel, deep.paths[0].isRoot], [false, false]);
     assert.equal(free(deep.effects, B), true, "a removal two levels down is free");
+});
+
+// --- a program inside a workspace root is never described by a shipped manifest (ruled 2026-10-22) ---
+
+/** Facts for `argv` whose program the host resolved to `path`, with `inRoot` as the host reports it. */
+const inRootFacts = (argv, path, inRoot) => facts({ argv, program: { path, inRoot }, paths: argv.slice(1).map((a, i) => ({ arg: i + 1, given: a, path: `/w/${a}`, inRoot: true, secret: false, exists: true })) });
+
+test("in-root program: a file in a root named like a shipped program is undescribed, whatever the argv spelling", () => {
+    for (const [argv, path] of [[["./cat", "x"], "/w/cat"], [["bin/ls", "x"], "/w/bin/ls"], [["cat", "x"], "/w/cat"], [["/w/head", "x"], "/w/head"]]) {
+        const f = shFacts(inRootFacts(argv, path, true), null, { roots: ["/w"] });
+        assert.equal(f.effects, "unknown", argv[0]);
+        assert.equal(f.described, false, argv[0]);
+        assert.deepEqual(f.why, [`${path} is inside a workspace root, so no shipped manifest describes it`], argv[0]);
+        assert.equal(f.program.inRoot, true, "the fact itself is unchanged");
+        assert.equal(shFacts(inRootFacts(argv, path, true)).effects, "unknown", "with no place given either");
+    }
+});
+
+test("in-root program: a name with no manifest stays unknown for the old reason; a link the host reports in-root is refused too", () => {
+    const none = shFacts(inRootFacts(["./frob", "x"], "/w/frob", true), null, { roots: ["/w"] });
+    assert.equal(none.effects, "unknown");
+    assert.deepEqual(none.why, ["./frob has no program manifest"]);
+    // rm has a shipped manifest since 2026-10-22: an in-root ./rm is refused for being in a root.
+    const rm = shFacts(inRootFacts(["./rm", "x"], "/w/rm", true), null, { roots: ["/w"] });
+    assert.deepEqual([rm.effects, rm.why], ["unknown", ["/w/rm is inside a workspace root, so no shipped manifest describes it"]]);
+    const link = shFacts(inRootFacts(["link-to-cat", "x"], "/w/link-to-cat", true), null, { roots: ["/w"] });
+    assert.equal(link.effects, "unknown", "inRoot is the host's word about the resolved file");
+    assert.equal(link.described, false);
+});
+
+test("in-root program: a program the host resolved outside the roots is described exactly as before (the default)", () => {
+    for (const [argv, path] of [[["cat", "x"], "/bin/cat"], [["/bin/cat", "x"], "/bin/cat"], [["ls", "x"], "/usr/bin/ls"]]) {
+        const f = shFacts(inRootFacts(argv, path, false), null, { roots: ["/w"] });
+        assert.equal(f.described, true, argv[0]);
+        assert.notEqual(f.effects, "unknown", argv[0]);
+        assert.deepEqual(f.why, [], argv[0]);
+    }
+});
+
+test("in-root program: a registered entrypoint manifest still applies (the refusal is for the shipped ones)", () => {
+    const f = shFacts(scriptFacts({ program: { path: "/w/bin/node", inRoot: true } }), null, placeOf);
+    assert.equal(f.described, true);
+    assert.notEqual(f.effects, "unknown");
+    assert.deepEqual(f.why, []);
 });
 
 // --- interpreted scripts: (program, entrypoint) pinned by sha256 (PROGRAM_MANIFEST.md, rulings of 2026-10-19) ---
@@ -290,7 +336,8 @@ test("ruling 2: the pin is the RESOLVED file's hash, the path must resolve to th
     assert.equal(shFacts(scriptFacts({ sha256: null }), null, placeOf).described, false, "an unreadable file has no hash to match");
     const card = shCardLines(shFacts(scriptFacts({ argv: ["node", "scripts/t.mjs", "a.txt"], path: "/w/scripts/tool.mjs" }), null, placeOf));
     const script = card.find((l) => l.label === "Script");
-    assert.equal(script.value, `scripts/t.mjs → /w/scripts/tool.mjs (sha256 ${PIN.slice(0, 12)})`);
+    assert.equal(script.value, `scripts/t.mjs → /w/scripts/tool.mjs (sha256 ${PIN.slice(0, 12)}) (a symlink the host did not name, so where the name is was not checked)`);
+    // No `link` and a changed last name: a symlink an older host did not name, said so rather than "outside the roots".
 });
 
 test("intended, not a gap: a symlinked entrypoint FILE is undescribed even when its target has the pinned content (a pin names a path AND a hash)", () => {
