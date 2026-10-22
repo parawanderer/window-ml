@@ -200,7 +200,7 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
  *  tell. */
-export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null; sha256?: string | null }
+export interface ShPathFact { arg: number; given: string; path: string; inRoot: boolean; secret: boolean; exists: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null; sha256?: string | null; link?: string }
 
 /** Where a resolved path sits among the roots: a root itself, or a top-level entry of one (its parent is a root).
  *  Both are textual over the host's realpaths, which the roots are too. Unset when the roots are not known. */
@@ -209,6 +209,15 @@ function placeAmongRoots(path: string, roots: readonly string[] | undefined): { 
     const p = normalPath(path), rs = roots.map(normalPath);
     const parent = p === "/" ? null : normalPath(p.slice(0, p.lastIndexOf("/")) || "/");
     return { topLevel: parent !== null && rs.includes(parent), isRoot: rs.includes(p) };
+}
+
+/** {@link placeAmongRoots} of a path fact, and of its symlink when it is one: `rm top` removes the link `top` while its
+ *  target may be nested, so the place is the wider of the two (review of #990, 2026-10-22). */
+function placeBoth(f: { path: string; link?: string }, roots: readonly string[] | undefined): { topLevel?: boolean; isRoot?: boolean } {
+    const a = placeAmongRoots(f.path, roots);
+    if (f.link === undefined || a.topLevel === undefined) return a;
+    const b = placeAmongRoots(f.link, roots);
+    return { topLevel: a.topLevel || b.topLevel === true, isRoot: a.isRoot === true || b.isRoot === true };
 }
 
 /**
@@ -271,7 +280,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
             if (p.arg === "cwd") return { kind: "fs", path: facts.cwd.path, inRoot: facts.cwd.inRoot, secret: secretBeneath(facts.cwd.containsSecret), exists: true, ...placeAmongRoots(facts.cwd.path, place?.roots) };
             const f = byArg.get(p.arg);
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
-            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeAmongRoots(f.path, place?.roots) } : { kind: "fs", path: p.given };
+            return f ? { kind: "fs", path: f.path, inRoot: f.inRoot, secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots) } : { kind: "fs", path: p.given };
         };
         const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
         effects = d.effects;
@@ -294,7 +303,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
-        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeAmongRoots(p.path, place?.roots), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
+        paths: facts.paths.map((p) => ({ arg: p.arg, given: p.given, path: p.path, inRoot: p.inRoot, secret: p.secret, exists: p.exists, ...placeBoth(p, place?.roots), ...(p.link !== undefined ? { link: p.link } : {}), ...(p.containsSecret !== undefined ? { containsSecret: p.containsSecret } : {}), ...(p.sha256 !== undefined ? { sha256: p.sha256 } : {}) })),
         repo: facts.repo ? { root: facts.repo.root, reasons: [...facts.repo.reasons] } : null,
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,

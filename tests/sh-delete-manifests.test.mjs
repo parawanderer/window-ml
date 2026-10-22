@@ -41,9 +41,11 @@ function run(argv, o = {}) {
     const m = manifestFor(argv, { cwd, roots });
     const walked = new Set(m ? describeCall(argv, m, {}).pathArgs.filter((p) => p.walk).map((p) => p.arg) : []);
     const paths = argv.map((given, arg) => ({ given, arg })).slice(1).map(({ given, arg }) => {
-        const path = norm(given.startsWith("/") ? given : `${cwd}/${given}`);
+        const at = norm(given.startsWith("/") ? given : `${cwd}/${given}`);
+        // o.links maps a symlink to its target: the host reports the target as `path` and the link as `link`.
+        const path = o.links?.[at] ?? at, link = o.links?.[at] !== undefined ? { link: at } : {};
         return {
-            arg, given, path, inRoot: inRoot(path), secret: !!o.secret?.includes(path), exists: true,
+            arg, given, path, ...link, inRoot: inRoot(path), secret: !!o.secret?.includes(path), exists: true,
             ...(walked.has(arg) ? { containsSecret: !!o.beneath?.includes(path) } : {}),
         };
     });
@@ -346,6 +348,14 @@ test("git -C <dir> rm / mv with operands is unknown: git resolves them against <
         assert.equal(free(f.effects, SANDBOX), false, argv.join(" "));
     }
     assert.equal(run(["git", "-C", "sub", "status"]).described, true, "a read subcommand acts on the -C directory itself (control)");
+});
+
+test("rm / mv / unlink of a top-level symlink to a nested target is not free: the link is the name removed", () => {
+    // Guards: the host follows the last symlink, so `rm top` was claimed on the nested target /w/src/gen while rm removes the top-level name /w/top (review of #990, 2026-10-22).
+    const links = { "/w/top": "/w/src/gen" };
+    assert.equal(free(run(["rm", "src/gen"]).effects, SANDBOX), true, "the nested target itself is free (control)");
+    for (const argv of [["rm", "top"], ["unlink", "top"], ["mv", "top", "src/x"], ["rm", "-r", "top"]]) assert.equal(free(run(argv, { links }).effects, SANDBOX), false, argv.join(" "));
+    assert.equal(free(run(["rm", "src/l"], { links: { "/w/src/l": "/w/src/gen" } }).effects, SANDBOX), true, "a nested link to a nested target stays free");
 });
 
 test("git rm walks its operands: a submodule (a gitlink) goes with its whole worktree without -r", () => {

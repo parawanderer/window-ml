@@ -90,6 +90,9 @@ export interface HostPathFact {
     secret: boolean;
     exists: boolean;
     containsSecret?: boolean | null;
+    /** When the argument's last component is a symlink: the link itself (its parent's realpath plus its name), which a
+     *  names write removes or renames while `path` is its target. The host has already folded it into `inRoot` and `secret`. */
+    link?: string;
     /** For a `hash` argument (host 0.4.0): the sha256 of the resolved file after symlinks, null for anything but a
      *  regular file of at most 16 MiB. `start` refuses with `PinChanged` once it changes. */
     sha256?: string | null;

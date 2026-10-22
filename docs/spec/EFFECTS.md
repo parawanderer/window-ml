@@ -116,7 +116,8 @@ universal over the top level, not a list of protected names, so an unlisted name
 exception. A claim with no path (`cargo build` creating `target/` under a bare `write(fs(roots))`) is unaffected; the
 cost falls only on calls that NAME a top-level path, once, until a policy remembers them. The resolved fact that carries
 this is `ShPathFact.topLevel` (whether `path`'s parent is a configured root), computed by the worker from the host's
-`realpath` and its own roots. **`write-names` is a manifest WORD, not an operation** (ruled 2026-10-19 on lane 4's
+`realpath` and its own roots; for a symlink argument, of the link too (the host's `link` fact), since `rm top` removes
+the link `top` wherever its target is (review of #990, 2026-10-22). **`write-names` is a manifest WORD, not an operation** (ruled 2026-10-19 on lane 4's
 objection building K3c): it projects onto `write` with `names: true` on the `fs` resource, keyed apart from the
 in-place write so the two never de-duplicate. A separate operation would make a person's policy fail open: `has("write")`
 would never fire for `rm`, `mv` or `sed -i`, and a universal over `writes` would be vacuously true for `rm .envrc`.
