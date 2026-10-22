@@ -27,7 +27,14 @@ export class Parser {
 
     parseProgram(): Node {
         const body: Node[] = [];
-        while (this.peek().t !== "eof") body.push(this.parseStatement());
+        // Nesting deep enough to exhaust the stack is outside the dialect, so it asks like any other refusal; a bare
+        // RangeError would be answered as the script's own error (sw-readonly.ts treats only NotInDialect/Denied as refused).
+        try {
+            while (this.peek().t !== "eof") body.push(this.parseStatement());
+        } catch (e) {
+            if (e instanceof RangeError) throw new NotInDialect("the script nests too deeply");
+            throw e;
+        }
         return { type: "Program", body };
     }
     parseStatement(): Node {
@@ -152,7 +159,7 @@ export class Parser {
             // Not operators here, and said so where they stand: left alone, the expression just ends and the caller
             // reports whatever token it then meets (an `expected ')'`), which names neither the keyword nor the fix.
             if (t.t === "name" && (t.v === "in" || t.v === "instanceof"))
-                throw new NotInDialect(t.v === "in" ? "'in' is not available; test a field with `!== undefined`" : "'instanceof' is not available; use Array.isArray or typeof");
+                throw new NotInDialect(t.v === "in" ? "'in' is not available; read the field itself, or compare it with `undefined` on an object whose keys you know" : "'instanceof' is not available; use Array.isArray or typeof");
             if (t.t !== "punct" || !(t.v in BP) || BP[t.v] < minbp) break;
             const op = t.v; this.i++;
             // JS refuses an UNPARENTHESISED unary operand on the left of `**` (`-2 ** 2` is a SyntaxError, because

@@ -27,10 +27,13 @@ disabled "headless" option as a placeholder for this.
   survive an eviction.
 - **The box**: several agents at once on one GPU box compete for it. The request hints (`use`, `session`) are where
   the server would learn that they are one tree of work.
-- **A child's status, when its parent asks for it** (Shane, 2026-10-22). A work order may ask the child to report
-  status; the child then appends a short status entry now and then: what it last did, in a sentence, and a timestamp.
+- **Proposed: a child's status, when its parent asks for it** (Shane, 2026-10-22). A work order may ask the child to
+  report status; the child then appends a short status entry now and then: what it last did, in a sentence, and a timestamp.
   Nothing is edited in place, the way `AGENT_MAIL.md` keeps messages immutable: the child's current status is its
   newest entry, and "last updated" is that entry's time. The parent, the session list and the agent graph read the
   newest entry; the whole list is the child's progress log. Open: the cadence (the work order's, the child's
   judgement, or both), whether an entry counts against the child's budget, and whether a status the child stops
-  updating is shown as stale after some time.
+  updating is shown as stale after some time. It sits beside `SESSION_CONTRACT.md`'s digest ("A digest instead of the
+  event stream"), a status line the child's RUNTIME derives on its utility model: the entries are what the AGENT says it
+  did, the digest what the runtime saw; which one a parent reads first, or whether the digest is built from the entries,
+  is not decided.

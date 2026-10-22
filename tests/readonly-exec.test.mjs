@@ -1920,6 +1920,11 @@ test("`in` refused changes only the message: lookalikes still run, for…in keep
     await assert.rejects(run(`for (const k in {a: 1}) {}`), (e) => outOfDialect(e) && /for…in/.test(e.message));
 });
 
+test("nesting deep enough to exhaust the stack is out of the dialect (it asks), never a RangeError the script answers", async () => {
+    for (const js of ["(a)=>".repeat(5000) + "1", "(".repeat(20000) + "1" + ")".repeat(20000), "[".repeat(20000) + "]".repeat(20000)])
+        await assert.rejects(run(js), (e) => outOfDialect(e) && /nests too deeply/.test(e.message), js.slice(0, 12));
+});
+
 // --- STORED tables (POINTER_VALUES slice 7) -------------------------------------------------------------------------
 // A facade over a PREVIEW whose whole table is in the value store: `col` / `select` / `records` (and a `head` past the
 // preview) read every row through a reader bound to the run, and return promises. No construct was added, but a new kind

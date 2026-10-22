@@ -119,6 +119,9 @@ test("on an undescribed call a DENY over a resource's field does not fire, so th
     assert.deepEqual(run("(c) => c.effects.writes.some((r) => r.names === true)", facts, "deny"), { decision: undefined }, "the unknown resource has no names");
     assert.deepEqual(run('(c) => c.effects.pairs.some((e) => e.op === "write" && e.res.kind === "fs")', facts, "deny"), { decision: undefined }, "nor an fs kind");
     assert.deepEqual(run('(c) => c.effects.has("write")', facts, "deny"), { decision: "deny" });
+    // Every field but kind reads undefined, so a DENY that tests an ABSENCE does fire (the prompt says so).
+    for (const src of ["(c) => c.effects.writes.some((r) => !r.inRoot)", "(c) => c.effects.writes.some((r) => r.inRoot !== true)", "(c) => !c.effects.writes.every((r) => r.inRoot)"])
+        assert.deepEqual(run(src, facts, "deny"), { decision: "deny" }, src);
 });
 
 test("a question about an operation or kind the algebra does not have is broken, not a quiet false", () => {

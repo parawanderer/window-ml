@@ -99,8 +99,8 @@ card shows the call's resolved facts, not the script.
   runs a call by itself. It is how a person is STRICTER than the default without refusing: "ask on every `rm` under
   `src/`", where the built-in default frees a nested delete inside a root. Three rules come with it:
   1. **The narrow direction, like `deny`.** An `ask` whose evaluation read a `null` fact fires (docs/dev/policies.md, "A
-     null fact is unknown"). Over an undescribed call (`effects: "unknown"`) a test of a resource's field does not fire,
-     and the call asks anyway, so no `ask` fails open.
+     null fact is unknown"). Over an undescribed call (`effects: "unknown"`) an `ask` that needs a resource's field to
+     hold does not fire, and the call asks anyway; one that tests an absence fires. Either way no `ask` fails open.
   2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
      an `allow` the `ask` overrides.
   3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored
