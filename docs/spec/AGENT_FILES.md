@@ -18,17 +18,19 @@ never sees anything about it: every convention but `AGENTS.md` is off until turn
 Under the file names, the conventions seen so far are the same three things:
 
 1. **Instructions found by where they sit**, read on every run: a file name looked up from the cwd to the workspace
-   root (and sometimes a per-user file), with an import syntax that pulls in another file.
+   root (and sometimes a per-user file), with an import syntax that pulls in another file. Conventions differ on what
+   several matches mean: the nearest one wins (`AGENTS.md`) or all of them are concatenated (`CLAUDE.md`), so each
+   description says which.
 2. **An index read up front, with the text fetched on demand**: a folder of documents, each with a one-line
-   description that is the index entry (Claude Code's skills and its memory, `MEMORY.md` plus one file per fact).
+   description that is the index entry (Claude Code's skills, and its memory: a `MEMORY.md` index plus topic files).
 3. **A store the agent writes to**: Claude Code's memory folder.
 
 So a convention is DATA, not code: a short description saying which file names, which folders, which field is the
-index entry, and which import syntax. Adding a convention is adding a description. Two ship:
+index entry, and which import syntax. Adding a convention is adding a description. Two are proposed:
 
 | Convention | Default | What it names (as of 2026-10-22; checked against the tool's docs when built) |
 | --- | --- | --- |
-| `agents-md` | on | `AGENTS.md`, nearest one from the cwd up to the root wins, following the agents.md convention |
+| `agents-md` | on (Shane, 2026-10-22) | `AGENTS.md`, nearest one from the cwd up to the root wins, following the agents.md convention |
 | `claude-code` | off | `CLAUDE.md` and `CLAUDE.local.md` up from the cwd, `~/.claude/CLAUDE.md`, `@path` imports, `.claude/skills/<name>/SKILL.md` (frontmatter `description`), the project's memory folder |
 
 A plugin system, where a convention is code, is not proposed: one extension point that data describes does not need
@@ -37,7 +39,9 @@ one. Revisit it when a second kind of extension needs code.
 ## Reading goes through the shell
 
 - **Every read is an `ml.sh` read**, judged by the same policies as any other ([`POLICIES.md`](POLICIES.md)): free
-  inside a workspace root, never of a secret path, asks otherwise. Nothing here widens what a run may read.
+  once a manifest marks the program's call read-only, and then in host mode only inside a workspace root and never of
+  a secret path (in container mode, within what is mounted); anything else asks. Nothing here widens what a run may
+  read.
 - **A file outside every root is not read** unless the person adds that folder as a root. Claude Code's per-user file
   and its memory folder live under `~/.claude/`, so turning `claude-code` on reads only the workspace's files until
   then; the setting says so.
@@ -46,14 +50,14 @@ one. Revisit it when a second kind of extension needs code.
 
 ## The context budget
 
-This repository's `AGENTS.md` is about 9k tokens. That is a large share of a local model's window on every run, so
+This repository's `AGENTS.md` measured about 6-7k tokens on 2026-10-22 (25k characters; its size check allows 35k). That is a large share of a local model's window on every run, so
 the instructions are not pasted whole:
 
 - **Up to a cap, a file is loaded whole** (the cap is open; [`PROMPT_BUDGET.md`](PROMPT_BUDGET.md) decides it).
 - **Past the cap, it is indexed**: each section by its heading and first sentence, fetched on demand by the model, the
   way skills already work. The index is what costs tokens on every run.
-- **The run log and both exports carry exactly what the model saw** (the AGENTS.md rule), with the file and commit
-  each piece came from.
+- **The run log and both exports carry exactly what the model saw** (the AGENTS.md rule), with the file each piece
+  came from and, where it is in a repository, the commit.
 
 ## Trust
 
