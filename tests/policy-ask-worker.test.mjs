@@ -214,7 +214,7 @@ test("a page's FETCH_URL from an unapproved origin is refused before any policy 
 
 /** A page-built run (`START_RUN` from tab 8) whose model calls fetch_url on `OTHER` once; the delegated tool's ml.fetch is
  *  the page's `FETCH_URL`. Returns the worker, the tool's result, and what a later `FETCH_URL` of the same URL got. */
-async function pageRun({ ask }) {
+async function pageRun({ ask, after }) {
     let n = 0, toolResult;
     const page = { tab: { id: 8, url: "https://builder.example/" } };
     const bg = loadBackground({
@@ -243,6 +243,7 @@ async function pageRun({ ask }) {
         model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
     } }, page);
     assert.ok(res.data, "the run finished");
+    if (after) await after(bg);
     const later = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, page);
     return { toolResult, later };
 }
@@ -257,4 +258,20 @@ test("the control: with no ask, the same approval consents the tab to the URL fo
     const { toolResult, later } = await pageRun({ ask: false });
     assert.equal(toolResult, "ok");
     assert.equal(later.error, undefined, "the uncredentialed approval is remembered for the tab (the tier the ask withholds)");
+});
+
+test("an ask added after the tab was consented to a URL withdraws the consent: the page's own ml.fetch of it is refused", T, async () => {
+    const { toolResult, later } = await pageRun({ ask: false, after: (bg) => addAsk(bg) });
+    assert.equal(toolResult, "ok", "the first approval ran and was remembered for the tab");
+    assert.match(String(later.error ?? ""), /hasn't been approved/, "the remembered consent no longer answers once an ask matches the URL");
+});
+
+test("a deny added after the tab was consented to a URL withdraws the consent too", T, async () => {
+    const { later } = await pageRun({ ask: false, after: (bg) => policies(bg, { op: "add", effect: "deny", source: '(c) => c.host === "other.example"', label: "Never other.example" }) });
+    assert.match(String(later.error ?? ""), /hasn't been approved/);
+});
+
+test("an ask about another host leaves the tab's consent alone", T, async () => {
+    const { later } = await pageRun({ ask: false, after: (bg) => policies(bg, { op: "add", effect: "ask", source: '(c) => c.host === "elsewhere.example"', label: "Ask about elsewhere" }) });
+    assert.equal(later.error, undefined);
 });

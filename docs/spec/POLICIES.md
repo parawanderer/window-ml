@@ -117,6 +117,12 @@ card shows the call's resolved facts, not the script.
   self-source, a remembered approval and an `allow`). The store, the policy page, `propose_policy` and the model's
   `ml.current.policies` take `ask`. The card names the policy (`AskWhy.cause` `ask-policy`) and an exec card's "Keep"
   leaves out the fetch URLs an `ask` matches. How: [`docs/dev/policies.md`](../dev/policies.md), "The `ask` answer".
+
+  An `ask` binds only where the extension decides. A read the page can make itself (its own origin, the page it is on,
+  an uncredentialed read of window.ml's public repository) stays free to the page's own `ml.fetch`, and a run the page
+  hosts (`window.ml.agent`) answers its cards with the page's own `approve`: a card in either place would bind nothing,
+  since the page can skip it with a plain `fetch()`. What the page could NOT do itself, it loses: a consent the tab
+  remembers from an earlier approval is withdrawn while an `ask` or a `deny` matches the URL (red-team recheck of #999).
 - It changes only **whether the person is asked**, never what is enforced: whatever bounds the call (for a shell call
   the container, the OS sandbox and the workspace roots) bounds it whatever a policy says.
 - It never reaches the refused tier: a call from a page, or one made from the page's world, is refused before any policy

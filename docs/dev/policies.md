@@ -131,8 +131,16 @@ policy decides"). It never refuses and never runs a call; it only takes away the
   approves the exec's code on its own card, where an `ask` over `fetch` shows only as the missing "Keep".
 - **Approving an asked `fetch_url` remembers nothing.** On a worker-built run the grant is the run's (`grantRunFetch`); on
   a page-built run the tab gets a ONE-TIME grant (`grantOnceFetch`, spent by `FETCH_URL`), never the session consent
-  `consentFetch` mints, so a script on the tab cannot repeat the fetch without a card. A URL the tab was consented to
-  BEFORE the `ask` existed stays consented for the page's own `ml.fetch`: `FETCH_URL` judges no policy, `allow` or `ask`.
+  `consentFetch` mints, so a script on the tab cannot repeat the fetch without a card.
+- **A remembered consent yields to an `ask` or a `deny`.** `FETCH_URL` (`sw-fetch-url.ts` `withdrawn`) judges a consent
+  the tab remembers (`fetchConsent`) over the global policies and those of every run the tab hosts (`activeRuns`); while
+  an `ask` or a `deny` matches, or the store is not loaded, the consent does not answer and the page's script is refused.
+
+**What an ask cannot reach.** The free tiers of the page's own `ml.fetch` are judged by no policy: a same-origin read,
+the page it is on, an uncredentialed self-source read and the URLs an approved exec spelled out. The first three are
+reads the page can make itself with `fetch()`; the last was approved on that exec's card. The page-hosted loop
+(`ml-agent-run.ts`) frees the same tiers, and its `approve` is the page's own callback. A card in either place would
+bind nothing, so neither consults a policy (`tests/redteam-policy-ask-free-tiers.test.mjs`).
 
 ## The first consumer: remembered URLs
 
