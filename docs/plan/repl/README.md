@@ -297,7 +297,8 @@ listed as remaining is DONE unless named below.
      string at about 0.5G characters in milliseconds). Built in #1010 (merged a83afab2, 2026-10-23, the janitor reviewed): the
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
-     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost, unowned.
+     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost; taken by root-k's subagent as #1045, a NEGATIVE result
+     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)).
   4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
      ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day (builder corrected within
