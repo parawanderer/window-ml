@@ -46,8 +46,15 @@ that needs a decision goes to the coordinator, who writes the ruling into the sp
    its refresh lands; a run started in that window must not lose the tool to timing. When the host does not answer, the
    precheck tells the model and no card is shown (a committed test). Measured in tests: 0 starts before the card is
    answered (asserted); the evidence run passes, fails on each of five causes, covers no calls and the plain host, on the
-   FAKE host only. (c) stays "built, not measured on a real host" until one real evidence run on the sandboxed macOS
-   host over a real recorded call is carried in `ROOT_K_RESULT_2.md`, a negative result included. (c) is a
+   FAKE host only. MEASURED the same day on the real sandboxed macOS host (wmlhost 0.7.0, Seatbelt, the built worker's
+   native port bridged to the binary; `ROOT_K_RESULT_2.md` on #1055): `file a.txt` re-ran under `write:none,
+   exec:program-only`, exited 0 in 9 ms, `evidence {calls:1}` set, 147 ms from the first host message to the outcome;
+   `touch b.txt` drafted as a reader (a lying manifest) read on the card as "read, free" since the card is derived from
+   the draft, exited 1 in 7 ms under the sandbox, `evidenceFailure` stored, the entry sandbox-only; nothing started
+   before the card was answered in either run. Accepted residual, in the result file: a program that would write on the
+   plain host but writes nothing under the sandbox and exits 0 passes (the check is exit code, envelope and protected
+   names, never a diff of the root), the spec's own evidence-before-trust limit; a root diff is a later widening of the
+   check, on a need. Not measured on Linux/Landlock. (c) is a
    new tool and (b) adds message types: each gets the red-team pass AGENTS.md requires, written by a separate agent with
    tests that fail first (`tests/redteam.test.js`; the `redteam` skill). The sh-policy session's #990 (destructive
    programs, no shipped manifest inside a workspace root) and #995 (the manifest JSON Schemas) are K's edges, already on
