@@ -484,6 +484,31 @@ The fake host starts sessions too, so the form is exercised at phone width in th
 exercised against a browser: `chat.start` mints a session and answers the first turn, `agent.start` mints a
 running one, and `tabs.list` returns three demo tabs so the picker has something real in it.
 
+### The dot field behind it
+
+On a wide page the start page draws a FIELD behind the box (`src/chat/start-field.ts`, the water in
+`start-water.ts`): a grid of dots on a slow swell, drawn in 2.5D, flattened toward the box by a ramp of its signed
+distance, with a damped wave equation under it that a held press on open ground stirs. A dot becomes a pill along
+the surface's slope, and where the WATER slopes its colour channels split (chromatic aberration), so a ripple shows in
+colour and calm water never does. One WebGL `POINTS` draw a frame; the water is stepped on the CPU at 60 Hz.
+
+- **Every knob is one object, `FIELD`**, read each frame; the web build exposes it as `__startField`, which is what a
+  tuning panel binds to. Its defaults are the values chosen in one. The ink and its opacity are per theme, picked by
+  the page's own background (`outline-color: var(--bg)` on the canvas), not by the theme setting.
+- **The canvas is `position: fixed` over the whole window**, under the list, which draws over it frosted. Opening or
+  closing the list slides over the field instead of resizing it (a resize rebuilds the grid and stills the water).
+- **A press stirs it only on open ground** (`onOpenGround`, `NOT_GROUND`): never the box, a pill, a button or the list.
+  While held, nothing on the page selects.
+- **It stands still** (one frame, no clock, no water) for reduced motion, a battery at or under 20% and not charging
+  (`navigator.getBattery`, Chrome and Edge only), frames slower than 25 fps for three seconds, or `FIELD.still`. Each
+  lifts with its cause, except slowness. The reason is `data-still` on the canvas.
+- **Never on a phone**: the narrow layout does not mount it. Leaving the start page unmounts it, and its drawing
+  stops with it (`tests/e2e/start-field.spec.mjs` counts the draws).
+- **What it costs** (M5 Pro, 1440×900 at 2×, Metal), over the same page with it still: at 60 fps about 5% of a core in
+  the page and 7% in the GPU process; at 120 fps, which the display offers and the swell does not need, three times
+  the GPU. Almost all of it is compositing a window-sized canvas; the simulation is about 0.14 ms a frame. So `fps`
+  caps it at 60.
+
 ## Saved sessions
 
 `src/session/session-store.ts` keeps a session's DEBUG EVENTS in IndexedDB, and `capabilities.persistence` says whether this

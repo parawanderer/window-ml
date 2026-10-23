@@ -25,6 +25,10 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
+      # The pinned Node (.nvmrc), not the runner's own: test.mjs refuses an older one.
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
       - run: node scripts/pr-conflicts.mjs --branch "${GITHUB_REF_NAME}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -41,6 +45,10 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
+      # The pinned Node (.nvmrc), not the runner's own: test.mjs refuses an older one.
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
       - run: node scripts/pr-conflicts.mjs --all
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

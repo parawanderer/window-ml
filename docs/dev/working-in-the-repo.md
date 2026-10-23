@@ -482,8 +482,9 @@ lie is the one it never merges and the person reads. `merge-when-green` skill.
 Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at
 once (this one on the UI, another on the benchmark/pointers), and the PR is what runs CI — which is what
 catches what one session broke for another. A green local `npm test` is not that check: it does not run
-the e2e suite or the real-CPython tests, and it runs on whatever Node you have. CI's unit suite runs on Node 26
-only: the 22 and 24 legs were dropped on 2026-10-15 (the reason is beside the matrix in `tests.yml`).
+the e2e suite or the real-CPython tests. Node is pinned to 26 (`.nvmrc`, which every CI job reads, and `engines`
+with `engine-strict`); `npm test` refuses an older one. The 22 and 24 legs were dropped on 2026-10-15 (the reason is
+beside the matrix in `tests.yml`).
 
 `.github/workflows/tests.yml` runs on `pull_request` (and on pushes to main), and **cancels superseded
 runs per branch** so a fix supersedes the run it replaces instead of queueing behind it. Main is exempt, because

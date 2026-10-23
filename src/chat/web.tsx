@@ -16,6 +16,7 @@ import { installViewPrefs } from "./view-mode";
 import { installPageTheme } from "./page-theme";
 import { ChatApp } from "./chat-app";
 import { fakePairing } from "../pairing/fake-pairing";
+import { FIELD } from "./start-field";
 
 // `__chatFakeLatencyMs`, set by a spec's init script before load, slows every answer: how a spec sees what the page
 // draws while it waits (a first list, a placeholder), which an instant demo host never shows.
@@ -28,6 +29,8 @@ const local = (globalThis as { __chatFakeLocal?: unknown }).__chatFakeLocal;
 if (typeof local === "string") host.local.add(local);
 // Scripting handle for the specs and for poking at the page by hand: emit events, restart a runtime, change grants.
 (globalThis as { __chatFake?: unknown }).__chatFake = host;
+// The start page's dot field's knobs (start-field.ts), live: for a tuning panel bound to them while it runs.
+(globalThis as { __startField?: unknown }).__startField = FIELD;
 // `?long=<n>` adds a chat of n turns and an agent run of n steps (long-session.ts): the transcript at a size the demo
 // world never reaches, for measuring and for watching a reload.
 const longN = Number(new URLSearchParams(globalThis.location?.search ?? "").get("long")) || 0;

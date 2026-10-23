@@ -158,6 +158,10 @@ export async function configureExtension(/** @type {any} */ sw, /** @type {Recor
     // The self-approval list is kept by origin in local storage since slice 3, and the worker read the old sync setting
     // once, at its start: a spec that names `pageApprovalDomains` means that list, so it is written there as origins.
     if (Array.isArray(config.pageApprovalDomains)) {
+        // Wait for the one-time site-list migration to finish first: it reads `pageApprovalDomains` and writes
+        // `ml_site_selfapprove`, and a direct write here that races it can be overwritten with the migration's
+        // earlier (empty) read.
+        await sw.evaluate(() => /** @type {any} */ (globalThis)._siteSchemaReady?.() ?? Promise.resolve());
         await sw.evaluate(async (/** @type {string[]} */ entries) => {
             const origins = entries.map((e) => { try { return new URL(/:\/\//.test(e) ? e : `https://${e}`).origin; } catch { return null; } }).filter(Boolean);
             await chrome.storage.local.set({ ml_site_selfapprove: [...new Set(origins)].sort() });

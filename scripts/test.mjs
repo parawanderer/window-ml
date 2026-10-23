@@ -24,6 +24,14 @@ import { fileURLToPath } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// THE NODE THE REPO PINS (.nvmrc, `engines`): CI runs it, and a suite that passes on another major is not the one CI
+// runs. Refused up front with the fix, rather than failing later in a way that looks like a test's fault.
+const PINNED = Number(readFileSync(path.join(ROOT, ".nvmrc"), "utf8").trim());
+if (Number(process.versions.node.split(".")[0]) < PINNED) {
+    console.error(`test.mjs: Node ${process.versions.node} is older than the pinned ${PINNED} (.nvmrc). On macOS: \`brew install node\`, and drop any PATH entry for an older keg (\`/opt/homebrew/opt/node@22/bin\`, often in ~/.zshrc); with nvm: \`nvm use\`.`);
+    process.exit(1);
+}
 const ALL = readdirSync(path.join(ROOT, "tests"))
     .filter((f) => /\.test\.(js|mjs)$/.test(f)).sort();
 
