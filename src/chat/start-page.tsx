@@ -24,6 +24,7 @@ import { DevicePicker } from "./device-picker";
 import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
+import { onOpenGround, startField } from "./start-field";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
 const modelCache = new Map<string, ModelChoice[]>();
@@ -45,6 +46,18 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
         return () => clearTimeout(t);
     }, [on, ms]);
     return on || held;
+}
+
+/**
+ * The dot field behind the start page (start-field.ts), calm around the box `boxOf` finds. A canvas fixed over the
+ * whole window, under everything (the list draws over it), that takes no pointer events: a press on the page's open
+ * ground stirs it. Not on a phone, where it would only cost battery behind a page that is all box.
+ * @gallery none a WebGL animation behind the start page; seen with `node tests/e2e/chat-shots.mjs`
+ */
+function StartField({ boxOf }: { boxOf: () => Element | null }) {
+    const canvas = useRef<HTMLCanvasElement>(null);
+    useEffect(() => (canvas.current ? startField(canvas.current, boxOf, (t) => onOpenGround(t, ".chat-start-page")) ?? undefined : undefined), []);
+    return <canvas class="chat-start-field" ref={canvas} aria-hidden="true" />;
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
@@ -207,6 +220,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
             </div>
         ) : null}
         <div class="chat-start-page">
+            {narrow ? null : <StartField boxOf={() => box.current?.closest(".chat-start-box") ?? null} />}
             <div class="chat-start-col">
                 {/* NARROW: the choices sit OUTSIDE the box, above it and across the full width, as the phone app's
                     own start screen has them. Inside it they read as part of the message being composed; they are not
