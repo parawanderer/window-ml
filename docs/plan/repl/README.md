@@ -158,7 +158,7 @@ one item in hand and goes idle: root-k finishes (d), the Settings registration p
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops, PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
 and continue. The janitor reviews every open code PR in dependency order: #1052, #1042, #1048, #1055, #1051, #1045,
-#1041, #1046, then (d); the coordinator reviews result files and specs only. The lanes resume when the week resets.
+#1041, #1046, then (d), then #1068; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -360,7 +360,13 @@ listed as remaining is DONE unless named below.
   PRs, the shell probes then `propose_policy` to `sh`, file-kept policies, co-writing's two items), and the small
   unowned items of this section (the `ended` record at a deadline kill, #1007's two uncharged reads, the `sed`
   over-count, the `ask` re-check, the lost-POLICIES-add race, the corpus append) run through Sonnet subagents that the
-  session briefs, reviews and merges, never two in one tree.
+  session briefs, reviews and merges, never two in one tree. The red team's `MANIFESTS` pass is #1068 (2026-10-23,
+  test-only, stacked on #1048's branch `manifests/store` as ruled, head b05f0650, rebased on the janitor's B2 fix
+  fec2cbd7): the three page properties hold (pinned, positive controls, mutation-checked); one residual B2 gap as a
+  failing-first todo, the entrypoint branch of `storeRefusal` runs no shipped-program check, so a stored entrypoint
+  manifest naming `git` is kept, survives load and shadows `git.json` at call time. The fix is root-k's, on #1048's
+  branch before it merges (a hole in the item being landed, inside the freeze); #1068 merges after #1048 and the
+  janitor reviews it. The red team's `propose_manifest` pass on #1055 follows.
 
 ## The lanes
 
