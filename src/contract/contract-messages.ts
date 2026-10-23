@@ -96,8 +96,9 @@ export interface MlWireRequest {
 /** Why a wire call failed. `Absent`: the client's realm has no such member (the dialect reports it as a refusal).
  *  `Refused`: the sender, the handle or the run is not one the worker vouches for. `SecretHandle`: an argument named a
  *  secret, which is never resolved to a value here. `Denied`: the call's gate or the person said no. `TooLarge`: the
- *  answer cannot cross and has no pointer to stay home under. `BadRequest`: malformed. `Failed`: the member threw. */
-export type MlWireErrorCode = "Absent" | "Refused" | "SecretHandle" | "Denied" | "TooLarge" | "BadRequest" | "Failed";
+ *  answer cannot cross and has no pointer to stay home under. `OverBudget`: the call would take the client past its step
+ *  budget, shared by every call its code makes. `BadRequest`: malformed. `Failed`: the member threw. */
+export type MlWireErrorCode = "Absent" | "Refused" | "SecretHandle" | "Denied" | "TooLarge" | "OverBudget" | "BadRequest" | "Failed";
 
 /** A value too big to cross: it stays in the run's store under `token`, and a narrower read (a pipe) fetches part of it. */
 export interface MlWirePointer { token: string; label: string; size: number }

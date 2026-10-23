@@ -12,7 +12,7 @@
 //
 // Pure: no DOM, no chrome, no I/O.
 
-import { runPipe, splitStages } from "./text-pipe";
+import { runPipe, splitStages, type PipeLimits } from "./text-pipe";
 import type { TokenKind } from "../contract/contract-render";
 import { type TableLike } from "../table/table-data";
 export type { DerefRead, DerefMeta } from "../contract/contract-pointers";
@@ -133,8 +133,9 @@ export function pipeInput(v: TokenValue, slot: "in" | "out" = "out"): string {
 
 /** Read a pointer through `pipe`. A leading `latex` / `img` cast is applied first (it needs the typed value);
  *  everything after is the ordinary text-pipe dialect. Any stage that fails THROWS with an actionable message —
- *  the dialect's existing contract — and the caller turns that into a tool error the model can correct. */
-export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | string[] | null): string {
+ *  the dialect's existing contract — and the caller turns that into a tool error the model can correct. `limits`
+ *  holds the line stages to a caller's budget (text-pipe.ts `PipeLimits`); absent, they run as the tool's own do. */
+export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | string[] | null, limits?: PipeLimits): string {
     const stages = pipeStages(pipe);
     // With NO pipe the model wants the value as it would read it — the rendered table, not the {columns,rows}
     // JSON that only exists so the structural stages have something to work on.
@@ -156,7 +157,7 @@ export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | str
     // The remaining stages go through as an ARRAY, never re-joined into a string: joining and letting runPipe
     // re-split is what used to tear `grep -E 'error|warn'` into two stages (silently returning nothing, or —
     // for `'head|tail'` — a plausible wrong answer).
-    return rest.length ? runPipe(text, rest) : text;
+    return rest.length ? runPipe(text, rest, limits) : text;
 }
 
 /** Resolve a `pipe` argument to its STAGES — the canonical form for EXECUTION. A string is split on unquoted

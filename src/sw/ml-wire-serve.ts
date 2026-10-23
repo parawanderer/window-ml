@@ -6,6 +6,7 @@
 // (a function, a proxy, a class instance, a getter) reaches the client: only its data does.
 
 import type { MlWireAnswer, MlWireErrorCode, MlWirePointer, MlWireRequest, WireRealm } from "../contract";
+import { STEP_BUDGET } from "../readonly-exec/limits";
 
 /** A per-call decision on a gated member: run it, refuse it, or ask the person and wait for `decided`. */
 export type WireGateDecision = { allow: true } | { deny: string } | { ask: string; decided: Promise<boolean> };
@@ -275,6 +276,9 @@ export interface WireClient {
      *  (docs/spec/ML_WIRE.md, "the step an ask rides is a fact of the handle, never of the message"). Absent: code no
      *  step started, which can raise no ask. */
     step?: { seq: number; local: { step: number; seq: number } };
+    /** The evaluation steps its code's calls may still spend, all of them together (docs/spec/ML_WIRE.md, "One budget a
+     *  cell"). Each call alone is already bounded; this is what bounds a loop of them. */
+    budget: { left: number };
 }
 
 const clients = new Map<string, WireClient>();   // state: plumbing — one in-flight cell each
@@ -285,12 +289,12 @@ export const wireClient = (handle: string): WireClient | undefined => clients.ge
 /**
  * Open a client for code the worker is about to start, and get the handle its calls must carry.
  * @param c where its calls will come from, the run it is for (null: none), its realm, its tab's URL now, and the
- *   running step that started it (kept only with a run)
+ *   running step that started it (kept only with a run). It starts with a whole {@link STEP_BUDGET}.
  * @returns the handle, and `close` to call when the code has finished: later calls on the handle are refused
  */
 export function openWireClient(c: { from: WireFrom; run: string | null; realm: WireRealm; tabUrl?: () => string; step?: WireClient["step"] }): { handle: string; close: () => void } {
     const handle = `mlw-${crypto.randomUUID()}`;
-    clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => ""), ...(c.run && c.step ? { step: { seq: c.step.seq, local: { ...c.step.local } } } : {}) });
+    clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => ""), ...(c.run && c.step ? { step: { seq: c.step.seq, local: { ...c.step.local } } } : {}), budget: { left: STEP_BUDGET } });
     return { handle, close: () => { clients.delete(handle); } };
 }
 
