@@ -18,6 +18,9 @@ let locked = false;   // state: plumbing — the realm's lockdown latch, one-way
 /** The realm's cell gate, installed with the lockdown (cell-gate.ts). */
 let gate: CellGate | null = null;   // state: plumbing — installed once per realm, before `lockdown()`
 
+/** Whether this realm's `lockdown()` has run and left it frozen: the latch `lockdownReadonly` sets, for tests and the worker's own checks. */
+export function realmLocked(): boolean { return locked; }
+
 /**
  * The names a worker's `globalThis` must keep after the strip: the JS intrinsics Pyodide needs, plus a
  * few host APIs that carry no capability (console, timers — string arguments refused — the URL and
@@ -144,20 +147,19 @@ _h
  * The Python half of taking `pyodide_js` (the Pyodide API object, and through it `_api` and `_module`) out of a cell's
  * reach. Pyodide's own modules import from it at THEIR import time (`webloop`'s `scheduleCallback`, the package loader's
  * `loadedPackages`), so both are imported first and keep what they bound; then every `pyodide_js*` entry leaves
- * `sys.modules`, and the import hook's loader for each old module lets go of it: the old module's spec keeps that
- * loader alive past a collection, where `gc.get_objects()` finds it.
+ * `sys.modules`, and the import hook's loader for each old module (its `__loader__`, its spec's `loader`) lets go of
+ * it: the old module's spec keeps that loader alive past a collection, where `gc.get_objects()` finds it.
  */
 const PYODIDE_JS_SEAL = /* python */ `
-import sys as _ml_s, gc as _ml_gc
+import sys as _ml_s
 import pyodide.webloop, pyodide._package_loader
 from _pyodide._importhook import JsLoader as _ml_L
-_ml_old = [m for k, m in _ml_s.modules.items() if k == "pyodide_js" or k.startswith("pyodide_js.")]
 for _ml_k in [k for k in _ml_s.modules if k == "pyodide_js" or k.startswith("pyodide_js.")]:
-    del _ml_s.modules[_ml_k]
-for _ml_o in _ml_gc.get_objects():
-    if isinstance(_ml_o, _ml_L) and any(_ml_o.jsproxy is m for m in _ml_old):
-        _ml_o.jsproxy = None
-del _ml_s, _ml_gc, _ml_L, _ml_old, _ml_k, _ml_o
+    _ml_m = _ml_s.modules.pop(_ml_k)
+    for _ml_l in (getattr(_ml_m, "__loader__", None), getattr(getattr(_ml_m, "__spec__", None), "loader", None)):
+        if isinstance(_ml_l, _ml_L):
+            _ml_l.jsproxy = None
+del _ml_s, _ml_L, _ml_k, _ml_m, _ml_l
 `;
 
 /**

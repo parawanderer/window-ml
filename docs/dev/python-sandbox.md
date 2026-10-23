@@ -193,9 +193,17 @@ a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own sur
 the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
 respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
-(1) Agoric `ses` `lockdown()` after one `runPythonAsync("1")` warmup (Pyodide's result path
-assigns `.constructor`, which `lockdown()` then freezes — lock first and every later call
-throws `ConversionError`); (2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
+(1) Agoric `ses` `lockdown()` with `overrideTaming: "severe"`, after one `runPythonAsync("1")` warmup. Pyodide's
+`getPyProxyClass` assigns `.constructor` on a plain object, which a frozen `Object.prototype` refuses for every PyProxy
+kind no warmup made (6 of 14 kinds measured: tuple, set, generator, ndarray, iterator, memoryview); `severe` is ses's
+own override fix, a setter that defines an OWN property and refuses `Object.prototype` itself. An accessor we define
+ourselves is refused by ses's permit check ("Accessor not expected"): that was main's state until 2026-10-23, the throw
+swallowed and the realm never frozen. A lockdown that leaves the realm unfrozen now fails the boot (`realmLocked()` is
+the latch). (1b) `pyodide_js` out of a cell's reach: unregistered once `pyodide.webloop` and the package loader have
+bound what they import at load, purged from `sys.modules`, its old `JsLoader`s cleared, and re-registered as a stand-in
+holding only `_api.config` (`webloop.run_until_complete` and the patched `asyncio.run` import it at call time).
+`tests/redteam-python-lockdown.test.mjs` holds both, with a gc walk for any JsProxy of the API, `_api` or `_module`.
+(2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
 needs and a few capability-free host APIs stay; `eval`, `Function`, `fetch`, `importScripts`,
 `postMessage`, `navigator`, `chrome`, every Node module go. There is no deny list to keep
 current. (3) The harness's module references (`ast.parse`, `json.loads`, `textwrap.indent`,
