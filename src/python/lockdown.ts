@@ -18,6 +18,9 @@ let locked = false;   // state: plumbing — the realm's lockdown latch, one-way
 /** The realm's cell gate, installed with the lockdown (cell-gate.ts). */
 let gate: CellGate | null = null;   // state: plumbing — installed once per realm, before `lockdown()`
 
+/** Whether this realm's `lockdown()` has run and left it frozen: the latch `lockdownReadonly` sets, for tests and the worker's own checks. */
+export function realmLocked(): boolean { return locked; }
+
 /**
  * The names a worker's `globalThis` must keep after the strip: the JS intrinsics Pyodide needs, plus a
  * few host APIs that carry no capability (console, timers — string arguments refused — the URL and
@@ -141,6 +144,27 @@ _h
 `;
 
 /**
+ * The Python half of taking `pyodide_js` (the Pyodide API object, and through it `_api` and `_module`) out of a cell's
+ * reach. Pyodide's own modules import from it at THEIR import time (`webloop`'s `scheduleCallback`, the package loader's
+ * `loadedPackages`), so both are imported first and keep what they bound; then every `pyodide_js*` entry leaves
+ * `sys.modules`, and the import hook's loader for each old module (its `__loader__`, its spec's `loader`) lets go of
+ * it: the old module's spec keeps that loader alive past a collection, where `gc.get_objects()` finds it.
+ */
+const PYODIDE_JS_SEAL = /* python */ `
+def _ml_seal():
+    import sys
+    import pyodide.webloop, pyodide._package_loader
+    from _pyodide._importhook import JsLoader
+    for k in [k for k in sys.modules if k == "pyodide_js" or k.startswith("pyodide_js.")]:
+        m = sys.modules.pop(k)
+        for loader in (getattr(m, "__loader__", None), getattr(getattr(m, "__spec__", None), "loader", None)):
+            if isinstance(loader, JsLoader):
+                loader.jsproxy = None
+_ml_seal()
+del _ml_seal
+`;
+
+/**
  * Boot a readonly-only Python worker: tame the JS intrinsics, strip the scope to the allow list, and
  * capture the harness's module references before any cell runs. Never undone — the readonly worker is
  * locked down at boot and stays that way (`full` mode runs in a separate worker that is never locked).
@@ -156,34 +180,41 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
     //    prototype chain throw. `lockdown()` is once per realm; a second call is a no-op here.
     if (!locked) {
         // Pyodide's PyProxy class factory (`Module.getPyProxyClass`) builds a descriptor map with
-        // `n.constructor = ...` on a plain `{}`, which `lockdown()` then freezes non-writable so the
-        // assignment throws `Cannot assign to read only property 'constructor'`. The factory caches
-        // per flag bitfield, so a single warmup only pre-creates the class for ONE flag combination
-        // and the table/DataFrame path hits the uncached one. Fix: give `Object.prototype.constructor`
-        // an accessor setter BEFORE the freeze — `lockdown()` preserves accessors (just makes them
-        // non-configurable), so the setter still materialises an own property on every assignment.
-        try {
-            Object.defineProperty(Object.prototype, "constructor", {
-                get() { return Object; },
-                set(v: unknown) {
-                    Object.defineProperty(this, "constructor", {
-                        value: v, writable: true, enumerable: true, configurable: true,
-                    });
-                },
-                configurable: true,
-                enumerable: false,
-            });
-        } catch { /* already an accessor or non-configurable */ }
+        // `n.constructor = ...` on a plain `{}`. A frozen `Object.prototype.constructor` is the override
+        // mistake: the assignment throws `Cannot assign to read only property 'constructor'`, and the factory
+        // caches per flag bitfield, so the table/DataFrame path hits a combination no warmup made (#735).
+        // `overrideTaming: "severe"` is ses's own fix: it turns that property (and the rest of the tamed
+        // prototypes') into an accessor whose setter defines an OWN property on `this` and refuses
+        // `this === Object.prototype`. An accessor we define ourselves is refused by ses's permit check
+        // ("Accessor not expected"), which left the realm unfrozen.
         // Warm up the basic eval path too (cheap, keeps the first cell from being the first conversion).
         try { await py.runPythonAsync("1", { globals: py.globals }); } catch { /* unwarmable: the later cells will say so */ }
         // The cell gate wraps `Promise.prototype.then`/`finally`, so it goes in before `lockdown()` freezes them.
         // It throws on a Pyodide without the internals it hooks: no worker boots then, rather than one whose cells
         // can schedule Python past their result (cell-gate.ts).
-        // Once per realm, apart from the `locked` latch: a `lockdown()` that throws leaves the latch unset.
         gate ??= installCellGate(py);
-        try { (globalThis as any).lockdown({ errorTaming: "unsafe" }); locked = true; } catch { /* already locked */ }
+        try {
+            (globalThis as any).lockdown({ errorTaming: "unsafe", overrideTaming: "severe" });
+        } catch (e) {
+            // A second call in a realm already locked is fine; a realm left unfrozen must not run a cell.
+            if (!Object.isFrozen(Object.prototype) || !Object.isFrozen(Promise.prototype)) throw e;
+        }
+        locked = true;
     }
     if (!gate) throw new Error("lockdownReadonly: this realm is already locked down, so the cell gate cannot be installed");
+
+    // 1b. `pyodide_js` out of a cell's reach: `import pyodide_js` reached `_api` (`runPythonInternal`, `rawRun`) and
+    //     `_module` (`ccall`, `HEAP`, `PyProxy_getAttrsQuiet`). Two imports in `webloop` run at CALL time
+    //     (`run_until_complete` and the patched `asyncio.run` read `pyodide_js._api.config`), so the name stays
+    //     registered, as a stand-in holding `config.enableRunUntilComplete` and nothing else. It is the import
+    //     hook's, not a `sys.modules` entry, so a cell that pops it gets it back on the next import. `_nodeSock` and
+    //     `abortSignalAny` stay absent, so those imports fail as they do in a browser. A seal that throws fails the
+    //     boot: the worker must not run a cell with the API in reach.
+    // Only `config` is frozen: the import system sets `_api` on its parent whenever a cell re-imports it.
+    const standIn = { _api: { config: Object.freeze({ enableRunUntilComplete: !!py._api?.config?.enableRunUntilComplete }) } };
+    try { py.unregisterJsModule("pyodide_js"); } catch { /* a second boot of this interpreter, or a seal that threw before */ }
+    py.runPython(PYODIDE_JS_SEAL);
+    py.registerJsModule("pyodide_js", standIn);
 
     // 2. Capture what the relay needs BEFORE the strip: the worker's `onmessage` is defined once and
     //    frozen; the closure holds `postMessage` so the relay can still answer.

@@ -755,7 +755,6 @@ test("P2-gate: the hooks are fixed, so a cell that reaches Module cannot put the
 // cannot reach `pyodide_js`.
 test("P2-gate residual: pyodide_js.runPython bound to a source string and handed to setTimeout runs Python after the result", {
     skip,
-    todo: "a JS function bound to a source string carries no Python callable, so no door sees it; closed by making pyodide_js unreachable from a cell",
 }, async () => {
     const r = await scheduledThenAsk("_rt_pgs", `try:
     import pyodide_js
@@ -766,12 +765,12 @@ except BaseException as e:
     _m.woke.append("sched-fail:" + type(e).__name__)
 _m.woke.append("armed")
 "x"`);
-    assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `got ${JSON.stringify(r)}`);
+    // The lockdown's stand-in carries no `runPython`, so the scheduling itself fails; what matters is that no Python ran.
+    assert.ok(!r.woke.includes("ran") && r.woke.at(-1) === "armed", `got ${JSON.stringify(r)}`);
 });
 
 test("P2-gate residual: a later cell that reaches Module can point a revoked proxy back at its callable", {
     skip,
-    todo: "PyProxy_getAttrsQuiet(p).shared.ptr = id(f) from a later cell un-revokes the first cell's proxy; closed by making pyodide_js unreachable from a cell",
 }, async () => {
     await cell(`import types, sys
 from js import setTimeout
