@@ -65,7 +65,7 @@ const GENRES = {
     // the settings collect/preview/apply, the backup file over the archive's SQLite, and the sequence that drives them.
     backup: {
         about: "backup and restore: the file format, the key inventory against the sources, settings preview and apply, the file, the keyring",
-        files: ["backup-format.test.mjs", "backup-inventory.test.mjs", "backup-settings.test.mjs", "backup-file.test.mjs", "backup-keyring.test.mjs", "backup-run.test.mjs"],
+        files: ["backup-format.test.mjs", "backup-inventory.test.mjs", "backup-settings.test.mjs", "backup-file.test.mjs", "backup-keyring.test.mjs", "backup-run.test.mjs", "chat-record.test.mjs"],
     },
     // The read-only exec dialect: the parser and mediated evaluator, and each member a survey may call for free
     // (`ml.pipe`, `ml.jsonPath`, `ml.current`). Four files, so a change to the dialect has its own suite; its rule

@@ -347,7 +347,8 @@ export function previewRestore(up: UpgradedSettings, current: StorageSnapshot): 
             changes.push({
                 area, key, kind, group, ...(has ? { before: now[key] } : {}), after,
                 shown: { ...(has ? { before: show(key, now[key]) } : {}), after: show(key, after) },
-                ...(group === "risky" ? { why: RISKY_CONFIG[key] } : {}),
+                ...(group === "risky" ? { why: key === "chatUrl" && !own(next, API_KEY) && typeof now[API_KEY] === "string" && now[API_KEY] !== ""
+                    ? "this backup carries no API key, so THIS browser's saved API key would be sent to this address" : RISKY_CONFIG[key] } : {}),
             });
         }
     }

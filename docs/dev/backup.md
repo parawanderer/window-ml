@@ -82,19 +82,17 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 - **Restore shows what it would change before it changes anything**, sites it would approve listed first: approving a
   site lets its pages call `window.ml`. Unknown keys are dropped; a backup from an older version is read through the
   same upgrade a stored value would get, tested against a fixture.
-- **Resuming a restored chat (the open question, answered in part 2a).** A chat's `ml_session_<hash>` record, what
-  `ml.resumeChat` reads, is not a column of the archive, but its content is: `saveChatSession` writes the same
-  `StoredSession` into the session's `history` as `{ kind: "chat", session }` (sw-sessions.ts), and `history` is
-  archived and backed up whole. Archiving never removes the `ml_session_` record (only a delete does, `forgetStored`),
-  so in the same profile an archived chat still resumes. A RESTORED chat does not: nothing writes `ml_session_<hash>`
-  back. Un-archiving (`unarchiveSession`) restores the row, events and history into the session store and stops there,
-  while `ml.resumeChat` (`GET_SESSION`, background.ts) and a worker-hosted chat after an eviction (`rehydrate`,
-  sw-chat.ts, through `load`) read only the storage key. So a restored chat is readable, but resuming it from a page
-  fails until the key exists. The fix is small and belongs to the screens' PR: let `GET_SESSION` and `load` fall back to
-  the session store's history when the key is absent and the history is a chat (one source), or have `unarchiveSession`
-  write the key when `history.kind === "chat"`. Not done in 2a, which does not touch the archive schema or the chat
-  path. Related, found on the way and not touched: a session evicted with outcome `deleted` leaves its `ml_session_`
-  record behind, since only `forgetStored` removes it.
+- **Resuming a restored chat (the open question).** A chat's `ml_session_<hash>` record, what `ml.resumeChat` reads, is
+  not a column of the archive, but its content is: `saveChatSession` writes the same `StoredSession` into the session's
+  `history` as `{ kind: "chat", session }` (sw-sessions.ts), and `history` is archived and backed up whole. Archiving
+  never removes the `ml_session_` record (only a delete does, `forgetStored`), so in the same profile an archived chat
+  still resumes. A RESTORED chat does not: nothing writes `ml_session_<hash>` back. Un-archiving (`unarchiveSession`)
+  restores the row, events and history into the session store and stops there, while `ml.resumeChat` (`GET_SESSION`,
+  background.ts) and a worker-hosted chat after an eviction (`rehydrate`, sw-chat.ts, through `load`) read only the
+  storage key. So a restored chat is readable, but resuming it from a page fails until the key exists.
+  `unarchiveSession` now writes the record back from the history when it is a chat and no record exists
+  (`restoreChatRecord`, session/chat-record.ts), never over a live one. Not touched, noted: a session evicted with
+  outcome `deleted` leaves its `ml_session_` record behind, since only `forgetStored` removes it.
 
 ### What part 2a built
 
@@ -138,7 +136,8 @@ that did not have the key.
    would become able to call `window.ml` before the rest (a site on the self-approval list counts: that implies use).
    Then policies (those that allow first), then the settings that send traffic or widen what runs without asking
    (`chatUrl`, which would receive the saved API key; the shell, auto-approve and CDP flags), then everything else.
-   A credential is shown as `(set)`, never its value.
+   A credential is shown as `(set)`, never its value. A restore that changes `chatUrl` while the backup carries no API
+   key would send THIS browser's saved key to the backup's address, and the risky group says exactly that.
 
 `applyRestore` writes exactly `plan.changes`, one `set` per storage area, so the site lists and their layout marker land
 together; a key the backup does not carry is left alone. A list the backup holds empty and that is not empty here is a

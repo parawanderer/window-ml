@@ -272,3 +272,11 @@ test("a setting that is one of a few words must be one of them", () => {
     assert.deepEqual(up.sync, { debugMode: "overlay" });
     assert.deepEqual(up.dropped.map((d) => d.key).sort(), ["cardCorner", "theme"]);
 });
+
+test("a changed chatUrl with no API key in the backup says that this browser's saved key would be sent to it", () => {
+    const base = { format: "wml-settings", v: 1, created: "x", apiKeyIncluded: false, local: {} };
+    const why = (sync, current) => planRestore({ ...base, sync }, { sync: current, local: {} }).changes.find((c) => c.key === "chatUrl").why;
+    assert.match(why({ chatUrl: "https://elsewhere.test/v1" }, { ...DEFAULT_CONFIG, apiKey: "mine" }), /saved API key would be sent/);
+    assert.doesNotMatch(why({ chatUrl: "https://elsewhere.test/v1", apiKey: "theirs" }, { ...DEFAULT_CONFIG, apiKey: "mine" }), /saved API key would be sent/);
+    assert.doesNotMatch(why({ chatUrl: "https://elsewhere.test/v1" }, { ...DEFAULT_CONFIG, apiKey: "" }), /saved API key would be sent/);
+});
