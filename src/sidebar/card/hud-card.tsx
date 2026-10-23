@@ -238,11 +238,14 @@ export function CardApp() {
     // A site's start card (card-start.tsx) is an approval too, and waits behind an open tool gate of the same run.
     const asking = !pendingStep && startAskPending(run ?? undefined);
     const pending = !!pendingStep || asking;
-    // Deny with a note, as the transcript's ApprovalRow offers: keyed by the gate it was opened for, so a new gate
-    // never inherits an open note field.
+    // Deny with a note, as the transcript's ApprovalRow offers: keyed by the gate it was opened for, and only while
+    // that gate's footer is drawn. A nested ask on the same step has the same key, so it is excluded by name, and any
+    // change of gate (another tab, the gate answered elsewhere, an ask) closes the field.
     const gateKey = run && pendingStep?.seq != null ? stepKey(run.hash, pendingStep.seq) : "";
     const [sayingFor, setSayingFor] = useState("");
-    const saying = !!gateKey && sayingFor === gateKey;
+    const draft = useRef("");   // what the field holds, so the x can send it rather than drop it
+    const saying = !!gateKey && !pendingAsk && sayingFor === gateKey;
+    useEffect(() => { setSayingFor(""); }, [gateKey, pendingAsk?.id]);
     // The other asks waiting on this card: the pill and the head say how many (1.1, "Queued behind a pending tool approval").
     const moreWaiting = runs.filter((s) => s.hash !== run?.hash && runIsPending(s)).length + (pendingStep && startAskPending(run ?? undefined) ? 1 : 0);
     // Terminal ONLY when the run isn't mid-turn: a follow-up run() keeps the PRIOR summary set, so without
@@ -480,7 +483,7 @@ export function CardApp() {
     };
     const onClose = (e: Event) => {
         e.stopPropagation();
-        if (pendingStep) decide(false);          // × on a pending gate = a fast Deny
+        if (pendingStep) decide(false, false, saying ? draft.current.trim() || undefined : undefined);   // × on a pending gate = a fast Deny, with the note if one is open
         else if (asking) { /* a start card is answered with its own buttons only (they arm after a second) */ }
         else dismissCardRun(run.hash);           // × on a finished card = dismiss (drops it from the tab strip)
     };
@@ -626,14 +629,14 @@ export function CardApp() {
                         {pendingStep.askWhy ? <AskWhyLine why={pendingStep.askWhy} /> : null}
                         {showGrants ? <GrantCard grants={pendingStep.grants!} /> : null}
                         {saying
-                            ? <DenyNote onCancel={() => setSayingFor("")} onSend={(t) => decide(false, false, t || undefined)} />
+                            ? <DenyNote onCancel={() => setSayingFor("")} onInput={(t) => { draft.current = t; }} onSend={(t) => decide(false, false, t || undefined)} />
                             : <div class="card-foot-row">
                                 {/* Deny splits as the transcript's does: the chevron is "deny, and say why", which is
                                     how a person redirects the model (a proposed policy refined in words included). */}
                                 <span class="appr-deny-wrap">
                                     <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
                                     <button class="appr-btn no appr-deny-more" aria-label="Deny with a message"
-                                        {...cursorTipOn("Deny with a message")} onClick={() => setSayingFor(gateKey)}><IconChevron /></button>
+                                        {...cursorTipOn("Deny with a message")} onClick={() => { draft.current = ""; setSayingFor(gateKey); }}><IconChevron /></button>
                                 </span>
                                 <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
                                 {showGrants ? <button class="appr-btn yes remember" title="Approve — and let the agent fetch these URLs WITHOUT approval for the rest of this session (results are cached)" onClick={() => decide(true, true)}>Keep <kbd class="kb">{KEEP_HINT}</kbd></button> : null}
@@ -649,7 +652,7 @@ export function CardApp() {
 
 /** The HUD gate's "deny, and say why": an inline field in the card's footer, not the transcript's dialog, since the
  *  card is a small frame over the page. ⌘/Ctrl+Enter sends, Esc goes back to the buttons. */
-export function DenyNote({ onCancel, onSend }: { onCancel: () => void; onSend: (text: string) => void }) {
+export function DenyNote({ onCancel, onSend, onInput }: { onCancel: () => void; onSend: (text: string) => void; onInput?: (text: string) => void }) {
     const note = useRef<HTMLTextAreaElement>(null);
     useEffect(() => { note.current?.focus(); }, []);
     const send = () => onSend(note.current?.value.trim() || "");
@@ -657,6 +660,7 @@ export function DenyNote({ onCancel, onSend }: { onCancel: () => void; onSend: (
         <div class="card-deny-note">
             <textarea ref={note} class="chat-dialog-field appr-say" rows={3} aria-label="Why you are denying this"
                 placeholder="Say what to do instead. The model reads this rather than a bare no."
+                onInput={e => onInput?.((e.currentTarget as HTMLTextAreaElement).value)}
                 onKeyDown={e => {
                     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onCancel(); }
                     else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }

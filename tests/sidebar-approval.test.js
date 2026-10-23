@@ -188,6 +188,34 @@ test("HUD card: ⌘/Ctrl+Enter in the note sends it; an empty note is a plain de
     assert.equal(msg.feedback, undefined, "a blank note carries no feedback");
 });
 
+test("HUD card: × with a note open denies WITH the note, not a bare deny that drops what was typed", async () => {
+    const { w, approvals } = await hudGate("dn4");
+    w.shadow.querySelector(".card-foot .appr-deny-more").click();
+    await w.flush();
+    const field = w.shadow.querySelector(".card-deny-note textarea");
+    field.value = "not this one";
+    field.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    w.shadow.querySelector(".card-x").dispatchEvent(new w.window.Event("pointerdown", { bubbles: true }));
+    const [msg] = approvals();
+    assert.ok(msg && msg.decision === false, "× denies");
+    assert.equal(msg.feedback, "not this one");
+});
+
+test("HUD card: a note left open on a gate answered elsewhere does not mute the keys for a nested ask on the same step", async () => {
+    const { w, approvals } = await hudGate("dn5");
+    w.shadow.querySelector(".card-foot .appr-deny-more").click();
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".card-deny-note"), "the field is open on the step's gate");
+    // The gate is approved from the sidebar; the running step then raises a nested ask, which shares its seq.
+    const ask = { id: "a0123456789abcdef01234567", kind: "sh", state: "pending", raisedAt: 1000, facts: { argv: ["git", "status"], program: { path: "/usr/bin/git", inRoot: false }, cwd: { path: "/w", inRoot: true }, env: { set: [], free: true }, secrets: [], paths: [], repo: { root: "/w", reasons: [] }, repoConfigRunsCode: false, effects: "unknown", described: false, why: [], runner: false, mode: "host", sandboxed: false, placement: "host-plain" } };
+    await w.dispatch(agentStep("dn5", 1, { seq: 1, pending: true, awaitingApproval: false, approval: "user", tool: "click", arguments: { selector: "#go" }, asks: [ask] }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".card-body .astep-approve.ask"), "the ask has the card");
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const msg = approvals().find((m) => m.ask === ask.id);
+    assert.ok(msg && msg.decision === true, "Enter answers the ask: the stale note field did not keep the keys off");
+});
+
 // --- granting a host: the origin note, the Chrome prompt, and the settings list --------------------------
 
 test("host access (fetch_url): a first-time origin shows the note; approving requests that host in the same gesture", async () => {
