@@ -27,7 +27,7 @@ test("each genre asserts what its file promises", () => {
 
 test("the lifted counts do not shrink silently", () => {
     const count = (genre) => loadVectors(genre).filter((v) => v.js !== undefined).length;
-    assert.deepEqual(Object.fromEntries(GENRES.map((g) => [g, count(g)])), { abuse: 51, halting: 118, failure: 5, ownership: 66, print: 0 });
+    assert.deepEqual(Object.fromEntries(GENRES.map((g) => [g, count(g)])), { abuse: 51, halting: 154, failure: 5, ownership: 66, print: 0 });
 });
 
 // --- the Python-only vectors, which wait for the patched interpreter ---

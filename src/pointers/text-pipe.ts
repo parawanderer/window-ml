@@ -12,6 +12,7 @@
 
 import { jsonShape } from "../dom/dom";
 import { riskyRegex } from "../readonly-exec/limits";
+import { regexSteps, UNCHARGED_SEARCH_STEPS } from "../readonly-exec/regex-cost";
 
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
  *  "here is what you can pipe" list. A prompt that advertises a verb the dialect lacks costs the model a whole
@@ -87,6 +88,25 @@ function compilePattern(cmd: "grep" | "sed", source: string, flags: string, limi
     return new RegExp(source, flags);
 }
 
+/**
+ * Price a stage's searches before any of them runs: `passes` searches of `re` over every line. V8 has no match
+ * timeout and a pattern `riskyRegex` lets through can still backtrack polynomially (`a+b` on a long run of "a" is
+ * quadratic), so the bound (regex-cost.ts) is taken over the lines joined, with `m` so a leading `^` counts once per
+ * line. A caller with `limits.steps` is charged it; every other caller is held to UNCHARGED_SEARCH_STEPS, which is
+ * the same rule `compilePattern` applies: whoever asked.
+ * @param cmd the stage, for the message
+ * @param re the compiled pattern
+ * @param lines the stage's input
+ * @param passes how many times each line may be searched
+ * @param limits the caller's limits
+ */
+function chargeSearch(cmd: "grep" | "sed", re: RegExp, lines: string[], passes: number, limits?: PipeLimits): void {
+    const flags = re.flags.includes("m") ? re.flags : re.flags + "m";
+    const steps = passes * regexSteps(re.source, flags, lines.join("\n"), limits?.steps);
+    if (limits?.steps) { limits.steps(steps); return; }
+    if (steps > UNCHARGED_SEARCH_STEPS) throw new Error(`\`${cmd}\` — refused ${JSON.stringify(re.source)}: on this input it can backtrack for too long. Anchor it, make the repeat narrower, or use -F for a literal string.`);
+}
+
 /** What a CALLER that cannot trust the pipeline's input may hold it to. The read-only `exec` dialect is the one
  *  that passes these: there a pipe is a single host call doing work the dialect's step budget cannot see, over a
  *  pattern the model wrote. Every other caller passes nothing and gets the pipeline exactly as before. */
@@ -96,6 +116,10 @@ export interface PipeLimits {
     onPattern?(source: string): void;
     /** Called once per stage with the size of that stage's input, in characters. Throw to stop the pipeline. */
     charge?(chars: number): void;
+    /** Called with the work a stage's regex searches can do, in evaluation steps, before they run (regex-cost.ts),
+     *  and with the steps the bound's own scans cost. Throw to stop the pipeline. Absent: over UNCHARGED_SEARCH_STEPS,
+     *  the stage is refused. */
+    steps?(n: number): void;
     /** Characters a stage may produce. Every stage's output is checked after it runs. The two that can grow their
      *  input by MORE than a constant factor are checked before they build anything, since there the allocation is
      *  the cost: `sed` (one replacement per match, a match per character with `g`) and the JSON stages that
@@ -202,6 +226,7 @@ function grep(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     try { testRe = compilePattern("grep", src, i ? "i" : "", limits); gRe = new RegExp(src, i ? "gi" : "g"); }
     catch (e) {
         if (!(e instanceof SyntaxError)) throw e; throw new Error(`\`grep\` — invalid regex ${JSON.stringify(pattern)} (${(e as Error).message}). Use -F for a literal string.`); }
+    chargeSearch("grep", testRe, lines, only && !v ? 2 : 1, limits);
     const A = nums.C ?? nums.A ?? 0, B = nums.C ?? nums.B ?? 0;
     const matched: number[] = [];
     for (let k = 0; k < lines.length; k++) { let m = testRe.test(lines[k]); if (v) m = !m; if (m) matched.push(k); }
@@ -310,6 +335,7 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     catch (e) {
         if (!(e instanceof SyntaxError)) throw e; throw new Error(`sed: ${String((e as Error).message)}. Escape a literal metacharacter, or use grep -F to match one literally.`); }
     const max = limits?.maxChars;
+    chargeSearch("sed", re, lines, max != null && re.global ? 2 : 1, limits);
     if (max == null) return lines.map((l) => l.replace(re, replacement));
     // The one stage that can GROW its input, and by a product: `s/./<a long string>/g` puts a copy of the
     // replacement at every character. So the size is bounded BEFORE a line is built, not after, since the

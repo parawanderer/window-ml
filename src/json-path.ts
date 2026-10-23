@@ -1,4 +1,4 @@
-// json-path.ts — RFC 9535 JSONPath over JSON values: `ml.jsonPath(value, "$..author")`. Pure, no imports, and no
+// json-path.ts — RFC 9535 JSONPath over JSON values: `ml.jsonPath(value, "$..author")`. Pure, one import, and no
 // `eval` anywhere: the popular libraries evaluate filter expressions as JavaScript, which is a known injection class and
 // the opposite of what the read-only `exec` dialect is. This one has its own recursive-descent parser for the whole
 // grammar (descendants, slices, unions, filters, the five standard functions) and is checked against the official
@@ -7,7 +7,9 @@
 // Bounded for a caller that cannot trust the expression or the data: the expression's length and nesting are capped,
 // a cycle in the data is an error rather than a hang, every node visited can be charged to a caller's budget, and a
 // `match()`/`search()` pattern is handed to the caller before it is compiled (the dialect refuses one that could
-// backtrack catastrophically).
+// backtrack catastrophically) and each test is priced on its value before it runs (regex-cost.ts, the one import).
+
+import { regexSteps, UNCHARGED_SEARCH_STEPS } from "./readonly-exec/regex-cost";
 
 /** What a caller that cannot trust the input may hold a query to. The read-only dialect passes all three. */
 export interface JsonPathLimits {
@@ -15,6 +17,9 @@ export interface JsonPathLimits {
     charge?(n: number): void;
     /** Called with every JS regex SOURCE `match()`/`search()` is about to compile; throw to refuse it. */
     onPattern?(source: string): void;
+    /** Called before each `match()`/`search()` test with the work it can do, in evaluation steps (regex-cost.ts), and
+     *  with what the bound's own scans cost; throw to stop. Absent: a test over UNCHARGED_SEARCH_STEPS is refused. */
+    steps?(n: number): void;
 }
 
 /** One match: where it is, as an RFC 9535 Normalized Path (`$['store']['book'][0]`), and what is there. */
@@ -525,7 +530,13 @@ class Evaluator {
                 const [s, p] = args;
                 if (typeof s !== "string" || typeof p !== "string") return false;
                 const re = this.regex(p, f.name === "match");
-                return re ? re.test(s) : false;
+                if (!re) return false;
+                // V8 has no match timeout: a pattern `onPattern` passed can still backtrack polynomially on a long
+                // value, so the test is priced on THIS value before it runs.
+                const steps = regexSteps(re.source, re.flags, s, this.limits.steps);
+                if (this.limits.steps) this.limits.steps(steps);
+                else if (steps > UNCHARGED_SEARCH_STEPS) throw new Error(`${f.name}(): the pattern ${JSON.stringify(p)} can backtrack for too long on a ${s.length.toLocaleString("en-US")}-character value`);
+                return re.test(s);
             }
         }
         return NOTHING;

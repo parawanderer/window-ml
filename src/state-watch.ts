@@ -141,6 +141,7 @@ export async function evalWatch(tree: Record<string, unknown>, expr: string, js?
         const nodes = mlJsonPath(tree, q.query, { paths: true }, {
             charge: (n) => { if ((spent += n) > WATCH_NODE_BUDGET) throw new Error(`stopped after visiting ${WATCH_NODE_BUDGET.toLocaleString("en")} values: narrow it`); },
             onPattern: (src) => { const why = riskyRegex(src); if (why) throw new Error(`the pattern ${JSON.stringify(src)} has ${why}, which can run for hours`); },
+            steps: (n) => { if ((spent += n) > WATCH_NODE_BUDGET) throw new Error("stopped: a match() or search() here could backtrack for too long on these values: narrow it"); },
         }) as JsonPathNode[];
         return { expr, nodes };
     } catch (err) {

@@ -1206,5 +1206,341 @@
     "expect": "halts",
     "reason": "calls nest at most MAX_CALL_DEPTH deep and every step is charged to the policy's budget, so a policy ends in milliseconds",
     "from": "tests/readonly-policy.test.mjs halting"
+  },
+  {
+    "name": "match: /a+b/ over 300,000 \"a\"",
+    "js": "\"a\".repeat(300000).match(/a+b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "one unbounded quantifier followed by something that fails, on a long run of what it repeats: quadratic in one host call",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "test: /a+b/ over 300,000 \"a\"",
+    "js": "/a+b/.test(\"a\".repeat(300000))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "one unbounded quantifier followed by something that fails, on a long run of what it repeats: quadratic in one host call",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "exec: /a+b/ over 300,000 \"a\"",
+    "js": "/a+b/.exec(\"a\".repeat(300000))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "one unbounded quantifier followed by something that fails, on a long run of what it repeats: quadratic in one host call",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "search: /a+b/ over 300,000 \"a\"",
+    "js": "\"a\".repeat(300000).search(/a+b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "one unbounded quantifier followed by something that fails, on a long run of what it repeats: quadratic in one host call",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "replace with g: /a+b/g over 300,000 \"a\"",
+    "js": "\"a\".repeat(300000).replace(/a+b/g, \"\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a global search tries every start once, each one quadratic in the run after it",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "replaceAll: /a+b/g over 300,000 \"a\"",
+    "js": "\"a\".repeat(300000).replaceAll(/a+b/g, \"\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "as replace with g",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "split: /\\s*x/ over 300,000 spaces",
+    "js": "\" \".repeat(300000).split(/\\s*x/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "split searches at every position, and each search runs the whole run of spaces",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "matchAll spread: /a+b/g over 300,000 \"a\"",
+    "js": "[...\"a\".repeat(300000).matchAll(/a+b/g)].length",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "matchAll searches lazily as it is iterated; it is charged for the whole iteration when it is called",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a pattern given as a string: match(\"a+b\")",
+    "js": "\"a\".repeat(300000).match(\"a+b\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "match compiles a string pattern, and the search it runs is the same",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "new RegExp from a built string",
+    "js": "new RegExp(\"a+\" + \"b\").test(\"a\".repeat(300000))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the pattern is priced where it searches, not where it is built",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a RegExp held in an object",
+    "js": "({ re: /a+b/ }).re.test(\"a\".repeat(300000))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a RegExp receiver is priced whatever reached it",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a String object receiver",
+    "js": "new String(\"a\".repeat(300000)).match(/a+b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a String object is a string here (ml.dereference returns one)",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "lazy: /a+?b/",
+    "js": "\"a\".repeat(300000).match(/a+?b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a lazy quantifier tries the same iteration counts in the other order",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "cubic: /a*a*b/ over 20,000 \"a\"",
+    "js": "\"a\".repeat(20000).match(/a*a*b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "two quantifiers over the same run: cubic",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a large bounded count: /a{1,60000}b/",
+    "js": "\"a\".repeat(300000).match(/a{1,60000}b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a bounded quantifier with a large maximum is as quadratic as an unbounded one up to that maximum",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a chain of optionals: thirty-four a? then thirty-four a, on 33 characters",
+    "js": "\"a\".repeat(33).match(/a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "each a? doubles the paths, and on an input one short of a match the engine tries them all: exponential in the PATTERN (about 35 s), which riskyRegex does not see",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a lookahead: /(?=a+b)/",
+    "js": "\"a\".repeat(300000).match(/(?=a+b)/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a lookahead runs its quantifier at every start",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a lookbehind: /(?<=ba+)/",
+    "js": "\"a\".repeat(300000).match(/(?<=ba+)/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a lookbehind runs its quantifier backwards from every start, over the whole run before it",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a class opened by ]: /[^]]+b/ over a run of ]",
+    "js": "\"]\".repeat(300000).match(/[^]]+b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "in JavaScript [^] is any character and the ] after it a literal, so ]+ backtracks over the run; read the PCRE way, as a class of not-], it would be priced linear and run for half a minute",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "alternation: /(?:a+b|a+c)/",
+    "js": "\"a\".repeat(300000).match(/(?:a+b|a+c)/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "each branch is quadratic, and the branches add",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "case-insensitive: /A+b/i",
+    "js": "\"a\".repeat(300000).match(/A+b/i)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the run is found with the pattern's own flags, so the i flag cannot hide it",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a Unicode property: /\\p{L}+1/u",
+    "js": "\"a\".repeat(300000).match(/\\p{L}+1/u)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the run of a class is found by the class itself",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a backreference: /(a*)\\1b/ over 20,000 \"a\"",
+    "js": "\"a\".repeat(20000).match(/(a*)\\1b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "each path compares a capture as long as the run",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "a multiline anchor does not help: /a*a*b/m over lines of \"a\"",
+    "js": "(\"a\".repeat(3000) + \"\\n\").repeat(100).match(/a*a*b/m)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "only a LEADING ^ limits the starts, to one per line",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "many medium searches in one loop",
+    "js": "const s = \"a\".repeat(30000); Array.from({ length: 20 }, () => s.match(/a+b/)).length",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "each search is charged to the same budget, so splitting the work does not escape it",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
+    "name": "an array pattern: match([\"(a+)+$\"])",
+    "js": "(\"a\".repeat(34) + \"!\").match([\"(a+)+$\"])",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the host coerces a pattern that is not a string or a RegExp with its toString, which no check read: an exponential pattern ran on a 34-character input",
+    "from": "tests/readonly-soundness.test.mjs a pattern is checked as the text the host compiles"
+  },
+  {
+    "name": "an array pattern: search([\"(a+)+$\"])",
+    "js": "(\"a\".repeat(34) + \"!\").search([\"(a+)+$\"])",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the host coerces a pattern that is not a string or a RegExp with its toString, which no check read: an exponential pattern ran on a 34-character input",
+    "from": "tests/readonly-soundness.test.mjs a pattern is checked as the text the host compiles"
+  },
+  {
+    "name": "an array pattern: matchAll",
+    "js": "[...(\"a\".repeat(34) + \"!\").matchAll([\"(a+)+$\"])].length",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the host coerces a pattern that is not a string or a RegExp with its toString, which no check read: an exponential pattern ran on a 34-character input",
+    "from": "tests/readonly-soundness.test.mjs a pattern is checked as the text the host compiles"
+  },
+  {
+    "name": "an object pattern with a toString arrow",
+    "js": "(\"a\".repeat(34) + \"!\").match({ toString: () => \"(a+)+$\" })",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the host coerces a pattern that is not a string or a RegExp with its toString, which no check read: an exponential pattern ran on a 34-character input",
+    "from": "tests/readonly-soundness.test.mjs a pattern is checked as the text the host compiles"
+  },
+  {
+    "name": "an object searched by test, with a toString arrow",
+    "js": "/a+b/.test({ toString: () => \"a\".repeat(300000) })",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "test and exec coerce what they search: an object is refused rather than run",
+    "from": "tests/readonly-soundness.test.mjs a pattern is checked as the text the host compiles"
+  },
+  {
+    "name": "\\w+@ over a megabyte of words",
+    "js": "\"word \".repeat(200000).match(/\\w+@/g) === null",
+    "env": "none",
+    "expect": {
+      "value": true
+    },
+    "budget": 3000000,
+    "reason": "a quantifier over a word runs a word: short runs, a linear search",
+    "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
+  },
+  {
+    "name": "a delimiter split over a megabyte",
+    "js": "\"a, b ,c \".repeat(110000).split(/\\s*,\\s*/).length",
+    "env": "none",
+    "expect": {
+      "value": 220001
+    },
+    "budget": 3000000,
+    "reason": "whitespace runs are short",
+    "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
+  },
+  {
+    "name": "a/b pairs found by a+b",
+    "js": "[...\"ab\".repeat(100000).matchAll(/a+b/g)].length",
+    "env": "none",
+    "expect": {
+      "value": 100000
+    },
+    "budget": 3000000,
+    "reason": "the run of \"a\" is one character long",
+    "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
+  },
+  {
+    "name": "an anchored line grep over 2,000 log lines",
+    "js": "Array.from({ length: 2000 }, (_, i) => (i % 7 ? \"INFO \" : \"ERROR \") + \"request \" + i + \" took \" + (i % 97) + \"ms\").join(\"\\n\").match(/^.*ERROR.*$/gm).length",
+    "env": "none",
+    "expect": {
+      "value": 286
+    },
+    "budget": 3000000,
+    "reason": "a leading ^ with m starts once per line, and a line is short",
+    "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
+  },
+  {
+    "name": "a repeated word with a backreference",
+    "js": "(\"the the cat sat \".repeat(5000)).match(/\\b(\\w+)\\s+\\1\\b/g).length",
+    "env": "none",
+    "expect": {
+      "value": 5000
+    },
+    "budget": 3000000,
+    "reason": "a backreference compares at most the longest capture, here a word",
+    "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
+  },
+  {
+    "name": "an anchored whole-string match",
+    "js": "/^a+b$/.test(\"a\".repeat(300000))",
+    "env": "none",
+    "expect": {
+      "value": false
+    },
+    "budget": 3000000,
+    "reason": "a leading ^ without m starts once: linear",
+    "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
   }
 ]

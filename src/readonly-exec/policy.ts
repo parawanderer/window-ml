@@ -384,6 +384,7 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
                     if (why) throw new Denied(`ml.pipe: the pattern ${JSON.stringify(src)} has ${why}, which can run for hours on one line — it needs approval`);
                 },
                 charge: (chars: number) => meter?.charge(Math.ceil(chars / PIPE_CHARS_PER_STEP)),
+                ...(meter ? { steps: (n: number) => meter.charge(n) } : {}),
                 maxChars: MAX_STRING,
                 tooLarge: (msg: string): never => { throw new NotInDialect(`${msg}, too much to build without asking`); },
             });
@@ -402,6 +403,7 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             const paths = !!(opts && typeof opts === "object" && Object.getOwnPropertyDescriptor(opts, "paths")?.value === true);
             return (hostJsonPath as (...a: unknown[]) => unknown).call(ml, source, expr, { paths }, {
                 charge: (n: number) => meter?.charge(n),
+                ...(meter ? { steps: (n: number) => meter.charge(n) } : {}),
                 onPattern: (src: string) => {
                     const why = riskyRegex(src);
                     if (why) throw new Denied(`ml.jsonPath: the pattern ${JSON.stringify(src)} has ${why}, which can run for hours on one value — it needs approval`);
