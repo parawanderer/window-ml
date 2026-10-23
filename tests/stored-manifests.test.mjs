@@ -114,6 +114,33 @@ test("B5: a proposed manifest describes a call only under the sandbox; the perso
     assert.equal(run("person", false).described, true);
 });
 
+test("B5: a proposed manifest whose evidence run passed describes plain-host calls too; a failed one stays sandbox-only", () => {
+    const run = (over, sandboxed) => shFacts(facts({ sandboxed }), null, { roots: ["/w"], stored: [entry({ origin: "proposed", ...over })] });
+    assert.equal(run({ evidence: { calls: 2, at: 5 } }, false).described, true);
+    const failed = run({ evidenceFailure: { argv: ["mytool", "a.txt"], why: "it exited 2", at: 5 } }, false);
+    assert.equal(failed.described, false);
+    assert.match(failed.why.join("; "), /until an evidence run passes/);
+    assert.equal(run({ evidenceFailure: { argv: ["mytool"], why: "x", at: 5 } }, true).described, true, "under the sandbox a failure changes nothing");
+});
+
+test("evidence read back from storage is well-formed and only on a proposed entry, with at least one call, or the entry is dropped", () => {
+    const ok = entry({ origin: "proposed", evidence: { calls: 1, at: 5 } });
+    assert.equal(S.validStored(ok, "global"), true);
+    assert.equal(S.validStored(entry({ origin: "proposed", evidenceFailure: { argv: ["mytool"], why: "x", at: 5 } }), "global"), true);
+    assert.equal(S.validStored(entry(), "global"), true, "an entry stored before evidence existed still loads");
+    const bad = [
+        entry({ origin: "person", evidence: { calls: 1, at: 5 } }),
+        entry({ origin: "proposed", evidence: { calls: 0, at: 5 } }),
+        entry({ origin: "proposed", evidence: { calls: "1", at: 5 } }),
+        entry({ origin: "proposed", evidence: { calls: 1 } }),
+        entry({ origin: "proposed", evidence: null }),
+        entry({ origin: "proposed", evidenceFailure: { argv: "mytool", why: "x", at: 5 } }),
+        entry({ origin: "proposed", evidenceFailure: { argv: [1], why: "x", at: 5 } }),
+        entry({ origin: "proposed", evidenceFailure: { argv: [], at: 5 } }),
+    ];
+    for (const b of bad) assert.equal(S.validStored(b, "global"), false, JSON.stringify(b.evidence ?? b.evidenceFailure));
+});
+
 test("B3 at call time: an in-root program is described by its workspace's entry and by nothing else", () => {
     const program = { path: "/w/bin/mytool", inRoot: true, fingerprint: PIN.fingerprint };
     const pin = { ...PIN, path: "/w/bin/mytool", inRoot: true };
@@ -171,4 +198,22 @@ test("remove takes an entry out of memory and storage; a removed or unknown id i
     await new Promise((res) => setTimeout(res, 0));
     assert.deepEqual(stored.ml_manifests_workspace, {}, "an emptied root leaves no key");
     assert.match((await M.addManifest({ scope: "global", manifest: SHIPPED_MANIFESTS.rm, origin: "person", pin: { ...PIN, path: "/bin/rm" } })).refused, /shipped/);
+});
+
+test("markEvidence records a proposed entry's run, each outcome replacing the other, and refuses a person's entry", async () => {
+    const r = await M.addManifest({ scope: "global", manifest: { ...MYTOOL, program: "evtool" }, origin: "proposed", pin: { ...PIN, path: "/opt/bin/evtool" } });
+    const failure = { argv: ["evtool", "a"], why: "it exited 2", at: 7 };
+    assert.equal(await M.markEvidence(r.id, { failure }), true);
+    failure.argv.push("mutated");
+    const got = () => M.storedManifests().find((s) => s.id === r.id);
+    assert.deepEqual(got().evidenceFailure, { argv: ["evtool", "a"], why: "it exited 2", at: 7 }, "a copy is kept");
+    assert.equal(await M.markEvidence(r.id, { evidence: { calls: 3, at: 8 } }), true);
+    assert.deepEqual([got().evidence, got().evidenceFailure], [{ calls: 3, at: 8 }, undefined]);
+    await new Promise((res) => setTimeout(res, 0));
+    assert.deepEqual(stored.ml_manifests_global.find((s) => s.id === r.id).evidence, { calls: 3, at: 8 }, "saved");
+    const p = await M.addManifest({ scope: "global", manifest: { ...MYTOOL, program: "pertool" }, origin: "person", pin: { ...PIN, path: "/opt/bin/pertool" } });
+    assert.equal(await M.markEvidence(p.id, { evidence: { calls: 1, at: 9 } }), false);
+    assert.equal(await M.markEvidence("man-none", { evidence: { calls: 1, at: 9 } }), false);
+    assert.equal(M.storedManifests().find((s) => s.id === p.id).evidence, undefined);
+    await M.removeManifest(r.id); await M.removeManifest(p.id);
 });

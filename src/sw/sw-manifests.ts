@@ -8,7 +8,7 @@
 
 import { defineState } from "../state-registry";
 import { SHIPPED_MANIFESTS } from "../shell/sh-call";
-import { storeRefusal, validStored, type ManifestRequest, type StoredManifest } from "../shell/stored-manifests";
+import { storeRefusal, validStored, type ManifestEvidence, type ManifestEvidenceFailure, type ManifestRequest, type StoredManifest } from "../shell/stored-manifests";
 
 /** The storage key of the global manifests. */
 export const GLOBAL_MANIFESTS_KEY = "ml_manifests_global";
@@ -101,6 +101,25 @@ export async function removeManifest(id: string): Promise<boolean> {
         return true;
     }
     return false;
+}
+
+/**
+ * Record a proposed entry's evidence run, once storage has been read: a pass lets it describe plain-host calls too
+ * (B5), a failure keeps it sandbox-only and is kept for the registration page. Each replaces the other.
+ * @param id the entry's id
+ * @param outcome what the run measured
+ * @returns whether a proposed entry with that id was there
+ */
+export async function markEvidence(id: string, outcome: { evidence: ManifestEvidence } | { failure: ManifestEvidenceFailure }): Promise<boolean> {
+    await manifestsReady;
+    const e = [...globals, ...[...byRoot.values()].flat()].find((s) => s.id === id);
+    if (!e || e.origin !== "proposed") return false;
+    delete e.evidence;
+    delete e.evidenceFailure;
+    if ("evidence" in outcome) e.evidence = { ...outcome.evidence };
+    else e.evidenceFailure = { ...outcome.failure, argv: [...outcome.failure.argv] };
+    save();
+    return true;
 }
 
 /** What the registration page shows: the stored entries by scope, and the shipped programs a stored one cannot replace. */

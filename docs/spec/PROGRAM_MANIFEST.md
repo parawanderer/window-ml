@@ -119,8 +119,24 @@ Five rulings settle where a registered manifest lives and when it describes a ca
   fingerprints every call already, and hashing a large binary on every call does not pay. A script keeps its
   `entrypoint.sha256`. Any change drops the call back to `unknown`, with the reason on the card.
 - **B5, a model's draft.** An entry with `origin: "proposed"` describes a call only under the OS sandbox, where its
-  claims are enforced, until `propose_manifest`'s evidence run marks it. The person's own (`origin: "person"`)
+  claims are enforced, until `propose_manifest`'s evidence run marks it (below). The person's own (`origin: "person"`)
   describes calls on both placements.
+
+**`propose_manifest` (ruled 2026-10-23, root K slice c).** The model drafts a manifest for a program it read the
+`--help` or the source of; the person stores it or not on a card. Nothing executes before the person's word: the host
+only resolves the draft (`spawn`, then `discard`), which pins it (B4, or a script's `sha256` as the host read it) and
+applies B3 (a program inside a root, and any script, is forced to its workspace, and the card says why). The card is
+DERIVED only, and says so: the host's resolve-and-discard facts, and this run's calls of that program that ran, each
+resolved again with the draft and read by it (its effects, and whether it would go without a card). Nothing measured
+is mixed in. Approved, the entry is stored with `origin: "proposed"` and describes sandboxed calls only (B5). The
+evidence run follows approval, on a sandboxed host only: this run's ran calls of the program that the entry makes
+free, at most eight, the latest first, each re-run under the envelope derived from the draft (write none, exec the
+program only) with the version probe's 2 s limit. Each must exit within its `okCodes`, with the envelope applied as
+asked and no protected name changed. If all pass, the entry gets `evidence {calls, at}` and from then on describes
+plain-host calls too; the first failure is stored on the entry (`evidenceFailure`) and it stays sandbox-only. With no
+call to re-run there is no evidence, which the card says beforehand; a synthetic call is never made. Offered only to
+a run the worker built while the settings turn ml.sh on; a page's start never carries it. Built in
+`src/shell/manifest-proposal.ts` (pure) and `src/sw/sw-manifest-proposal.ts`.
 
 What a page may do with the store: nothing. `MANIFESTS` is answered for extension pages only, and what it adds is
 the person's whatever the payload says; a stored manifest never reaches a page.

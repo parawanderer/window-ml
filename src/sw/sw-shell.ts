@@ -79,6 +79,16 @@ function nativePort(port: chrome.runtime.Port): HostPort {
     };
 }
 
+/** The workspace folders the settings name, blanks dropped. */
+const settingsRoots = (cfg: Pick<ShellSettings, "shellRoots">): string[] => (cfg.shellRoots ?? []).map((r) => String(r).trim()).filter(Boolean);
+
+/**
+ * Whether the settings turn ml.sh on with a folder to run in: what a run's tools are decided by, so a run started while
+ * the host is still connecting (a worker just woken) is offered the same tools. Whether the host answers is each call's.
+ * @param cfg the settings
+ */
+export const shellTurnedOn = (cfg: Pick<ShellSettings, "shellEnabled" | "shellRoots">): boolean => cfg.shellEnabled === true && settingsRoots(cfg).length > 0;
+
 /** Tell whoever draws the capabilities that the status changed. */
 function setStatus(s: ShellStatus): void {
     const changed = JSON.stringify(s) !== JSON.stringify(status);
@@ -109,7 +119,7 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
     };
     if (current) { const old = current; current = null; old.client.close("the settings changed"); }
     if (!enabled) return fail("off", "Running programs (ml.sh) is turned off in Settings.");
-    const roots = (cfg.shellRoots ?? []).map((r) => String(r).trim()).filter(Boolean);
+    const roots = settingsRoots(cfg);
     if (!roots.length) return fail("no-roots", "No workspace folder is set: ml.sh runs programs only inside the folders named in Settings.");
     let port: chrome.runtime.Port;
     try { port = chrome.runtime.connectNative(HOST_NAME); }
