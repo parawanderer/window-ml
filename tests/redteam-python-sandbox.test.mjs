@@ -386,26 +386,45 @@ _m.woke.append("armed")
     assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
 });
 
-// A cancelled task is left PENDING: the sweep also cancels the wakeup task.cancel() schedules, so the CancelledError is never
-// thrown into its coroutine. What matters is that none of its code runs again, a finally or an except included, even when the
-// next cell collects garbage.
-for (const [what, tag, body] of [
-    ["a finally", "_rt_p2tf", `    try:
-        await asyncio.sleep(10)
-    finally:
-        _m.woke.append("ran")`],
-    ["an except CancelledError that awaits again", "_rt_p2te", `    try:
-        await asyncio.sleep(10)
-    except asyncio.CancelledError:
-        _m.woke.append("ran")
+// A task the cell STARTED (it awaits a tick, so the coroutine is suspended inside its try) and KEPT on a module. The sweep
+// leaves it pending; its finally or except must not run after the result, in a task of its own or during a later cell
+// that only collects garbage and lets the loop turn. `_where` tells the cell's own task from any other. A later cell that
+// DRIVES the kept coroutine itself is the todo below ("cannot be resumed from a later cell through its _coro").
+for (const [what, tag, handler] of [
+    ["a finally", "_rt_p2tf", `    finally:
+        _m.woke.append(_where())`],
+    ["an except CancelledError that awaits again", "_rt_p2te", `    except BaseException:
+        _m.woke.append(_where())
         await asyncio.sleep(0)
-        _m.woke.append("ran again")`],
+        _m.woke.append(_where())`],
 ]) {
-    test(`P2-handle: ${what} in a task the cell made never runs, after the result or after a gc.collect()`, { skip }, async () => {
-        const r = await scheduledThenAsk(tag, `async def _c():\n${body}\nasyncio.ensure_future(_c())\n_m.woke.append("armed")\n"x"`);
-        assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
-        const g = (await cell(`import sys, gc, asyncio\ngc.collect()\nawait asyncio.sleep(0.05)\n{"woke": list(sys.modules["${tag}"].woke)}`)).value;
-        assert.deepEqual(g, { woke: ["armed"] }, `after gc.collect(), got ${JSON.stringify(g)}`);
+    test(`P2-handle: ${what} in a task the cell started and kept never runs after the result, or after a gc.collect()`, { skip }, async () => {
+        await cell(`
+import asyncio, types, sys
+_m = types.ModuleType("${tag}")
+_m.woke = []
+sys.modules["${tag}"] = _m
+_m.cell_task = asyncio.current_task()
+def _where():
+    return "in-cell" if asyncio.current_task() is _m.cell_task else "later"
+async def _c():
+    _m.started = True
+    try:
+        await asyncio.sleep(0.01)   # wakes well inside the wait below: only the cancel keeps the handler from running then
+        _m.woke.append("later")
+${handler}
+_m.t = asyncio.ensure_future(_c())
+await asyncio.sleep(0)
+_m.woke.append("armed")
+"x"`, { later: 0.15 });
+        const g = (await cell(`import sys, gc, asyncio
+_m = sys.modules["${tag}"]
+gc.collect()
+await asyncio.sleep(0.05)
+{"woke": list(_m.woke), "started": bool(getattr(_m, "started", False))}`)).value;
+        assert.equal(g.started, true, "positive control: the task started and suspended inside its try");
+        assert.ok(g.woke.includes("armed"), JSON.stringify(g));
+        assert.deepEqual(g.woke.filter((w) => w === "later"), [], `the task's handler ran after the result: ${JSON.stringify(g)}`);
     });
 }
 
@@ -457,10 +476,8 @@ for (const [what, tag, body] of jsRoutes) {
     });
 }
 
-// The tests above never START the task (ensure_future, then return: the coroutine never reaches its try) and
-// never keep a reference to it. A hostile cell does both: it awaits a tick so the task suspends at its await
-// point, stores the Task on the recorder module, and a LATER cell drives the still-pending coroutine through
-// `_coro`. The sweep cancels the task and the wakeup Handle, which leaves the task pending — its `finally` is
+// A hostile cell starts the task (it awaits a tick so the task suspends at its await point), stores the Task on
+// the recorder module, and a LATER cell drives the still-pending coroutine through `_coro`. The sweep cancels the task and the wakeup Handle, which leaves the task pending — its `finally` is
 // one `throw` away on an object the next cell can hold.
 test("P2-handle: a started task kept on the module cannot be resumed from a later cell through its _coro", {
     skip,
