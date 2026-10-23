@@ -148,8 +148,12 @@ test("on a hidden page the content script relays nothing the page posts and answ
     const w = loadPageWorld({ visible: false, onRuntimeMessage: () => ({ data: "ANSWERED" }) });
     const posted = [];
     w.context.window.addEventListener("message", (e) => { if (e.data?.type?.endsWith?.("_RESPONSE")) posted.push(e.data.type); });
-    for (const type of ["INFO_REQUEST", "LLM_REQUEST", "LIST_MODELS_REQUEST", "START_RUN_REQUEST"])
+    w.fromContent((e) => { if (e.data?.type?.endsWith?.("_RESPONSE")) posted.push(e.data.type); });
+    // On the window, and on injected.js's port as a page that took it would.
+    for (const type of ["INFO_REQUEST", "LLM_REQUEST", "LIST_MODELS_REQUEST", "START_RUN_REQUEST"]) {
         w.context.window.postMessage({ type, requestId: `x-${type}`, payload: {} }, "*");
+        w.asInjected({ type, requestId: `p-${type}`, payload: {} });
+    }
     await flush(30);
     assert.deepEqual(w.runtimeCalls.map((c) => c.type), [], "a hidden page's post reached the worker");
     assert.deepEqual(posted, [], "a hidden page was answered");
@@ -157,7 +161,7 @@ test("on a hidden page the content script relays nothing the page posts and answ
 
 test("on a visible page what the page posted before the worker answered is relayed once it does (positive control)", T, async () => {
     const w = loadPageWorld({ visible: true, onRuntimeMessage: () => ({ data: "ANSWERED" }) });
-    w.context.window.postMessage({ type: "INFO_REQUEST", requestId: "early", payload: {} }, "*");
+    w.asInjected({ type: "INFO_REQUEST", requestId: "early", payload: {} });
     await flush(30);
     assert.ok(w.runtimeCalls.some((c) => c.type === "GET_INFO" || c.requestId === "early" || JSON.stringify(c).includes("early")), JSON.stringify(w.runtimeCalls));
 });

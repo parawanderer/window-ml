@@ -7,10 +7,13 @@
 import test from "node:test";
 import assert from "node:assert";
 
-const posted = [];
-globalThis.window = { postMessage: (m) => posted.push(m) };
+// What the relay sends injected.js: with no port handed over yet, the page channel holds it in its queue (page-channel.ts).
+globalThis.window = { addEventListener: () => {} };
 
 const { onSessionDone, relaySessionToPage } = await import("../src/sidebar/shell-session-relay.ts");
+const { listenForPage } = await import("../src/page-channel.ts");
+listenForPage();
+const posted = globalThis.__mlPageChannel.queue;
 
 const reset = () => { posted.length = 0; };
 
