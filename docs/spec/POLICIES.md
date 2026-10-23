@@ -192,8 +192,22 @@ removed is told once, before the first model call, by a note the WORKER writes, 
 transcript and the export and never as the person's words; the first ask afterwards says so again with its cause.
 
 
-The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
-a page never can. A policy reached over the hub is set by a principal holding `approve`.
+The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself
+(the one exception is a person's own grant, "A policy kept in a file" below), and a page never can. A policy reached over the hub is set by a principal holding `approve`.
+
+## Where a policy can live
+
+Every place a policy can come from, how it is written there and how it reaches a decision (2026-10-23). The scopes
+above are three of these rows; the store's keys and code are in [`docs/dev/policies.md`](../dev/policies.md).
+
+| Where | Written as | Loaded | Status |
+| --- | --- | --- | --- |
+| Built-in default | code: `free()` in [`src/effects.ts`](../../src/effects.ts), ONE rule over a call's effects for every consumer | compiled in; always present | built |
+| global | a `StoredPolicy` (among its fields source, effect, consumer, label, and origin: `person`, `card` or `proposed`) | read from `chrome.storage.local` after each worker wake; until it is, every gated call asks | built |
+| run | the same, keyed by the session's hash | as global; survives a resume, removed when the session is deleted or archived (kept when the move to the archive fails) | built |
+| workspace | not specified | not specified | this spec's scope table only |
+| Over the hub | set by a principal holding `approve` | not specified | one sentence above |
+| A file (a repository the host opens, or one passed along) | not specified; the policy page's typed-node trees are the natural form, with the hash of each script a rule allows | its `deny` and `ask` rules from the live file at once; its `allow` rules only from the accepted snapshot, pinned by hash, loaded by a card, entering the store with `origin: "file"` | proposed below |
 
 ## Widening is a policy, never a button on a card
 
@@ -211,6 +225,57 @@ one. Here widening is never a button on a call:
   and the card is answered either way.
 - **Fewer cards is the job of the tiers**, not of the card: the consumer's own description of a call, its sandbox and
   the person's policies decide most calls before a card exists.
+
+## A policy kept in a file (proposed, not built)
+
+(Shane and the sh-policy session, 2026-10-23.) Every policy above lives in the person's store. A policy can also live in
+a FILE: in a repository the host opens, or passed along as a file or a link, so that rules someone decided can be
+copied by others. A repository is one place for such a file, not the main case: this system is not built around a
+coding workflow. The rules below hold whatever carried the file; only how it is found differs (a file found where it
+applies, a directory or an origin, is in effect for that place; one the person imports applies where they say).
+
+- **A file is untrusted until accepted**, whoever wrote it. The host cannot tell that the person opening a repository
+  wrote its policy, for the same reason a repository's own git config is untrusted ([`SHELL.md`](SHELL.md),
+  `repoConfigRunsCode`); that fact is about git config and none of these rules reads it. A file's `deny` and `ask`
+  rules take effect on the file's word, under any configuration: across policies the stricter answer wins ("What a
+  policy decides" above), so neither can make a call run. Its `allow` rules take effect only once accepted.
+- **What is in effect is the accepted snapshot, plus the file's live `deny` and `ask` rules.** Acceptance is of a
+  content hash, for that file at that place: the same bytes at another path or place are not accepted. A rule that was
+  in the accepted snapshot stays in effect until a new snapshot is accepted, so deleting a `deny` from the file (by
+  anyone, through any write the rules allow) frees nothing, and adding one takes effect at once. Editing the file,
+  the model's edits included, therefore never widens what runs: the host sees the hash differ and shows a pending
+  change.
+- **Loading a change is a proposal, not an answer to a call.** It reaches the person as one card stating what each new
+  or changed `allow` will match and the evidence, as a proposal from the model does ("Showing what was approved"
+  below), never as a button on a call's card ("Widening is a policy" above). Accepted, each such rule enters the store
+  as a policy with `origin: "file"`, the file's place and path, and the snapshot's hash, at the scope of the place it
+  was found in or the one the person chose; the model reads that origin in `ml.current.policies`. From there it is an
+  ordinary policy: a `deny` from any source still wins over it, and "A change takes effect at once" applies.
+- **A script a rule allows is pinned as any allowed script is**: `(program, entrypoint)` by `sha256` over its local
+  import closure ("A condition about the outside world is a pinned script" above), recorded in the snapshot. The pin
+  is checked at every call the rule would allow, not only at acceptance: after an edit to the script or anything it
+  imports, the rule no longer matches and the call asks, so it fails closed and the script needs no write protection.
+  The model may draft both a rule and the check it allows; neither frees a call until the person has accepted them.
+- **Committing or pushing a change to a policy file asks by default**: a commit whose staged paths include a policy file
+  or a script one of its rules allows. Under these rules every person who takes the file meets the new hash as a
+  pending change, so the gate does not protect anyone's enforcement: it is the author ENDORSING the change for everyone
+  who takes the file from them, and the model does not endorse in the person's name unless told to.
+- **These gates are defaults, and a person widens them by policy, as any other.** Someone working on a shared
+  repository keeps them; someone whose file is their own and read by no one may let its commits and pushes go
+  unasked. The grants differ in weight and the card says which: unasked commits and pushes give up only the
+  endorsement. Loading the model's own edits UNASKED is the one exception to "the model never adds a policy itself"
+  (Scopes, above), exists only once the person has written it, and gives up every gate, since the model can then
+  write "allow everything"; its card says so in those words. A person who disagrees with a file's `deny` does not
+  answer it with an `allow`, which it would beat: they take the file out of effect for that place, a separate act.
+
+The worked example is "merge only through my script" without a classifier. One `deny` matches every `gh` call and
+every `git` call whose effects are not read-only (so read-only `git` is left to the tiers, and no `allow` has to beat
+a `deny`), and one `allow` names a pinned script that decides what makes a PR mergeable. What "reviewed" means is the
+script's, so the person's. The same rules can be the way one person works on their laptop (their store) or what a
+project decided for itself (a file in its repository, accepted by each person who opens it); there the `deny` applies
+at once and the script waits for acceptance. Open, and a dependency of every `deny` naming a program: whether the
+host's sandbox refuses that program when an allowed call starts it INDIRECTLY (a runner such as `npm run`, `xargs` or
+a git alias); until it does, "deny `git`" covers calls that name `git`, not every process that runs it.
 
 ## One page lists every policy
 
