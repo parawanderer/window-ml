@@ -579,6 +579,27 @@ true: the host answers only for what was declared to it, and the registering ses
 outlives its port. The agent-status line ([`AGENT_MAIL.md`](AGENT_MAIL.md), first build step) is where the answer is
 read from; the register call is the host's.
 
+Ruled 2026-10-23 (coordinator, on the `[window-ml root-k]` session's shape before its host PR). The shape: `register
+{ pgid, owner: { session, harness, run?, step? }, memoryBound?, onOwnerLoss?, orphanTimeoutMs? }` answers `{ id, pgid,
+start }`, a row in the same owner table and ledger as a spawn with `kind: "registered"`, the leader's start time read by
+the host itself, the memory watchdog and CPU sampling on it as on a spawn, the port closing being the owner going, a
+`done` with `code: null, registered: true` when the group is gone; `owner { pid }` answers `{ owner, id, kind, host }`
+or `{ owner: null }` from this session's table and every live or orphan ledger through `members_of`, never `ps`;
+`cpuMs` (user plus sys of the live members) rides `status`, orphans, `done` and `ended`, measured, never bounded. Then:
+(R1) `register` is REFUSED over the hub, reason `scope`: a hub is trusted with nothing, and a remote principal
+registering a local group would hold a kill over any same-uid process through owner-loss or the memory bound.
+(R2) What may be registered is checked only where a wrong answer is a kill the person did not mean: refuse
+(`BadRequest`) a group holding the host or any ancestor of it (owner-loss would kill the browser), `pgid` of 1 or
+less, a group already a row in any table, and a group the host cannot signal; nothing else is verified, since ownership
+is declared. The owner a row answers is what the registering connection DECLARED, bound to that connection: a port
+registers for itself, never for a session it names. (R3) `register` comes over the port only, this round: a harness
+with no native port holds a `wmlhost serve` stdio session open, and that process exiting is its owner going, which is
+what "outlives its port" means above. No `wmlhost register --holder <pid>` CLI: owner-loss on an arbitrary pid's exit
+is a kill anyone with the uid can arm on any group, wider than declared ownership, so it is Shane's to add later, on a
+need. The extension side of this PR reads only: `owner(pid)`, `status`'s registered rows and `cpuMs` in the shell
+client, no page-reachable route, no `register` sent by the worker; the agent-status line stays `AGENT_MAIL.md` step 1's,
+whoever builds it.
+
 ## The host's language: Rust, a sibling of the box connector (decided 2026-10-15, replacing Node)
 
 The 2026-10-13 decision for Node rested on the host needing to run the TypeScript dialects (the text pipe for "the
