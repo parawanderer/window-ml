@@ -594,7 +594,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, beforeInjected } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -615,6 +615,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     const prewarms = [];   // PYTHON_PREWARM payloads, in order
     const listeners = {};       // type -> fn[]
     const dispatchedEvents = []; // event types dispatched (for assertions)
+    const windowPosts = [];      // everything posted on the page's window (page-channel.ts: nothing of ours should be)
     const runtimeMsgListeners = []; // chrome.runtime.onMessage listeners (content.js's reverse channel)
 
     // A real (jsdom) DOMParser so page-world code that parses HTML strings works in the sandbox — e.g. the
@@ -642,6 +643,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
             return true;
         },
         postMessage: (data) => {
+            windowPosts.push(data);
             queueMicrotask(() => {
                 for (const fn of [...(listeners.message || [])]) fn({ source: win, data });
             });
@@ -734,6 +736,9 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     };
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
+    // The page's own scripts, run before injected.js: what a page given injected.js LATE (a run on a hidden page, an
+    // origin allowed while it is open) can do first. Never possible on a visible page, where injected.js is first.
+    if (beforeInjected) vm.runInContext(beforeInjected, context);
     let injectedSrc = fs.readFileSync(path.join(DIST, "injected.js"), "utf8");
     if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
         const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
@@ -767,7 +772,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         port._on = (e) => { fn(e); if (prev) prev(e); };
     };
 
-    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage, asContent, asInjected, fromInjected, fromContent };
+    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, windowPosts, fireRuntimeMessage, asContent, asInjected, fromInjected, fromContent, pageRun: (src) => vm.runInContext(src, context) };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM
