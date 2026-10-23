@@ -151,15 +151,17 @@ _h
  * it: the old module's spec keeps that loader alive past a collection, where `gc.get_objects()` finds it.
  */
 const PYODIDE_JS_SEAL = /* python */ `
-import sys as _ml_s
-import pyodide.webloop, pyodide._package_loader
-from _pyodide._importhook import JsLoader as _ml_L
-for _ml_k in [k for k in _ml_s.modules if k == "pyodide_js" or k.startswith("pyodide_js.")]:
-    _ml_m = _ml_s.modules.pop(_ml_k)
-    for _ml_l in (getattr(_ml_m, "__loader__", None), getattr(getattr(_ml_m, "__spec__", None), "loader", None)):
-        if isinstance(_ml_l, _ml_L):
-            _ml_l.jsproxy = None
-del _ml_s, _ml_L, _ml_k, _ml_m, _ml_l
+def _ml_seal():
+    import sys
+    import pyodide.webloop, pyodide._package_loader
+    from _pyodide._importhook import JsLoader
+    for k in [k for k in sys.modules if k == "pyodide_js" or k.startswith("pyodide_js.")]:
+        m = sys.modules.pop(k)
+        for loader in (getattr(m, "__loader__", None), getattr(getattr(m, "__spec__", None), "loader", None)):
+            if isinstance(loader, JsLoader):
+                loader.jsproxy = None
+_ml_seal()
+del _ml_seal
 `;
 
 /**
@@ -210,7 +212,7 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
     //     boot: the worker must not run a cell with the API in reach.
     // Only `config` is frozen: the import system sets `_api` on its parent whenever a cell re-imports it.
     const standIn = { _api: { config: Object.freeze({ enableRunUntilComplete: !!py._api?.config?.enableRunUntilComplete }) } };
-    py.unregisterJsModule("pyodide_js");
+    try { py.unregisterJsModule("pyodide_js"); } catch { /* a second boot of this interpreter, or a seal that threw before */ }
     py.runPython(PYODIDE_JS_SEAL);
     py.registerJsModule("pyodide_js", standIn);
 
