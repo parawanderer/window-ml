@@ -285,7 +285,9 @@ listed as remaining is DONE unless named below.
      builds output quadratic in its input while only the input's length is charged. ASSIGNED 2026-10-23 on Shane's word
      (relayed by the quadratic-regex session) to that session: [`REPLACE_OUTPUT_BOUND.md`](REPLACE_OUTPUT_BOUND.md); the
      red team found it and reviews nothing, the janitor reviews. Measured since: memory, not halting (V8 refuses the
-     string at about 0.5G characters in milliseconds).
+     string at about 0.5G characters in milliseconds). Built in #1010 (open 2026-10-23, the janitor reviewing): the
+     `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
+     output bound at all, now held to `MAX_STRING`.
 
 ## The lanes
 
