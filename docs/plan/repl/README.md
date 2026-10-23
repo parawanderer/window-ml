@@ -158,7 +158,7 @@ one item in hand and goes idle: root-k finishes (d), the Settings registration p
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
 and continue. The janitor reviews every open code PR in dependency order: #1052, #1042, #1048, #1055, #1051, #1045,
-#1041, #1046, then (d), then #1068; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+#1041, #1046, then (d), then #1068, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -372,7 +372,9 @@ listed as remaining is DONE unless named below.
   failing-first todo, the entrypoint branch of `storeRefusal` runs no shipped-program check, so a stored entrypoint
   manifest naming `git` is kept, survives load and shadows `git.json` at call time. The fix is root-k's, on #1048's
   branch before it merges (a hole in the item being landed, inside the freeze); #1068 merges after #1048 and the
-  janitor reviews it. The red team's `propose_manifest` pass on #1055 follows.
+  janitor reviews it. The red team's `propose_manifest` pass is #1070 (2026-10-23, test-only, stacked on #1055's
+  branch `manifests/propose`, head 5ee9eb92, `redteam-propose-manifest.test.mjs` on its branch): twelve pins, all six
+  boundary properties hold against c0ca2a09, mutation-checked, no gap; it merges after #1055, the janitor reviews it.
 
 ## The lanes
 
