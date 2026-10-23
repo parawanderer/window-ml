@@ -15,6 +15,7 @@ below, so nothing outside the folder imports `readonly-exec/` directly. The piec
 | `readonly-exec.ts` | `evalReadonly`: builds the root scope, parses, runs the evaluator, restores on failure, attaches the failing line |
 | `readonly-exec/limits.ts` | the refusals (`NotInDialect`, `Denied`, `NeedsPage`), the halting rationale and bounds (`STEP_BUDGET`, `MAX_COLLECTION`, `MAX_STORED_CELLS`, `MAX_STRING`, `MAX_CALL_DEPTH`, `PIPE_CHARS_PER_STEP`), `riskyRegex` |
 | `readonly-exec/regex-cost.ts` | `regexWork`/`regexSteps`: the bound on one regex search's backtracking over its input, and `REGEX_UNITS_PER_STEP` (the Halting row) |
+| `readonly-exec/replace-size.ts` | `replaceWorstCase`/`replaceSize`: how many characters a String `replace` will build, counted before the host builds it; the evaluator's `replaceCharge` and the pipe's `sed` both use it (the `replaceCharge` row) |
 | `readonly-exec/tokenizer.ts` | `tokenize`, regex-vs-division, template literals, the punctuators and `COMPOUND` |
 | `readonly-exec/parser.ts` | the `Parser` (Pratt, the `BP` table) and the AST `Node` type |
 | `readonly-exec/policy.ts` | what may be read, called, built and written: `DENIED_PROPS`, the method gate (`BY_KIND`, `kindOf`, `methodAllowed`, the Set/Map brand checks), `CALLABLE_ROOTS`, `isWritableTarget`, `SAFE_CONSTRUCTORS`, `MUTATING_METHODS`, `ANSWER_METHODS`, `ML_READONLY_METHODS`, and `mlFacade`, the `ml` object the dialect sees |
