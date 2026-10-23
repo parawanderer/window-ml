@@ -29,7 +29,18 @@ that needs a decision goes to the coordinator, who writes the ruling into the sp
    neither built, and a Tier 1 `@lift` entry suspends the in-process gate, so it is its own root. (c2), after (c) merges
    and only if time allows: Tier 3 (`@cost interpret`) entries only, sha256-pinned, delivered through the existing
    `src/python/dialect-data.ts` path to the fork's `load_manifests`, no fork change; Tier 1 stays out of root K, listed
-   for Shane. (c) is a
+   for Shane. RULED 2026-10-23, the evidence run of (c): nothing executes before the person's word; the card's block is
+   DERIVED and says so (the host resolves the program and discards: pin path, fingerprint, `inRoot`, the version when
+   the draft reads one, a script's sha256; plus this run's recorded `ml.sh` calls of that program with the draft's
+   reading of each, free or asks), never mixed with MEASURED; on approval the entry is stored `origin: "proposed"` and
+   applies sandboxed only (B5), loaded live; the MEASURED run follows approval, on a sandboxed host only, over this
+   run's recorded calls of the program the draft makes free, under the envelope derived from the draft (write none, net
+   none, program-only exec) with the 2 s / 4 KiB probe limits, each within `okCodes` with no envelope mismatch and no
+   `protectedChanged`; all pass marks `evidence {calls, at}` and the entry then also describes plain-host calls; any
+   failure keeps it sandbox-only and is stored on the entry for (d)'s page; zero recorded free calls means no evidence,
+   sandbox-only, said on the card, never a synthetic call. Measuring before the card was refused: an execution no card
+   covered. Scope is the model's choice, B3 forcing workspace for an in-root program or a script, said on the card; the
+   tool is offered only to a worker-built run with `ml.sh` bound, like `propose_policy`. (c) is a
    new tool and (b) adds message types: each gets the red-team pass AGENTS.md requires, written by a separate agent with
    tests that fail first (`tests/redteam.test.js`; the `redteam` skill). The sh-policy session's #990 (destructive
    programs, no shipped manifest inside a workspace root) and #995 (the manifest JSON Schemas) are K's edges, already on
