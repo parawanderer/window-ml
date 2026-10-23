@@ -15,7 +15,7 @@ import { ML_READONLY_METHODS, mlFacade } from "../readonly-exec/policy";
 import { workerReadonlyMl, derefWhole, type RunDeref } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import type { PipeLimits } from "../pointers/text-pipe";
-import { PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/limits";
+import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/limits";
 import { derefByRun, runControllers, sessionTokens } from "./sw-runs";
 import { shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
@@ -86,8 +86,10 @@ async function shMember(fn: (c: ShCallContext, a: readonly unknown[]) => Promise
 
 /**
  * The pipe limits that charge a client's budget: what each stage reads and makes, at the dialect's rate, and what its
- * searches can cost (regex-cost.ts). A charge past what is left throws `OverBudget` before the work it prices runs.
- * One cell's calls draw on one budget; without it each is bounded alone and a loop of them is not.
+ * searches can cost (regex-cost.ts). A search or a stage's input past what is left throws `OverBudget` before it runs;
+ * a stage's output is charged once made, and held to MAX_STRING, checked before building for the stages that grow
+ * by more than a constant factor (`sed`, pretty-printed JSON), as the dialect's pipe is. One cell's calls draw on one
+ * budget; without it each is bounded alone and a loop of them is not.
  * @param client the client
  * @returns the limits
  */
@@ -95,7 +97,10 @@ function meterOf(client: WireClient): PipeLimits {
     const spend = (n: number): void => {
         if ((client.budget.left -= n) < 0) throw new WireError("OverBudget", `this code's ml calls are over their ${STEP_BUDGET.toLocaleString("en-US")} steps together; read less per call, or read once and work on the value in the cell`);
     };
-    return { charge: (chars) => spend(Math.ceil(chars / PIPE_CHARS_PER_STEP)), steps: spend };
+    return {
+        charge: (chars) => spend(Math.ceil(chars / PIPE_CHARS_PER_STEP)), steps: spend, maxChars: MAX_STRING,
+        tooLarge: (msg) => { throw new WireError("OverBudget", `${msg}, too much for one call to build`); },
+    };
 }
 
 /**
