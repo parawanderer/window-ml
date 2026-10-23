@@ -212,6 +212,48 @@ one. Here widening is never a button on a call:
 - **Fewer cards is the job of the tiers**, not of the card: the consumer's own description of a call, its sandbox and
   the person's policies decide most calls before a card exists.
 
+## A policy kept in a file (proposed, not built)
+
+(Shane and the sh-policy session, 2026-10-23.) Every policy above lives in the person's store. A policy can also live in
+a FILE: in a repository the host opens, or passed along as a file or a link, so that rules someone decided can be
+copied by others. A repository is one place for such a file, not the main case: this system is not built around a
+coding workflow. The rules below hold whatever carried the file; only how it is found differs (a file found where it
+applies, a directory or an origin, is scoped to that place; one the person imports applies where they say).
+
+- **A file is untrusted until accepted**, whoever wrote it: the host cannot tell that the person opening a repository
+  wrote its policy, the same reason a repository's own git config is untrusted ([`SHELL.md`](SHELL.md),
+  `repoConfigRunsCode`). A rule that only NARROWS (a reject, an ask, or a partial lift of the file's own reject that
+  allows no more than no file would) applies on the file's word, always, under any configuration. A rule that WIDENS
+  applies only once accepted.
+- **What is in effect is the accepted snapshot, pinned by hash, never the file's live text.** So editing the file, by
+  the person or by the model through any means the write rules allow, changes nothing in effect: the host sees the
+  hash differ and shows a pending change. Loading it is a separate act, one card that shows the change in MEANING
+  ("newly allowed: running `scripts/<merge-check>`"), not a text diff; it then reaches the store, where "A change takes
+  effect at once" applies.
+- **A script a rule allows is part of the hash.** Editing the script suspends the rule until the person accepts again,
+  so it fails closed and the script needs no write protection: the model may draft both the rule and the check it
+  allows, and neither gates anything until the person has seen it. This is "The pinned code is what runs", above,
+  applied to a file.
+- **Committing or pushing a change to a policy file asks by default**: a commit whose staged paths include a policy file
+  or a script one allows. Each consumer's host asks again on the new hash anyway, so this gate is not for anyone's
+  enforcement: it is the author ENDORSING the change for everyone who takes the file from them, and the model should
+  not endorse in the person's name unless told to.
+- **These gates are defaults, and a person widens them by policy, as any other.** Someone working on a shared
+  repository keeps them; someone whose file is their own and read by no one may let its commits and pushes go
+  unasked. The grants differ in weight and the card says which: unasked commits and pushes give up only the
+  endorsement; LOADING the model's own edits unasked gives up every gate, since the model can then write "allow
+  everything", and its card says so in those words.
+- **The person's own policies and a file's both apply**: rejects add up, and a call a rule would allow must be allowed
+  by both, so neither loosens the other.
+
+The worked example is "merge only through my script" without a classifier: reject the `git` and `gh` programs, allow
+`git`'s read-only operations again, and allow one script that decides what makes a PR mergeable. What "reviewed" means
+is the script's, so the person's. The same rules can be the way one person works on their laptop (their store) or
+what a project decided for itself (a file in its repository, accepted by each person who opens it); there the rejects
+apply at once and the script waits for acceptance. Open: whether the host's sandbox refuses a rejected program started
+INDIRECTLY (a runner such as `npm run`, `xargs` or a git alias under an allowed call), which "reject `git`" needs to
+mean what it says.
+
 ## One page lists every policy
 
 Global, workspace and each session's, one line per policy (Shane, 2026-10-13). Each line can be edited or deleted on
