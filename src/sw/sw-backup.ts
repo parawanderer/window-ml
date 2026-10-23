@@ -7,7 +7,7 @@
  */
 import { BackupError, type Secret } from "../backup/backup-format";
 import type { BackupForm } from "../backup/backup-file";
-import { chromeStorageWriter, type RestorePlan, type StorageSnapshot } from "../backup/backup-settings";
+import { chromeStorageWriter, type StorageSnapshot } from "../backup/backup-settings";
 import { createBackup, offerRestore, restoreBackup, type BackupDeps } from "../backup/backup-run";
 import { archiveCall, scheduleFolderSync } from "./sw-archive";
 import { sessionStore } from "./sw-sessions";
@@ -51,16 +51,17 @@ export async function backupAction(payload: unknown, deps: BackupDeps = realDeps
         case "restore": {
             const secret = secretOf(p.secret);
             const sessions = p.sessions === true, settings = p.settings === true;
-            // The page's plan is only a list of the keys the person accepted: the worker computes the plan again from the
-            // file and the storage as they are now, and writes the changes of its own plan whose keys the page also lists.
-            let plan: RestorePlan | null = null;
-            if (settings) {
+            // The worker reads the file and the storage again and uses ITS offer: its own digest, its own session hashes and
+            // its own plan. From the page it takes only which settings keys the person accepted, and, as a check, the digest
+            // the person previewed (a different file in the slot is refused, never imported).
+            const offer = await offerRestore(deps, secret);
+            if (typeof p.digest === "string" && p.digest !== offer.contents.digest) throw new BackupError("changed", "the backup file changed since it was previewed; read it again");
+            if (settings && offer.plan) {
                 const accepted = new Set(((p.plan as { changes?: { area?: unknown; key?: unknown }[] } | null)?.changes ?? []).map((c) => `${c?.area}\0${c?.key}`));
-                const fresh = (await offerRestore(deps, secret)).plan;
-                if (fresh) plan = { ...fresh, changes: fresh.changes.filter((c) => accepted.has(`${c.area}\0${c.key}`)) };
+                offer.plan = { ...offer.plan, changes: offer.plan.changes.filter((c) => accepted.has(`${c.area}\0${c.key}`)) };
             }
             if (settings) await siteSchemaReady();   // a later site-access migration must not undo the lists written here
-            const done = await restoreBackup(deps, { plan, sessions, settings, secret });
+            const done = await restoreBackup(deps, { offer, sessions, settings, secret });
             if (done.sessionsAdded > 0) scheduleFolderSync();
             return done;
         }

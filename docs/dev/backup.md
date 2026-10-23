@@ -193,10 +193,11 @@ before anything runs, and it is not in `HANDLE_MAP`): `{action:"create", form, i
 secret?}` and `{action:"restore", plan, sessions, settings, secret?}`, handled by `backupAction` in `sw-backup.ts`
 over the real `BackupDeps` (`archiveCall`, the worker's `sessionStore`, the three storage areas, `chromeStorageWriter`).
 A failure answers `{ error, reason }`, so the page can tell `needs-key` from `wrong-secret`. A restore does not trust
-the plan the page sends back: the worker plans again from the file and the storage as they are now, and writes only
-the changes of its own plan whose area and key the page's plan also lists (a key the file lacks, or a forged value,
-is never written). It waits for `siteSchemaReady()` before writing settings and calls `scheduleFolderSync()` only when
-sessions were added. Setting up and changing the passphrase are not messages: the page reaches the keyring in
+the page: the worker reads the file and the storage again, makes its own offer (its own digest, its own session hashes,
+its own plan) and restores THAT. From the page it takes only the area and key of each settings change the person left
+ticked (a key the file lacks, or a forged value, is never written) and, optionally, the digest the person previewed: a
+different one is refused with `reason: "changed"`. It waits for `siteSchemaReady()` before writing settings and calls
+`scheduleFolderSync()` only when sessions were added. Setting up and changing the passphrase are not messages: the page reaches the keyring in
 IndexedDB directly.
 
 **Not built in 2a.** The screens (including the recovery screen and its type-back check, the encryption switch, the
