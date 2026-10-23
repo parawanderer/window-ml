@@ -97,8 +97,34 @@ host resolved it, with no interpreter flag before it (`-u`, `-X`, `--` included)
 it is unknown and asks, with a `why` line each. The card shows the script and its hash where a binary shows its
 version. If the host refuses the start with `PinChanged` (the file changed after its facts were read), a call no
 person approved is described again from fresh facts, once; one the person approved is refused, naming both hashes,
-and the run log's `shell`/`pin-changed` record keeps them. No script manifest ships: a pin is per repository, and the
-store that holds them is K2, so until then only tests pass their own list.
+and the run log's `shell`/`pin-changed` record keeps them. No script manifest ships: a pin is per repository, so a
+script's manifest lives in its workspace's part of the store below.
+
+**Manifests the person registered are stored beside the shipped ones** (PROGRAM_MANIFEST.md, "The store, as built";
+root K slice b, rulings B1 to B5 of 2026-10-23). `sw-manifests.ts` keeps them in `chrome.storage.local`
+(`ml_manifests_global`, and `ml_manifests_workspace` by the root's realpath; declared `manifests.global` and
+`manifests.workspace`), and the pure `stored-manifests.ts` says what may be kept and when one describes a call. The
+store refuses at write time (`storeRefusal`), naming why: a key a shipped manifest describes (shipped wins, naming
+the file), a binary without the host's pin (`path`, `fingerprint`, `inRoot`, and `version` only for a manifest that
+reads one), a script's entry outside workspace scope or with a program pin, an in-root program for any scope but its
+own workspace, and a second entry for one key in one scope and root. A read keeps the well-formed entries and drops
+the rest, never repairing them. At call time `manifestsFor` puts the workspace's own entries, then the global ones,
+before the shipped list; `storedMisses` makes the call `unknown`, with a `why` line, when the resolved program's path,
+fingerprint or version is not the pin's, when an in-root program meets a non-workspace entry, and when an entry the
+model proposed (`origin: "proposed"`) meets a call not under the sandbox. A change waits for the first read
+(`manifestsReady`), so an add made before it is not overwritten by it, and `shRun` waits for it too. Only an extension
+page reaches the store: `MANIFESTS` (`list`, `add`, `remove`) refuses any other sender, and what it adds is the
+person's (`origin: "person"`), whatever the payload says.
+
+**CPU is a second measured fact beside memory** (host 0.7.0, root 1 of ROOT_K.md). `done.cpuMs`, the user and system
+time of the call's members with the children they reaped, reaches `ShResult.cpuMs`, the span (`shSpanOf`), the
+`shell`/`run` record and the event lane's row (`shCallText`); it is never bounded, and absent from an older host.
+
+**Whose process is this** (SHELL.md, the ownership ruling of 2026-10-23, R1 to R5). The host answers `owner { pid }` from
+its owner tables, which hold what it spawned and the process groups a connection on that machine declared with
+`register`; `HostClient.owner` and `HostClient.status` read them. The worker only reads: it never sends `register`
+(`tests/sh-call.test.mjs` holds that no file in `src/` does), and no page-started type reaches either call. Nothing in
+the extension shows the answer yet: the agent-status line it is meant for is `AGENT_MAIL.md`'s first build step.
 
 **CPU is a second measured fact beside memory** (host 0.7.0, root 1 of ROOT_K.md). `done.cpuMs`, the user and system
 time of the call's members with the children they reaped, reaches `ShResult.cpuMs`, the span (`shSpanOf`), the

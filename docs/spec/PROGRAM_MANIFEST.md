@@ -85,8 +85,9 @@ over the manifest's data so the profile is derived from the same source as the f
 
 **How a program is registered.**
 
-- The person names it. The host resolves it, and a tool the person owns is pinned by the HASH of its binary or script,
-  a better pin than `git` can have; a changed script drops back to `unknown`.
+- The person names it. The host resolves it, and a tool the person owns is pinned: a script by its `sha256`, a binary
+  (this round, B4 below) by the host's fingerprint and resolved path, both better pins than `git` can have; a changed
+  script or binary drops back to `unknown`.
 - A draft manifest is generated from the program's `--help`, its man page, its shell completion files (which encode
   the flags and whether they take file arguments), or—for a script in the workspace—directly from its source and
   argument parser (`parseArgs`, `argparse`, `process.argv` walk). A model with `ml.sh` enabled can draft the manifest
@@ -119,6 +120,13 @@ plain-host import-closure hash unbuilt and K1's "applies only when `sandboxed: t
   run marks it; `origin: "person"` applies on both placements.
 - The store's message types get the red-team pass from the red team's lane: a page cannot store, list or delete a
   manifest, and a stored manifest never reaches a page.
+
+As built (`src/sw/sw-manifests.ts`, the storage; `src/shell/stored-manifests.ts`, the rules, pure; mechanics in
+`docs/dev/shell.md`), on top of the ruling: a workspace's entries describe a call only while that root is configured;
+another workspace's entry for an in-root program misses at call time as well as being refused when stored; a script's
+manifest (`entrypoint`) is workspace scope always, since it arrived with the repository; B2 is checked at store, load
+and call time; a pin that no longer matches leaves the call `unknown` with the reason on the card. `MANIFESTS` is
+answered for extension pages only, and what it adds is `origin: "person"`.
 
 ### Interpreted script tools (`node scripts/<name>.mjs`, `python3 <script>.py`)
 

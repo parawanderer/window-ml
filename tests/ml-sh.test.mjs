@@ -57,6 +57,26 @@ test("a described call inside the roots, under the sandbox, runs without a card:
     assert.match(results[0], /it runs programs through ml\.sh/, "the exec ran in an isolated world for it");
 });
 
+// --- a program described by a stored manifest (PROGRAM_MANIFEST.md, "Registering a program") ---
+
+/** The person's own tool, stored globally, pinned to what the fake host resolves `mytool` to. */
+const storedTool = (fingerprint = "1:2:3:4") => ({ ml_manifests_global: [{ id: "man-t", scope: "global", origin: "person", created: 1,
+    manifest: { program: "mytool", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], paths: "operands", flags: {} } },
+    pin: { path: "/usr/bin/mytool", fingerprint, inRoot: false } }] });
+
+test("a program a stored manifest describes runs without a card under the sandbox, and asks once its binary changed", T, async () => {
+    for (const [fingerprint, cards] of [["1:2:3:4", 0], ["1:2:3:5", 1]]) {
+        const host = fakeNativeHost({ done: () => ({ out: "ok\n", err: "", code: 0 }) });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["mytool"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, localExtra: storedTool(fingerprint), onStep: ask.onStep });
+        const r = valueOf(results[0]);
+        assert.equal(r.ok, true, fingerprint);
+        assert.equal(ask.asked.length, cards, `pinned to 1:2:3:4, the host reported it as ${fingerprint}`);
+        assert.equal(r.approvedBy, cards ? "person" : "builtin");
+        if (cards) assert.match(ask.asked[0].facts.why.join("; "), /not the program its manifest was registered for/);
+    }
+});
+
 // --- a call the person is asked about ---
 
 test("an undescribed program asks inside the running step, showing the host's facts; allowed, it runs and says it waited", T, async () => {

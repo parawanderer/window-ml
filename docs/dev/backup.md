@@ -107,8 +107,8 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 | `src/archive/archive-worker.ts` | the ops `backupBegin`, `backupPut`, `backupFinish`, `backupAbort`, `restoreInspect`, `restoreSessions`, `backupFileRemove` |
 | `src/sw/policy-valid.ts` | the policy validator and the source and label bounds the worker and a restore share (moved out of `sw-policies.ts`) |
 
-**The inventory.** 127 classified entries: 92 backed up (the 55 config keys other than the API key, the global
-policies, 5 site keys, 31 UI preferences), 1 backed up only when encrypted (`apiKey`), 34 never. The config is
+**The inventory.** 129 classified entries: 92 backed up (the 55 config keys other than the API key, the global
+policies, 5 site keys, 31 UI preferences), 1 backed up only when encrypted (`apiKey`), 36 never. The config is
 classified from `DEFAULT_CONFIG`, so a new setting is in every backup from the commit that adds it; any other key needs
 an entry in `INVENTORY`, and `tests/backup-inventory.test.mjs` fails on a key nobody classified and on an entry no
 source names. The scan reads every `ml_` string in `src/` (a whole literal is a key, one ending in `_` or `:` and the
