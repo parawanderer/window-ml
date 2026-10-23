@@ -9,7 +9,7 @@
 import type { DerefRead, DerefValue } from "../contract/contract-pointers";
 import { DerefText } from "../tools/deref-read";
 import { pipeStages, derefPipe, TokenStore } from "../pointers/token-pipe";
-import { mlPipe } from "../pointers/text-pipe";
+import { mlPipe, type PipeLimits } from "../pointers/text-pipe";
 import { mlJsonPath } from "../json-path";
 import { mlSchema } from "../ml/ml-schema";
 import { mlRange } from "../util";
@@ -20,7 +20,7 @@ import { workerFetchCached } from "./worker-tools";
 import type { StoredColumnReader } from "../table/table-data";
 
 /** A run's pointer resolver, as the loop hands it to the host (`tokenSink`). */
-export type RunDeref = (ref: string, pipe?: string | string[]) => DerefRead;
+export type RunDeref = (ref: string, pipe?: string | string[], limits?: PipeLimits) => DerefRead;
 
 /**
  * Read a pointer through the run's resolver, over the WHOLE of a stored text when its row names one (fetch_url past its
@@ -31,14 +31,15 @@ export type RunDeref = (ref: string, pipe?: string | string[]) => DerefRead;
  * @param deref the run's pointer resolver
  * @param ref the pointer
  * @param stages the pipe, as stages
+ * @param limits the caller's budget for the pipe's line stages (text-pipe.ts `PipeLimits`), or none
  * @returns what the resolver answers, with the whole text in place of the preview
  */
-export async function derefWhole(runId: string, deref: RunDeref, ref: string, stages: string[]): Promise<DerefRead> {
+export async function derefWhole(runId: string, deref: RunDeref, ref: string, stages: string[], limits?: PipeLimits): Promise<DerefRead> {
     const base = deref(ref);
     const key = base.meta?.value, meta = base.meta;
-    if (!key || !meta || meta.table || meta.kind === "table" || TokenStore.slotOf(ref) === "in") return stages.length ? deref(ref, stages) : base;
+    if (!key || !meta || meta.table || meta.kind === "table" || TokenStore.slotOf(ref) === "in") return stages.length ? deref(ref, stages, limits) : base;
     const whole = await readStoredText(key, runId);
-    return { ...base, value: derefPipe({ id: meta.id, tool: meta.tool, kind: meta.kind, out: whole, t: 0, step: meta.step }, "out", stages) };
+    return { ...base, value: derefPipe({ id: meta.id, tool: meta.tool, kind: meta.kind, out: whole, t: 0, step: meta.step }, "out", stages, limits) };
 }
 
 /** A stored table's columns, read from the worker's value store for the run that holds it: what `VALUE_COLUMNS` answers

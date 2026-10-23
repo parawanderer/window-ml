@@ -72,6 +72,37 @@ test("a full-mode cell is a full client, and this round its members are the read
     assert.equal(got.chat.error?.code, "Absent", "no gated member is on the wire until the consent path is");
 });
 
+// --- one budget a cell: every call its code makes draws on one step budget (ML_WIRE.md) ---
+
+test("a cell's piped dereferences share one step budget: a loop of calls each under its own cap is stopped, and the next cell starts whole", T, async () => {
+    // `grep a+b` over a run of "a" backtracks quadratically: about 90k steps here, well under the 3M one call may cost
+    // alone (regex-cost.ts UNCHARGED_SEARCH_STEPS), so before the budget a loop of them was never stopped.
+    const url = "https://data.example/a.txt";
+    const cells = [];
+    await wireRun(async (wire, bg) => {
+        const answers = [];
+        for (let i = 0; i < 80; i++) {
+            const a = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep a+b" }]);
+            answers.push(a);
+            if (a.error) break;
+        }
+        cells.push({ answers, config: await wireCall(bg, wire, "config") });
+    }, { body: "a".repeat(3900) + "\n", url, calls: [
+        { name: "fetch_url", args: { url } },
+        { name: "python_exec", args: { code: "print(1)", mode: "readonly" } },
+        { name: "python_exec", args: { code: "print(2)", mode: "readonly" } },
+    ] });
+    assert.equal(cells.length, 2, "positive control: both cells ran");
+    const [first, second] = cells;
+    const last = first.answers.at(-1);
+    assert.equal(last.error?.code, "OverBudget", `the loop is stopped by the budget, not by the cap: ${JSON.stringify(last).slice(0, 200)}`);
+    assert.match(last.error.message, /over their 3,000,000 steps together/);
+    assert.ok(first.answers.length >= 10 && first.answers.length < 80, `stopped after ${first.answers.length} calls`);
+    assert.ok(first.answers.slice(0, -1).every((a) => "value" in a), "every call before it answered");
+    assert.equal(typeof first.config.value?.model, "string", "a call that does no metered work still answers");
+    assert.equal(second.answers.length, first.answers.length, "the next cell's client starts with a whole budget");
+});
+
 // --- the server's rules, without a worker ---
 
 test("ask: a gated call answers ask first, then its value or a Denied once the person decides", async () => {
