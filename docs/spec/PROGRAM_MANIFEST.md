@@ -85,8 +85,9 @@ over the manifest's data so the profile is derived from the same source as the f
 
 **How a program is registered.**
 
-- The person names it. The host resolves it, and a tool the person owns is pinned by the HASH of its binary or script,
-  a better pin than `git` can have; a changed script drops back to `unknown`.
+- The person names it. The host resolves it, and a tool the person owns is pinned: a script by its `sha256`, a binary
+  (this round, B4 below) by the host's fingerprint and resolved path, both better pins than `git` can have; a changed
+  script or binary drops back to `unknown`.
 - A draft manifest is generated from the program's `--help`, its man page, its shell completion files (which encode
   the flags and whether they take file arguments), or—for a script in the workspace—directly from its source and
   argument parser (`parseArgs`, `argparse`, `process.argv` walk). A model with `ml.sh` enabled can draft the manifest
@@ -114,9 +115,9 @@ Five rulings settle where a registered manifest lives and when it describes a ca
   own entry, pinned; a global entry, or another workspace's, is refused when stored and misses at call time. A
   script's manifest (`entrypoint`) is workspace scope always: it arrived with the repository.
 - **B4, the pin.** A binary is pinned by the host's `program.fingerprint` (device, inode, size, mtime) and its
-  resolved path, plus the version it reported when its manifest reads one. This replaces "the HASH of its binary"
-  above for binaries: the host fingerprints every call already, and hashing a large binary on every call does not
-  pay. A script keeps its `entrypoint.sha256`. Any change drops the call back to `unknown`, with the reason on the card.
+  resolved path, plus the version it reported when its manifest reads one. Ruled over hashing the binary: the host
+  fingerprints every call already, and hashing a large binary on every call does not pay. A script keeps its
+  `entrypoint.sha256`. Any change drops the call back to `unknown`, with the reason on the card.
 - **B5, a model's draft.** An entry with `origin: "proposed"` describes a call only under the OS sandbox, where its
   claims are enforced, until `propose_manifest`'s evidence run marks it. The person's own (`origin: "person"`)
   describes calls on both placements.
