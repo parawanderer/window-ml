@@ -230,6 +230,14 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   report until proven otherwise. Local: 0 of 660 green on 2026-10-19 (15 solo, 5x full suite at 3 workers, 5x two parallel
   full suites at 3 workers). No CI artifact yet of a stall. Next failure: download `e2e-results-3` and read the page
   snapshot before theorising; do not raise the 20s and do not touch `idx.settled`'s meaning of "ended" without that.
+- **`resource-panel.spec.mjs:2125` › the narrowed window is in storage** — deterministic-looking, not a race:
+  `ml_res_window` Received 6 Expected < 6 on both tries; the on-screen check at `:2119` passed. Peer traced it to
+  `settleScrub` in `src/sidebar/resource/resource-scrub.tsx:44-55` (400 ms re-armed `setTimeout`, `chrome.storage.local.set`
+  in a swallowed catch). Owner: resource panel. Do not chase as a flake.
+- **`background.test.js:2588` › `two START_RUNs under one run id while the first is still starting: one hosts, one is
+  refused`** — flaked once on #998 (both starts hosted, `actual: 2, expected: 1`), passed on rerun. The test races two
+  START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
+  not touch background start.
 - Seen once each: `site-access` 16a (@security), `cross-page` composer seq collision, `output-scroll` tail-follow,
   `chat-web` phone tooltip, `focus-restore`, `bench-editor` traceback, `chat-page` PAGE-hosted run, `resource-panel`
   narrow window.
