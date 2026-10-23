@@ -385,6 +385,13 @@ listed as remaining is DONE unless named below.
   owner table and CPU time read; the worker never registers), host #28 MERGED ae7284e6, #1048 retargeted to `main`.
   Root-k merged `main` into `manifests/store`; main's backup inventory then failed on the store's two keys, classified
   `never` backed up in a48e9743, a commit the janitor has not yet seen (asked the same hour; #1048 waits on CI).
+  **Root 1 DONE 2026-10-23**: [`ROOT_K_RESULT_1.md`](ROOT_K_RESULT_1.md) merged 9fe4e6a2 (#1075, the coordinator
+  reviewed, every claim checked against the merged code). Left by it, each named there: the host's CPU timebase is a
+  per-arch constant (an x86_64 host under Rosetta undercounts about 42x), a follow-up root-k's session was refused
+  permission to post on host #28, so it is Shane's to post or assign; `HostStatus` is narrower than PROTOCOL.md's
+  `status`, to widen before the first `status()` consumer, unowned; nothing reads `owner` until the agent-status line
+  (`AGENT_MAIL.md` step 1); a registered row counts toward the 32 running calls, unmeasured against a session that
+  registers many.
 
 ## The lanes
 
