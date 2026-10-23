@@ -19,7 +19,11 @@ const ago = (t: number | null): string => {
     return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} minutes ago` : new Date(t).toLocaleString();
 };
 
-/** The section's body. `busy` names the action in flight, so its button says so and none is pressed twice. */
+/**
+ * The section's body. `busy` names the action in flight, so its button says so and none is pressed twice.
+ * @group settings
+ * @gallery {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": null}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": "", "found": {"name": "window.ml archive", "files": 14, "first": "2025-09", "last": "2026-10"}}
+ */
 export function ArchiveFolderBody(p: {
     report: FolderReport | null;
     archiveOn: boolean;
@@ -148,7 +152,10 @@ function adopted(name: string, r: FolderReport): string {
     return `Using ${name}.${got} ${written(r)}${bad}`;
 }
 
-/** This browser's archive folder: the body, wired to the picker (here, in the page, inside the click) and the worker. */
+/**
+ * This browser's archive folder: the body, wired to the picker (here, in the page, inside the click) and the worker.
+ * @gallery none it asks the service worker for the folder's state; `ArchiveFolderBody` is the same view with props
+ */
 export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     const [report, setReport] = useState<FolderReport | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
