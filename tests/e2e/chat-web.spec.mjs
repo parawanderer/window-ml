@@ -3635,3 +3635,19 @@ test("a capped session's list dot goes once it has been open here and stays gone
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- an idle page animates nothing forever ---
+
+test("a busy session's list dot pulses when it appears, then rests at full colour; nothing on the idle page animates forever", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const dot = page.locator(".chat-list .dot.pending").first();
+    await expect(dot).toBeVisible();
+    expect(await dot.evaluate((d) => getComputedStyle(d).animationName), "it still draws the eye").toBe("pulse");
+    // Three one-second pulses, and then it is still: the page has nothing left to composite.
+    await expect.poll(() => page.evaluate(() => document.getAnimations()
+        .filter((a) => a.playState === "running" && a.effect?.getTiming().iterations === Infinity)
+        .map((a) => `${a.animationName} on ${a.effect?.target?.className}`)), { timeout: 6000 }).toEqual([]);
+    await expect.poll(() => dot.evaluate((d) => getComputedStyle(d).opacity), { timeout: 6000, message: "it rests at full colour" }).toBe("1");
+    expect(errors).toEqual([]);
+    await page.close();
+});

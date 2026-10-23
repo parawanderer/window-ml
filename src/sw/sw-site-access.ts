@@ -102,6 +102,11 @@ export function siteSchemaReady(): Promise<boolean> {
     return schemaReady;
 }
 
+// Exposed for the e2e harness's `configureExtension`, which writes `ml_site_selfapprove` directly and must
+// wait for the one-time migration (it reads `pageApprovalDomains` and writes `ml_site_selfapprove`) so the
+// migration does not overwrite the harness's write with its earlier read. Not used at runtime.
+(globalThis as Record<string, unknown>)._siteSchemaReady = siteSchemaReady;
+
 /** The lists, as stored now, in this build's layout. A storage area that cannot be read counts as empty: refusing is
  *  the safe side. */
 export async function readSiteLists(): Promise<SiteLists> {

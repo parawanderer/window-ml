@@ -96,14 +96,13 @@ async function snapshot(run: string): Promise<{ members: StateMember[]; entries:
     const key = stateKeyFor(run);
     const entries = await readState(key, "human", "worker");
     const members = membersFor("worker", entries);
-    // WHO HOSTS THE LOOP is the session index's word, from where each event came from (session-index.ts), never the
-    // page's. A page-hosted run's messages, pointers and mailbox are the page's: it may answer for those worker ids,
-    // but only where the worker itself holds nothing for this run, and the row says it came from the page.
     const binding = sessionServer.index.binding(run);
     const pageHosts = binding?.hostedBy === "page";
     const tabId = key.tabId ?? (pageHosts ? binding?.tabId : undefined);
     if (tabId == null) return { members, entries };
     const page = await askPage(tabId, run);
     if ("error" in page) return { members, entries, pageError: page.error };
-    return withPageState({ members, entries }, page.raw, pageHosts) ?? { members, entries, pageError: "the page's answer was not a state snapshot" };
+    const merged = withPageState({ members, entries }, page.raw, pageHosts);
+    if (!merged) return { members, entries, pageError: "the page's answer was not a state snapshot" };
+    return merged;
 }

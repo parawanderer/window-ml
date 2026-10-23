@@ -175,7 +175,8 @@ tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printe
   Not against the cell itself: one that patches `plt.close` keeps its figures open for the next cell of its PRINCIPAL
   (a readonly worker is one principal's; the `full` one is everyone's, the shared-interpreter residual below).
 - **The epilogue catches `BaseException`**: it runs the cell's own objects outside the cell's try, and an escape would
-  skip the cancel of what the cell scheduled.
+  skip the cancel of the cell's tasks and asyncio handles; since #998 the cancel runs BEFORE the epilogue, so the catch
+  is belt and braces.
 - **No module it brings in holds the JavaScript bridge**: `tests/python-matplotlib.test.mjs` walks everything those
   modules reach under the lockdown, after a cell tried every backend, the check a new package with a `prepare` owes.
 
@@ -206,7 +207,13 @@ parses, encodes or injects — and the wrapper looks the harness up in the NAMES
 JsProxy lands in the Python namespace: injected inputs are `None`/`str` via `undefined`, and
 the stdout tee is Pyodide's JS-side `setStdout`, given the exact bytes (`stdoutWriter`; the `batched`
 handler strips each line's newline). (5) asyncio pending handles are cancelled
-before a cell's result is returned. The strip, the harness capture and the wrapper are
+before a cell's result is returned: every `asyncio.Task` from `all_tasks()` and every uncancelled `asyncio.Handle` that
+`gc.get_objects()` reaches (#998; the route matrix in #987). Two classes that sweep does not reach, found by the red
+team on 2026-10-23 and held as failing-first `{ todo }` tests on its branch `redteam/python-cancel-gaps` (148875e0),
+with no owner yet: a callable handed to a JS scheduler the strip keeps (`setTimeout`, `queueMicrotask`, `Promise.then`,
+through `create_once_callable`/`create_proxy`) makes no Handle and fires after the result; and a started task kept on a
+module keeps a live `_coro` that a later cell drives with `throw`, so the first cell's `finally` runs after its result
+(the fix is to spend the coroutine in the cancel, not to leave it pending). The strip, the harness capture and the wrapper are
 **escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
