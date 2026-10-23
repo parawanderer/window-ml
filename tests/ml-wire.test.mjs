@@ -148,6 +148,27 @@ test("a stage with no regex charges what it reads and makes, and a sed that woul
     assert.ok(got.answered >= 60 && got.answered < 200, `head alone answered ${got.answered} times`);
 });
 
+test("grep's context assembly is priced with the stage: a -A over many matching lines is refused, not run", { ...T, todo: "inRange scans the whole match list per line (lines x matched) and the charge sees only chars and the regex search: 40k matching lines cost 3,048 of 3,000,000 steps for 2.9s of thread" }, async () => {
+    // `grep -A/-B/-C` marks every line within range of a match by scanning the WHOLE match list per line
+    // (text-pipe.ts `inRange`, `matched.some(...)` per k): lines x matched, quadratic when the pattern is common.
+    // The charge sees only what the stage reads (chars / PIPE_CHARS_PER_STEP) and the regex search itself, so
+    // 40,000 matching lines is about 1.6e9 comparisons — measured seconds here — for roughly 1.3k steps. The
+    // budget exists to stop a cell holding the worker's one thread; this stage holds it and the budget never
+    // moves. Defended: the assembly is priced with the stage and the call answers OverBudget before that loop.
+    const url = "https://data.example/lines.txt";
+    const body = ("x\n").repeat(40_000);
+    const got = {};
+    await wireRun(async (wire, bg) => {
+        got.context = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep -A 1 x" }]);
+        got.plain = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep x" }]);
+        got.small = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "head 20 | grep -A 1 x" }]);
+    }, { body, url, store: true });
+    assert.ok("value" in got.plain, "positive control: the same grep without a context flag answers");
+    assert.ok("value" in got.small, "positive control: a context flag on a small input answers");
+    assert.match(got.small.value.text, /^x/m, "and it still marks context");
+    assert.equal(got.context.error?.code, "OverBudget", `the context loop is priced and refused, not run: ${JSON.stringify(got.context).slice(0, 200)}`);
+});
+
 // --- the server's rules, without a worker ---
 
 test("ask: a gated call answers ask first, then its value or a Denied once the person decides", async () => {
