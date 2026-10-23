@@ -10,7 +10,7 @@
 import type { HostFacts } from "./host-protocol";
 import { validateManifest, type ProgramManifest } from "./program-manifest";
 import { effectsText, manifestFor, quoteArg, type ShFacts } from "./sh-call";
-import { manifestKey, type ManifestRequest } from "./stored-manifests";
+import { manifestKey, type ManifestOrigin, type ManifestRequest } from "./stored-manifests";
 
 /** The longest draft the tool takes, as JSON. */
 export const DRAFT_MAX_CHARS = 16384;
@@ -76,9 +76,10 @@ export function draftArgvs(d: ManifestDraft, roots: readonly string[]): { root: 
  * @param facts the host's facts for `draftArgvs`' argv under `root` (resolved, then discarded: nothing ran)
  * @param root the root that argv was built for
  * @param roots the configured roots
+ * @param origin whose draft it is: the model's (`propose_manifest`) or the person's (the registration page)
  * @returns the request and why its scope was forced, or the error the model reads
  */
-export function draftRequest(d: ManifestDraft, facts: HostFacts, root: string, roots: readonly string[]): { request: ManifestRequest; forced?: string } | { error: string } {
+export function draftRequest(d: ManifestDraft, facts: HostFacts, root: string, roots: readonly string[], origin: ManifestOrigin = "proposed"): { request: ManifestRequest; forced?: string } | { error: string } {
     const manifest = structuredClone(d.manifest) as Record<string, unknown>;
     let scope = d.scope, forced: string | undefined, pin: ManifestRequest["pin"], where = root;
     const e = manifest.entrypoint as { path: string; sha256?: string } | undefined;
@@ -101,7 +102,7 @@ export function draftRequest(d: ManifestDraft, facts: HostFacts, root: string, r
     }
     const problems = validateManifest(manifest);
     if (problems.length) return { error: `Error: not a valid program manifest: ${problems.slice(0, 5).join("; ")}` };
-    const request: ManifestRequest = { scope, ...(scope === "workspace" ? { root: where } : {}), manifest: manifest as unknown as ProgramManifest, origin: "proposed", ...(pin ? { pin } : {}) };
+    const request: ManifestRequest = { scope, ...(scope === "workspace" ? { root: where } : {}), manifest: manifest as unknown as ProgramManifest, origin, ...(pin ? { pin } : {}) };
     return { request, ...(forced ? { forced } : {}) };
 }
 

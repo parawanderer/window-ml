@@ -114,7 +114,11 @@ fingerprint or version is not the pin's, when an in-root program meets a non-wor
 model proposed (`origin: "proposed"`) and whose evidence run has not passed meets a call not under the sandbox. A change waits for the first read
 (`manifestsReady`), so an add made before it is not overwritten by it, and `shRun` waits for it too. Only an extension
 page reaches the store: `MANIFESTS` (`list`, `add`, `remove`) refuses any other sender, and what it adds is the
-person's (`origin: "person"`), whatever the payload says.
+person's (`origin: "person"`), whatever the payload says. An add is pinned the way a model's draft is (`checkDraft`,
+`sw-manifest-proposal.ts`): the host resolves `{ manifest, scope }` under the root the page names (or the first) and
+discards it, so the pin and a script's `sha256` are the host's and a payload's are never read; B3's forced scope comes
+back as `forced`. The page is `manifests-section.tsx` in Settings, after "Programs (ml.sh)", on the policy page's row
+styles; it re-reads on a change to either storage key.
 
 **A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "The store, as built", the slice c ruling).
 The gate's precheck (`checkManifestProposal`, `sw-manifest-proposal.ts`) parses the draft (`parseDraft`), has the host

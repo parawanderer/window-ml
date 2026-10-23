@@ -30,6 +30,7 @@ import { IconCheck } from "../icons";
 import { Disclosure } from "../disclosure";
 import { toHost } from "../parent-channel";
 import { ShellSectionBody } from "./shell-section";
+import { ManifestsSectionBody } from "./manifests-section";
 import { Lbl } from "./settings-label";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
@@ -1819,6 +1820,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
 
                 <Section id="shell" title="Programs (ml.sh)">
                 <ShellSectionBody c={c} setField={setField} />
+                </Section>
+
+                <Section id="manifests" title="Program manifests (ml.sh)">
+                <ManifestsSectionBody roots={c.shellRoots ?? []} />
                 </Section>
 
                 <Section id="introspection" title="The agent reading its own run (ml.current)">

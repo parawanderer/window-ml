@@ -12,7 +12,7 @@
 import { hostTakesEnvelope, type HostFacts } from "../shell/host-protocol";
 import { callsOfDraft, draftArgvs, draftNote, draftRequest, parseDraft, type DraftReading } from "../shell/manifest-proposal";
 import { envelopeFor, envelopeMismatch, manifestsFor, planSpawn, shFacts, SHIPPED_MANIFESTS } from "../shell/sh-call";
-import { manifestKey, storeRefusal, type ManifestRequest, type StoredManifest } from "../shell/stored-manifests";
+import { manifestKey, storeRefusal, type ManifestOrigin, type ManifestRequest, type StoredManifest } from "../shell/stored-manifests";
 import { addManifest, manifestsReady, markEvidence, storedManifests } from "./sw-manifests";
 import { judgeCall } from "./sw-policies";
 import { recordRunLog } from "./sw-run-log";
@@ -28,9 +28,10 @@ export interface CheckedManifest {
 /** The step a proposal is made from: the host records it as the owner of every resolve and re-run. */
 export interface ProposalStep { runId: string; seq: number; signal: AbortSignal }
 
-/** The facts of `argv` in `cwd`, resolved and discarded: the host starts nothing. */
-async function resolveOnly(h: ShellHost, step: Pick<ProposalStep, "runId" | "seq">, spawn: Parameters<ShellHost["client"]["spawn"]>[0]): Promise<HostFacts> {
-    const facts = await h.client.spawn({ ...spawn, owner: { run: step.runId, seq: step.seq } });
+/** The facts of `argv` in `cwd`, resolved and discarded: the host starts nothing. A step's resolve names it as owner;
+ *  the registration page's has none. */
+async function resolveOnly(h: ShellHost, step: Pick<ProposalStep, "runId" | "seq"> | undefined, spawn: Parameters<ShellHost["client"]["spawn"]>[0]): Promise<HostFacts> {
+    const facts = await h.client.spawn({ ...spawn, ...(step ? { owner: { run: step.runId, seq: step.seq } } : {}) });
     await h.client.discard(facts.id).catch(() => { /* expired: nothing to start either way */ });
     return facts;
 }
@@ -41,17 +42,33 @@ async function resolveOnly(h: ShellHost, step: Pick<ProposalStep, "runId" | "seq
  * @param args the model's arguments
  * @returns the entry, or the error the model reads
  */
-export async function checkManifestProposal(step: Pick<ProposalStep, "runId" | "seq">, args: Record<string, unknown>): Promise<CheckedManifest | { error: string }> {
+export function checkManifestProposal(step: Pick<ProposalStep, "runId" | "seq">, args: Record<string, unknown>): Promise<CheckedManifest | { error: string }> {
+    return checkDraft(args, "proposed", step);
+}
+
+/**
+ * Check a draft, the model's or the person's, as the store would, pinned to what the host resolves for it now (B4, and
+ * a script's sha256 as the host read it; a pin or hash the draft carries is never used): nothing runs.
+ * @param args `{ manifest, scope }`
+ * @param origin whose draft it is
+ * @param step the proposing step, for a model's draft
+ * @param root the configured root (as given in Settings, or as the host resolved it) to resolve under first: where a
+ *   workspace entry for a binary is kept. Absent: the first root.
+ * @returns the entry, or the error (`Error: …`)
+ */
+export async function checkDraft(args: Record<string, unknown>, origin: ManifestOrigin, step?: Pick<ProposalStep, "runId" | "seq">, root?: string): Promise<CheckedManifest | { error: string }> {
     const d = parseDraft(args);
     if ("error" in d) return d;
     try {
         return await withShell(async (h) => {
-            const roots = h.configured.roots.map((r) => r.path);
+            const first = root === undefined ? undefined : h.configured.roots.find((r) => r.given === root || r.path === root);
+            if (root !== undefined && !first) return { error: `Error: ${root} is not a configured workspace folder.` };
+            const roots = h.configured.roots.map((r) => r.path).sort((a, b) => (b === first?.path ? 1 : 0) - (a === first?.path ? 1 : 0));
             if (!roots.length) return { error: "Error: no workspace folder is configured for ml.sh." };
             let last: { error: string } = { error: `Error: ${String(d.manifest.program)} did not resolve.` };
             for (const { root, argv } of draftArgvs(d, roots)) {
                 const facts = await resolveOnly(h, step, { argv, cwd: root, mode: "host", ...(argv.length > 1 ? { pathArgs: [{ arg: 1, hash: true }] } : {}) });
-                const r = draftRequest(d, facts, root, roots);
+                const r = draftRequest(d, facts, root, roots, origin);
                 if ("error" in r) { last = r; continue; }
                 await manifestsReady;
                 const why = storeRefusal(r.request, storedManifests(), SHIPPED_MANIFESTS);
