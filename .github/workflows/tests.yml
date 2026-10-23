@@ -471,6 +471,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Every gallery example renders
         run: node scripts/gallery.mjs check --changed "origin/${{ github.base_ref || 'main' }}"
+      - name: The gallery CLI's own browser tests (skipped in the unit job, which has no browser)
+        run: node scripts/test.mjs --files tests/gallery.test.mjs
 
   e2e-shard:
     needs: changes

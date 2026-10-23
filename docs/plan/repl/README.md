@@ -153,6 +153,13 @@ surfaces it.
 
 ## Status (2026-10-19)
 
+**Freeze, 2026-10-23 (Shane, day 5 of the usage week at 81%): land, then stop, "for now".** Every builder finishes the
+one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
+python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
+stops, PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
+and continue. The janitor reviews every open code PR in dependency order: #1052, #1042, #1048, #1055, #1051, #1045,
+#1041, #1046, then (d), then #1068; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
 listed as remaining is DONE unless named below.
@@ -282,6 +289,15 @@ listed as remaining is DONE unless named below.
      callable handed to a kept JS scheduler (`setTimeout`, `queueMicrotask`, `Promise.then`) makes no Handle; a started
      task kept on a module keeps a live `_coro` a later cell can `throw` into. Also: the two existing `finally` tests
      never started the coroutine, so they would have passed with the cancel deleted; #987 reshaped them.
+     FIXED 2026-10-23: #1051 merged 5dd5a1fc (reviewed by the janitor, two rounds), result
+     [`LANE_PYTHON_CANCEL_RESULT.md`](LANE_PYTHON_CANCEL_RESULT.md) merged 7fbb8eca. The spend cancels every task and
+     turns the loop up to 8 rounds, a task still pending refuses the cell's result, named; the cell gate
+     (`src/python/cell-gate.ts`) hooks Pyodide's three doors from Python to JS before `lockdown()`, once per realm,
+     non-configurable, and a revoked callable that fires is a silent counted no-op reported on the next cell. Order:
+     spend, then revoke (ruled). The six todos are plain tests; gate reverted alone fails 21 tests, spend alone 1.
+     Left, named in the result: two todos through `pyodide_js` that turn plain when #1046 lands; drops after a run's
+     last cell unreported, and a task that never yields hangs to the run's timeout, both unowned. Lane STOPPED
+     2026-10-23 under the freeze; clone removed.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
@@ -290,14 +306,15 @@ listed as remaining is DONE unless named below.
      did not cause, named in its PR: a Python cell calling through the ml wire has no shared step meter, so each search
      gets the per-call cap (handed to the repl follow-up session; BUILT in #1007, merged 9ec17928, 2026-10-23: one ml-wire
      step budget a cell, `ML_WIRE.md` "One budget a cell", the red team's grep `-A/-B/-C` quadratic fixed with it;
-     named there and unowned: the unpiped stored-text read and `serveWireCall`'s argument copies are uncharged); a `replace` whose replacement uses `$'` or `` $` ``
+     named there and since charged by #1053, merged bb881ed7, 2026-10-23: the unpiped stored-text read and `serveWireCall`'s argument copies); a `replace` whose replacement uses `$'` or `` $` ``
      builds output quadratic in its input while only the input's length is charged. ASSIGNED 2026-10-23 on Shane's word
      (relayed by the quadratic-regex session) to that session: [`REPLACE_OUTPUT_BOUND.md`](REPLACE_OUTPUT_BOUND.md); the
      red team found it and reviews nothing, the janitor reviews. Measured since: memory, not halting (V8 refuses the
      string at about 0.5G characters in milliseconds). Built in #1010 (merged a83afab2, 2026-10-23, the janitor reviewed): the
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
-     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost, unowned.
+     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost; taken by root-k's subagent as #1045, a NEGATIVE result
+     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)).
   4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
      ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day (builder corrected within
@@ -343,7 +360,13 @@ listed as remaining is DONE unless named below.
   PRs, the shell probes then `propose_policy` to `sh`, file-kept policies, co-writing's two items), and the small
   unowned items of this section (the `ended` record at a deadline kill, #1007's two uncharged reads, the `sed`
   over-count, the `ask` re-check, the lost-POLICIES-add race, the corpus append) run through Sonnet subagents that the
-  session briefs, reviews and merges, never two in one tree.
+  session briefs, reviews and merges, never two in one tree. The red team's `MANIFESTS` pass is #1068 (2026-10-23,
+  test-only, stacked on #1048's branch `manifests/store` as ruled, head b05f0650, rebased on the janitor's B2 fix
+  fec2cbd7): the three page properties hold (pinned, positive controls, mutation-checked); one residual B2 gap as a
+  failing-first todo, the entrypoint branch of `storeRefusal` runs no shipped-program check, so a stored entrypoint
+  manifest naming `git` is kept, survives load and shadows `git.json` at call time. The fix is root-k's, on #1048's
+  branch before it merges (a hole in the item being landed, inside the freeze); #1068 merges after #1048 and the
+  janitor reviews it. The red team's `propose_manifest` pass on #1055 follows.
 
 ## The lanes
 

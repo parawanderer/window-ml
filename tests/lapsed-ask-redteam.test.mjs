@@ -41,6 +41,7 @@ globalThis.chrome = { storage: { local: { get: async () => structuredClone(STORE
 const P = await import("../src/sw/sw-policies.ts");
 await P.policiesReady;
 const { readState } = await import("../src/state-registry.ts");
+const { POLICY_LABEL_MAX } = await import("../src/sw/policy-valid.ts");
 const { checkProposal } = await import("../src/sw/policy-proposal.ts");
 const { extractGrants } = await import("../src/sw/grant-extract.ts");
 const RELAY = await import("../src/page-relay.ts");
@@ -401,7 +402,7 @@ test("a PERSON-written label is stored as written, but what is SAID of it is one
 test("the card's remember label is bounded in length: a long ml.fetch literal does not become a long sentence in the model's result", () => {
     const long = `https://long.example/${"a".repeat(5000)}`;
     const made = P.rememberFetchUrls("h-long", [long]);
-    assert.ok(made[0].label.length <= P.POLICY_LABEL_MAX, `a ${made[0].label.length}-character label is quoted into the model's sentence and the archive note`);
+    assert.ok(made[0].label.length <= POLICY_LABEL_MAX, `a ${made[0].label.length}-character label is quoted into the model's sentence and the archive note`);
 });
 
 // --- 6. the archive note: a system message, once ---

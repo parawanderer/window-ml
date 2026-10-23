@@ -13,13 +13,11 @@ import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
+import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
 export type PolicyConsumer = "fetch" | "sh";
-
-/** Every consumer, for checking what storage held. */
-const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh"]);
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */
@@ -61,8 +59,8 @@ export interface LapsedAsk { id: string; scope: StoredPolicy["scope"]; label: st
 /** A policy that allowed calls and is gone, kept with its source so a later ask can tell whether it would have covered it. */
 interface LapsedPolicy extends LapsedAsk { consumer: PolicyConsumer; source: string }
 
-/** The storage key of the global policies. */
-export const GLOBAL_POLICIES_KEY = "ml_policies_global";
+/** The storage key of the global policies (declared in policy-valid.ts, which a backup reads without this module). */
+export { GLOBAL_POLICIES_KEY };
 /** The storage key of every session's run policies, by session hash. */
 export const RUN_POLICIES_KEY = "ml_policies_run";
 /** The storage key of what each ARCHIVED session lost: when its run policies were removed, and their labels. */
@@ -195,14 +193,6 @@ export const policiesReady: Promise<void> = (() => {
         });
     } catch { readState = "read"; loaded = true; return Promise.resolve(); }   // no storage (a test harness): nothing saved to wait for
 })();
-
-/** Keep only well-formed policies of a scope from what storage held; anything else is dropped, never guessed at. */
-function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
-    if (!Array.isArray(v)) return [];
-    return v.filter((p): p is StoredPolicy => !!p && typeof p === "object"
-        && typeof p.id === "string" && typeof p.source === "string" && typeof p.label === "string"
-        && (p.effect === "allow" || p.effect === "deny" || p.effect === "ask") && CONSUMERS.has(p.consumer) && p.scope === scope);
-}
 
 /** Whether storage held a well-formed lapsed policy. */
 function validLapsed(p: unknown): p is LapsedPolicy {
@@ -506,6 +496,3 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
 export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: PolicyEffect; label: string; source: string }[] {
     return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }
-
-/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
-export const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;

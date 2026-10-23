@@ -8,7 +8,8 @@ in four PRs, and each section below says which parts exist yet.
 | --- | --- |
 | A. The folder merges before it writes; a picked folder with old files is asked about | built |
 | 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
-| 2. Backup and restore of settings and sessions, in Settings and from the popup | planned |
+| 2a. Backup and restore without screens: the key inventory, collect and preview and apply of settings, the file writer, the keyring at rest, the worker ops | built |
+| 2b. The screens: Settings → Extension, the DevTools panel, the popup button, the recovery screen | planned |
 | 3. The encrypted archive folder, its upgrade from plaintext month files, tombstones across machines | planned |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
@@ -81,8 +82,116 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 - **Restore shows what it would change before it changes anything**, sites it would approve listed first: approving a
   site lets its pages call `window.ml`. Unknown keys are dropped; a backup from an older version is read through the
   same upgrade a stored value would get, tested against a fixture.
-- **Open question for part 2:** a chat's `ml_session_<hash>` record (what `ml.resumeChat` reads) is not in the archive
-  schema today; check whether an un-archived chat stays resumable before calling chats restored.
+- **Resuming a restored chat (the open question).** A chat's `ml_session_<hash>` record, what `ml.resumeChat` reads, is
+  not a column of the archive, but its content is: `saveChatSession` writes the same `StoredSession` into the session's
+  `history` as `{ kind: "chat", session }` (sw-sessions.ts), and `history` is archived and backed up whole. Archiving
+  never removes the `ml_session_` record (only a delete does, `forgetStored`), so in the same profile an archived chat
+  still resumes. A RESTORED chat does not: nothing writes `ml_session_<hash>` back. Un-archiving (`unarchiveSession`)
+  restores the row, events and history into the session store and stops there, while `ml.resumeChat` (`GET_SESSION`,
+  background.ts) and a worker-hosted chat after an eviction (`rehydrate`, sw-chat.ts, through `load`) read only the
+  storage key. So a restored chat is readable, but resuming it from a page fails until the key exists.
+  `unarchiveSession` now writes the record back from the history when it is a chat and no record exists
+  (`restoreChatRecord`, session/chat-record.ts), never over a live one. Not touched, noted: a session evicted with
+  outcome `deleted` leaves its `ml_session_` record behind, since only `forgetStored` removes it.
+
+### What part 2a built
+
+| File | Holds |
+| --- | --- |
+| `src/backup/backup-inventory.ts` | `INVENTORY` and `classify(area, key)`: every storage key, backed up or never, one reason each |
+| `src/backup/backup-settings.ts` | `collectSettings`, `parseSettings`, `upgradeSettings`, `previewRestore`, `applyRestore` (pure) |
+| `src/backup/backup-file.ts` | `beginBackup`, `addSession`, `finishBackup`, `sealBackup`, `openBackupBytes`, `inspectBackup`, `inspectRestore`, `restoreNewSessions` |
+| `src/backup/backup-keyring.ts` | the data key at rest (IndexedDB `ml-backup-keyring`), `setupKeyring`, `changePassphrase` |
+| `src/backup/backup-opfs.ts` | the two origin-private files that carry a backup between a page and the archive worker |
+| `src/backup/backup-run.ts` | `createBackup`, `offerRestore`, `restoreBackup`: the sequence, every outside thing injected |
+| `src/archive/archive-worker.ts` | the ops `backupBegin`, `backupPut`, `backupFinish`, `backupAbort`, `restoreInspect`, `restoreSessions`, `backupFileRemove` |
+| `src/sw/policy-valid.ts` | the policy validator and the source and label bounds the worker and a restore share (moved out of `sw-policies.ts`) |
+
+**The inventory.** 127 classified entries: 92 backed up (the 55 config keys other than the API key, the global
+policies, 5 site keys, 31 UI preferences), 1 backed up only when encrypted (`apiKey`), 34 never. The config is
+classified from `DEFAULT_CONFIG`, so a new setting is in every backup from the commit that adds it; any other key needs
+an entry in `INVENTORY`, and `tests/backup-inventory.test.mjs` fails on a key nobody classified and on an entry no
+source names. The scan reads every `ml_` string in `src/` (a whole literal is a key, one ending in `_` or `:` and the
+text before a template's first `${` are prefixes) and the keys at every `chrome.storage.*.get|set|remove` call. It
+cannot see a key assembled at run time from non-literal parts, or a key that does not start with `ml_` and is reached
+only through a constant. Stores that are not `chrome.storage` (IndexedDB) are listed in `OTHER_STORES`, with what a
+backup does with each, so the hub pairing is visibly never backed up.
+
+**Collect.** `collectSettings` reads `sync` and `local` (never `session`) and keeps the keys the inventory marks `yes`.
+The API key is kept only for an encrypted file or when the person ticked the box for a plain one, and the result says
+when it was left out (`apiKeyOmitted`) so the screen can tell the person. A whole-list key nobody ever wrote (the
+policies, the site lists) is collected as empty, so that a backup saying "none" differs from a backup from a version
+that did not have the key.
+
+**Restore, three steps, none of which writes.**
+
+1. `parseSettings` bounds the payload (8 MiB, 256 KiB a value) and refuses one from a newer layout. The worker holds
+   the 8 MiB bound too, where it reads the row (`inspectBackup`): an oversize payload is never returned, only
+   `settingsError`, so a hostile file cannot make the worker hand a gigabyte of text to the page.
+2. `upgradeSettings` reads an old payload through the upgrades a stored value gets: the site lists through
+   `migrateSiteLists` (a pre-slice-3 backup has no agent levels and keeps its self-approval whitelist in the sync
+   config), `protoStream` through `protoMode`, the policies through the validator the worker uses. It drops, and lists,
+   a key this version does not keep, a key the inventory says is never restored, a config value of the wrong type, an
+   origin that is not an origin, a malformed or repeated policy, and a policy whose source or label is past
+   `POLICY_SOURCE_MAX`/`POLICY_LABEL_MAX` (the policy page refuses those too; counted in the same note).
+   `tests/fixtures/backup/settings-pre-slice3.json` is the fixture of an old payload and `tests/backup-settings.test.mjs`
+   reads it.
+3. `previewRestore` lists the changes against what is stored now. Sites whose standing changes come first, those that
+   would become able to call `window.ml` before the rest (a site on the self-approval list counts: that implies use).
+   Then policies (those that allow first), then the settings that send traffic or widen what runs without asking
+   (`RISKY_CONFIG`: `chatUrl`, which would receive the saved API key; `apiKey` itself, which replaces this browser's;
+   `modelFilter`, whose clearing removes the model whitelist; `agentStartPage`; `pageApprovalDomains`, which migrates
+   into the self-approval list; the shell, auto-approve and CDP flags), then everything else. A credential is shown as
+   `(set)`, never its value, and a plain file can carry `apiKey` too, so a restore that changes it is risky whatever the
+   file's form. A restore that changes `chatUrl` while the backup carries no API key would send THIS browser's saved
+   key to the backup's address, and the risky group says exactly that.
+   What a screen renders: `PolicyChange.source` is the predicate, so a hostile rule cannot hide behind its label.
+   `Change.shown` is display text cut at 160 characters; when it is cut, `shown.truncated` is `true` and
+   `shown.length` holds the full lengths, and the change's own `before`/`after` hold the whole value.
+
+`applyRestore` writes exactly `plan.changes`, one `set` per storage area, so the site lists and their layout marker land
+together; a key the backup does not carry is left alone. A list the backup holds empty and that is not empty here is a
+removal. Run it in the service worker after `siteSchemaReady()`, or a later migration can undo it. The site lists a
+backup carries are the `local` ones (the session half of the agent levels, and the sites allowed for one browser
+session, are never backed up); a restore replaces the local lists and keeps the session ones.
+
+**The file.** `beginBackup` opens an empty in-memory archive and imports the archive's own export into it; `addSession`
+writes each live session with the archive's own `writeSession` (the live copy wins where a session is in both);
+`finishBackup` adds the `backup_settings` table (`key`/`value` rows: `payload`, `created`, `layout`) and serializes it.
+`sealBackup` writes the chosen form. The memory cost is the archive twice over plus the file. A restore opens the file
+(`openBackupBytes`: this install's key when it sealed the file, else the passphrase or recovery key it is given),
+`inspectRestore` counts what is new without changing the archive, and `restoreNewSessions` is the archive's import (new
+sessions only, and never a session the person removed on purpose). The worker then marks every month dirty, because an
+import from a folder matches the folder and an import from a backup does not.
+
+**The restore is pinned to what was inspected.** `restoreInspect` answers the SHA-256 of the file in the `in` slot
+(`digest`), the hash of every session it would add (`hashes`, uncapped) and the first 500 of them by title, start time
+and bytes (`adding`, with `more` counting the rest). `restoreSessions` takes the digest and hashes back, refuses with
+`reason: "changed"` when the slot's file digests differently, and imports only those hashes (`importFrom`'s `only`).
+`restoreBackup` takes the whole `RestoreOffer` for that reason: pass it what `offerRestore` returned, never a re-read.
+The same applies to the settings half, which `applyRestore` pins to `plan.changes`.
+
+**An import copies only the images its new sessions reference** (`importFrom`). It once copied every `images` row of the
+file, so an orphan blob in a backup or a month file landed in the archive whether or not any session was new.
+
+**Moving the bytes.** Extension messages are JSON and a backup can be hundreds of megabytes, so the worker writes the
+finished file to an origin-private file (`out`) and reads the file to restore from another (`in`); the page, which
+shares the origin, streams `out` to the place the person chose and copies a picked file into `in`. The ops return sizes
+and counts only. A `BackupError`'s `reason` travels with the error (`archiveCall` keeps it), so the screen can tell
+"this needs the passphrase" from "that passphrase is wrong".
+
+**The keyring.** `setupKeyring(store, passphrase)` makes the data key, stores it as a non-extractable `CryptoKey` with
+its two wrapped copies in IndexedDB `ml-backup-keyring` (created with `add`, so two contexts racing a set-up cannot both
+win), and returns the recovery key once as 7 groups of 4 for the recovery screen. `loadKeyring` needs no secret: the
+data key is usable but not readable. `changePassphrase` unwraps with the old passphrase or the recovery key and
+replaces only the passphrase wrap; files already written keep their old wraps, so they open with the old passphrase and
+with the recovery key.
+
+**Not built in 2a.** The screens (including the recovery screen and its type-back check, the encryption switch, the
+export dialog, "Decrypt a file"); the service-worker binding that hands `createBackup` the real session store and
+storage and the message handlers behind the screens; adopting another install's data key on restore; rotating the
+recovery key; a browser (e2e) run of the new worker ops and of the origin-private file transfer, which only a real
+Chromium can exercise (Node tests drive the same functions through a fake worker).
 
 ## The folder: merge before write (part A)
 
@@ -116,5 +225,11 @@ same to each other.
 - **An encrypted file's name is a hint.** Read the first bytes; a renamed `.sqlite` may be gzip or encrypted.
 - **The data key is never extractable after setup;** code that needs its raw bytes is code that should be unwrapping
   with the passphrase or the recovery key.
+- **A restore imports the sessions it listed, from the file it digested.** Do not give `restoreSessions` back a re-read
+  of the slot, and do not make `BackupContents.adding` the pin: it is capped for display, `hashes` is not.
+- **A restore writes the preview and nothing else.** `applyRestore` reads `plan.changes` only; a new kind of restored
+  key is a new `Change`, never a side write.
+- **A new storage key is a decision.** The inventory test fails until it is classified; `never` is a fine answer, with
+  the reason in one line.
 - **Every reader goes through the budget.** `gunzip`, `readAnyForm` and `decryptFile` cap the output (`LIMITS`); a new
   reader that decompresses without `maxOutput`, or reads a header without `parseHeader`, is a gzip bomb or an Argon2 bomb.

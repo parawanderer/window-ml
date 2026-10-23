@@ -31,14 +31,21 @@ export type RunDeref = (ref: string, pipe?: string | string[], limits?: PipeLimi
  * @param deref the run's pointer resolver
  * @param ref the pointer
  * @param stages the pipe, as stages
- * @param limits the caller's budget for the pipe's line stages (text-pipe.ts `PipeLimits`), or none
+ * @param limits the caller's budget for the pipe's line stages (text-pipe.ts `PipeLimits`), or none; with no stages it
+ *   is charged the size of the text read (`charge`), since nothing else would charge that copy
  * @returns what the resolver answers, with the whole text in place of the preview
  */
 export async function derefWhole(runId: string, deref: RunDeref, ref: string, stages: string[], limits?: PipeLimits): Promise<DerefRead> {
     const base = deref(ref);
     const key = base.meta?.value, meta = base.meta;
-    if (!key || !meta || meta.table || meta.kind === "table" || TokenStore.slotOf(ref) === "in") return stages.length ? deref(ref, stages, limits) : base;
-    const whole = await readStoredText(key, runId);
+    if (!key || !meta || meta.table || meta.kind === "table" || TokenStore.slotOf(ref) === "in") {
+        if (stages.length) return deref(ref, stages, limits);
+        limits?.charge?.(base.value.length);
+        return base;
+    }
+    // An unpiped read copies the whole text with no stage to charge it, so the caller's budget is charged its size
+    // here, before the copy (the blob's byte count, which is the character count for the ASCII a megabyte usually is).
+    const whole = await readStoredText(key, runId, !stages.length && limits?.charge ? limits.charge : undefined);
     return { ...base, value: derefPipe({ id: meta.id, tool: meta.tool, kind: meta.kind, out: whole, t: 0, step: meta.step }, "out", stages, limits) };
 }
 

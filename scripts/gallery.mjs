@@ -188,6 +188,12 @@ async function settle(page, id, variant, timeout = 10_000) {
     }, { id, variant, timeout });
 }
 
+/** The frame of the SELECTED tile (`--variant`), else the first. One union selector would match in DOM order and always pick the first tile. */
+async function selectedFrame(page) {
+    const sel = page.locator(".gl-tile.sel .gl-frame");
+    return (await sel.count()) ? sel.first() : page.locator(".gl-tile .gl-frame").first();
+}
+
 async function shot() {
     const ids = positional;
     if (!ids.length) { console.error("usage: node scripts/gallery.mjs shot <id> [<id> …] [flags]  (ids: node scripts/gallery.mjs list)"); process.exit(2); }
@@ -206,7 +212,7 @@ async function shot() {
             await g.page.waitForTimeout(opt("wait") ? Number(opt("wait")) : 150);
             const out = opt("out") ?? `test-results/gallery-${id.replace(/[^\w.-]+/g, "_")}.png`;
             mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-            const frame = g.page.locator(".gl-tile.sel .gl-frame, .gl-tile:first-child .gl-frame").first();
+            const frame = await selectedFrame(g.page);
             const snap = async (file) => { if (flag("page")) await g.page.screenshot({ path: file }); else await frame.screenshot({ path: file }); };
             /** A numbered frame beside the final shot: `<out>-<n>-<name>.png`. */
             let n = 0;
@@ -315,7 +321,7 @@ async function variantFlow(page, id, variant) {
 
 /** Run a committed flow against the tile for the check: it passes when it returns without throwing. */
 async function runFlow(page, file) {
-    const tile = page.locator(".gl-tile.sel .gl-frame, .gl-tile:first-child .gl-frame").first();
+    const tile = await selectedFrame(page);
     const mod = await import(`${path.join(ROOT, file)}?t=${Date.now()}`);
     await (mod.default ?? mod.run)({ page, tile, frame: tile, shot: async () => {} });
 }

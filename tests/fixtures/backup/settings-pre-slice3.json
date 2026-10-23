@@ -1,0 +1,27 @@
+{
+  "format": "wml-settings",
+  "v": 1,
+  "created": "2026-03-01T10:00:00.000Z",
+  "apiKeyIncluded": false,
+  "sync": {
+    "chatUrl": "http://localhost:3000/api/chat/completions",
+    "model": "qwen3:8b",
+    "theme": "dark",
+    "protoStream": true,
+    "pageApprovalDomains": ["localhost", "https://dev.example.com", "*.wild.test", "host.test:8080/path", ""],
+    "aSettingThisVersionDoesNotHave": 1,
+    "ocrNumCtx": "not a number"
+  },
+  "local": {
+    "ml_site_always": ["https://example.com", "https://old.test", "not an origin"],
+    "ml_site_denied": ["https://bad.test"],
+    "ml_debug_fontscale": 1.2,
+    "ml_policies_global": [
+      { "id": "pol-1", "scope": "global", "consumer": "fetch", "effect": "allow", "source": "(c) => c.kind === \"fetch\"", "label": "allow fetches", "origin": "card", "created": 1700000000000, "extra": "dropped" },
+      { "id": "pol-bad", "scope": "global", "consumer": "nope", "effect": "allow", "source": "x", "label": "malformed" },
+      { "id": "pol-1", "scope": "global", "consumer": "fetch", "effect": "deny", "source": "x", "label": "repeated id" }
+    ],
+    "ml_hub_log": [{ "x": 1 }],
+    "ml_future_pref": true
+  }
+}

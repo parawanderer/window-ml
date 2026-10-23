@@ -62,6 +62,34 @@ starts from main.
    boot against the old (cell count, any new failure) since "severe" puts accessors on every property of the tamed
    intrinsics; boot time next to lane 1's 18 ms; a test that the freeze is real and the latch set, and that a cell
    assigning `Object.prototype.constructor` is refused.
+   MEASURED 2026-10-23 by the builder (branch `fix/python-lockdown`, before its PR): the table/DataFrame cells never
+   exercised #735 (they pass under a plain freeze); the real #735 property is a probe of 14 PyProxy kinds after boot,
+   of which a plain freeze breaks 6 (tuple, set, generator, ndarray, iterator, memoryview), the old boot leaves the
+   realm unfrozen and lets `Object.prototype.constructor = Function` through, and the severe boot freezes with 0 of 14
+   broken and refuses that write; that probe is the committed test. The dialect corpus of 1714 real cells gives
+   identical outcomes old against new (318 ok, 1396 error, 0 changed; 9 ok results differ only by random output); the
+   lockdown step goes from 8.1 ms to 9.0 ms; a boot that leaves the realm unfrozen now FAILS. For the step 4 gap:
+   `pyodide_js` is unregistered after webloop and the package loader bind what they import, `sys.modules` purged, the
+   old JsLoaders' proxy cleared (a loader held the API alive past `gc.collect`, findable via `gc.get_objects`), and a
+   stand-in re-registered carrying only `_api.config.enableRunUntilComplete` (webloop and the patched `asyncio.run`
+   import config at call time); the gc walk finds 0 live proxies of the API, `_api` or `_module` (2 before), and
+   `asyncio.run` works, also after a cell pops the stand-in. OPEN, the red team's probe in its test-only PR: in Node
+   `run_js` still answers under the stand-in scope; in the worker that rests on step 3's strip removing eval, measured
+   only in the real worker.
+   RULED 2026-10-23 (coordinator, on the builder's question after running the red team's #1060 against #1046's branch):
+   #1046 merges as ruled, the stand-in and nothing wider. (i) `run_js` is OPEN, now with its route: `pyodide/code.py`'s
+   `run_js` does `from js import eval`, not `pyodide_js`, and `from js import Function` is the same route, so the
+   stand-in cannot close it and a clean `lockdown()` does not either (the kept `Function` binding still evaluates);
+   closing it is a step 3 property (the strip) or a refusal of `js` in an approved cell, which is a NEW defence with a
+   corpus cost: widening, Shane's call, parked under the 2026-10-23 freeze. (ii) The red team's todos that ask for
+   `import js`, `pyodide.ffi`, `pyodide.webloop` and `import asyncio` to fail in an approved cell ask for that same
+   widening; they stay `todo`, labelled as parked, not as #1046's debt. (iii) Its todos that ask for `pyodide_js` not to
+   import assert a property wider than the ruled one; the ruled property is "`pyodide_js` imports as a config-only
+   stand-in with no `_module` and no `_api` beyond `config`", and the red team, never the builder (rule 10), rewrites
+   those todos against it or keeps them as a record of the wider ask. (iv) The finder's and the builder's tests live in
+   separate files: the red team's keep `redteam-python-lockdown.test.mjs` (on #1060's branch); #1046 renames its own to a non-`redteam-`
+   name before it is marked ready, so neither PR merges the other's file. Severity, from #1060: the bridge imports reach
+   from an APPROVED cell; the auto-approved inside path refuses every import form unasked.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
