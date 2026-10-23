@@ -156,7 +156,7 @@ surfaces it.
 **Freeze, 2026-10-23 (Shane, day 5 of the usage week at 81%): land, then stop, "for now".** Every builder finishes the
 one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
-stops, PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
+stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
 and continue. The janitor reviews every open code PR in dependency order: #1052, #1042, #1048, #1055, #1051, #1045,
 #1041, #1046, then (d), then #1068; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
@@ -297,7 +297,8 @@ listed as remaining is DONE unless named below.
      spend, then revoke (ruled). The six todos are plain tests; gate reverted alone fails 21 tests, spend alone 1.
      Left, named in the result: two todos through `pyodide_js` that turn plain when #1046 lands; drops after a run's
      last cell unreported, and a task that never yields hangs to the run's timeout, both unowned. Lane STOPPED
-     2026-10-23 under the freeze; clone removed.
+     2026-10-23 under the freeze; clone removed. #1046 landed the same day, so the two `pyodide_js` todos can turn plain;
+     unowned until the week resets.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
@@ -322,14 +323,19 @@ listed as remaining is DONE unless named below.
      attribute-gate probe as failing-first tests in its own PR; the janitor reviews; the finder builds and reviews nothing on it;
      item 2's fix is sound only once this is closed. Severity MEASURED the same day: the dialect refuses every import form
      involved, so this and item 2's six routes escape an APPROVED readonly cell, not the auto-approved path; the
-     attribute-gate route is the red team's to probe with the fix.
+     attribute-gate route is the red team's to probe with the fix. FIXED 2026-10-23: #1046 merged de645ea3 (the
+     config-only stand-in; the gc walk finds 0 live proxies of the API); the red team's attribute-gate probe is #1060,
+     37 pinned routes hold. `run_js` stays OPEN as a step 3 property ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2,
+     RULED). Lane STOPPED under the freeze; clone removed.
   5. FOUND 2026-10-23 by `[window-ml python-cancel]`, reproduced by the coordinator: `lockdown()` THROWS on main (the
      `Object.prototype.constructor` accessor from #735 is refused by `ses`'s permit check), the `try/catch` swallows it, so
      the readonly realm is never frozen and the latch never sets; P1 still holds, nothing tests the freeze
      ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2, the DEFECT paragraph). ASSIGNED the same day with item 4 to
      `[window-ml security] Site access` as builder (the red team's first assignment withdrawn under rule 10; it delivers
      the frozen-realm tests), the janitor reviews, the finder builds nothing on it. Fix shape ruled: the accessor goes
-     in AFTER `lockdown()`, the `ses` permit is not widened.
+     in AFTER `lockdown()`, the `ses` permit is not widened. FIXED 2026-10-23 in the same #1046 (de645ea3):
+     `overrideTaming: "severe"` in place of our accessor, the realm frozen and the latch set, 0 of 14 PyProxy kinds
+     broken, corpus 0 changed, lockdown 9.0 ms from 8.1.
 - **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
   (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
   named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped

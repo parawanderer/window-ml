@@ -90,6 +90,11 @@ starts from main.
    separate files: the red team's keep `redteam-python-lockdown.test.mjs` (on #1060's branch); #1046 renames its own to a non-`redteam-`
    name before it is marked ready, so neither PR merges the other's file. Severity, from #1060: the bridge imports reach
    from an APPROVED cell; the auto-approved inside path refuses every import form unasked.
+   FIXED 2026-10-23: #1046 merged de645ea3 (`[window-ml security] Site access`, rebased on #1051; the janitor reviewed,
+   its one finding, pin the stand-in's `enableRunUntilComplete`, fixed in 117bd3e1 before merge; builder's tests in
+   `python-lockdown.test.mjs`). The DEFECT and the step 4 GAP above are closed as measured; `run_js` and the parked
+   widening questions stay as ruled. CI's first run failed one #1051 test (P2 gate, "a revoked callback that fires
+   after the result is silent and counted"), green alone, in its file and on the rerun: a timing flake, watched.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
