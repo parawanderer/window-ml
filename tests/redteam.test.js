@@ -310,6 +310,31 @@ test("GAIN blocked — a page cannot mint a stored entry with origin \"proposed\
     assert.deepEqual(reloaded.data.global, [], "a forged origin does not survive a read");
 });
 
+test("GAIN blocked — an entrypoint manifest cannot name a shipped program and shadow its shipped manifest (B2)", {
+    todo: "storeRefusal's B2 check (`shipped[m.program]`) sits only in the no-entrypoint branch, and validStored inherits it: an entrypoint manifest with program \"git\" is kept at store time and survives the load, and manifestFor matches an entrypoint entry before the shipped one. So `git <entrypoint> …` is described by the stored entry's command tree instead of src/shell/manifests/git.json — a stored manifest shadowing a shipped one, which B2 says never happens. The binary variant is refused and dropped (fec2cbd7); the entrypoint variant is the same hole through the other branch. Refuse an entrypoint manifest whose program names a shipped one, in storeRefusal (so both store and load drop it).",
+}, async () => {
+    const S = require("../src/shell/stored-manifests.ts");
+    const { SHIPPED_MANIFESTS, manifestFor, manifestsFor } = require("../src/shell/sh-call.ts");
+    const ENTRY = { program: "git", entrypoint: { path: "scripts/x.mjs", sha256: "a".repeat(64) }, command: { effects: [], paths: "none", flags: {} } };
+    const BIN = { program: "git", version: { range: "*", args: [], pattern: "" }, command: { effects: [], paths: "none", flags: {} } };
+    const GEN_OK = { program: "node", entrypoint: { path: "scripts/x.mjs", sha256: "a".repeat(64) }, command: { effects: [], paths: "none", flags: {} } };
+
+    // Positive controls: the B2 fix works for a binary, and a non-shipped entrypoint manifest is the store's to keep.
+    assert.match(S.storeRefusal({ scope: "global", manifest: BIN, origin: "person", pin: { path: "/usr/bin/git", fingerprint: "1:2:3:4", inRoot: false } }, [], SHIPPED_MANIFESTS) ?? "kept", /src\/shell\/manifests\/git\.json/, "control: a binary entry for a shipped program is refused");
+    assert.equal(S.validStored({ id: "man-bin", created: 1, scope: "global", manifest: BIN, origin: "person", pin: { path: "/usr/bin/git", fingerprint: "1:2:3:4", inRoot: false } }, "global", SHIPPED_MANIFESTS), false, "control: a hand-written binary entry for a shipped program is dropped on load");
+    assert.equal(S.storeRefusal({ scope: "workspace", root: "/w", manifest: GEN_OK, origin: "person" }, [], SHIPPED_MANIFESTS), undefined, "control: an entrypoint manifest for a program no shipped manifest describes is kept");
+    assert.equal(S.validStored({ id: "man-node", created: 1, scope: "workspace", root: "/w", manifest: GEN_OK, origin: "person" }, "workspace", SHIPPED_MANIFESTS), true, "control: and it survives a load");
+
+    // Defended: an entrypoint manifest naming a shipped program is the same hole B2 closed for a binary.
+    assert.match(S.storeRefusal({ scope: "workspace", root: "/w", manifest: ENTRY, origin: "person" }, [], SHIPPED_MANIFESTS) ?? "kept", /src\/shell\/manifests\/git\.json/, "an entrypoint manifest for a shipped program is refused at store time");
+    assert.equal(S.validStored({ id: "man-ent", created: 1, scope: "workspace", root: "/w", manifest: ENTRY, origin: "person" }, "workspace", SHIPPED_MANIFESTS), false, "and a hand-written one is dropped on load (both scopes; an entrypoint manifest is always workspace-scoped)");
+
+    // And it is a shadow, not a curiosity: the call path reads the entrypoint entry first.
+    const stored = [{ id: "man-ent", scope: "workspace", root: "/w", manifest: ENTRY, origin: "person", created: 1 }];
+    const hit = manifestFor(["git", "scripts/x.mjs", "--help"], { cwd: "/w", roots: ["/w"] }, manifestsFor(stored, ["/w"]).list);
+    assert.ok(!hit?.entrypoint, `git scripts/x.mjs must be described by the shipped manifest, got ${JSON.stringify(hit && { program: hit.program, entrypoint: hit.entrypoint })}`);
+});
+
 test("GAIN blocked — a site trusted to self-gate (pageApprovalDomains) is approved over https, never over plain http", async () => {
     const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, { tab: { id: 2, url: "https://trusted.example/" }, url: "https://trusted.example/" });
