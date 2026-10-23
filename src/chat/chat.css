@@ -101,6 +101,12 @@ html, body, #root { height: 100%; }
 /* A session row: the panel's `.row`, two lines tall, with the open one marked. */
 .chat-row { align-items: flex-start; }
 .chat-row .dot { margin-top: .45em; }
+/* A RUNNING OR WAITING SESSION'S DOT PULSES THREE TIMES, then rests at full colour. Pulsing for as long as the
+   session ran kept the browser compositing every frame for an idle page: about 15% of a core in Chrome's GPU process
+   while any approval sat waiting, measured on an M5 Pro, against under 1% once it rests. The pulse is what draws the
+   eye when a session turns busy; the colour, and "Needs you" for a session waiting on you, say it from then on. The
+   DevTools panel's dots keep pulsing: there it is instrumentation during a run, not a page left open all day. */
+.chat-list .dot.pending { animation-iteration-count: 3; }
 .chat-row.active { border-color: var(--accent); background: var(--panel-2); }
 .chat-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* ONE LINE, and the status keeps its place on it. This wrapped, so a row with a long page host pushed "stopped at
