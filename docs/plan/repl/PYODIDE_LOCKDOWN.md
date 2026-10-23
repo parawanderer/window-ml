@@ -49,6 +49,21 @@ starts from main.
    closure-held post, never a function the cell holds. None means none: the injected inputs (`INJECTED_IMAGE_B64`,
    `INJECTED_TABLES_JSON`, the prelude's `_b64`/`_tsj`) land as `JsNull` today when the harness passes a JS `null`, and
    become Python `None`/`str` at injection time (measured by the red-team session, 2026-10-15).
+   GAP FOUND 2026-10-23 by the `[window-ml python-cancel]` session, reproduced in a worker after `lockdownReadonly`: a
+   cell can `import pyodide_js` and from it reach `_api` (`runPythonInternal`, `rawRun`, `scheduleCallback`) and
+   `_module` (`ccall`, `dynCall`, `HEAP`, `_Py_IncRef`/`_Py_DecRef`, `PyProxy_getAttrsQuiet`, every hook installed on
+   `Module`). `js.setTimeout(pyodide_js._api.runPythonInternal.bind(None, src), 10)` runs `src` after the cell's result
+   with no Python callable crossing, so step 5's cancel has nothing to revoke; a later cell can un-revoke a proxy
+   through `PyProxy_getAttrsQuiet(p).shared.ptr`. The pre-lockdown `harden()` in `python-runtime.ts` unregisters
+   `js` and `pyodide_js` and purges `sys.modules`; the lockdown worker does not call it. ASSIGNED the same day to the
+   red team as this document's lane (the finder builds and reviews nothing on it, rule 10; the janitor reviews): make
+   `pyodide_js`, `_module` and `_api` unreachable from a cell while Pyodide's own boot-time `from pyodide_js._api
+   import scheduleCallback` keeps working; a gc-walk test that no live Python object holds a JsProxy of `Module` or
+   the API; every other way to the API object enumerated. The finder's PR carries the two failing-first `{ todo }`
+   tests (the string-run route; the un-revoke) and makes its own hooks non-writable; the cancel fix of step 5 is sound
+   only once this is closed. Open the same day: whether the dialect's membership predicate admits `import pyodide_js`
+   unasked (the finder measures), which says whether this is an escape of the auto-approved path or of an approved
+   readonly cell only.
 5. **Cancel the asyncio loop's pending handles before a cell's result is returned**, so nothing scheduled by one cell
    runs during the next, even with the strip in place.
 6. **The harness binds its own module functions at boot** (red-team property P5, 2026-10-15). A cell that monkeypatches

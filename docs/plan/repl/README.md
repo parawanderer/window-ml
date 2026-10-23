@@ -298,6 +298,12 @@ listed as remaining is DONE unless named below.
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
      (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost, unowned.
+  4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
+     reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
+     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day to the red team as
+     the lockdown's lane (it did not find this one), the janitor reviews, the finder builds and reviews nothing on it;
+     item 2's fix is sound only once this is closed. Severity open until the finder measures whether the dialect
+     predicate admits the import unasked.
 - **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
   (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
   named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped
