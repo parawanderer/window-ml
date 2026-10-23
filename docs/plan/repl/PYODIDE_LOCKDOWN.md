@@ -62,6 +62,20 @@ starts from main.
    boot against the old (cell count, any new failure) since "severe" puts accessors on every property of the tamed
    intrinsics; boot time next to lane 1's 18 ms; a test that the freeze is real and the latch set, and that a cell
    assigning `Object.prototype.constructor` is refused.
+   MEASURED 2026-10-23 by the builder (branch `fix/python-lockdown`, before its PR): the table/DataFrame cells never
+   exercised #735 (they pass under a plain freeze); the real #735 property is a probe of 14 PyProxy kinds after boot,
+   of which a plain freeze breaks 6 (tuple, set, generator, ndarray, iterator, memoryview), the old boot leaves the
+   realm unfrozen and lets `Object.prototype.constructor = Function` through, and the severe boot freezes with 0 of 14
+   broken and refuses that write; that probe is the committed test. The dialect corpus of 1714 real cells gives
+   identical outcomes old against new (318 ok, 1396 error, 0 changed; 9 ok results differ only by random output); the
+   lockdown step goes from 8.1 ms to 9.0 ms; a boot that leaves the realm unfrozen now FAILS. For the step 4 gap:
+   `pyodide_js` is unregistered after webloop and the package loader bind what they import, `sys.modules` purged, the
+   old JsLoaders' proxy cleared (a loader held the API alive past `gc.collect`, findable via `gc.get_objects`), and a
+   stand-in re-registered carrying only `_api.config.enableRunUntilComplete` (webloop and the patched `asyncio.run`
+   import config at call time); the gc walk finds 0 live proxies of the API, `_api` or `_module` (2 before), and
+   `asyncio.run` works, also after a cell pops the stand-in. OPEN, the red team's probe in its test-only PR: in Node
+   `run_js` still answers under the stand-in scope; in the worker that rests on step 3's strip removing eval, measured
+   only in the real worker.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
