@@ -72,9 +72,15 @@ key derivation. Each bound is inclusive: a value at the limit is accepted, one p
 | Argon2id `t` | 1 to 12 | when the header is parsed |
 | Argon2id `p` | 1 to 4 | when the header is parsed |
 | decompressed output | at most 1 GiB (1073741824) unless the caller sets a smaller cap | counted while streaming; stop at once when passed |
-| every field | `salt` 16 bytes, `iv` 12, `ct` 48, `fileSalt` 32, strict base64 (`^[A-Za-z0-9+/]*={0,2}$`) | when the header is parsed |
+| every field | `salt` 16 bytes, `iv` 12, `ct` 48, `fileSalt` 32, base64 of the standard alphabet (`^[A-Za-z0-9+/]*={0,2}$`) | when the header is parsed |
 
-With at most one passphrase wrap and its cost capped, an unlock attempt runs Argon2id at most once.
+Base64: a writer emits the standard alphabet WITH padding. A reader MUST accept the field with or without its `=`
+padding (both readers here do) and MUST refuse any other character, whitespace included; the decoded length then
+decides. Whichever way a reader decodes, the header bytes are the AAD, so a re-encoded field fails authentication.
+
+With at most one passphrase wrap and its cost capped, an unlock attempt runs Argon2id at most once. What that costs,
+measured on an Apple M5: the default (64 MiB, t 3) about 0.12 s; the largest cost a file may ask (256 MiB, t 12) about
+1.8 s, the same at p 4 as at p 1. A screen that unlocks a file should show progress for that long.
 
 ### Error reasons
 

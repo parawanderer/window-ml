@@ -60,7 +60,7 @@ export interface ArgonParams {
     t: number;
     p: number;
 }
-/** The cost a new passphrase wrap gets: 64 MiB, three passes, one lane (about a second on a laptop). */
+/** The cost a new passphrase wrap gets: 64 MiB, three passes, one lane (about 0.12 s on an M5; the cap in `LIMITS` is 16 times the work). */
 export const DEFAULT_ARGON: Readonly<ArgonParams> = { alg: "argon2id", m: 65536, t: 3, p: 1 };
 /**
  * The one resource budget every reader of this format keeps (spec: "Limits a reader MUST keep"): what a file may ask of a
