@@ -13,7 +13,7 @@ import type { ArchiveOp } from "../archive/archive-worker";
 import type { ArchiveInput } from "../archive/db";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { StoredSessionRow } from "../session/session-store";
-import type { BackupContents, BackupForm } from "./backup-file";
+import type { BackupForm, RestoreInspection } from "./backup-file";
 import type { Secret } from "./backup-format";
 import { SettingsError, applyRestore, collectSettings, planRestore, type RestorePlan, type StorageSnapshot, type StorageWriter } from "./backup-settings";
 
@@ -64,7 +64,8 @@ export async function createBackup(deps: BackupDeps, o: { form: BackupForm; incl
 
 /** What a file in the `in` slot holds, and what restoring it would change here. Nothing is changed by asking. */
 export interface RestoreOffer {
-    contents: BackupContents;
+    /** what the file holds, with the digest and the session hashes `restoreBackup` is pinned to */
+    contents: RestoreInspection;
     /** the settings preview, or null when the file carries none or they could not be read (`settingsError` says which) */
     plan: RestorePlan | null;
     settingsError?: string;
@@ -76,8 +77,8 @@ export interface RestoreOffer {
  * @throws with `reason: "needs-key"` when a secret is needed, `"wrong-secret"` when it was wrong
  */
 export async function offerRestore(deps: BackupDeps, secret?: Secret): Promise<RestoreOffer> {
-    const contents = await deps.call<BackupContents>("restoreInspect", { secret });
-    if (contents.settings == null) return { contents, plan: null };
+    const contents = await deps.call<RestoreInspection>("restoreInspect", { secret });
+    if (contents.settings == null) return { contents, plan: null, ...(contents.settingsError ? { settingsError: contents.settingsError } : {}) };
     try { return { contents, plan: planRestore(contents.settings, await deps.storage()) }; }
     catch (e) {
         if (e instanceof SettingsError) return { contents, plan: null, settingsError: e.message };
@@ -86,14 +87,16 @@ export async function offerRestore(deps: BackupDeps, secret?: Secret): Promise<R
 }
 
 /**
- * Restore: sessions into the ARCHIVE (new ones only), and the settings the preview listed. Either half can be skipped.
- * The `in` file is removed afterwards.
- * @param plan the preview the person saw; exactly its changes are written
+ * Restore: sessions into the ARCHIVE, and the settings the preview listed. Either half can be skipped. The `in` file is
+ * removed afterwards.
+ * @param o.offer what `offerRestore` returned and the person saw: exactly its plan's changes are written, and exactly its
+ *   session hashes are imported, from the same file (the worker refuses with `reason: "changed"` when the slot holds another)
  */
-export async function restoreBackup(deps: BackupDeps, o: { plan: RestorePlan | null; sessions: boolean; settings: boolean; secret?: Secret }): Promise<{ sessionsAdded: number; written: { sync: string[]; local: string[] } }> {
+export async function restoreBackup(deps: BackupDeps, o: { offer: RestoreOffer; sessions: boolean; settings: boolean; secret?: Secret }): Promise<{ sessionsAdded: number; written: { sync: string[]; local: string[] } }> {
+    const { contents, plan } = o.offer;
     try {
-        const sessionsAdded = o.sessions ? (await deps.call<{ imported: number }>("restoreSessions", { secret: o.secret })).imported : 0;
-        const written = o.settings && o.plan ? await applyRestore(o.plan, deps.writer) : { sync: [], local: [] };
+        const sessionsAdded = o.sessions ? (await deps.call<{ imported: number }>("restoreSessions", { secret: o.secret, digest: contents.digest, hashes: contents.hashes })).imported : 0;
+        const written = o.settings && plan ? await applyRestore(plan, deps.writer) : { sync: [], local: [] };
         return { sessionsAdded, written };
     } finally { await deps.call("backupFileRemove", { slot: "in" }).catch(() => { /* already gone */ }); }
 }

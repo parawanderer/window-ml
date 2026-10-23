@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { CONFIG_ENUMS, SettingsError, applyRestore, collectSettings, parseSettings, planRestore, previewRestore, upgradeSettings, PAYLOAD_LIMITS } from "../src/backup/backup-settings.ts";
+import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "../src/sw/policy-valid.ts";
 import { DEFAULT_CONFIG } from "../src/contract/contract-config.ts";
 import { SITE_SCHEMA } from "../src/site-access.ts";
 
@@ -200,6 +201,27 @@ test("a newer site layout is not guessed at: its site keys are dropped with the 
     assert.ok(up.dropped.some((d) => d.key === "ml_site_always" && /newer layout/.test(d.reason)));
 });
 
+// --- what the preview carries for a screen ---
+
+test("a policy change carries the predicate, so a screen shows what the rule does and not only its label", () => {
+    const source = '(c) => c.url === "https://evil.test/steal"';
+    const plan = planRestore({ format: "wml-settings", v: 1, created: "x", apiKeyIncluded: false, sync: {}, local: { ml_policies_global: [policy("p1", "allow", { source, label: "Allow OpenWebUI" })] } }, { sync: { ...DEFAULT_CONFIG }, local: {} });
+    assert.deepEqual(plan.policies.map((p) => [p.label, p.effect, p.consumer, p.source]), [["Allow OpenWebUI", "allow", "fetch", source]]);
+});
+
+test("a shown value says when it is cut, and how long the whole is", () => {
+    const base = { format: "wml-settings", v: 1, created: "x", apiKeyIncluded: false, local: {} };
+    const short = planRestore({ ...base, sync: { theme: "dark" } }, { sync: { ...DEFAULT_CONFIG, theme: "light" }, local: {} }).changes.find((c) => c.key === "theme");
+    assert.equal(short.shown.after, '"dark"');
+    assert.equal(short.shown.truncated, undefined, "a value shown whole is not marked");
+    const url = "https://evil.test/" + "a".repeat(400);
+    const ch = planRestore({ ...base, sync: { chatUrl: url } }, { sync: { ...DEFAULT_CONFIG }, local: {} }).changes.find((c) => c.key === "chatUrl");
+    assert.equal(ch.shown.truncated, true);
+    assert.equal(ch.shown.length.after, JSON.stringify(url).length);
+    assert.ok(ch.shown.after.length < ch.shown.length.after);
+    assert.equal(ch.after, url, "the change itself holds the whole value");
+});
+
 // --- hostile payloads ---
 
 test("a payload cannot name its own keys: __proto__, the never-restored keys, oversize values and wrong types are dropped", () => {
@@ -219,6 +241,27 @@ test("the API key arrives only if the backup carried it, and a restore of a plai
     const plan = planRestore(plain.payload, current);
     assert.equal(plan.changes.some((c) => c.key === "apiKey"), false);
     assert.equal(plan.apiKeyIncluded, false);
+});
+
+test("a policy past the length bounds the policy page holds is left out and counted with the other malformed ones", () => {
+    const ok = upgradeSettings(parseSettings({ format: "wml-settings", v: 1, created: "x", apiKeyIncluded: false, sync: {}, local: { ml_policies_global: [policy("ok", "allow", { source: "x".repeat(POLICY_SOURCE_MAX), label: "y".repeat(POLICY_LABEL_MAX) })] } }));
+    assert.equal(ok.local.ml_policies_global.length, 1, "exactly at the bounds is kept");
+    const up = upgradeSettings(parseSettings({ format: "wml-settings", v: 1, created: "x", apiKeyIncluded: false, sync: {}, local: { ml_policies_global: [
+        policy("long-source", "allow", { source: "x".repeat(POLICY_SOURCE_MAX + 1) }), policy("long-label", "allow", { label: "y".repeat(POLICY_LABEL_MAX + 1) }), policy("fine"),
+    ] } }));
+    assert.deepEqual(up.local.ml_policies_global.map((p) => p.id), ["fine"]);
+    assert.match(up.notes.join("\n"), /2 policies .*left out/);
+});
+
+test("modelFilter, agentStartPage, pageApprovalDomains and apiKey are risky, each with what changing it does", () => {
+    const plan = planRestore(
+        { format: "wml-settings", v: 1, created: "x", apiKeyIncluded: true, sync: { modelFilter: "", agentStartPage: "https://evil.test/", pageApprovalDomains: ["evil.test"], apiKey: "sk-evil" }, local: {} },
+        { sync: { ...DEFAULT_CONFIG, modelFilter: "^(qwen|llama)", apiKey: "sk-mine" }, local: { ml_site_schema: SITE_SCHEMA } },
+    );
+    const by = Object.fromEntries(plan.changes.map((c) => [c.key, c]));
+    for (const k of ["modelFilter", "agentStartPage", "pageApprovalDomains", "apiKey"]) { assert.equal(by[k].group, "risky", k); assert.ok(by[k].why, k); }
+    assert.equal(by.apiKey.why, "replaces this browser's saved API key");
+    assert.deepEqual([by.apiKey.shown.before, by.apiKey.shown.after], ["(set)", "(set)"], "still never shown");
 });
 
 // --- applying ---

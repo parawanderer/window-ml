@@ -8,8 +8,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { importBytes, markAllDirty, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession } from "../src/archive/db.ts";
-import { abandonBackup, addSession, beginBackup, finishBackup, inspectBackup, openBackupBytes, sealBackup, unlockChoice } from "../src/backup/backup-file.ts";
+import { abandonBackup, addSession, beginBackup, finishBackup, inspectBackup, inspectRestore, openBackupBytes, restoreNewSessions, sealBackup, unlockChoice } from "../src/backup/backup-file.ts";
 import { BackupError, createKeyring, gunzip, sniff } from "../src/backup/backup-format.ts";
+import { PAYLOAD_LIMITS } from "../src/backup/backup-settings.ts";
 
 const sqlite3 = await init();
 const CHEAP = { argon: { m: 64, t: 1, p: 1 } };
@@ -177,4 +178,78 @@ test("the standalone decryptor opens a backup this code wrote", async () => {
         assert.equal(r.status, 0, r.stderr);
         assert.deepEqual(Buffer.from(readFileSync(out)), Buffer.from(made.bytes));
     } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// --- what a restore takes from the file ---
+
+const orphan = (a, sha = "orphan0000") => a.db.exec({ sql: "INSERT INTO images(sha, mime, data) VALUES (?, ?, ?)", bind: [sha, "image/png", new Uint8Array(2000)] });
+
+test("an import writes only the images its new sessions reference: an orphan image never lands, with or without a new session beside it", async () => {
+    // a file whose only session the target holds already: nothing is new, so no image is
+    const src = archive();
+    await put(src, "keep0001", Date.UTC(2026, 0, 5));
+    orphan(src);
+    const target = archive();
+    await put(target, "keep0001", Date.UTC(2026, 0, 5));
+    const before = Number(target.db.selectValue("SELECT count(*) FROM images"));
+    assert.equal(importBytes(sqlite3, target.raw, exported(src)), 0);
+    assert.equal(Number(target.db.selectValue("SELECT count(*) FROM images")), before);
+    // a file with a new session and an orphan beside it: the session's image lands, the orphan does not
+    const src2 = archive();
+    await put(src2, "new00001", Date.UTC(2026, 0, 5));
+    orphan(src2);
+    const t2 = archive();
+    assert.equal(importBytes(sqlite3, t2.raw, exported(src2)), 1);
+    assert.deepEqual(t2.db.selectValues("SELECT sha FROM images").map(String).includes("orphan0000"), false);
+    assert.equal(Number(t2.db.selectValue("SELECT count(*) FROM images")), 1);
+    assert.deepEqual(readArchived(t2.db, "new00001").events, events("new00001"), "control: the referenced image reads back");
+});
+
+test("inspecting refuses a settings payload past the budget: no settings come back, an error says why", async () => {
+    const make = (payload) => finishBackup(sqlite3, beginBackup(sqlite3, null), payload, new Date("2026-10-23T12:00:00Z")).bytes;
+    const ok = inspectBackup(sqlite3, archive().raw, make('{"format":"wml-settings","v":1}'));
+    assert.equal(ok.settings, '{"format":"wml-settings","v":1}', "control: a small payload is returned");
+    assert.equal(ok.settingsError, undefined);
+    const huge = inspectBackup(sqlite3, archive().raw, make("x".repeat(PAYLOAD_LIMITS.bytes + 1)));
+    assert.equal(huge.settings, null);
+    assert.match(huge.settingsError, /larger than any real backup/);
+    const edge = inspectBackup(sqlite3, archive().raw, make("x".repeat(PAYLOAD_LIMITS.bytes)));
+    assert.equal(edge.settings?.length, PAYLOAD_LIMITS.bytes, "a payload exactly at the budget is returned");
+});
+
+test("an inspection names each session it would add, capped at 500 with the rest counted, and pins the file it read", async () => {
+    const src = archive();
+    await put(src, "aaaa0001", Date.UTC(2026, 0, 5));
+    await put(src, "bbbb0002", Date.UTC(2026, 0, 6));
+    const target = archive();
+    await put(target, "bbbb0002", Date.UTC(2026, 0, 6));
+    const file = exported(src);
+    const c = await inspectRestore(sqlite3, target.raw, file, file);
+    assert.deepEqual(c.hashes, ["aaaa0001"], "the one the archive has is not offered");
+    assert.deepEqual(c.adding, [{ hash: "aaaa0001", title: "task aaaa0001", createdTs: Date.UTC(2026, 0, 5) - 10, bytes: 100 }]);
+    assert.equal(c.more, 0);
+    assert.match(c.digest, /^[0-9a-f]{64}$/);
+    // 502 new sessions: 500 named, 2 counted, and all 502 pinned
+    const big = archive();
+    big.db.transaction(() => { for (let i = 0; i < 502; i++) big.db.exec({ sql: "INSERT INTO sessions(hash, runtime, kind, task, created_ts, last_ts, archived_ts, events, bytes, pinned, summary) VALUES (?, 'local', 'agent', 't', 1, ?, 1, 0, 1, 0, '{}')", bind: [`h${String(i).padStart(7, "0")}`, 1000 + i] }); });
+    const many = await inspectRestore(sqlite3, archive().raw, exported(big), exported(big));
+    assert.deepEqual([many.adding.length, many.more, many.hashes.length, many.newSessions], [500, 2, 502, 502]);
+});
+
+test("restoring is pinned to what was inspected: a changed file is refused, and only the pinned sessions are imported", async () => {
+    const src = archive();
+    await put(src, "aaaa0001", Date.UTC(2026, 0, 5));
+    await put(src, "bbbb0002", Date.UTC(2026, 0, 6));
+    const file = exported(src);
+    const target = archive();
+    const seen = await inspectRestore(sqlite3, target.raw, file, file);
+    // the file in the slot changed since: another session, and the digest differs
+    const other = archive();
+    await put(other, "cccc0003", Date.UTC(2026, 0, 7));
+    const swapped = exported(other);
+    await assert.rejects(restoreNewSessions(sqlite3, target.raw, swapped, swapped, { digest: seen.digest, hashes: seen.hashes }), (e) => e instanceof BackupError && e.reason === "changed");
+    assert.deepEqual(hashes(target), [], "nothing was imported");
+    // the same file, pinned to one of the two hashes: only that one lands
+    assert.equal(await restoreNewSessions(sqlite3, target.raw, file, file, { digest: seen.digest, hashes: ["bbbb0002"] }), 1);
+    assert.deepEqual(hashes(target), ["bbbb0002"]);
 });

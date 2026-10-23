@@ -15,3 +15,6 @@ export function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolic
         && typeof p.id === "string" && typeof p.source === "string" && typeof p.label === "string"
         && (p.effect === "allow" || p.effect === "deny" || p.effect === "ask") && CONSUMERS.has(p.consumer) && p.scope === scope);
 }
+
+/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
+export const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;

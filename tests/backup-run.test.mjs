@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import init from "@sqlite.org/sqlite-wasm";
 import { importBytes, markAllDirty, migrate, prepareSession, readArchived, wasmDb, writeSession } from "../src/archive/db.ts";
-import { abandonBackup, addSession, beginBackup, finishBackup, inspectBackup, openBackupBytes, sealBackup } from "../src/backup/backup-file.ts";
+import { abandonBackup, addSession, beginBackup, finishBackup, inspectRestore, openBackupBytes, restoreNewSessions, sealBackup } from "../src/backup/backup-file.ts";
 import { BackupError, createKeyring } from "../src/backup/backup-format.ts";
 import { createBackup, offerRestore, restoreBackup } from "../src/backup/backup-run.ts";
 import { DEFAULT_CONFIG } from "../src/contract/contract-config.ts";
@@ -37,8 +37,8 @@ function fakeWorker(keyring) {
                 slots.set("out", sealed);
                 return { size: sealed.byteLength, sessions: made.sessions, form: args.form };
             }
-            case "restoreInspect": return inspectBackup(sqlite3, raw, await openBackupBytes(slots.get("in"), keyring, args.secret));
-            case "restoreSessions": { const n = importBytes(sqlite3, raw, await openBackupBytes(slots.get("in"), keyring, args.secret)); if (n) markAllDirty(db); return { imported: n }; }
+            case "restoreInspect": { const file = slots.get("in"); return inspectRestore(sqlite3, raw, file, await openBackupBytes(file, keyring, args.secret)); }
+            case "restoreSessions": { const file = slots.get("in"); const n = await restoreNewSessions(sqlite3, raw, file, await openBackupBytes(file, keyring, args.secret), args); if (n) markAllDirty(db); return { imported: n }; }
             case "backupFileRemove": slots.delete(args.slot); return true;
             default: throw new Error(`fake worker: ${op}`);
         }
@@ -125,7 +125,7 @@ test("restore: the file is inspected without changing anything, then the session
     assert.equal(fresh.db.selectValue("SELECT count(*) FROM sessions"), 0, "asking changed nothing");
     assert.equal(freshStorage.state.sync.model, "mine");
 
-    const done = await restoreBackup(d, { plan: offer.plan, sessions: true, settings: true, secret: { passphrase: "pw" } });
+    const done = await restoreBackup(d, { offer, sessions: true, settings: true, secret: { passphrase: "pw" } });
     assert.equal(done.sessionsAdded, 2);
     assert.deepEqual(readArchived(fresh.db, "live0001").events, events("live0001"));
     assert.equal(freshStorage.state.sync.model, "from-old");
@@ -149,13 +149,13 @@ test("restoring only the sessions, or only the settings, does only that", async 
     w2.slots.set("in", w1.slots.get("out"));
     const st2 = fakeStorage({ ...DEFAULT_CONFIG }, {});
     const offer = await offerRestore(deps(w2, st2));
-    await restoreBackup(deps(w2, st2), { plan: offer.plan, sessions: true, settings: false });
+    await restoreBackup(deps(w2, st2), { offer, sessions: true, settings: false });
     assert.equal(w2.db.selectValue("SELECT count(*) FROM sessions"), 1);
     assert.equal(st2.state.sync.model, "");
     w2.slots.set("in", w1.slots.get("out"));
     const w3 = fakeWorker(null);
     w3.slots.set("in", w1.slots.get("out"));
-    const done = await restoreBackup(deps(w3, st2), { plan: offer.plan, sessions: false, settings: true });
+    const done = await restoreBackup(deps(w3, st2), { offer, sessions: false, settings: true });
     assert.equal(done.sessionsAdded, 0);
     assert.equal(w3.db.selectValue("SELECT count(*) FROM sessions"), 0);
     assert.equal(st2.state.sync.model, "m");
@@ -175,6 +175,31 @@ test("a month file (no settings) offers its sessions and no settings preview; a 
     const newer = await offerRestore(deps(w, fakeStorage()));
     assert.equal(newer.plan, null);
     assert.match(newer.settingsError, /newer version/);
+});
+
+test("a restore imports what the offer counted: a file swapped in the slot afterwards is refused, and nothing is written", async () => {
+    const a = fakeWorker(null);
+    await a.put("aaaa0001", Date.UTC(2026, 0, 5));
+    const b = fakeWorker(null);
+    await b.put("bbbb0002", Date.UTC(2026, 0, 6));
+    const w = fakeWorker(null);
+    w.slots.set("in", sqlite3.capi.sqlite3_js_db_export(a.raw.pointer));
+    const st = fakeStorage();
+    const offer = await offerRestore(deps(w, st));
+    assert.deepEqual(offer.contents.hashes, ["aaaa0001"]);
+    assert.match(offer.contents.digest, /^[0-9a-f]{64}$/);
+    w.slots.set("in", sqlite3.capi.sqlite3_js_db_export(b.raw.pointer));
+    await assert.rejects(restoreBackup(deps(w, st), { offer, sessions: true, settings: false }), (e) => e.reason === "changed");
+    assert.equal(w.db.selectValue("SELECT count(*) FROM sessions"), 0);
+});
+
+test("an oversize settings payload is reported by the offer as settingsError, with no plan", async () => {
+    const w = fakeWorker(null);
+    w.slots.set("in", finishBackup(sqlite3, beginBackup(sqlite3, null), "x".repeat(9 << 20)).bytes);
+    const offer = await offerRestore(deps(w, fakeStorage()));
+    assert.equal(offer.plan, null);
+    assert.match(offer.settingsError, /larger than any real backup/);
+    assert.equal(offer.contents.settings, null);
 });
 
 // --- the ops the sequence calls exist in the worker ---

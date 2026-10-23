@@ -100,12 +100,12 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 | --- | --- |
 | `src/backup/backup-inventory.ts` | `INVENTORY` and `classify(area, key)`: every storage key, backed up or never, one reason each |
 | `src/backup/backup-settings.ts` | `collectSettings`, `parseSettings`, `upgradeSettings`, `previewRestore`, `applyRestore` (pure) |
-| `src/backup/backup-file.ts` | `beginBackup`, `addSession`, `finishBackup`, `sealBackup`, `openBackupBytes`, `inspectBackup` |
+| `src/backup/backup-file.ts` | `beginBackup`, `addSession`, `finishBackup`, `sealBackup`, `openBackupBytes`, `inspectBackup`, `inspectRestore`, `restoreNewSessions` |
 | `src/backup/backup-keyring.ts` | the data key at rest (IndexedDB `ml-backup-keyring`), `setupKeyring`, `changePassphrase` |
 | `src/backup/backup-opfs.ts` | the two origin-private files that carry a backup between a page and the archive worker |
 | `src/backup/backup-run.ts` | `createBackup`, `offerRestore`, `restoreBackup`: the sequence, every outside thing injected |
 | `src/archive/archive-worker.ts` | the ops `backupBegin`, `backupPut`, `backupFinish`, `backupAbort`, `restoreInspect`, `restoreSessions`, `backupFileRemove` |
-| `src/sw/policy-valid.ts` | the policy validator the worker and a restore share (moved out of `sw-policies.ts`) |
+| `src/sw/policy-valid.ts` | the policy validator and the source and label bounds the worker and a restore share (moved out of `sw-policies.ts`) |
 
 **The inventory.** 127 classified entries: 92 backed up (the 55 config keys other than the API key, the global
 policies, 5 site keys, 31 UI preferences), 1 backed up only when encrypted (`apiKey`), 34 never. The config is
@@ -125,19 +125,29 @@ that did not have the key.
 
 **Restore, three steps, none of which writes.**
 
-1. `parseSettings` bounds the payload (8 MiB, 256 KiB a value) and refuses one from a newer layout.
+1. `parseSettings` bounds the payload (8 MiB, 256 KiB a value) and refuses one from a newer layout. The worker holds
+   the 8 MiB bound too, where it reads the row (`inspectBackup`): an oversize payload is never returned, only
+   `settingsError`, so a hostile file cannot make the worker hand a gigabyte of text to the page.
 2. `upgradeSettings` reads an old payload through the upgrades a stored value gets: the site lists through
    `migrateSiteLists` (a pre-slice-3 backup has no agent levels and keeps its self-approval whitelist in the sync
    config), `protoStream` through `protoMode`, the policies through the validator the worker uses. It drops, and lists,
    a key this version does not keep, a key the inventory says is never restored, a config value of the wrong type, an
-   origin that is not an origin, a malformed or repeated policy. `tests/fixtures/backup/settings-pre-slice3.json` is
-   the fixture of an old payload and `tests/backup-settings.test.mjs` reads it.
+   origin that is not an origin, a malformed or repeated policy, and a policy whose source or label is past
+   `POLICY_SOURCE_MAX`/`POLICY_LABEL_MAX` (the policy page refuses those too; counted in the same note).
+   `tests/fixtures/backup/settings-pre-slice3.json` is the fixture of an old payload and `tests/backup-settings.test.mjs`
+   reads it.
 3. `previewRestore` lists the changes against what is stored now. Sites whose standing changes come first, those that
    would become able to call `window.ml` before the rest (a site on the self-approval list counts: that implies use).
    Then policies (those that allow first), then the settings that send traffic or widen what runs without asking
-   (`chatUrl`, which would receive the saved API key; the shell, auto-approve and CDP flags), then everything else.
-   A credential is shown as `(set)`, never its value. A restore that changes `chatUrl` while the backup carries no API
-   key would send THIS browser's saved key to the backup's address, and the risky group says exactly that.
+   (`RISKY_CONFIG`: `chatUrl`, which would receive the saved API key; `apiKey` itself, which replaces this browser's;
+   `modelFilter`, whose clearing removes the model whitelist; `agentStartPage`; `pageApprovalDomains`, which migrates
+   into the self-approval list; the shell, auto-approve and CDP flags), then everything else. A credential is shown as
+   `(set)`, never its value, and a plain file can carry `apiKey` too, so a restore that changes it is risky whatever the
+   file's form. A restore that changes `chatUrl` while the backup carries no API key would send THIS browser's saved
+   key to the backup's address, and the risky group says exactly that.
+   What a screen renders: `PolicyChange.source` is the predicate, so a hostile rule cannot hide behind its label.
+   `Change.shown` is display text cut at 160 characters; when it is cut, `shown.truncated` is `true` and
+   `shown.length` holds the full lengths, and the change's own `before`/`after` hold the whole value.
 
 `applyRestore` writes exactly `plan.changes`, one `set` per storage area, so the site lists and their layout marker land
 together; a key the backup does not carry is left alone. A list the backup holds empty and that is not empty here is a
@@ -150,9 +160,19 @@ writes each live session with the archive's own `writeSession` (the live copy wi
 `finishBackup` adds the `backup_settings` table (`key`/`value` rows: `payload`, `created`, `layout`) and serializes it.
 `sealBackup` writes the chosen form. The memory cost is the archive twice over plus the file. A restore opens the file
 (`openBackupBytes`: this install's key when it sealed the file, else the passphrase or recovery key it is given),
-`inspectBackup` counts what is new without changing the archive, and `importBytes` is the archive's import (new
+`inspectRestore` counts what is new without changing the archive, and `restoreNewSessions` is the archive's import (new
 sessions only, and never a session the person removed on purpose). The worker then marks every month dirty, because an
 import from a folder matches the folder and an import from a backup does not.
+
+**The restore is pinned to what was inspected.** `restoreInspect` answers the SHA-256 of the file in the `in` slot
+(`digest`), the hash of every session it would add (`hashes`, uncapped) and the first 500 of them by title, start time
+and bytes (`adding`, with `more` counting the rest). `restoreSessions` takes the digest and hashes back, refuses with
+`reason: "changed"` when the slot's file digests differently, and imports only those hashes (`importFrom`'s `only`).
+`restoreBackup` takes the whole `RestoreOffer` for that reason: pass it what `offerRestore` returned, never a re-read.
+The same applies to the settings half, which `applyRestore` pins to `plan.changes`.
+
+**An import copies only the images its new sessions reference** (`importFrom`). It once copied every `images` row of the
+file, so an orphan blob in a backup or a month file landed in the archive whether or not any session was new.
 
 **Moving the bytes.** Extension messages are JSON and a backup can be hundreds of megabytes, so the worker writes the
 finished file to an origin-private file (`out`) and reads the file to restore from another (`in`); the page, which
@@ -205,6 +225,8 @@ same to each other.
 - **An encrypted file's name is a hint.** Read the first bytes; a renamed `.sqlite` may be gzip or encrypted.
 - **The data key is never extractable after setup;** code that needs its raw bytes is code that should be unwrapping
   with the passphrase or the recovery key.
+- **A restore imports the sessions it listed, from the file it digested.** Do not give `restoreSessions` back a re-read
+  of the slot, and do not make `BackupContents.adding` the pin: it is capped for display, `hashes` is not.
 - **A restore writes the preview and nothing else.** `applyRestore` reads `plan.changes` only; a new kind of restored
   key is a new `Change`, never a side write.
 - **A new storage key is a decision.** The inventory test fails until it is classified; `never` is a fine answer, with

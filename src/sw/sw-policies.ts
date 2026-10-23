@@ -13,7 +13,7 @@ import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
-import { validList, CONSUMERS, GLOBAL_POLICIES_KEY } from "./policy-valid";
+import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
@@ -449,6 +449,3 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
 export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: PolicyEffect; label: string; source: string }[] {
     return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }
-
-/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
-export const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;

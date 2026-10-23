@@ -7,7 +7,8 @@
 
 import type { NeutralMessage } from "../contract/contract-chat";
 import { evalPolicy, type PolicyEffect } from "../readonly-exec";
-import { fetchFacts, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw-policies";
+import { fetchFacts } from "./sw-policies";
+import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./policy-valid";
 
 /** A proposal as the worker accepted it: the strings it checked, which are what the card shows and what is added. */
 export interface PolicyProposal {

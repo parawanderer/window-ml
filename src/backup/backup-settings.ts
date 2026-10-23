@@ -12,8 +12,8 @@
  */
 import { DEFAULT_CONFIG, LEXICAL_METRICS, protoMode } from "../contract/contract-config";
 import { type AgentLevel, type SiteLists, SITE_ACCESS_KEYS, SITE_SCHEMA, SITE_SCHEMA_KEY, levelsFor, migrateSiteLists, originOf } from "../site-access";
-import { GLOBAL_POLICIES_KEY, validList } from "../sw/policy-valid";
-import type { PolicyOrigin, StoredPolicy } from "../sw/sw-policies";
+import { GLOBAL_POLICIES_KEY, validList, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "../sw/policy-valid";
+import { type PolicyOrigin, type StoredPolicy } from "../sw/sw-policies";
 import { classify } from "./backup-inventory";
 
 type Rec = Record<string, unknown>;
@@ -217,10 +217,12 @@ export function upgradeSettings(payload: SettingsPayload): UpgradedSettings {
         const raw = local[GLOBAL_POLICIES_KEY];
         const good = validList(raw, "global");
         const ids = new Set<string>();
-        const unique = good.filter((p) => !ids.has(p.id) && ids.add(p.id)).map(cleanPolicy);
+        // The policy page refuses a source or a label past these bounds (background.ts `POLICIES`), so a restore does too.
+        const inBounds = good.filter((p) => p.source.length <= POLICY_SOURCE_MAX && p.label.length <= POLICY_LABEL_MAX);
+        const unique = inBounds.filter((p) => !ids.has(p.id) && ids.add(p.id)).map(cleanPolicy);
         const n = (Array.isArray(raw) ? raw.length : 0) - unique.length;
         if (!Array.isArray(raw)) dropped.push({ area: "local", key: GLOBAL_POLICIES_KEY, reason: "not a list of policies" });
-        else if (n > 0) notes.push(`${n} polic${n === 1 ? "y" : "ies"} in the backup were malformed or repeated and were left out`);
+        else if (n > 0) notes.push(`${n} polic${n === 1 ? "y" : "ies"} in the backup were malformed, repeated or past the length bounds of the policy page, and were left out`);
         if (Array.isArray(raw)) local[GLOBAL_POLICIES_KEY] = unique; else delete local[GLOBAL_POLICIES_KEY];
     }
     return { sync, local, dropped, notes, apiKeyIncluded: own(sync, API_KEY) && sync[API_KEY] !== "" };
@@ -242,7 +244,7 @@ export interface Change {
     /** what the restore writes; for a removed list, the empty list */
     after: unknown;
     /** both values as short text for the screen; a credential shows as "(set)" */
-    shown: { before?: string; after: string };
+    shown: { before?: string; after: string; /** set when either text is cut: render the change's own `before`/`after` for the whole */ truncated?: true; /** the full length of each text, set with `truncated` */ length?: { before?: number; after: number } };
     /** for the `risky` group: what changing it does */
     why?: string;
 }
@@ -260,7 +262,11 @@ export interface SiteChange {
 }
 
 /** One global policy a restore would add, remove or change. */
-export interface PolicyChange { id: string; label: string; effect: string; consumer: string; kind: "added" | "removed" | "changed" }
+export interface PolicyChange {
+    id: string; label: string; effect: string; consumer: string; kind: "added" | "removed" | "changed";
+    /** the predicate: what the policy matches, which a label can misdescribe (bounded by `POLICY_SOURCE_MAX`) */
+    source: string;
+}
 
 /** Everything a restore would do, and what it would not. */
 export interface RestorePlan {
@@ -289,15 +295,20 @@ const RISKY_CONFIG: Readonly<Record<string, string>> = {
     autoApprovePython: "runs Python without asking",
     autoApproveSameOriginAuth: "sends as-you requests without asking",
     autoApproveSelfSource: "reads the agent's own source without asking",
+    modelFilter: "the whitelist of models a page or run may use; clearing it allows every model the server offers",
+    agentStartPage: "the page a blank agent run starts on",
+    pageApprovalDomains: "the old self-approval whitelist: its sites are migrated into the self-approval list, which grants use",
+    apiKey: "replaces this browser's saved API key",
     pierceClosedShadow: "lets runs read closed shadow roots",
     cdp: "lets runs use trusted clicks and typing through the debugger",
     execDefaultWorld: "which world page scripts run in",
 };
 
-const show = (key: string, v: unknown): string => {
-    if (key === API_KEY) return v === "" || v === undefined ? "(empty)" : "(set)";
+/** A value as text for a screen, cut at 160 characters; `cut` says so, with the full length. */
+const show = (key: string, v: unknown): { text: string; cut: boolean; length: number } => {
+    if (key === API_KEY) { const t = v === "" || v === undefined ? "(empty)" : "(set)"; return { text: t, cut: false, length: t.length }; }
     const s = JSON.stringify(v) ?? "undefined";
-    return s.length > 160 ? `${s.slice(0, 157)}...` : s;
+    return s.length > 160 ? { text: `${s.slice(0, 157)}...`, cut: true, length: s.length } : { text: s, cut: false, length: s.length };
 };
 
 /** The order a restore's changes are shown in. */
@@ -344,9 +355,11 @@ export function previewRestore(up: UpgradedSettings, current: StorageSnapshot): 
             if ((has && canon(now[key]) === canon(after)) || (!has && empty)) { unchanged++; continue; }
             const kind: Change["kind"] = !has ? "added" : rule.mode === "replace" && empty ? "removed" : "changed";
             const group = groupOf(area, key, rule.group);
+            const sb = has ? show(key, now[key]) : undefined, sa = show(key, after);
+            const cut = !!sb?.cut || sa.cut;
             changes.push({
                 area, key, kind, group, ...(has ? { before: now[key] } : {}), after,
-                shown: { ...(has ? { before: show(key, now[key]) } : {}), after: show(key, after) },
+                shown: { ...(sb ? { before: sb.text } : {}), after: sa.text, ...(cut ? { truncated: true as const, length: { ...(sb ? { before: sb.length } : {}), after: sa.length } } : {}) },
                 ...(group === "risky" ? { why: key === "chatUrl" && !own(next, API_KEY) && typeof now[API_KEY] === "string" && now[API_KEY] !== ""
                     ? "this backup carries no API key, so THIS browser's saved API key would be sent to this address" : RISKY_CONFIG[key] } : {}),
             });
@@ -378,10 +391,10 @@ export function previewRestore(up: UpgradedSettings, current: StorageSnapshot): 
         const nowById = new Map(now.map((p) => [p.id, p])), nextById = new Map((up.local[GLOBAL_POLICIES_KEY] as StoredPolicy[]).map((p) => [p.id, p]));
         for (const p of nextById.values()) {
             const o = nowById.get(p.id);
-            if (!o) policies.push({ id: p.id, label: p.label, effect: p.effect, consumer: p.consumer, kind: "added" });
-            else if (canon(cleanPolicy(o)) !== canon(p)) policies.push({ id: p.id, label: p.label, effect: p.effect, consumer: p.consumer, kind: "changed" });
+            if (!o) policies.push({ id: p.id, label: p.label, effect: p.effect, consumer: p.consumer, kind: "added", source: p.source });
+            else if (canon(cleanPolicy(o)) !== canon(p)) policies.push({ id: p.id, label: p.label, effect: p.effect, consumer: p.consumer, kind: "changed", source: p.source });
         }
-        for (const p of nowById.values()) if (!nextById.has(p.id)) policies.push({ id: p.id, label: p.label, effect: p.effect, consumer: p.consumer, kind: "removed" });
+        for (const p of nowById.values()) if (!nextById.has(p.id)) policies.push({ id: p.id, label: p.label, effect: p.effect, consumer: p.consumer, kind: "removed", source: p.source });
         policies.sort((x, y) => (x.effect === "allow" ? 0 : 1) - (y.effect === "allow" ? 0 : 1) || x.label.localeCompare(y.label));
     }
     return { changes, sites, policies, dropped: up.dropped, notes: up.notes, unchanged, apiKeyIncluded: up.apiKeyIncluded };

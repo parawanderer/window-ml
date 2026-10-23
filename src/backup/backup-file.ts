@@ -15,6 +15,7 @@
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { ARCHIVE_SCHEMA, importBytes, migrate, prepareSession, wasmDb, withAttachedBytes, writeSession, type ArchiveDb, type ArchiveInput } from "../archive/db";
 import { BackupError, encryptFile, gzip, readHeader, readAnyForm, sniff, type Keyring, type Secret } from "./backup-format";
+import { PAYLOAD_LIMITS } from "./backup-settings";
 
 /** The three forms a backup can be written in (`docs/dev/backup.md`, "The three forms of a file"). */
 export type BackupForm = "plain" | "gzip" | "encrypted";
@@ -110,15 +111,35 @@ export function openBackupBytes(file: Uint8Array, installKeyring: Keyring | null
     return readAnyForm(file, async () => unlockChoice(file, installKeyring, secret), maxOutput);
 }
 
+/** One session a restore would add, as much as a screen needs to name it. */
+export interface AddingSession { hash: string; title: string; createdTs: number; bytes: number }
+
+/** The most sessions `BackupContents.adding` names; the rest are counted in `more`. */
+export const ADDING_CAP = 500;
+
 /** What a backup file holds, found without restoring anything. */
 export interface BackupContents {
     /** sessions in the file */
     sessions: number;
     /** of those, the ones this archive does not have and did not remove on purpose: what a restore would add */
     newSessions: number;
-    /** the settings payload JSON, or null when the file carries none (a month file, or a sessions-only backup) */
+    /** the first `ADDING_CAP` of them, newest first, by title, start time and size */
+    adding: AddingSession[];
+    /** how many more than `adding` names */
+    more: number;
+    /** the hash of EVERY session a restore would add (not capped): what `restoreNewSessions` is pinned to */
+    hashes: string[];
+    /** the settings payload JSON, or null when the file carries none (a month file, a sessions-only backup, or `settingsError`) */
     settings: string | null;
+    /** why the payload was not handed over: it is longer than `PAYLOAD_LIMITS.bytes` */
+    settingsError?: string;
     created: string | null;
+}
+
+/** `BackupContents` of a file in the slot, plus the digest of that file. */
+export interface RestoreInspection extends BackupContents {
+    /** SHA-256 of the file as it sat in the slot (hex): a restore refuses a file whose digest differs */
+    digest: string;
 }
 
 /**
@@ -131,11 +152,46 @@ export function inspectBackup(sqlite3: Sqlite3Static, raw: Database, plain: Uint
         if (theirs > ARCHIVE_SCHEMA) throw new Error(`that backup was written by a newer version (archive schema ${theirs}); update the extension to read it`);
         const has = Number(db.selectValue(`SELECT count(*) FROM ${s}.sqlite_master WHERE type = 'table' AND name = '${SETTINGS_TABLE}'`)) > 0;
         const get = (key: string): string | null => (has ? (db.selectValue(`SELECT value FROM ${s}.${SETTINGS_TABLE} WHERE key = ?`, [key]) as string | undefined) ?? null : null);
+        // The payload's length is asked of SQLite first: a string past the budget is never produced, let alone handed on.
+        const payloadLength = has ? Number(db.selectValue(`SELECT length(value) FROM ${s}.${SETTINGS_TABLE} WHERE key = 'payload'`) ?? 0) : 0;
+        const tooLarge = payloadLength > PAYLOAD_LIMITS.bytes;
+        const fresh = `FROM ${s}.sessions WHERE hash NOT IN (SELECT hash FROM main.sessions) AND hash NOT IN (SELECT hash FROM main.removed)`;
+        const newSessions = Number(db.selectValue(`SELECT count(*) ${fresh}`));
         return {
             sessions: Number(db.selectValue(`SELECT count(*) FROM ${s}.sessions`)),
-            newSessions: Number(db.selectValue(`SELECT count(*) FROM ${s}.sessions WHERE hash NOT IN (SELECT hash FROM main.sessions) AND hash NOT IN (SELECT hash FROM main.removed)`)),
-            settings: get("payload"),
+            newSessions,
+            adding: db.selectObjects(`SELECT hash, COALESCE(title, task, '') AS title, created_ts AS createdTs, bytes ${fresh} ORDER BY last_ts DESC, hash LIMIT ${ADDING_CAP}`)
+                .map((r) => ({ hash: String(r.hash), title: String(r.title), createdTs: Number(r.createdTs), bytes: Number(r.bytes) })),
+            more: Math.max(0, newSessions - ADDING_CAP),
+            hashes: db.selectValues(`SELECT hash ${fresh} ORDER BY last_ts DESC, hash`).map(String),
+            settings: tooLarge ? null : get("payload"),
+            ...(tooLarge ? { settingsError: "the settings in this backup are larger than any real backup holds" } : {}),
             created: get("created"),
         };
     });
+}
+
+/** SHA-256 of some bytes, as lowercase hex. */
+export async function digestOf(bytes: Uint8Array): Promise<string> {
+    const d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>));
+    return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The restore's look at a file: what `inspectBackup` finds in `plain`, with the digest of `file` (the bytes as they sat in
+ * the `in` slot, whatever form) to pin the restore to.
+ */
+export async function inspectRestore(sqlite3: Sqlite3Static, raw: Database, file: Uint8Array, plain: Uint8Array): Promise<RestoreInspection> {
+    return { ...inspectBackup(sqlite3, raw, plain), digest: await digestOf(file) };
+}
+
+/**
+ * Import the sessions a restore was previewed with, and only those, from the file now in the slot.
+ * @param pin the digest and hashes `inspectRestore` returned
+ * @returns how many sessions were added (a hash the archive gained or removed since is not imported)
+ * @throws `changed` when `file` is not the file that was inspected
+ */
+export async function restoreNewSessions(sqlite3: Sqlite3Static, raw: Database, file: Uint8Array, plain: Uint8Array, pin: { digest: string; hashes: readonly string[] }): Promise<number> {
+    if (await digestOf(file) !== pin.digest) throw new BackupError("changed", "the backup file changed after it was previewed: choose it again");
+    return importBytes(sqlite3, raw, plain, pin.hashes);
 }

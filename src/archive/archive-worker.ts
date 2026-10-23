@@ -9,10 +9,10 @@
 //
 // chrome-free, like python-worker.ts: the wasm is found next to this script's own URL.
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { importBytes, archiveStats, dirtyMonths, listArchived, markAllDirty, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
+import { archiveStats, dirtyMonths, listArchived, markAllDirty, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
 import { folderState, monthFolder, moveMonthFilesAside, writableFolder, type FolderState } from "./archive-folder";
 import { adoptFolder, importMonths, surveyFolder, syncMonths, type SyncOutcome } from "./folder-sync";
-import { abandonBackup, addSession, beginBackup, finishBackup, inspectBackup, openBackupBytes, sealBackup, type BackupBuild, type BackupContents, type BackupForm } from "../backup/backup-file";
+import { abandonBackup, addSession, beginBackup, finishBackup, inspectRestore, openBackupBytes, restoreNewSessions, sealBackup, type BackupBuild, type BackupForm, type RestoreInspection } from "../backup/backup-file";
 import { idbKeyringStore, loadKeyring } from "../backup/backup-keyring";
 import { readBackupSlot, removeBackupSlot, writeBackupSlot, type BackupSlot } from "../backup/backup-opfs";
 import type { BackupError, Secret } from "../backup/backup-format";
@@ -51,8 +51,8 @@ export type ArchiveOp =
     | { op: "backupAbort"; args?: undefined }
     /** open the `in` file (decrypting it with the install's key or the secret) and say what it holds, changing nothing */
     | { op: "restoreInspect"; args: { secret?: Secret } }
-    /** import the `in` file's sessions into the archive (new ones only) and mark their months for the folder */
-    | { op: "restoreSessions"; args: { secret?: Secret } }
+    /** import the sessions `restoreInspect` named, and only those, from the `in` file if it is still the file it digested; mark their months for the folder */
+    | { op: "restoreSessions"; args: { secret?: Secret; digest: string; hashes: string[] } }
     /** delete a backup file left in the origin-private file system */
     | { op: "backupFileRemove"; args: { slot: BackupSlot } };
 
@@ -141,11 +141,12 @@ async function run(req: ArchiveOp): Promise<unknown> {
             return { size: sealed.byteLength, sessions: made.sessions, form: req.args.form };
         }
         case "restoreInspect": {
-            const plain = await backupPlain(req.args.secret);
-            return { ...inspectBackup(sqlite3, raw, plain) } satisfies BackupContents;
+            const { file, plain } = await backupPlain(req.args.secret);
+            return await inspectRestore(sqlite3, raw, file, plain) satisfies RestoreInspection;
         }
         case "restoreSessions": {
-            const imported = importBytes(sqlite3, raw, await backupPlain(req.args.secret));
+            const { file, plain } = await backupPlain(req.args.secret);
+            const imported = await restoreNewSessions(sqlite3, raw, file, plain, req.args);
             // The folder does not hold these yet (an import from a folder is the only one that already matches it).
             if (imported) markAllDirty(db);
             return { imported };
@@ -174,11 +175,11 @@ async function run(req: ArchiveOp): Promise<unknown> {
     }
 }
 
-/** The `in` file as plain SQLite bytes: opened with this install's key when it sealed the file, else with `secret`. */
-async function backupPlain(secret?: Secret): Promise<Uint8Array> {
+/** The `in` file as it sits in the slot, and as plain SQLite bytes: opened with this install's key when it sealed the file, else with `secret`. */
+async function backupPlain(secret?: Secret): Promise<{ file: Uint8Array; plain: Uint8Array }> {
     const file = await readBackupSlot("in");
     if (!file) throw new Error("no backup file was handed over");
-    return openBackupBytes(file, await loadKeyring(idbKeyringStore()), secret);
+    return { file, plain: await openBackupBytes(file, await loadKeyring(idbKeyringStore()), secret) };
 }
 
 async function folderReport(db: ArchiveDb): Promise<FolderReport> {

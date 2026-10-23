@@ -187,6 +187,8 @@ test("the whitelist is read only through the one rule: no other source file matc
     }
     assert.deepEqual(uses.sort(), [
         "backup/backup-settings.ts: const legacyHosts = sync.pageApprovalDomains;",
+        // not a read: the key's row in the restore's risky list, which says what restoring it does
+        "backup/backup-settings.ts: pageApprovalDomains: \"the old self-approval whitelist: its sites are migrated into the self-approval list, which grants use\",",
         "contract/contract-config.ts: pageApprovalDomains: [],",
         "contract/contract-config.ts: pageApprovalDomains: string[];",
         "sw/sw-site-access.ts: const [stored, sync] = await Promise.all([readStored(), chrome.storage.sync.get({ pageApprovalDomains: [] }).catch(none)]);",
