@@ -39,6 +39,16 @@ const REGEX_STRING = new Set(["match", "matchAll", "search", "replace", "replace
 /** The String methods that also COMPILE a pattern handed as anything other than a RegExp. */
 const COMPILES_PATTERN = new Set(["match", "matchAll", "search"]);
 
+/** A replacement's special patterns, `$$` included so that it is skipped rather than counted: `$&`, `` $` ``, `$'`, `$n`,
+ *  `$nn` and `$<name>` each insert text from the receiver at every match, so a two-character replacement builds output
+ *  quadratic in its receiver (`"a".repeat(n).replace(/a/g, "$'")` is n²/2 characters). */
+const REPLACEMENT_REF = /\$(?:\$|[&`']|\d{1,2}|<[^>]*>)/g;
+
+/** Refuse a replace before it builds a result over {@link MAX_STRING}. */
+function tooMuchReplaced(size: number): never {
+    throw new NotInDialect(`a replace that would build ${size.toLocaleString("en-US")} characters, more than a value may hold without asking`);
+}
+
 /** String methods that only scan, hash or compare (HOST_SCAN_CHARS_PER_STEP); every other one builds (HOST_CHARS_PER_STEP). */
 const SCANNING_STRING = new Set(["includes", "indexOf", "lastIndexOf", "search", "localeCompare", "normalize", "trim", "trimStart", "trimEnd", "test"]);
 
@@ -108,6 +118,9 @@ export class Evaluator {
     private depth = 0;
     /** The call depth of a host call in progress that coerces what its callbacks return (COERCES_CALLBACK), or -1. */
     coercingAt = -1;
+    /** A `replace` in progress whose replacer is a script arrow: the call depth, and the characters it has built so far
+     *  (the receiver's, plus what each call returned). Each return is counted before the host adds it to the result. */
+    private replacing: { depth: number; chars: number } | null = null;
     // What is left of the step budget. Spent by every node evaluated and every element iterated.
     /** The source line of the statement being evaluated — reported when a script throws. */
     line = 0;
@@ -189,6 +202,71 @@ export class Evaluator {
         const steps = regexSteps(source, flags, input, (n) => this.tick(n), HOST_SCAN_CHARS_PER_STEP);
         if (steps > this.fuel) throw new NotInDialect(`a regex search that could backtrack for too long on this input (/${source.length > 40 ? source.slice(0, 40) + "…" : source}/ over ${input.length.toLocaleString("en-US")} characters)`);
         this.tick(steps);
+    }
+    /** Charge a `replace` or `replaceAll` for the text it BUILDS, before it builds it. The host sizes and allocates its
+     *  result in one call, so the check after it (`sized`) came only once a string of up to V8's limit was in memory,
+     *  and a result under {@link MAX_STRING} was charged as if it were the receiver: 300 replaces of 8.8 million
+     *  characters each ran without asking. The worst case is tried first; a global replace whose worst case is over the
+     *  limit is then measured match by match (a second search, charged as the first was). A replacer arrow is counted as
+     *  it returns (`replacing`). */
+    private replaceCharge(str: string, key: string, args: unknown[], search: [string, string, string] | null): void {
+        const r = args[1];
+        if (typeof r === "function") {
+            if (!this.ourFns.has(r)) throw new NotInDialect("a replacer that is not an arrow written in the script");
+            return;
+        }
+        const text = this.replacementText(r);
+        const refs = [...text.matchAll(REPLACEMENT_REF)].map((m) => m[0]).filter((t) => t !== "$$");
+        const p = args[0];
+        const global = key === "replaceAll" || (isRegExp(p) && String(p.flags).includes("g"));
+        const n = str.length;
+        let size = n + (global ? n + 1 : 1) * (text.length + refs.length * n);
+        if (size > MAX_STRING && global) size = this.replacedSize(str, p, text, refs, search);
+        if (size > MAX_STRING) tooMuchReplaced(size);
+        this.tick(Math.floor(size / HOST_CHARS_PER_STEP));
+    }
+    /** The text a host call coerces a replacement to. A string, a String object or a primitive is its `String()`; an
+     *  object is refused, since the host would coerce it by running its `toString`, and the text it returns (a `$'`) is
+     *  what decides the size. */
+    private replacementText(v: unknown): string {
+        if (v === null || typeof v !== "object" || kindOf(v) === "string") return String(v);
+        throw new NotInDialect("a replacement that is not a string or a function");
+    }
+    /** An upper bound on what a GLOBAL replace builds, found match by match: the receiver, plus at each match the
+     *  replacement with every special pattern counted at what it inserts there (`$&` the match, `` $` `` what precedes
+     *  it, `$'` what follows it, a `$n` or `$<name>` the longest capture of that match). Stops once over the limit. */
+    private replacedSize(str: string, p: unknown, text: string, refs: string[], search: [string, string, string] | null): number {
+        const n = str.length;
+        let size = n, matches = 0;
+        const at = (index: number, len: number, capture: number): boolean => {
+            matches++;
+            size += text.length;
+            for (const t of refs) size += t === "$&" ? len : t === "$`" ? index : t === "$'" ? n - index - len : Math.max(capture, t.length);
+            return size > MAX_STRING;
+        };
+        if (isRegExp(p)) {
+            if (search) this.regexCharge(search);
+            for (const m of str.matchAll(new RegExp(String(p.source), String(p.flags)))) {
+                let capture = 0;
+                for (let i = 1; i < m.length; i++) capture = Math.max(capture, m[i]?.length ?? 0);
+                if (at(m.index ?? 0, m[0].length, capture)) break;
+            }
+        } else {
+            const s = this.regexText(p, "pattern");
+            this.scans(str);
+            for (let i = str.indexOf(s); i !== -1; i = str.indexOf(s, i + Math.max(1, s.length))) if (at(i, s.length, 0)) break;
+        }
+        this.tick(Math.floor(matches * (1 + refs.length) / HOST_COPY_ELEMENTS_PER_STEP));
+        return size;
+    }
+    /** What a replacer arrow returned, counted before the host adds it to the result (`replacing`). */
+    private replaced(rep: { chars: number }, ret: unknown): void {
+        if (ret !== null && typeof ret === "object" && kindOf(ret) !== "string")
+            throw new NotInDialect("a replacer that returns an object, which the host would turn into text by running its toString");
+        const len = String(ret).length;
+        rep.chars += len;
+        if (rep.chars > MAX_STRING) tooMuchReplaced(rep.chars);
+        this.tick(Math.floor(len / HOST_CHARS_PER_STEP));
     }
     /** How many parts `v` expands to when walked whole, counting a part as often as a walk would visit it (so an array
      *  that shares its parts counts at its expanded size), and how many characters its strings hold. Throws past
@@ -315,6 +393,7 @@ export class Evaluator {
         // Last, once the arguments are walked: the search's own backtracking, which nothing above bounds.
         const search = this.regexSearch(obj, key, args, str);
         if (search) this.regexCharge(search);
+        if (str !== null && (key === "replace" || key === "replaceAll")) this.replaceCharge(str, key, args, search);
         if (isTable(obj)) {
             const t = obj as { rows: unknown[]; columns: unknown[]; shape: [number, number] };
             const stored = isStoredTable(obj);
@@ -748,6 +827,8 @@ export class Evaluator {
                     const coerced = self.coercingAt === self.depth;
                     const ret = runSync(self.callArrow(node, scope, args));
                     if (coerced) self.expands(ret);
+                    const rep = self.replacing;
+                    if (rep !== null && rep.depth === self.depth) self.replaced(rep, ret);
                     return ret;
                 };
                 this.ourFns.set(fn, { node, scope });
@@ -1020,7 +1101,10 @@ export class Evaluator {
             let out: unknown;
             const wasCoercing = this.coercingAt;
             if (COERCES_CALLBACK.has(key)) this.coercingAt = this.depth;
-            try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; }
+            const wasReplacing = this.replacing;
+            if ((key === "replace" || key === "replaceAll") && typeof args[1] === "function" && (typeof obj === "string" || kindOf(obj) === "string"))
+                this.replacing = { depth: this.depth, chars: String(obj).length };
+            try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; this.replacing = wasReplacing; }
             if (out !== null && typeof out === "object" && MATERIALISED.has(Object.prototype.toString.call(out))) out = Array.from(out as Iterable<unknown>);
             // A NEW array is charged its length: what `slice`, `map` or `split` built is a copy proportional to it.
             if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_COPY_ELEMENTS_PER_STEP));

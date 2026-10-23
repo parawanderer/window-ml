@@ -1542,5 +1542,235 @@
     "budget": 3000000,
     "reason": "a leading ^ without m starts once: linear",
     "from": "tests/readonly-soundness.test.mjs the regex charge leaves ordinary searches alone"
+  },
+  {
+    "name": "$' over 30,000 characters",
+    "js": "\"a\".repeat(30000).replace(/a/g, \"$'\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "each match inserts what follows it: n²/2 characters, built in one host call before any check after it",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "$' past V8's string limit",
+    "js": "\"a\".repeat(60000).replace(/a/g, \"$'\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "over V8's limit the host throws a RangeError, a runtime error rather than the human gate",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "replaceAll with a string pattern and $`",
+    "js": "\"a\".repeat(30000).replaceAll(\"a\", \"$`\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a string pattern with replaceAll matches everywhere; $` inserts what precedes each",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "replaceAll with a regex and $'",
+    "js": "\"a\".repeat(30000).replaceAll(/a/g, \"$'\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "replaceAll with a regex is the same global replace",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "$1 captured inside a lookahead",
+    "js": "\"a\".repeat(5000).replace(/(?=(a*))/g, \"$1\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a zero-width match whose capture runs to the end: each match inserts the rest",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "a named capture inside a lookahead",
+    "js": "\"a\".repeat(5000).replace(/(?=(?<r>a*))/g, \"$<r>\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "$<name> inserts its capture like $n",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "$& of an empty pattern with a long literal",
+    "js": "\"a\".repeat(5000).replace(/(?:)/g, \"$&\" + \"x\".repeat(2000))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a literal at each of n+1 positions",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "a String object receiver of a replace",
+    "js": "new String(\"a\".repeat(30000)).replace(/a/g, \"$'\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a String object is the same receiver",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "one match, many $'",
+    "js": "\"a\".repeat(1000000).replace(/a/, \"$'\".repeat(20))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a single match still inserts the rest once per $'",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "a replacer arrow returning a long string",
+    "js": "const big = \"x\".repeat(4000); \"a\".repeat(4000).replace(/a/g, () => big)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "what each call returns is counted before the host adds it",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "a loop of replaces each under the limit",
+    "js": "const s = \"a\".repeat(4200); let t = 0; for (const i of Array.from({ length: 300 })) t += s.replace(/a/g, \"$'\").length; t",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "8.8 million characters each, charged as the receiver: 2.6 billion built without asking",
+    "from": "tests/readonly-soundness.test.mjs a replace is charged for the text it builds"
+  },
+  {
+    "name": "a loop of replaceAll with a string pattern",
+    "js": "const s = \"a\".repeat(4200); let t = 0; for (const i of Array.from({ length: 300 })) t += s.replaceAll(\"a\", \"$`\").length; t",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the same, through replaceAll",
+    "from": "tests/readonly-soundness.test.mjs a replace is charged for the text it builds"
+  },
+  {
+    "name": "a loop of a literal at every match",
+    "js": "const s = \"a\".repeat(4200); let t = 0; for (const i of Array.from({ length: 300 })) t += s.replace(/a/g, \"$&\" + \"x\".repeat(2000)).length; t",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "output grows with a long literal too, not only with $'",
+    "from": "tests/readonly-soundness.test.mjs a replace is charged for the text it builds"
+  },
+  {
+    "name": "a replacement object with a toString arrow",
+    "js": "\"abc\".replace(/b/, { toString: () => \"$'\" })",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the host runs its toString, and the text it returns decides the size",
+    "from": "tests/readonly-soundness.test.mjs a replacement is a string or an arrow"
+  },
+  {
+    "name": "a replacement array",
+    "js": "\"abc\".replace(/b/, [\"$'\"])",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "an array is joined into the replacement by the host",
+    "from": "tests/readonly-soundness.test.mjs a replacement is a string or an arrow"
+  },
+  {
+    "name": "a replacer arrow returning an object",
+    "js": "\"abc\".replace(/b/, () => ({ toString: () => \"x\" }))",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "the host turns the return into text by running its toString",
+    "from": "tests/readonly-soundness.test.mjs a replacement is a string or an arrow"
+  },
+  {
+    "name": "a replacer that is a builtin",
+    "js": "\"abc\".replace(/b/, String)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "a builtin's return is not counted as an arrow's is",
+    "from": "tests/readonly-soundness.test.mjs a replacement is a string or an arrow"
+  },
+  {
+    "name": "a date rewrite over a log",
+    "js": "\"2026-10-23 ok\\n\".repeat(1000).replace(/(\\d{4})-(\\d{2})-(\\d{2})/g, \"$3/$2/$1\").length",
+    "env": "none",
+    "expect": {
+      "value": 14000
+    },
+    "budget": 3000000,
+    "reason": "the $n of an ordinary rewrite is a short capture",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "$& around every word",
+    "js": "\"the cat sat \".repeat(10000).replace(/\\w+/g, \"<$&>\").length",
+    "env": "none",
+    "expect": {
+      "value": 180000
+    },
+    "budget": 3000000,
+    "reason": "a worst case over the limit is measured match by match",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "replaceAll of a delimiter over a megabyte",
+    "js": "\"a,b,\".repeat(250000).replaceAll(\",\", \";\").length",
+    "env": "none",
+    "expect": {
+      "value": 1000000
+    },
+    "budget": 3000000,
+    "reason": "a one-character replacement",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "a replacer arrow upper-casing words",
+    "js": "\"abc \".repeat(25000).replace(/\\w+/g, (w) => w.toUpperCase()).length",
+    "env": "none",
+    "expect": {
+      "value": 100000
+    },
+    "budget": 3000000,
+    "reason": "each return is counted as it comes",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "$' and $` on a short string",
+    "js": "\"a-b\".replace(\"-\", \"$'$`\")",
+    "env": "none",
+    "expect": {
+      "value": "abab"
+    },
+    "budget": 3000000,
+    "reason": "a short receiver is cheap whatever the replacement",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "$' at the end of a long string",
+    "js": "\"w \".repeat(50000).replace(/ $/g, \"$'\").length",
+    "env": "none",
+    "expect": {
+      "value": 99999
+    },
+    "budget": 3000000,
+    "reason": "the worst case is huge, the one match inserts nothing",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "$$ is a literal dollar, not a reference",
+    "js": "\"a\".repeat(30000).replace(/a/g, \"$$'\").length",
+    "env": "none",
+    "expect": {
+      "value": 60000
+    },
+    "budget": 3000000,
+    "reason": "$$ then a quote: two characters per match",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
   }
 ]

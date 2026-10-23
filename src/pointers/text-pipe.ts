@@ -11,7 +11,7 @@
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
 import { jsonShape } from "../dom/dom";
-import { riskyRegex } from "../readonly-exec/limits";
+import { riskyRegex, MAX_STRING } from "../readonly-exec/limits";
 import { regexSteps, UNCHARGED_SEARCH_STEPS } from "../readonly-exec/regex-cost";
 
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
@@ -334,9 +334,10 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     try { re = compilePattern("sed", pattern, flags.includes("g") ? (flags.includes("i") ? "gi" : "g") : (flags.includes("i") ? "i" : ""), limits); }
     catch (e) {
         if (!(e instanceof SyntaxError)) throw e; throw new Error(`sed: ${String((e as Error).message)}. Escape a literal metacharacter, or use grep -F to match one literally.`); }
-    const max = limits?.maxChars;
-    chargeSearch("sed", re, lines, max != null && re.global ? 2 : 1, limits);
-    if (max == null) return lines.map((l) => l.replace(re, replacement));
+    // A caller with no `maxChars` (a tool's `pipe`, an `@tool:` pipe) is held to MAX_STRING: with none, `s/a/$'/g` on a
+    // long line built a string up to V8's limit.
+    const max = limits?.maxChars ?? MAX_STRING;
+    chargeSearch("sed", re, lines, re.global ? 2 : 1, limits);
     // The one stage that can GROW its input, and by a product: `s/./<a long string>/g` puts a copy of the
     // replacement at every character. So the size is bounded BEFORE a line is built, not after, since the
     // allocation is the cost. A `$&`/`$1`/`$<name>`/`` $` ``/`$'` in the replacement inserts text from the line,
