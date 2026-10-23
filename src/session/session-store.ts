@@ -387,6 +387,9 @@ export class SessionStore {
         if (this.timer) clearTimeout(this.timer);
         this.urgent = urgent;
         this.timer = setTimeout(() => { this.timer = null; this.urgent = false; void this.flush(); }, urgent ? 0 : this.opts.flushMs ?? FLUSH_MS);
+        // In Node (tests, scripts), a pending flush timer holds the process open; the browser kills a worker's timers
+        // regardless. A background flush must never be why a process stays alive.
+        (this.timer as unknown as { unref?: () => void }).unref?.();
     }
 
     private async write(): Promise<void> {
