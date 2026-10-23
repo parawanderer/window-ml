@@ -744,9 +744,12 @@ function backupWorker(file) {
         if (msg.op === "backupFinish") return { ok: true, result: { size: 10, sessions: 0, form: msg.args.form } };
         if (msg.op === "restoreInspect") {
             if (file.needsKey && !msg.args?.secret) return { ok: false, error: "this file needs a passphrase", reason: "needs-key" };
-            return { ok: true, result: { sessions: 2, newSessions: 2, settings: JSON.stringify(file.settings), created: null } };
+            return { ok: true, result: { sessions: 2, newSessions: 2, settings: JSON.stringify(file.settings), created: null, digest: file.digest ?? "d1", hashes: ["h1", "h2"] } };
         }
-        if (msg.op === "restoreSessions") return { ok: true, result: { imported: file.imported ?? 0 } };
+        if (msg.op === "restoreSessions") {
+            if (msg.args?.digest !== (file.digest ?? "d1")) return { ok: false, error: "the file changed", reason: "changed" };
+            return { ok: true, result: { imported: file.imported ?? 0 } };
+        }
         return { ok: true, result: null };
     };
     return { ops, onArchiveOp };
@@ -803,6 +806,22 @@ test("BACKUP restore writes only the changes the worker's own plan has AND the p
     assert.equal(bg.stored.model, "restored", "the value is the file's, not the page's");
     assert.equal(bg.stored.chatUrl, config.chatUrl, "a change the page did not list is not written");
     assert.equal(bg.localStore.ml_site_always, undefined, "a key outside the file's plan is not written");
+});
+
+test("BACKUP restore refuses a file swapped into the slot between offer and restore, with reason changed, and writes nothing", T, async () => {
+    const file = { settings: settingsFile({ model: "restored" }, {}), imported: 2 };
+    const worker = backupWorker(file);
+    const bg = loadBackground({ config, onArchiveOp: worker.onArchiveOp });
+    const offer = (await bg.send({ type: "BACKUP", payload: { action: "offer" } }, SETTINGS_PAGE)).data;
+    file.digest = "swapped";
+    file.settings = settingsFile({ model: "evil" }, {});
+    const res = await bg.send({ type: "BACKUP", payload: { action: "restore", plan: offer.plan, digest: offer.contents.digest, sessions: true, settings: true } }, SETTINGS_PAGE);
+    assert.equal(res.reason, "changed");
+    assert.equal(bg.stored.model, "default-model", "no setting was written");
+    assert.ok(!worker.ops.includes("restoreSessions"), "no session was imported");
+    // Even with no digest from the page, the worker pins restoreSessions to the file it read itself.
+    const own = await bg.send({ type: "BACKUP", payload: { action: "restore", plan: offer.plan, sessions: true, settings: false } }, SETTINGS_PAGE);
+    assert.equal(own.data.sessionsAdded, 2);
 });
 
 test("BACKUP restore waits for the site-access migration before it writes, and schedules a folder sync only when sessions were added", T, async () => {
