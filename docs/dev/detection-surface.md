@@ -12,8 +12,10 @@ and what only makes the browser look automated.
 ## How it is measured
 
 - **The probe** (`tests/e2e/fixtures/detect/probe.js`) is each page's first script. From the page's main world it records,
-  as a change log with timestamps: globals added, the DOM (a MutationObserver on the document), window messages, console
-  identity and native-ness, the stacks of whoever calls `querySelector*`, `getBoundingClientRect`, `elementFromPoint`,
+  as a change log with timestamps: globals added, the DOM (a MutationObserver on the document), window messages (with a
+  ping of its own every half second, so an empty list is a fact about the window and not a listener that never ran), the
+  two events injected.js dispatches on `window` by name (the port hand-off and `ml:ready`), console identity and
+  native-ness, the stacks of whoever calls `querySelector*`, `getBoundingClientRect`, `elementFromPoint`,
   `dispatchEvent` and `focus` (it wraps them, as a detector would), every input event with `isTrusted`,
   `navigator.userActivation`, coordinates, `pointerType`/`pressure`/size and `key`/`code`, focus, visibility, inner/outer
   size, rAF rate, `freeze`/`resume`, and four console-getter shapes of the `Runtime.enable` tell. It learns the extension's
@@ -52,7 +54,7 @@ names are the spec's.
 | 3 | `<script src="chrome-extension://<id>/injected.js">` added then removed | **fixed** (step 2): injected.js is a registered MAIN-world content script, no tag | `domAdded` has no script; `extIdLearnedBy` [] at load on an approved page (no page wrapper sees its stack) | Done | None |
 | 4 | The extension's id and function names in stacks | installed (injected.js's ready event through `dispatchEvent`); every page-realm tool (`querySelector*`, `getBoundingClientRect`, `elementFromPoint`, `focus`, `dispatchEvent`); exec-main (`eval at run (chrome-extension://<id>/injected.js…)`, `executeTool`, `runDelegatedToolIn`) | `extensionCallers`, `pageCallCaller`, `caughtStack` | Not while tools run in the page's world: any page can wrap a builtin and read `new Error().stack`. exec-strict shows bare `<anonymous>` frames; exec-iso shows nothing | Moving page tools to an isolated world loses main-world parity (page globals) |
 | 5 | Web-accessible `sidebar.html` (200) fetchable by id; `mermaid.html` and `mermaid-frame.js` too, saying nothing `sidebar.html` does not; framed by any other origin, the frame answers nothing (`ancestorOrigins`, mermaid-frame.ts). injected.js is no longer listed (step 2) | installed, once a page knows the id | `warFetch` null on a hidden page: its probe learns no id to fetch with | Yes, not done: `use_dynamic_url` (manifest.json does not set it; unmeasured whether `getURL` in a content script returns the dynamic URL) | A web store build's id is fixed, so a page that knows it detects the install with one `fetch` |
-| 6 | Window messages | visible origin: `__mlSidebar`, `PAGE_ADOPT_HELLO`; run: `ADOPT_RUN`, `RUN_ADOPTED_NOW`, `RUN_READOPTED`, `PAGE_TOOL_RUN` (tool name and args), `PAGE_TOOL_RESULT`, `PAGE_TOOL_STREAM` (+stream), `ML_HL_RESOLVE`/`ML_HL_AT`. A hidden page: none, and nothing it posts is answered (page-gate.ts) until a run starts there | `messages`; site-access.spec "attack 2…" (`{ timeout: true }` for every raw request) | Partly: a MessagePort between injected.js and content.ts (step 2b) | The page still shares the world the tool code runs in |
+| 6 | Window messages | **fixed** (SITE_PRESENCE step 2b): none. injected.js talks to content.js and the shell on a MessagePort (`page-channel.ts`), handed over by one `ml-page-port` event on `window` at document_start, before any page script. Residual: on a page given injected.js after it loaded (a run on a hidden page, a restored tab) a page listener sees the hand-off and can take the port, or race the injection with its own; a page that wraps a builtin injected.js's tool code calls still reads what it is given | `messages` (empty in every span, with the probe's own ping heard as the control), `pageEvents` (the hand-off and `ml:ready`: none on a visible page, both on a hidden page given injected.js for a run); site-access.spec "attack 2…" (`{ timeout: true }` for every raw request); `tests/redteam-exec-shared-world.test.mjs` (the prototype wrap, a todo) | Done for page listeners; not for a page that rewrites builtins | The page still shares the world the tool code runs in |
 | 7 | `div#ml-sb-card[popover]` on `<html>`, and `div#ml-sb-root-hl[popover]` for a click/type highlight (when drawn before the gate is answered) | run (HUD quiet) | `domAdded`, `domAttrs` | No | It is the person's view of the run |
 | 8 | Window `blur`, focus on `#ml-sb-card` | gated calls (approval card) | "an approval moves focus…" | Probably: do not focus the card | Keyboard approval |
 | 9 | `__mlPierceClosed` global | **fixed** (SITE_PRESENCE step 1): the flag is a module variable in `dom.ts`, set per run | `globalsAdded` has no `__mlPierceClosed` (`expectRunTrace`) | Done | None |
@@ -109,8 +111,9 @@ Ranked; each also in the table.
    `'__mlClosedRoots' in window`, `attachShadow`'s source, the injected `<script>`, the stack of injected.js's ready
    event, and a 200 from `chrome-extension://<id>/injected.js`. That fingerprints the person as a window.ml user on every
    site they visit. `test.fixme` in the spec.
-3. **A run's tool calls are readable by the page** (rows 4, 6): `PAGE_TOOL_RUN` carries the tool name and arguments on the
-   page's window, and page-realm tools call builtins the page can wrap. Inherent to tools that run in the page's world
+3. **A run's tool calls are readable by the page** (rows 4, 6): `PAGE_TOOL_RUN` carries the tool name and arguments,
+   no longer on the page's window (step 2b) but on a port a page given injected.js late can take, and page-realm tools
+   call builtins the page can wrap. Inherent to tools that run in the page's world
    (docs/dev/site-access.md, "Adding a tool"), listed because it is also the strongest detector.
 4. **The page writes into the model's exec result** (row 10). Fixed for the page's own `console.log` lines (SITE_PRESENCE
    step 1, `tests/redteam-exec-console.test.mjs`): `console` is a parameter of the exec's code, bound to a null-prototype
@@ -118,7 +121,7 @@ Ranked; each also in the table.
    each is one-shot, so the page cannot evaluate code of its own beside the collector, `state` and `ml`, nor run the
    approved script again (#652 review). What remains is inherent to sharing the world: the page can rewrite the builtins
    the collector and the value's serialisation call (`Array.prototype.map`, `JSON.stringify`), throw an error with a
-   stack of its choosing, and read the delegated path's `PAGE_TOOL_RESULT` off its window (row 6). The model reads every
+   stack of its choosing, and read the delegated path's `PAGE_TOOL_RESULT` by wrapping `MessagePort.prototype.postMessage` (row 6). The model reads every
    main-world exec result under a first line `page-writable (ran in page world):` (`PAGE_WORLD_HEAD`, output-clip.ts): the
    console, the `value:` (the page's own `JSON.stringify`) and an error the script threw. The console section is the plain
    `console:`. An isolated-world exec and a read-only survey carry no heading, and that absence is what tells the model

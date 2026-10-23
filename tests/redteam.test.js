@@ -28,11 +28,18 @@ const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", a
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-// The attacker owns window.postMessage. Which background messages can it actually get RELAYED? A page can only
-// relay HANDLE_MAP *_REQUEST types; everything else the content script drops. Returns the forwarded bg types.
+// The attacker owns window.postMessage, which content.js no longer hears (SITE_PRESENCE step 2b): asserted here for every
+// probe. Its strongest position is injected.js's port, which a page given injected.js after it loaded can take from the
+// hand-off. Which background messages can it get RELAYED through that? Only HANDLE_MAP *_REQUEST types; everything else
+// the content script drops. Returns the forwarded bg types.
 async function pageRelays(...msgs) {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: null }) });
+    await tick();
+    const boot = world.runtimeCalls.length;
     for (const m of msgs) world.context.window.postMessage(m);
+    await tick();
+    assert.deepEqual(world.runtimeCalls.slice(boot).map((c) => c.type), [], "a message on the page's window relayed something");
+    for (const m of msgs) world.asInjected(m);
     await tick();
     return world.runtimeCalls.map((c) => c.type);
 }
@@ -295,6 +302,8 @@ test("GAIN blocked — the worker's question to the shell about where the extens
     const posted = [];
     const real = world.context.window.postMessage;
     world.context.window.postMessage = (m, ...rest) => { posted.push(m); return real.call(world.context.window, m, ...rest); };
+    await tick();
+    world.fromContent((e) => posted.push(e.data));   // the port too: a page may hold it
     for (const t of shotTypes) await world.fireRuntimeMessage({ type: t }, { id: "ext" });
     await tick();
     assert.deepEqual(posted.filter((m) => JSON.stringify(m).includes("SHOT")), [], "the page saw the worker's shot");
@@ -1113,8 +1122,8 @@ test("the page relay carries no stop: CANCEL_TOOL_IN_PAGE and PAGE_TOOL_CANCEL a
 test("content.ts re-posts the worker's CANCEL_TOOL_IN_PAGE as exactly { type, runId }: nothing else of the payload, nothing for a non-string runId, and nothing back to the worker", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: null }) });
     const posted = [];
-    world.context.window.addEventListener("message", (e) => { if (e.data?.type !== "PAGE_ADOPT_HELLO") posted.push(JSON.parse(JSON.stringify(e.data))); });
     await tick();
+    world.fromContent((e) => { if (e.data?.type !== "PAGE_ADOPT_HELLO") posted.push(JSON.parse(JSON.stringify(e.data))); });
     posted.length = 0;   // the page's own boot messages
     const before = world.runtimeCalls.length;
     const answer = await world.fireRuntimeMessage({ type: "CANCEL_TOOL_IN_PAGE", payload: { runId: "r1", type: "PAGE_TOOL_RESULT", callId: "c", envelope: { readonly: true, result: "FORGED" } } });

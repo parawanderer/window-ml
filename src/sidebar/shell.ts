@@ -24,6 +24,7 @@ import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, ty
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
 import { gateOpen, whenOpen, whenEverOpen } from "../page-gate";
+import { toPage, onPage, offPage, type ChannelMessage } from "../page-channel";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -771,7 +772,7 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
         return drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
     } else if (ref.token) {
         hlTokenSeq = seq;
-        if (gateOpen()) window.postMessage({ type: "ML_HL_RESOLVE", token: ref.token, seq }, "*");   // injected replies with the coords
+        if (gateOpen()) toPage({ type: "ML_HL_RESOLVE", token: ref.token, seq });   // injected replies with the coords
     } else hideHighlight();
 }
 /** The sequence number of the token highlight waiting on injected's ML_HL_AT, or 0: no other highlight takes one. */
@@ -866,23 +867,26 @@ const shot = pageShotGate({
     },
 });
 
-function onWindowMessage(e: MessageEvent): void {
+function onWindowMessage(e: ChannelMessage): void {
     const d = e.data;
     if (!d) return;
+    // Only from a page the worker opened: on a hidden one any port is the page's own (page-channel.ts), and what it
+    // sends could mount the card or answer a session command. Held while the gate is pending, dropped if it closes.
+    if (!gateOpen()) { whenOpen(() => onWindowMessage(e)); return; }
     // injected.js just loaded and is listening (a page-load race: it may have missed the
     // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
-    if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
+    if (d.__mlSidebar === "hello") { if (busLive()) handshake(); return; }
     // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
-    if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
+    if (d.__mlSessionDone) { onSessionDone(d.__mlSessionDone); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar isn't captured into the agent's
     // `look`). Hide, then ack after two frames so the hidden state has painted before the capture fires; the hide
-    // lifts itself if no "show" comes (shell-shot.ts). Only from this window: a subframe's post is not injected.js's.
+    // lifts itself if no "show" comes (shell-shot.ts). Only over the page channel, which a subframe does not have.
     // A shot the WORKER takes hides nothing: it masks the rects SHOT_RECTS reports.
-    if (d.__mlSidebarShot === "hide" && e.source === window && gateOpen()) { shot.pageHide(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")); return; }
-    if (d.__mlSidebarShot === "show" && e.source === window) { shot.pageShow(); return; }
+    if (d.__mlSidebarShot === "hide" && gateOpen()) { shot.pageHide(() => toPage({ __mlSidebarShot: "hidden" })); return; }
+    if (d.__mlSidebarShot === "show") { shot.pageShow(); return; }
     // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
     // a newer hover superseded it, or the token was stale and didn't resolve).
-    if (d.type === "ML_HL_AT" && e.source === window) {
+    if (d.type === "ML_HL_AT") {
         if (d.seq !== hlSeq || hlTokenSeq !== hlSeq) return;   // only the answer to a token request still current
         hlTokenSeq = 0;
         if (d.point) drawHighlight(d.point.x - 10, d.point.y - 10, 20, 20, `point · ${Math.round(d.point.x)}, ${Math.round(d.point.y)}`);
@@ -890,11 +894,11 @@ function onWindowMessage(e: MessageEvent): void {
         else hideHighlight();
         return;
     }
-    // The page's own session events (injected.js's bus: a run or chat the page hosts). A window message is the PAGE's
-    // whatever it says about itself: a `__mlFromBg` tag on one is ignored, since the worker's events never come this way
+    // The page's own session events (injected.js's bus: a run or chat the page hosts). A message on the page channel is
+    // the PAGE's whatever it says about itself (the page shares injected.js's world): a `__mlFromBg` tag on one is ignored, since the worker's events never come this way
     // any more (they arrive over chrome.runtime, below). Before attack 15 they did, and the page could both read and
     // forge them.
-    if (d.__mlDebug && e.source === window) { feedDebug(d.__mlDebug, false); return; }
+    if (d.__mlDebug) { feedDebug(d.__mlDebug, false); return; }
 }
 
 /** Sessions the worker has spoken for on this tab, from its own stream: a start (`started`) means it emits the whole
@@ -1067,7 +1071,7 @@ function fromApp(d: any): void {
         if (d.text.trim() || cleanImages(d.images) || elementContext) {
             const body = { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() };
             // The worker drives a run it built; anything else (a run or chat this page built) is the page's.
-            workerFirst({ ...body, action: "send" }, () => whenOpen(() => window.postMessage({ __mlSessionSend: body }, "*")));
+            workerFirst({ ...body, action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: body })));
         }
         return;
     }
@@ -1076,7 +1080,7 @@ function fromApp(d: any): void {
         // the person picked rides along; anything that is not a number is simply not forwarded, as with startRun.
         const steps = stepBudget(d.maxSteps);
         const body = { hash: d.hash, ...(steps ? { maxSteps: steps } : {}) };
-        workerFirst({ ...body, action: "continue" }, () => whenOpen(() => window.postMessage({ __mlContinueRun: body }, "*")));
+        workerFirst({ ...body, action: "continue" }, () => whenOpen(() => toPage({ __mlContinueRun: body })));
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && typeof d.hash === "string") {
@@ -1085,7 +1089,7 @@ function fromApp(d: any): void {
         // (__mlCancelSession → injected) can't resolve the hash (a re-adopt that didn't re-register it). Harmless
         // no-op if it's not a live run. The page message still handles a page-hosted chat/handle session.
         chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: d.hash } });
-        whenOpen(() => window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*"));
+        whenOpen(() => toPage({ __mlCancelSession: { hash: d.hash } }));
         return;
     }
     // The card app posts its AUTHORITATIVE resolved theme (config.theme, auto→OS, resolved inside the
@@ -1234,7 +1238,7 @@ function fromApp(d: any): void {
         }
         overlayReady = true;
         // Once the gate opens, even if it opens later: an app that loaded first must not leave the bus un-live.
-        whenEverOpen(() => window.postMessage({ __mlSidebar: "ready" }, "*"));
+        whenEverOpen(() => toPage({ __mlSidebar: "ready" }));
         // Flush debug events buffered while the overlay iframe loaded (the replayed history of a re-adopted
         // run) — in order, so the fresh sidebar rebuilds the whole session, not an empty list.
         for (const ev of bgRing) toApp(ev);
@@ -1278,11 +1282,11 @@ function startResize(e: PointerEvent): void {
 // the post itself would tell it the extension is there (SITE_PRESENCE.md step 2).
 function handshake(): void {
     whenEverOpen(() => {
-        window.postMessage({ __mlSidebar: "present" }, "*");
+        toPage({ __mlSidebar: "present" });
         // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once. An overlay
         // whose app is already up says `ready` again too: injected.js put in after the page loaded (an origin allowed
         // since, a person's run) missed the one the app's handshake sent.
-        if (mode !== "overlay" || overlayReady) window.postMessage({ __mlSidebar: "ready" }, "*");
+        if (mode !== "overlay" || overlayReady) toPage({ __mlSidebar: "ready" });
     });
 }
 
@@ -1317,13 +1321,13 @@ function relayPointerOut(): void {
     toApp({ __mlSidebarPointerOut: true });
 }
 
-// Start listening on the page window. `handshakeInjected` is true for the overlay/devtools surfaces
+// Start listening to injected.js (the page channel). `handshakeInjected` is true for the overlay/devtools surfaces
 // (bring injected.js live + clear the stale DevTools-panel buffer); false for OFF mode, whose card is
 // fed by the background stream, not injected's bus — so injected stays dormant and off keeps its
 // near-zero footprint (just this idle listener, waiting for a background run). The exception is OFF with
 // `listPageSessions`, which the person turned on to see this page's own sessions in the chat page.
 function attach(handshakeInjected: boolean): void {
-    window.addEventListener("message", onWindowMessage);
+    onPage(onWindowMessage);
     window.addEventListener("keydown", relayChartKey, true);
     window.addEventListener("pointermove", relayPointerOut, { capture: true, passive: true });
     if (handshakeInjected) {
@@ -1500,13 +1504,13 @@ function teardown(): void {
     if (hlHost) { topLayer.release(hlHost); hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
     if (shellHost) { topLayer.release(shellHost); shellHost.remove(); shellHost = panel = frame = shellRoot = null; closeHostPort(); }
     unmountCard();
-    window.removeEventListener("message", onWindowMessage);
+    offPage(onWindowMessage);
     window.removeEventListener("keydown", relayChartKey, true);
     window.removeEventListener("pointermove", relayPointerOut, true);
     chartKeys = [];
     // Only a live bus needs switching off (off mode leaves it dormant unless `listPageSessions`). `mode` is
     // still the OLD surface here (applyMode tears down before advancing).
-    if (busLive() && gateOpen()) window.postMessage({ __mlSidebar: "gone" }, "*");
+    if (busLive() && gateOpen()) toPage({ __mlSidebar: "gone" });
 }
 
 // The single entry point for the three debug surfaces. `off` draws nothing up-front and leaves
@@ -1545,19 +1549,19 @@ themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the 
 // Keep the card pinned to its corner / centred when the viewport resizes (position is computed, not CSS-anchored).
 window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 
-// Capture window messages SYNCHRONOUSLY from module load — BEFORE the async storage.get below picks the
+// Capture injected.js's messages (the page channel) SYNCHRONOUSLY from module load — BEFORE the async storage.get below picks the
 // surface and attach()es the real listener. A cross-page re-adopt streams the run's replayed history the
 // instant injected.js announces itself (PAGE_ADOPT_HELLO → CONTENT_READY → a ML_DEBUG_TO_PAGE burst), and
 // on a fast cached same-origin nav (GitHub) that burst can land before the storage.get resolves — dropping
 // the run's `agent` start so the corner card never mounted (the DevTools panel, fed by a surviving port, was
 // unaffected: the reported "HUD gone after nav"). Queue everything until the mode is known, then replay it
-// through onWindowMessage so nothing is lost. onWindowMessage's own guards (mode/frame/e.source) make a
+// through onWindowMessage so nothing is lost. onWindowMessage's own guards (mode/frame) make a
 // replayed event idempotent; no message can arrive mid-callback, so nothing is double-handled.
-let startupQueue: MessageEvent[] | null = [];
-const captureStartup = (e: MessageEvent): void => { if (startupQueue) startupQueue.push(e); };
+let startupQueue: ChannelMessage[] | null = [];
+const captureStartup = (e: ChannelMessage): void => { if (startupQueue) startupQueue.push(e); };
 /** The worker's events that arrived over chrome.runtime before the mode was known, replayed after the window's. */
 const workerStartup: unknown[] = [];
-window.addEventListener("message", captureStartup);
+onPage(captureStartup);
 chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false, persistUiRuns: true, pierceClosedShadow: true }, (cfg) => {
     pierceClosed = cfg.pierceClosedShadow !== false;
     listPageSessions = !!cfg.listPageSessions;
@@ -1567,7 +1571,7 @@ chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-r
     agentHud = (cfg.agentHud as string) || "progress";
     agentHudInDevtools = !!cfg.agentHudInDevtools;
     applyMode(cfg.debugMode as DebugMode);   // attaches the real onWindowMessage listener (overlay/devtools/off)
-    window.removeEventListener("message", captureStartup);
+    offPage(captureStartup);
     const queued = startupQueue; startupQueue = null;
     if (queued) for (const e of queued) onWindowMessage(e);   // replay anything that arrived before we were ready
     for (const ev of workerStartup.splice(0)) feedDebug(ev, true);
@@ -1593,7 +1597,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
                 try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
                 handshake();
             } else {
-                if (gateOpen()) window.postMessage({ __mlSidebar: "gone" }, "*");
+                if (gateOpen()) toPage({ __mlSidebar: "gone" });
             }
         }
         listPageSessions = next;

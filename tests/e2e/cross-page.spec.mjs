@@ -6,7 +6,7 @@
 
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents, inShell, clickInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, onChannel, inShell, clickInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -150,10 +150,9 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
     const page = await ext.context.newPage();
     const answers = [];
-    await page.exposeFunction("__ren", (s) => answers.push(s));
-    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data?.__mlDebug?.kind === "agent-result") window.__ren(e.data.__mlDebug.summary); }); });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent-result") answers.push(d.summary); });   // devtools mode: the page's own run reaches this port, never its window
 
     const before = fake.calls().length;
     fake.setScript([
@@ -186,10 +185,9 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
     const page = await ext.context.newPage();
     const answers = [];
-    await page.exposeFunction("__reni", (s) => answers.push(s));
-    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data?.__mlDebug?.kind === "agent-result") window.__reni(e.data.__mlDebug.summary); }); });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent-result") answers.push(d.summary); });   // devtools mode: the page's own run reaches this port, never its window
 
     const before = fake.calls().length;
     // CROSS-ORIGIN + no credentials → the PRIVATE incognito path (a same-origin render uses the session tab, no
@@ -356,7 +354,7 @@ test("continue: a step-capped run resumes with a fresh budget via __mlContinueRu
     const first = await page.evaluate(() => window.ml.agent("do the thing", { env: false, maxSteps: 1 }));
     expect(first.hitCap).toBe(true);
     // Fire the exact message the Continue button posts (the injected consumer resumes by hash, empty task).
-    await page.evaluate((hash) => window.postMessage({ __mlContinueRun: { hash } }, "*"), first.hash);
+    await onChannel(page, (ch, hash) => ch.asIsolated({ __mlContinueRun: { hash } }), first.hash);
     // The resumed turn completes — a non-capped agent-result with the post-continue answer.
     await expect.poll(() => results.some((r) => !r.hitCap && /extra budget/.test(r.summary || "")), { timeout: 15000 }).toBe(true);
     await page.close();
@@ -387,7 +385,7 @@ test("continue: a chosen step budget reaches the loop, not just the message", as
     ]);
     const first = await page.evaluate(() => window.ml.agent("do the thing", { env: false, maxSteps: 1 }));
     expect(first.hitCap).toBe(true);
-    await page.evaluate((hash) => window.postMessage({ __mlContinueRun: { hash, maxSteps: 3 } }, "*"), first.hash);
+    await onChannel(page, (ch, hash) => ch.asIsolated({ __mlContinueRun: { hash, maxSteps: 3 } }), first.hash);
     await expect.poll(() => results.some((r) => !r.hitCap && /larger budget/.test(r.summary || "")), { timeout: 15000 }).toBe(true);
     await page.close();
 });
@@ -718,9 +716,7 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
 
     // Turn 1: a background-hosted run that finishes on the START origin. Grab its hash.
     const events = [];
-    await page.exposeFunction("__cpXd", (e) => events.push(e));
-    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpXd({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); }); });
-    await page.reload(); await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { events.push({ kind: d.kind, id: d.id }); });   // devtools mode: the page's own run reaches this port, never its window
     let before = fake.calls().length;
     fake.setScript([{ content: "Turn one done." }]);
     await page.evaluate(() => { window.ml.createAgent({ env: false, crossOrigin: true, approvalRouting: "external" }).run("Say turn one."); return true; });
@@ -734,7 +730,7 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
         { tool: "findByText", args: { text: "XDOMAIN" } },
         { content: "Resumed answer — the coexist card must show THIS across the domain." },
     ]);
-    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Go to the other site and read the code." } }, "*"); return true; }, hash);
+    await onChannel(page, (ch, h) => { ch.asIsolated({ __mlSessionSend: { hash: h, text: "Go to the other site and read the code." } }); return true; }, hash);
     await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
     const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
@@ -759,9 +755,7 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
     await page.goto(site.url + "/");
     await waitForMl(page);
     const events = [];
-    await page.exposeFunction("__cpBg", (e) => events.push(e));
-    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpBg({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); }); });
-    await page.reload(); await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { events.push({ kind: d.kind, id: d.id }); });   // devtools mode: the page's own run reaches this port, never its window
 
     // Turn 1: ~120 read-only tool calls (each emits a pending + a done step ⇒ ~240 buffered events > the 200
     // bgRing cap), then an answer — filling the replay ring past the shell's ring so the start would be dropped.
@@ -780,7 +774,7 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
         { tool: "navigate", args: { url: site.crossOrigin + "/" } },
         { content: "Answer after a long session — the card must show THIS on the destination origin." },
     ]);
-    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Go to the other site." } }, "*"); return true; }, hash);
+    await onChannel(page, (ch, h) => { ch.asIsolated({ __mlSessionSend: { hash: h, text: "Go to the other site." } }); return true; }, hash);
     await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
     const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
@@ -890,7 +884,7 @@ test("cross-page: a HUD composer follow-up reaches the run after it navigated aw
     // Follow up via the HUD composer on the NAVIGATED page (the __mlSessionSend the composer posts by hash).
     fake.setScript([{ content: "My favourite is a sleepy tabby." }]);
     const before2 = fake.calls().length;
-    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "What's your favourite cat pic?" } }, "*"); return true; }, hash);
+    await onChannel(page, (ch, h) => { ch.asIsolated({ __mlSessionSend: { hash: h, text: "What's your favourite cat pic?" } }); return true; }, hash);
     // The follow-up must reach the run (a new model turn), carrying the follow-up text.
     await expect.poll(() => fake.calls().length - before2, { timeout: 15000 }).toBeGreaterThanOrEqual(1);
     const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
@@ -929,7 +923,7 @@ test("cross-page (HUD card): a resume that navigates still shows the card on the
     // on a window that is not listening yet and is simply dropped, and the test then waits 20s for a
     // navigation that was never asked for. Re-posting is guarded on "no turn has started", so the resume
     // cannot be delivered twice once one has.
-    const sendResume = () => page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Open the page at your current hash." } }, "*"); return true; }, hash);
+    const sendResume = () => onChannel(page, (ch, h) => { ch.asIsolated({ __mlSessionSend: { hash: h, text: "Open the page at your current hash." } }); return true; }, hash);
     await sendResume();
     await expect.poll(async () => {
         if (fake.calls().length - before > 1) return true;    // the resumed turn reached the model
@@ -991,7 +985,7 @@ test("cross-page: a HUD composer follow-up after a nav offsets its steps past th
         { content: "Follow-up done." },
     ]);
     const before2 = fake.calls().length;
-    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "read it again" } }, "*"); return true; }, hash);
+    await onChannel(page, (ch, h) => { ch.asIsolated({ __mlSessionSend: { hash: h, text: "read it again" } }); return true; }, hash);
     await expect.poll(() => fake.calls().length - before2, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
     await expect.poll(() => evs.slice(mark).some((e) => e.tool === "findByText"), { timeout: 10000 }).toBe(true);
 

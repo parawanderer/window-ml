@@ -41,8 +41,10 @@ const recordWindow = (page) => page.evaluate(() => {
 
 /** The page's window carried no capture, no model call, no config or capability read and no image fetch, and no image. */
 async function expectNoVisionOnPage(page) {
-    const posted = await page.evaluate(() => window.__posted);
-    expect(posted.length, "the page answered geometry, so its window carried messages").toBeGreaterThan(0);
+    // The run's traffic rides a private port (src/page-channel.ts), so the window hears none of it. The positive control is
+    // the page's own post, which proves the recorder is live.
+    const posted = await page.evaluate(() => { window.postMessage("listener-control", "*"); return new Promise((r) => setTimeout(() => r(window.__posted), 100)); });
+    expect(posted.join("\n"), "the recorder is live").toContain("listener-control");
     const types = posted.map((m) => { try { return JSON.parse(m)?.type; } catch { return "?"; } });
     expect(types.filter((t) => /CAPTURE_TAB|LLM_REQUEST|LLM_RESPONSE|B64_REQUEST|CONFIG|CAPS/.test(String(t))), "a vision message crossed the page's window").toEqual([]);
     expect(posted.filter((m) => m.includes("data:image")), "an image crossed the page's window").toEqual([]);

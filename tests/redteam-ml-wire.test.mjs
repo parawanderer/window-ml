@@ -23,7 +23,13 @@ test("a page posting ML_CALL (or any spelling of it) is never relayed to the wor
     assert.ok(!PAGE_STARTED_TYPES.has("ML_CALL"));
     assert.ok(!Object.values(HANDLE_MAP).some((e) => e.type === "ML_CALL"), "no HANDLE_MAP entry maps to ML_CALL");
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: null }) });
-    for (const type of ["CONFIG_REQUEST", "ML_CALL", "ML_CALL_REQUEST", "ML_ANSWER"]) world.context.window.postMessage({ type, requestId: "r", payload: { client: "x", call: "config", args: [] } });
+    await new Promise((r) => setTimeout(r, 5));
+    const boot = world.runtimeCalls.length;
+    const msgs = ["CONFIG_REQUEST", "ML_CALL", "ML_CALL_REQUEST", "ML_ANSWER"].map((type) => ({ type, requestId: "r", payload: { client: "x", call: "config", args: [] } }));
+    for (const m of msgs) world.context.window.postMessage(m);
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(world.runtimeCalls.length, boot, "nothing posted on the page's window is relayed (SITE_PRESENCE step 2b)");
+    for (const m of msgs) world.asInjected(m);   // a page that took injected.js's port
     await new Promise((r) => setTimeout(r, 5));
     const relayed = world.runtimeCalls.map((c) => c.type);
     assert.ok(relayed.includes("GET_CONFIG"), "positive control: a real request type relays");

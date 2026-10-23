@@ -142,6 +142,14 @@
         const t = ev.data && typeof ev.data === "object" ? (ev.data.type || Object.keys(ev.data).slice(0, 5).join(",")) : typeof ev.data;
         rec("message", { type: short(t, 80), fromSelf: ev.source === window, origin: ev.origin, keys: ev.data && typeof ev.data === "object" ? Object.keys(ev.data).slice(0, 12) : [] });
     }, true);
+    // The positive control for the list above: the probe posts itself a ping every half second, so an empty list of
+    // messages means the window carried nothing, not that this listener never ran. summarize() keeps the pings apart.
+    let pings = 0;
+    const ping = () => { window.postMessage({ type: "__probePing", n: ++pings }, "*"); };
+    // The two events the extension's page script dispatches on window by name: the port hand-off (page-channel.ts) and
+    // `ml:ready`. On a page whose script runs at document_start both fire before this probe exists; on a page given
+    // the script later (a run on a hidden page) a page listener sees them, which is detection-surface.md row 6's residual.
+    for (const t of ["ml-page-port", "ml:ready"]) window.addEventListener(t, (ev) => rec("page-event", { type: t, ports: ev.ports ? ev.ports.length : 0 }), true);
 
     // --- resources: anything loaded from an extension, and the extension ids a page could learn ---
     const extIds = new Set();
@@ -227,7 +235,8 @@
     rec("start", { at: T0, top: window === window.top });
     env();
     tick();
-    setInterval(() => { tick(); consoleProbe(); flush(); }, 100);
+    let ticks = 0;
+    setInterval(() => { tick(); consoleProbe(); if (ticks++ % 5 === 0) ping(); flush(); }, 100);
     document.addEventListener("DOMContentLoaded", () => { hook(); rec("ready", {}); flush(); });
     window.addEventListener("pagehide", flush);
 })();

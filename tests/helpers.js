@@ -20,6 +20,30 @@ const DIST = path.join(ROOT, "dist");
 // readonly interpreter capture their OWN logs by reassigning the methods, which a fresh object still allows),
 // so route it to no-ops. Fresh object PER sandbox so exec's save/restore can't bleed across worlds. Set
 // SANDBOX_CONSOLE=1 to see the real output while debugging a test.
+/**
+ * A MessagePort for the vm worlds (page-channel.ts): linked to its peer, delivering a structured clone by microtask, as
+ * a real port delivers by task. What arrives before `onmessage` is set waits, as a real port's queue does until started.
+ */
+class FakeMessagePort {
+    constructor() { this.other = null; this.closed = false; this._on = null; this._held = []; }
+    get onmessage() { return this._on; }
+    set onmessage(f) { this._on = f; for (const d of this._held.splice(0)) queueMicrotask(() => this._on && this._on({ data: d })); }
+    postMessage(data) {
+        const o = this.other, copy = structuredClone(data);
+        queueMicrotask(() => { if (!o || o.closed) return; if (o._on) o._on({ data: copy }); else o._held.push(copy); });
+    }
+    start() {}
+    close() { this.closed = true; }
+}
+/** A MessageChannel of two {@link FakeMessagePort}s. */
+class FakeMessageChannel {
+    constructor() { this.port1 = new FakeMessagePort(); this.port2 = new FakeMessagePort(); this.port1.other = this.port2; this.port2.other = this.port1; }
+}
+/** A MessageEvent that carries `ports`, as the page channel's hand-off needs. */
+class FakeMessageEvent {
+    constructor(type, init = {}) { this.type = type; this.data = init.data; this.ports = init.ports || []; this.source = init.source ?? null; }
+}
+
 function mkConsole() {
     if (process.env.SANDBOX_CONSOLE) return console;
     const noop = () => {};
@@ -570,7 +594,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, beforeInjected } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -591,12 +615,15 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     const prewarms = [];   // PYTHON_PREWARM payloads, in order
     const listeners = {};       // type -> fn[]
     const dispatchedEvents = []; // event types dispatched (for assertions)
+    const windowPosts = [];      // everything posted on the page's window (page-channel.ts: nothing of ours should be)
     const runtimeMsgListeners = []; // chrome.runtime.onMessage listeners (content.js's reverse channel)
 
     // A real (jsdom) DOMParser so page-world code that parses HTML strings works in the sandbox — e.g. the
     // fetch_url tool's HTML→Markdown conversion (turndown reads `DOMParser` off the global `window`). The stub
     // `document` below is enough for injected.js's own boot; parsing a fetched HTML page needs the real thing.
     const domParser = new JSDOM("").window.DOMParser;
+    // The page channel's isolated end (page-channel.ts), taken from injected.js's hand-off as content.js takes it.
+    const channel = { iso: null };
     const win = {
         DOMParser: domParser,
         addEventListener: (type, fn) => {
@@ -611,10 +638,12 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         },
         dispatchEvent: (event) => {
             dispatchedEvents.push(event.type);
+            if (event.type === "ml-page-port" && event.ports?.[0] && !channel.iso) channel.iso = event.ports[0];
             for (const fn of [...(listeners[event.type] || [])]) fn(event);
             return true;
         },
         postMessage: (data) => {
+            windowPosts.push(data);
             queueMicrotask(() => {
                 for (const fn of [...(listeners.message || [])]) fn({ source: win, data });
             });
@@ -634,6 +663,9 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         // that tests then "passed" against.
         setTimeout, clearTimeout,
         Event: class Event { constructor(type) { this.type = type; } },
+        MessageChannel: FakeMessageChannel,
+        MessagePort: FakeMessagePort,
+        MessageEvent: FakeMessageEvent,
         window: win,
         // injected.js is a browser script — `location` is always present there (used for the run's
         // pageOrigin + the navigate tool's same-origin check). Mock it for the vm.
@@ -705,6 +737,13 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     };
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
+    // The page's own scripts, run before injected.js: what a page given injected.js LATE (a run on a hidden page, an
+    // origin allowed while it is open) can do first. Never possible on a visible page, where injected.js is first. A late
+    // injected.js always comes through the worker's injectPageScripts, which re-arms the content script first.
+    if (beforeInjected) {
+        vm.runInContext(beforeInjected, context);
+        for (const fn of runtimeMsgListeners) fn({ type: "PAGE_PORT_ARM" }, {}, () => {});
+    }
     let injectedSrc = fs.readFileSync(path.join(DIST, "injected.js"), "utf8");
     if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
         const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
@@ -724,7 +763,21 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         if (!async) resolve(undefined);   // no listener kept the channel open
     });
 
-    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage };
+    // THE PAGE CHANNEL, from either end. `asContent(data)` sends to injected.js as content.js or the shell would;
+    // `asInjected(data)` sends to them as injected.js would. A test that posts on `window` speaks as the PAGE, which no
+    // longer reaches either.
+    const asContent = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
+    const asInjected = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.other.postMessage(data); };
+
+    // What injected.js sends to content.js and the shell: `fn` hears `{ data }` beside content.js's own listeners.
+    const fromInjected = (fn) => { context.__mlPageChannel.listeners.push(fn); };
+    // What content.js and the shell send to injected.js: `fn` hears `{ data }` just before injected.js does.
+    const fromContent = (fn) => {
+        const port = channel.iso.other, prev = port._on;
+        port._on = (e) => { fn(e); if (prev) prev(e); };
+    };
+
+    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, windowPosts, fireRuntimeMessage, asContent, asInjected, fromInjected, fromContent, pageRun: (src) => vm.runInContext(src, context) };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM
@@ -751,6 +804,9 @@ function loadDomWorld(html = "", { url, beforeInjected } = {}) {
         URL,
         Event: win.Event,
         CustomEvent: win.CustomEvent,
+        MessageChannel: FakeMessageChannel,
+        MessagePort: FakeMessagePort,
+        MessageEvent: FakeMessageEvent,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).
         Element: win.Element,
@@ -760,13 +816,27 @@ function loadDomWorld(html = "", { url, beforeInjected } = {}) {
         setTimeout: win.setTimeout.bind(win),
         clearTimeout: win.clearTimeout.bind(win)
     };
+    // The page channel's isolated end (page-channel.ts). jsdom's dispatchEvent refuses the fake hand-off event, so it is taken
+    // here; with no content.js in this world, `fromInjected` hears what injected.js sends and `asContent` answers it.
+    const channel = { iso: null, listeners: [] };
+    const dispatch = win.dispatchEvent.bind(win);
+    win.dispatchEvent = (event) => {
+        if (!(event instanceof FakeMessageEvent)) return dispatch(event);
+        if (event.type === "ml-page-port" && event.ports?.[0] && !channel.iso) {
+            channel.iso = event.ports[0];
+            channel.iso.onmessage = (e) => { for (const fn of [...channel.listeners]) fn(e); };
+        }
+        return true;
+    };
     vm.createContext(context);
     // The document_start patch first, as the browser runs it: it captures closed roots and answers the DOM tools' ask.
     vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
     // The page's own scripts, which run before injected.js (it loads at document_idle).
     if (beforeInjected) vm.runInContext(beforeInjected, context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
-    return { ml: win.ml, window: win, document: win.document, context };
+    const asContent = (data) => { if (!channel.iso) throw new Error("loadDomWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
+    const fromInjected = (fn) => { channel.listeners.push(fn); };
+    return { ml: win.ml, window: win, document: win.document, context, asContent, fromInjected };
 }
 
 // Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom
@@ -906,4 +976,4 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, hkCalls, setHousekeeping, setVram };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
+module.exports = { FakeMessageChannel, FakeMessageEvent, jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

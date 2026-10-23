@@ -20,7 +20,7 @@
 // Screenshots land in tests/e2e/artifacts/resource-demo/ (BOX=metal → …/resource-demo-metal/).
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, onChannel, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { BOXES, GiB } from "../fixtures/boxes.mjs";
 
@@ -80,9 +80,9 @@ const freeWith = (onDev) => SHAPE.devices.map((_, i) => IDLE(i) - (onDev[i] || 0
  *  Every timestamp is relative to NOW and must land inside the sampled window, so the caller says how far
  *  back the history actually reaches: an event before the first sample is correctly dropped (nothing was
  *  measured then), which on a short warm-up would silently leave the lane looking empty. */
-const scriptRun = (page, spanMs) => page.evaluate((span) => {
+const scriptRun = (page, spanMs) => onChannel(page, (ch, span) => {
     const now = Date.now();
-    const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+    const post = (ev) => ch.asInjected({ __mlDebug: ev });
     const hash = "demo-run";
     // Built FORWARD from the run's start, not backward from now: a step's timestamp is when it FINISHED, so
     // laying these out by counting back is how the first version ended up with a model load that began
@@ -147,9 +147,9 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
  * `sameModel` runs BOTH on one model, which is not a contrived case: a server or cloud backend runs the same
  * model several times concurrently, and grouping by model rather than by RUN would merge them back together.
  */
-const scriptOverlap = (page, spanMs, sameModel = false, models = ["gemma4:31b", "qwen3.8:27b"], embedModel = null, seq = false) => page.evaluate(({ span, sameModel, models, embedModel, seq }) => {
+const scriptOverlap = (page, spanMs, sameModel = false, models = ["gemma4:31b", "qwen3.8:27b"], embedModel = null, seq = false) => onChannel(page, (ch, { span, sameModel, models, embedModel, seq }) => {
     const now = Date.now();
-    const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+    const post = (ev) => ch.asInjected({ __mlDebug: ev });
     const at = (f) => now - Math.round(span * (1 - f));
 
     const run = (hash, model, task, from, to, steps) => {
@@ -235,6 +235,7 @@ async function main() {
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto("about:blank");
         await page.goto(`${fake.url}/api/version`);   // any page the content script can attach to
+        await waitForMl(page);   // an allowed page: a hidden one drops the events the specs send as injected.js
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
 
         // Slide the overlay open and switch to the VRAM monitor. A reload re-mounts the shell, so this is a

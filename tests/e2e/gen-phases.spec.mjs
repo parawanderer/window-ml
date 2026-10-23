@@ -12,17 +12,6 @@ import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
-/** Attach a node-side collector for the PAGE's own `__mlDebug` stream (a run the page hosts). The worker's events never
- *  reach the page, so each test also watches them with `watchRunEvents` once the page has loaded: together, the events
- *  the product actually emits rather than a test-only hook. */
-async function collectDebug(page, events) {
-    await page.exposeFunction("__phEvent", (ev) => events.push(ev));
-    await page.addInitScript(() => {
-        if (window.top !== window) return;   // the overlay's iframe sees the same messages; capturing there doubles every event
-        window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__phEvent(e.data.__mlDebug); });
-    });
-}
-
 const kindsOf = (phases) => (phases || []).map((p) => p.kind);
 
 /** Wait until the worker has reported every one of the run's `turns` model calls: each is one `agent-step` carrying
@@ -55,7 +44,6 @@ test("a streamed turn is split by channel, and an INTERLEAVED one keeps its orde
 
         const page = await ext.context.newPage();
         const events = [];
-        await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
@@ -111,7 +99,6 @@ test("a NON-streamed turn reports no phases — the boundary is not observable, 
 
         const page = await ext.context.newPage();
         const events = [];
-        await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
@@ -143,7 +130,6 @@ test("a model call is visible WHILE it generates, not only once it has finished"
 
         const page = await ext.context.newPage();
         const events = [];
-        await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
@@ -202,7 +188,6 @@ test("ollama-native + streaming: the split works on the other wire shape too", a
 
         const page = await ext.context.newPage();
         const events = [];
-        await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
@@ -233,7 +218,6 @@ test("ollama-native without streaming: real timings, and still no invented split
 
         const page = await ext.context.newPage();
         const events = [];
-        await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
@@ -266,7 +250,6 @@ test("the OpenAI route reports no model timings at all — and reports that, rat
 
         const page = await ext.context.newPage();
         const events = [];
-        await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
