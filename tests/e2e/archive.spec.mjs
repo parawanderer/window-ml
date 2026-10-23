@@ -1,11 +1,49 @@
 import { test, expect } from "@playwright/test";
 import { launchExtension } from "./harness.mjs";
+import sqliteInit from "@sqlite.org/sqlite-wasm";
+import { exportMonth, migrate, prepareSession, wasmDb, writeSession } from "../../src/archive/db.ts";
 
 // THE SESSION ARCHIVE IN A REAL BROWSER: the SQLite worker the offscreen document starts, its wasm found beside a
 // classic bundle, and its database on OPFS. None of that exists in node: the SQL is tested there (archive-db.test.mjs)
 // against an in-memory database, and this is the plumbing around it — offscreen relay, worker, wasm, VFS.
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+/** A month file as another machine's archive writes it: an archive in node holding `hashes`, exported. */
+async function otherMachinesMonth(hashes, lastTs) {
+    const sqlite3 = await sqliteInit();
+    const raw = new sqlite3.oo1.DB(":memory:");
+    const db = wasmDb(raw);
+    migrate(db);
+    for (const hash of hashes) {
+        writeSession(db, await prepareSession({ summary: { id: { runtime: "local", hash }, kind: "agent", status: "done", task: `task ${hash}`, createdTs: lastTs, lastTs, pendingApprovals: 0, saved: true },
+            events: [{ kind: "agent", id: hash, ts: lastTs, session: { hash, turn: 0 }, task: `remember ${hash}` }], history: null, bytes: 100 }), 1);
+    }
+    return [...exportMonth(sqlite3, raw, new Date(lastTs).toISOString().slice(0, 7)).bytes];
+}
+
+/** Put a file into the stand-in picked folder (an OPFS directory), as a sync tool copying it in would. */
+const writeFolderFile = (page, name, bytes) => page.evaluate(async ([name, bytes]) => {
+    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("picked-folder");
+    const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+    await w.write(new Uint8Array(bytes)); await w.close();
+}, [name, bytes]);
+
+/** The session hashes a month file in the folder holds, read in node. */
+async function folderHashes(page, name) {
+    const bytes = await page.evaluate(async (name) => {
+        let dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("picked-folder");
+        const parts = name.split("/");
+        for (const sub of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(sub);
+        return [...new Uint8Array(await (await (await dir.getFileHandle(parts.at(-1))).getFile()).arrayBuffer())];
+    }, name);
+    const sqlite3 = await sqliteInit();
+    const raw = new sqlite3.oo1.DB(":memory:");
+    raw.exec("ATTACH DATABASE ':memory:' AS f");
+    const p = sqlite3.wasm.allocFromTypedArray(new Uint8Array(bytes));
+    sqlite3.capi.sqlite3_deserialize(raw.pointer, "f", p, bytes.length, bytes.length, sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_READONLY);
+    return raw.selectValues("SELECT hash FROM f.sessions ORDER BY hash");
+}
 
 /** Send one archive operation from the service worker, as sw-archive.ts does. */
 async function archive(ext, op, args) {
@@ -56,7 +94,7 @@ test("a session goes into the OPFS archive and reads back, images restored, sear
     }
 });
 
-test("the folder: a sync writes the month's file, a delete rewrites it away, and an import restores what it holds", async () => {
+test("the folder: a sync writes the month's file, a delete rewrites it away and stays deleted, and another machine's file is imported and merged", async () => {
     const ext = await launchExtension();
     try {
         const page = await ext.context.newPage();
@@ -92,13 +130,30 @@ test("the folder: a sync writes the month's file, a delete rewrites it away, and
         expect(emptied.result).toMatchObject({ removed: ["2026-09"] });
         expect(await files()).toEqual([]);
 
-        // A wiped profile: the file is in the folder, the archive is empty; import brings it back.
+        // A delete is remembered: the folder's old copy does not bring it back, by a sync's merge or by Import.
         await archive(ext, "put", { input: session("f01de003", sept), archivedTs: 1 });
         await archive(ext, "sync");
         await archive(ext, "remove", { hash: "f01de003" });   // gone from the archive; the folder still has it (not synced)
-        const imported = await archive(ext, "import");
-        expect(imported.result.imported).toEqual({ files: 1, sessions: 1 });
-        expect((await archive(ext, "read", { hash: "f01de003" })).result.events[0].task).toBe("remember f01de003");
+        expect((await archive(ext, "import")).result.imported).toEqual({ files: 1, sessions: 0 });
+        expect((await archive(ext, "read", { hash: "f01de003" })).result).toBe(null);
+
+        // Another machine's file in the folder (built in node, as that machine's archive would write it): Import takes
+        // it in, and a sync of the month it shares with this archive keeps both machines' sessions.
+        await writeFolderFile(page, "2026-09.sqlite", await otherMachinesMonth(["0b0e0001", "0b0e0002"], sept + 5000));
+        expect((await archive(ext, "import")).result.imported).toEqual({ files: 1, sessions: 2 });
+        expect((await archive(ext, "read", { hash: "0b0e0001" })).result.events[0].task).toBe("remember 0b0e0001");
+        await writeFolderFile(page, "2026-09.sqlite", await otherMachinesMonth(["0b0e0003"], sept + 6000));
+        await archive(ext, "put", { input: session("f01de004", sept + 7000), archivedTs: 1 });
+        const merged = await archive(ext, "sync");
+        expect(merged.result).toMatchObject({ written: ["2026-09"], merged: 1 });
+        expect(await folderHashes(page, "2026-09.sqlite")).toEqual(["0b0e0001", "0b0e0002", "0b0e0003", "f01de004"]);
+
+        // Start fresh: the folder's files move into a subfolder, untouched, and the archive is written beside them.
+        const fresh = await archive(ext, "fresh");
+        const aside = `earlier-${new Date().toISOString().slice(0, 10)}`;
+        expect(fresh.result).toMatchObject({ movedAside: { folder: aside, files: 1 }, written: ["2026-09"] });
+        expect(await files()).toEqual(["2026-09.sqlite", aside]);
+        expect(await folderHashes(page, `${aside}/2026-09.sqlite`)).toEqual(["0b0e0001", "0b0e0002", "0b0e0003", "f01de004"]);
     } finally {
         await ext.close();
     }

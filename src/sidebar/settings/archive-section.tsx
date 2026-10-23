@@ -28,10 +28,26 @@ export function ArchiveFolderBody(p: {
     canAskHere: boolean;
     busy: string | null;
     message: string;
+    /** a folder just picked that already holds month files: asked about before anything is written to it */
+    found?: { name: string; files: number; first?: string; last?: string } | null;
     onPick(): void; onRegrant(): void; onSync(): void; onImport(): void; onForget(): void;
+    /** what to do with the files a just-picked folder holds: take them in (the default), or move them aside */
+    onAdopt?(): void; onFresh?(): void;
 }) {
     const r = p.report;
     if (!r) return <div class="set-hint">{p.message || "Reading…"}</div>;
+    if (p.found) return (
+        <div class="arch">
+            <div class="set-warn"><b>{p.found.name}</b> already holds {p.found.files} month file{p.found.files === 1 ? "" : "s"}
+                {p.found.first ? <> ({p.found.first === p.found.last ? p.found.first : `${p.found.first} to ${p.found.last}`})</> : null}, probably from an earlier archive.</div>
+            <div class="arch-actions">
+                <button class="test-btn arch-primary" disabled={!!p.busy} onClick={p.onAdopt}>{p.busy === "adopt" ? "Importing…" : "Import them and use this folder"}</button>
+                <button class="test-btn" disabled={!!p.busy} onClick={p.onFresh}>{p.busy === "fresh" ? "Moving…" : "Start fresh"}</button>
+            </div>
+            <div class="set-hint">Importing adds their sessions to this browser's archive and keeps everything the folder holds, so both machines' history ends up in the same files. Starting fresh moves the old files into a subfolder named <code>earlier-</code> and the date; nothing is deleted.</div>
+            {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
+        </div>
+    );
     const pending = r.pending ? <div class="set-hint">{r.pending} month file{r.pending === 1 ? "" : "s"} wait to be written. Nothing is lost meanwhile.</div> : null;
     const note = p.message ? <div class="set-hint arch-msg">{p.message}</div> : null;
     const off = !p.archiveOn ? <div class="set-warn">Sessions reach the folder only while "Archive sessions instead of deleting them" is on.</div> : null;
@@ -114,11 +130,22 @@ function isTopLevel(): boolean {
 }
 
 /** Ask the worker about the folder, or tell it what a click just did. */
-function folderMessage(action: "state" | "picked" | "sync" | "import"): Promise<FolderReport> {
+function folderMessage(action: "state" | "picked" | "fresh" | "survey" | "sync" | "import"): Promise<FolderReport> {
     return new Promise((resolve, reject) => chrome.runtime.sendMessage({ type: "ARCHIVE_FOLDER", payload: { action } }, (r?: { data?: FolderReport; error?: string }) => {
         if (r?.data) resolve(r.data);
         else reject(new Error(r?.error || "the archive did not answer"));
     }));
+}
+
+/** How many month files a sync wrote, in words. */
+const written = (r: FolderReport): string =>
+    r.written?.length ? `Wrote ${r.written.length} month file${r.written.length === 1 ? "" : "s"}.` : "Nothing archived yet to write.";
+
+/** What taking a folder into use did: the sessions it brought in, what it wrote, and any file it could not read. */
+function adopted(name: string, r: FolderReport): string {
+    const got = r.imported?.sessions ? ` Imported ${r.imported.sessions} session${r.imported.sessions === 1 ? "" : "s"} it held.` : "";
+    const bad = r.skipped?.length ? ` Left ${r.skipped.length} file${r.skipped.length === 1 ? "" : "s"} it could not read as they were (${r.skipped.map((x) => x.month).join(", ")}).` : "";
+    return `Using ${name}.${got} ${written(r)}${bad}`;
 }
 
 /** This browser's archive folder: the body, wired to the picker (here, in the page, inside the click) and the worker. */
@@ -127,6 +154,7 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     const [busy, setBusy] = useState<string | null>(null);
     const [message, setMessage] = useState("");
     const [isBrave, setIsBrave] = useState(false);
+    const [found, setFound] = useState<{ name: string; files: number; first?: string; last?: string } | null>(null);
     const refresh = () => folderMessage("state").then((r) => {
         // Only a page can tell that picking is impossible here; the worker reports "none" for a folder never picked.
         setReport(r.state === "none" && !canPickFolder() ? { ...r, state: "unsupported" } : r);
@@ -144,11 +172,27 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     return (
         <ArchiveFolderBody report={report} archiveOn={archiveOn} isBrave={isBrave} busy={busy} message={message}
             canAskHere={isTopLevel()}
+            found={found}
             onPick={act("pick", async () => {
                 const name = await pickFolder();
                 if (!name) return;
+                // Asked before anything is written: a folder with an earlier archive's files is a choice to make.
+                const survey = await folderMessage("survey");
+                if (survey.found?.files) { setFound({ name, ...survey.found }); return; }
+                return adopted(name, await folderMessage("picked"));
+            })}
+            onAdopt={act("adopt", async () => {
+                const name = found?.name ?? "the folder";
                 const r = await folderMessage("picked");
-                return `Using ${name}. ${r.written?.length ? `Wrote ${r.written.length} month file${r.written.length === 1 ? "" : "s"}.` : "Nothing archived yet to write."}`;
+                setFound(null);
+                return adopted(name, r);
+            })}
+            onFresh={act("fresh", async () => {
+                const name = found?.name ?? "the folder";
+                const r = await folderMessage("fresh");
+                setFound(null);
+                const moved = r.movedAside ? ` Moved ${r.movedAside.files} earlier file${r.movedAside.files === 1 ? "" : "s"} into ${r.movedAside.folder}.` : "";
+                return `Using ${name}.${moved} ${written(r)}`;
             })}
             onRegrant={act("regrant", async () => {
                 if (!(await regrantFolder())) return "Not allowed, so the folder stays paused.";

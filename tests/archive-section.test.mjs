@@ -85,3 +85,21 @@ test("the archive switched off is said, since nothing would reach the folder", (
     const host = show({ report: { state: "none", pending: 0, lastSync: null }, archiveOn: false });
     assert.match(host.textContent, /Archive sessions instead of deleting them/);
 });
+
+// --- a picked folder that already holds an earlier archive ---
+
+test("a picked folder with earlier month files asks first: import them (the default) or start fresh, nothing deleted", () => {
+    const host = show({ report: { state: "connected", name: "Archive", pending: 0, lastSync: null },
+        found: { name: "Archive", files: 14, first: "2025-09", last: "2026-10" },
+        onAdopt: () => clicks.push("adopt"), onFresh: () => clicks.push("fresh") });
+    assert.deepEqual(buttons(host), ["Import them and use this folder", "Start fresh"]);
+    assert.match(host.textContent, /Archive already holds 14 month files \(2025-09 to 2026-10\)/);
+    assert.match(host.textContent, /nothing is deleted/);
+    assert.ok(host.querySelector("button").classList.contains("arch-primary"), "importing is the default");
+    const [adopt, fresh] = host.querySelectorAll("button");
+    adopt.click(); assert.equal(clicks.at(-1), "adopt");
+    fresh.click(); assert.equal(clicks.at(-1), "fresh");
+    // One file says its month once, not "2026-10 to 2026-10".
+    const one = show({ report: { state: "connected", name: "Archive", pending: 0, lastSync: null }, found: { name: "Archive", files: 1, first: "2026-10", last: "2026-10" } });
+    assert.match(one.textContent, /holds 1 month file \(2026-10\),/);
+});
