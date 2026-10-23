@@ -67,6 +67,25 @@ of running the `finally`. `t.done()`/`t.cancelled()` are not pinned: the red tea
 drives `_coro` directly can exhaust the generator while the Task's own state still reads pending, so they are the
 mechanism's business; the PR body says what they read under the fix chosen. Say there which assertions moved and why.
 
+**Ruling on revocation** (coordinator, 2026-10-23, on the builder's measurement): the chokepoint is the proxy, with
+REVOCATION in place of `destroy()`, since a destroyed once-callable or PyProxy throws when its registry fires it and
+`offscreen.ts` kills the worker on that throw, and `webloop` makes one once-callable per `call_later`, so destroying
+everything recorded would kill the worker after any cancelled timer; the per-registry fallback is out as well (the tests
+lock down with an empty scope, so `js.setTimeout` there is Node's own and wrappers would go unexercised). The doors, as
+the builder enumerated them from `pyodide.asm.mjs`: every PyProxy through `pyproxy_new` (revoke: point it at an inert
+callable); `create_once_callable` (creation is not hookable; each wrapper calls `callPyObject(ptr)`, so the ptr is
+blocked while a revoked wrapper of it lives); promise handles (`then`/`catch`/`finally_` with a raw Python callable,
+covered by wrapping `Promise.prototype.then`/`finally` before `lockdown()` freezes them); `_agen_handle_result_js` is
+machinery only, the reason in the PR. Open and close of a cell's epoch come from the wrapper through a JS gate the
+harness captures in a Python closure, so the namespace holds no JsProxy. The two halves of "silent": a revoked wrapper
+that a stale registry FIRES after the cell's result is a silent no-op, never an error (nothing after the result may raise
+into the worker), counted and recorded through the run log (`recordRunLog`, `docs/dev/run-log.md`) so a person sees how
+many callbacks were dropped after which cell; a LATER cell that schedules a blocked ptr again is refused at schedule time,
+in that cell, as an error the cell sees, never a callback that silently never comes. Silent after the result, loud inside
+a cell. One more failing-first test: a cell that reaches the gate and closes its own epoch EARLY, then schedules; every
+callable from the cell's start to the cancel is revoked regardless, the early close idempotent, the cancel's revoke
+spanning the whole cell.
+
 ## Tests, failing first
 
 The six todos turn into plain tests in the PR that fixes them (`{ todo }` removed; each failed on main before, passes
