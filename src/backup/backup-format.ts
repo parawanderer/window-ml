@@ -19,11 +19,13 @@ export class BackupError extends Error {
             | "unknown-form"
             /** a version of the format this reader does not know */
             | "unsupported-version"
-            /** the header does not parse, or names something this reader refuses (a cost beyond its bounds, a bad field) */
+            /** the header does not parse, or a field of it is malformed (wrong type, wrong length, not base64) */
             | "bad-header"
+            /** a bound of `LIMITS` tripped: a header, chunk, wrap count, Argon2 cost or decompressed size beyond what any real file needs */
+            | "over-budget"
             /** the file ends before its last chunk: cut short, or the last chunk was removed */
             | "truncated"
-            /** bytes after the last chunk */
+            /** bytes after a chunk that authenticates as the last one */
             | "trailing-data"
             /** a chunk or the header failed authentication: edited, reordered, or the wrong file for this key */
             | "corrupt"
@@ -45,8 +47,6 @@ export class BackupError extends Error {
 const MAGIC = [0x57, 0x4d, 0x4c, 0x42, 0x41, 0x4b, 0x00, 0x01]; // "WMLBAK", 0x00, version 1
 const PREFIX_BYTES = 12; // magic (8) + header length (u32 LE)
 const TAG_BYTES = 16;
-const MAX_HEADER_BYTES = 1 << 20;
-const MAX_CHUNK = 64 << 20;
 /** The default plaintext chunk: 1 MiB, small enough to decrypt a file in a stream, large enough that the 20 bytes of framing vanish. */
 export const DEFAULT_CHUNK = 1 << 20;
 const SQLITE_MAGIC = "SQLite format 3\0";
@@ -62,8 +62,23 @@ export interface ArgonParams {
 }
 /** The cost a new passphrase wrap gets: 64 MiB, three passes, one lane (about a second on a laptop). */
 export const DEFAULT_ARGON: Readonly<ArgonParams> = { alg: "argon2id", m: 65536, t: 3, p: 1 };
-/** What a reader will agree to run on a header's say-so: a hostile file must not be able to ask for 1 TiB. */
-const ARGON_LIMITS = { m: 1 << 20, t: 64, p: 16 };
+/**
+ * The one resource budget every reader of this format keeps (spec: "Limits a reader MUST keep"): what a file may ask of a
+ * reader before it is refused as `over-budget`. Each bound is inclusive. `tools/wmlbak-decrypt.mjs` carries the same numbers
+ * as literals and a test holds the two equal.
+ */
+export const LIMITS = Object.freeze({
+    /** the header's JSON, in bytes */
+    headerBytes: 1 << 20,
+    /** a chunk's plaintext size as the header names it */
+    chunkBytes: 64 << 20,
+    /** the most wrap records a header may carry: at most one per `by` ("passphrase", "recovery"), so one Argon2 run per unlock */
+    wraps: 2,
+    /** the most a passphrase wrap may ask of Argon2id: `m` in KiB (256 MiB, four times the default), passes, lanes */
+    argon: Object.freeze({ m: 262144, t: 12, p: 4 }),
+    /** the most a reader decompresses by default (1 GiB); a caller may pass a smaller `maxOutput` */
+    outputBytes: 1 << 30,
+});
 
 /** One copy of the data key, sealed under one secret; the header carries one per way in. */
 export interface WrapRecord {
@@ -141,18 +156,32 @@ export function sniff(b: Uint8Array): FileForm {
     return "unknown";
 }
 
-async function pump(input: Uint8Array, stream: CompressionStream | DecompressionStream): Promise<Bytes> {
-    return new Uint8Array(await new Response(new Blob([input as Bytes]).stream().pipeThrough(stream)).arrayBuffer());
-}
-
 /** Compress bytes as gzip, the inside of every encrypted file and the whole of a `.sqlite.gz`. */
-export function gzip(b: Uint8Array): Promise<Bytes> {
-    return pump(b, new CompressionStream("gzip"));
+export async function gzip(b: Uint8Array): Promise<Bytes> {
+    return new Uint8Array(await new Response(new Blob([b as Bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
 }
 
-/** Decompress gzip bytes; throws on a stream that is not gzip or is cut short. */
-export function gunzip(b: Uint8Array): Promise<Bytes> {
-    return pump(b, new DecompressionStream("gzip"));
+/**
+ * Decompress gzip bytes; throws on a stream that is not gzip or is cut short. The output is counted as it streams and the
+ * read aborts the moment it passes `maxOutput` (default `LIMITS.outputBytes`, and never more), so a gzip bomb is refused as
+ * `over-budget` without being expanded.
+ */
+export async function gunzip(b: Uint8Array, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
+    const cap = Math.min(maxOutput, LIMITS.outputBytes);
+    const reader = new Blob([b as Bytes]).stream().pipeThrough(new DecompressionStream("gzip")).getReader();
+    const parts: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > cap) {
+            reader.cancel().catch(() => {});
+            throw new BackupError("over-budget", `the file decompresses to more than ${cap} bytes`);
+        }
+        parts.push(value);
+    }
+    return concat(...parts);
 }
 
 // --- the recovery key ---
@@ -241,23 +270,58 @@ async function argonKek(passphrase: string, salt: Uint8Array, p: { m: number; t:
     );
 }
 
+/**
+ * Every bound and shape rule on a list of wraps, run before any KDF: a count, each record's fields and lengths, and the
+ * Argon2 cost of every passphrase wrap. Too many or too costly is `over-budget`; anything malformed is `bad-header`.
+ */
+function checkWraps(wraps: unknown): WrapRecord[] {
+    if (!Array.isArray(wraps) || wraps.length < 1) throw new BackupError("bad-header", "the header carries no wraps");
+    if (wraps.length > LIMITS.wraps) throw new BackupError("over-budget", `the header carries ${wraps.length} wraps; this reader accepts ${LIMITS.wraps}`);
+    const seen = new Set<string>();
+    for (const w of wraps) {
+        if (typeof w !== "object" || w === null || Array.isArray(w)) throw new BackupError("bad-header", "a wrap in the header is not an object");
+        if (w.by !== "passphrase" && w.by !== "recovery") throw new BackupError("bad-header", "a wrap names a kind this reader does not know");
+        if (seen.has(w.by)) throw new BackupError("bad-header", `the header carries two "${w.by}" wraps; a file has at most one of each`);
+        seen.add(w.by);
+        unb64(w.salt, 16);
+        unb64(w.iv, 12);
+        unb64(w.ct, 48);
+        const k = w.kdf;
+        if (typeof k !== "object" || k === null) throw new BackupError("bad-header", "a wrap names no key derivation");
+        if (w.by === "recovery") {
+            if (k.alg !== "hkdf-sha256") throw new BackupError("bad-header", "the recovery wrap names a key derivation this reader does not know");
+            continue;
+        }
+        const { m, t, p } = k as ArgonParams;
+        if (k.alg !== "argon2id" || ![m, t, p].every((x) => Number.isInteger(x) && x >= 1) || m < 8 * p) throw new BackupError("bad-header", "the passphrase wrap names an Argon2id cost that is malformed");
+        if (m > LIMITS.argon.m || t > LIMITS.argon.t || p > LIMITS.argon.p) throw new BackupError("over-budget", `the passphrase wrap asks for Argon2id m=${m} t=${t} p=${p}; this reader accepts at most m=${LIMITS.argon.m} t=${LIMITS.argon.t} p=${LIMITS.argon.p}`);
+    }
+    return wraps as WrapRecord[];
+}
+
+/** The AES key a secret derives for one wrap (its raw bytes zeroed once imported), or null when the secret is the other kind. Wraps are `checkWraps`-clean. */
 async function kekFor(w: WrapRecord, secret: Secret): Promise<CryptoKey | null> {
     const salt = unb64(w.salt, 16);
-    if (w.by === "passphrase" && "passphrase" in secret) {
-        const k = w.kdf as ArgonParams;
-        const ok = k?.alg === "argon2id" && Number.isInteger(k.m) && Number.isInteger(k.t) && Number.isInteger(k.p) && k.m >= 8 * k.p && k.m <= ARGON_LIMITS.m && k.t >= 1 && k.t <= ARGON_LIMITS.t && k.p >= 1 && k.p <= ARGON_LIMITS.p;
-        if (!ok) throw new BackupError("bad-header", "the passphrase wrap names an Argon2id cost this reader refuses");
-        return aes(await argonKek(secret.passphrase, salt, k), ["decrypt"]);
+    let kek: Bytes;
+    if (w.by === "passphrase" && "passphrase" in secret) kek = await argonKek(secret.passphrase, salt, w.kdf as ArgonParams);
+    else if (w.by === "recovery" && "recoveryKey" in secret) {
+        const ikm = await parseRecoveryKey(secret.recoveryKey);
+        try {
+            kek = await hkdf(ikm, salt, "wmlbak v1 wrap recovery");
+        } finally {
+            ikm.fill(0);
+        }
+    } else return null;
+    try {
+        return await aes(kek, ["decrypt"]);
+    } finally {
+        kek.fill(0);
     }
-    if (w.by === "recovery" && "recoveryKey" in secret) {
-        if ((w.kdf as { alg: string })?.alg !== "hkdf-sha256") throw new BackupError("bad-header", "the recovery wrap names a key derivation this reader does not know");
-        return aes(await hkdf(await parseRecoveryKey(secret.recoveryKey), salt, "wmlbak v1 wrap recovery"), ["decrypt"]);
-    }
-    return null;
 }
 
 /** The raw data key out of whichever wrap the secret opens; callers import it and drop it at once. */
 async function unwrapRaw(wraps: WrapRecord[], secret: Secret): Promise<Bytes> {
+    checkWraps(wraps);
     let tried = false;
     for (const w of wraps) {
         const kek = await kekFor(w, secret);
@@ -286,7 +350,9 @@ async function makeWrap(raw: Uint8Array, by: "passphrase" | "recovery", secret: 
         kdf = { alg: "hkdf-sha256" };
         kek = await hkdf(secret as Uint8Array, salt, "wmlbak v1 wrap recovery");
     }
-    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: text.encode("wmlbak v1 wrap " + by) }, await aes(kek, ["encrypt"]), raw as Bytes);
+    const aesKey = await aes(kek, ["encrypt"]);
+    kek.fill(0);
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: text.encode("wmlbak v1 wrap " + by) }, aesKey, raw as Bytes);
     return { by, kdf, salt: b64(salt), iv: b64(iv), ct: b64(new Uint8Array(ct)) };
 }
 
@@ -362,7 +428,7 @@ const fileKey = async (k: Keyring, salt: Uint8Array) =>
 /** Seal a plain SQLite file as a `.wmlbak`: gzip, cut into chunks, each chunk AES-GCM with the header as associated data. */
 export async function encryptFile(plain: Uint8Array, keyring: Keyring, o: { kind: FileKind; chunk?: number; created?: Date }): Promise<Bytes> {
     const chunk = o.chunk ?? DEFAULT_CHUNK;
-    if (!Number.isInteger(chunk) || chunk < 1 || chunk > MAX_CHUNK) throw new RangeError("chunk size out of range");
+    if (!Number.isInteger(chunk) || chunk < 1 || chunk > LIMITS.chunkBytes) throw new RangeError("chunk size out of range");
     const fileSalt = random(32);
     const header: Header = { v: 1, kind: o.kind, created: (o.created ?? new Date()).toISOString(), compression: "gzip", chunk, fileSalt: b64(fileSalt), keyId: keyring.keyId, wraps: keyring.wraps };
     const headerBytes = text.encode(JSON.stringify(header));
@@ -383,7 +449,7 @@ function parseHeader(b: Uint8Array): { header: Header; prefixLen: number } {
     if (b[7] !== 1) throw new BackupError("unsupported-version", `format version ${b[7]} is newer than this reader knows`);
     if (b.length < PREFIX_BYTES) throw new BackupError("truncated", "the file ends inside its header");
     const hlen = new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(8, true);
-    if (hlen > MAX_HEADER_BYTES) throw new BackupError("bad-header", "the header claims an absurd length");
+    if (hlen > LIMITS.headerBytes) throw new BackupError("over-budget", `the header claims ${hlen} bytes; this reader accepts ${LIMITS.headerBytes}`);
     if (b.length < PREFIX_BYTES + hlen) throw new BackupError("truncated", "the file ends inside its header");
     let h: Header;
     try {
@@ -393,8 +459,10 @@ function parseHeader(b: Uint8Array): { header: Header; prefixLen: number } {
     }
     if (h?.v !== 1) throw new BackupError("unsupported-version", `header version ${h?.v} is not one this reader knows`);
     if (h.compression !== "gzip") throw new BackupError("bad-header", `compression "${h.compression}" is not one this reader knows`);
-    if (!Number.isInteger(h.chunk) || h.chunk < 1 || h.chunk > MAX_CHUNK) throw new BackupError("bad-header", "the header names a chunk size outside what this reader accepts");
-    if (typeof h.keyId !== "string" || !Array.isArray(h.wraps)) throw new BackupError("bad-header", "the header lacks its key id or wraps");
+    if (!Number.isInteger(h.chunk) || h.chunk < 1) throw new BackupError("bad-header", "the header names a bad chunk size");
+    if (h.chunk > LIMITS.chunkBytes) throw new BackupError("over-budget", `the header names a chunk of ${h.chunk} bytes; this reader accepts ${LIMITS.chunkBytes}`);
+    if (typeof h.keyId !== "string") throw new BackupError("bad-header", "the header lacks its key id");
+    checkWraps(h.wraps);
     unb64(h.fileSalt, 32);
     return { header: h, prefixLen: PREFIX_BYTES + hlen };
 }
@@ -406,7 +474,7 @@ export function readHeader(b: Uint8Array): { kind: FileKind; created: string; ke
 }
 
 /** Open a `.wmlbak` to plain SQLite bytes, with a keyring or a secret; returns nothing at all unless every chunk authenticates and the last is present. */
-export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret): Promise<Bytes> {
+export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
     const { header, prefixLen } = parseHeader(b);
     const keyring = "key" in keyOrSecret ? keyOrSecret : await unlock(header.wraps, keyOrSecret);
     if (keyring.keyId !== header.keyId) throw new BackupError("wrong-secret", "this file was sealed under a different data key than the one given");
@@ -422,28 +490,32 @@ export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret):
         if (len < TAG_BYTES || len > header.chunk + TAG_BYTES) throw new BackupError("corrupt", "a chunk has an impossible length");
         if (b.length - at - 4 < len) throw new BackupError("truncated", "the file ends inside a chunk");
         const final = at + 4 + len === b.length;
+        const frame = b.subarray(at + 4, at + 4 + len) as Bytes;
         try {
-            out.push(new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce(i, final), additionalData: prefix }, key, b.subarray(at + 4, at + 4 + len) as Bytes)));
+            out.push(new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce(i, final), additionalData: prefix }, key, frame)));
         } catch {
-            // Which of "cut short", "trailing bytes" and "edited" this is cannot be told from outside: the tag fails in all three.
-            throw new BackupError("corrupt", "a chunk failed authentication: the file is damaged, cut short, extended or edited");
+            // The tag failed. If it holds under the OTHER final flag, the chunk is genuine and only its place is wrong.
+            const other = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce(i, !final), additionalData: prefix }, key, frame).then(() => true, () => false);
+            if (other && final) throw new BackupError("truncated", "the file ends before its last chunk");
+            if (other) throw new BackupError("trailing-data", "the file has bytes after its last chunk");
+            throw new BackupError("corrupt", "a chunk failed authentication: the file is damaged or edited");
         }
         at += 4 + len;
         if (final) break;
     }
-    return gunzip(concat(...out));
+    return gunzip(concat(...out), maxOutput);
 }
 
 /** Raw SQLite bytes from any of the three forms; an encrypted one asks `unlockIfNeeded` for a keyring or a secret. */
-export async function readAnyForm(b: Uint8Array, unlockIfNeeded?: () => Promise<Keyring | Secret>): Promise<Bytes> {
+export async function readAnyForm(b: Uint8Array, unlockIfNeeded?: () => Promise<Keyring | Secret>, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
     switch (sniff(b)) {
         case "sqlite":
             return bytes(b);
         case "gzip":
-            return gunzip(b);
+            return gunzip(b, maxOutput);
         case "wmlbak":
             if (!unlockIfNeeded) throw new BackupError("needs-key", "this file is encrypted; give the passphrase or the recovery key");
-            return decryptFile(b, await unlockIfNeeded());
+            return decryptFile(b, await unlockIfNeeded(), maxOutput);
         default:
             throw new BackupError("unknown-form", "this is not a SQLite file, a gzip file or a window.ml backup");
     }

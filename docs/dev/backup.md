@@ -112,3 +112,5 @@ same to each other.
 - **An encrypted file's name is a hint.** Read the first bytes; a renamed `.sqlite` may be gzip or encrypted.
 - **The data key is never extractable after setup;** code that needs its raw bytes is code that should be unwrapping
   with the passphrase or the recovery key.
+- **Every reader goes through the budget.** `gunzip`, `readAnyForm` and `decryptFile` cap the output (`LIMITS`); a new
+  reader that decompresses without `maxOutput`, or reads a header without `parseHeader`, is a gzip bomb or an Argon2 bomb.

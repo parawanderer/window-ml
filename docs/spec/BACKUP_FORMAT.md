@@ -45,15 +45,52 @@ build the AAD.
 | `kind` | `"backup"` or `"archive-month"`; informational |
 | `created` | ISO 8601 UTC time of writing; informational |
 | `compression` | `"gzip"` is the only value; refuse another |
-| `chunk` | plaintext bytes per chunk, 1 to 67108864 (64 MiB). Take it from the header |
+| `chunk` | plaintext bytes per chunk, 1 to 67108864 (64 MiB; see the limits). Take it from the header |
 | `fileSalt` | base64 of 32 random bytes, new for every file |
 | `keyId` | hex of the first 8 bytes of `HKDF-SHA256(ikm = data key, salt = empty, info = "wmlbak v1 key id")`; names the data key so a reader can say "wrong key" early. Not secret |
 | `wraps` | the data key sealed under each secret that opens the file; any one is enough |
 
 Argon2id `m` is in KiB (`65536` is 64 MiB), `t` is passes, `p` is lanes. READERS MUST USE THE HEADER'S PARAMETERS, not
-constants: the cost may be raised later, and files already written keep theirs. A reader may refuse a cost far beyond
-any real one (the reference reader refuses `m` over 1 GiB, `t` over 64, `p` over 16) so a hostile file cannot make it
-allocate without bound.
+constants: the cost may be raised later, and files already written keep theirs, up to the limits below.
+
+**Wrap records are per keyring, not per file.** Every file written from one keyring carries byte-identical `wraps`, so
+swapping them between two such files changes nothing. A scheme with per-file wraps would be a format change and needs a
+new version byte.
+
+### Limits a reader MUST keep
+
+A file is untrusted input: it may sit in a synced folder where anyone can plant one. Every reader (the reference reader
+and any standalone one) MUST refuse a file that exceeds a limit below, and MUST do the header checks before running any
+key derivation. Each bound is inclusive: a value at the limit is accepted, one past it is refused.
+
+| What | Limit | Checked |
+| --- | --- | --- |
+| header length `H` | at most 1 MiB (1048576) | from the prefix, before the header is read |
+| `chunk` | 1 to 64 MiB (67108864) | when the header is parsed |
+| `wraps` | 1 or 2 records, at most one per `by`; a `by` other than `passphrase` or `recovery` is refused | when the header is parsed |
+| Argon2id `m` | at most 262144 KiB (256 MiB, four times the default); and `m` at least `8 * p` | when the header is parsed |
+| Argon2id `t` | 1 to 12 | when the header is parsed |
+| Argon2id `p` | 1 to 4 | when the header is parsed |
+| decompressed output | at most 1 GiB (1073741824) unless the caller sets a smaller cap | counted while streaming; stop at once when passed |
+| every field | `salt` 16 bytes, `iv` 12, `ct` 48, `fileSalt` 32, strict base64 (`^[A-Za-z0-9+/]*={0,2}$`) | when the header is parsed |
+
+With at most one passphrase wrap and its cost capped, an unlock attempt runs Argon2id at most once.
+
+### Error reasons
+
+The reference reader throws `BackupError` with one of these `reason`s. A caller may branch on any of them.
+
+| Reason | Meaning |
+| --- | --- |
+| `over-budget` | a limit above tripped: header, chunk, wrap count, Argon2 cost or decompressed size. The file is hostile or absurd, not merely damaged |
+| `bad-header` | the header is malformed: not JSON, a wrong type or length, bad base64, a duplicate or unknown wrap kind, an Argon2 `m` below `8 * p` |
+| `truncated` | the file ends early: inside a frame, or its last frame was removed (the new last chunk authenticates only as a non-final one) |
+| `trailing-data` | bytes follow a chunk that authenticates as the final one |
+| `corrupt` | a chunk fails authentication under both final flags: edited, reordered, or another file's body |
+| `wrong-secret` | the passphrase or recovery key opens no wrap, or the key id differs |
+| `bad-recovery-key` | a recovery key with a bad character or checksum |
+| `needs-key` | the file is encrypted and no secret was given |
+| `unknown-form`, `unsupported-version` | not one of the three forms; a version this reader does not know |
 
 ## Keys
 
@@ -100,10 +137,13 @@ key of that file. Because every file has its own key, chunk nonces restart at ze
 4. Concatenate the plaintext chunks, gunzip, and only then output anything.
 
 A reader MUST reject, and MUST NOT return or write partial plaintext for: an unknown version, a header it cannot parse,
-a missing final chunk (a truncated file fails because its new last chunk was written with flag `0`), data after the
-final chunk (the real final chunk is then read with flag `0` and fails), a frame length above `chunk + 16` or below 16,
-a file with no frames, and any authentication failure. The reference reader reports truncation, extension and edits as
-one error where the tag is what fails, since the cause cannot be told apart from outside.
+anything over a limit above, a missing final chunk (a truncated file fails because its new last chunk was written with
+flag `0`), data after the final chunk (the real final chunk is then read with flag `0` and fails), a frame length above
+`chunk + 16` or below 16, a file with no frames, and any authentication failure.
+
+To name the cause, a chunk whose tag fails is tried once more with the other final flag. If that authenticates, the chunk
+is genuine and only its place is wrong: read as final but written as non-final is `truncated`; read as non-final but
+written as final, with bytes after it, is `trailing-data`. If neither flag authenticates it is `corrupt`.
 
 ## The standalone decryptor
 
@@ -119,6 +159,17 @@ node wmlbak-decrypt.mjs 2026-10.wmlbak 2026-10.sqlite --recovery-key   # asks fo
 
 The secret is typed at a prompt, not given as an argument, so it stays out of shell history. The output is the plain
 SQLite file, which opens in any SQLite tool; nothing is written unless every chunk authenticates.
+
+It is the disaster-recovery path and a second implementation of this spec, so it keeps the same MUSTs as any reader:
+
+- the limits above, with the same numbers, checked before any key derivation; the test suite asserts its constants equal
+  the reference reader's;
+- the same strict base64 and field lengths, and the same refusal of a missing, null, duplicated or unknown wrap;
+- the same reasons in words: over budget, cut short, trailing data, damaged or edited;
+- every refusal is one line starting `wmlbak-decrypt:` and a nonzero exit, never a stack trace, and writes no output;
+- it MUST refuse an output path that is the input path (compared by resolved path, and by real path when both exist)
+  before reading anything, since writing it would replace the only encrypted copy with plaintext;
+- it zeroes the key-encryption key and the data key once used.
 
 ## Test vectors
 
