@@ -8,29 +8,49 @@
 // order relative to the page's answer are Chrome's own.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, onChannel } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MOVED = "The page changed while it was being looked at";
 
-/** A page with two buttons whose script moves (`how`) when the worker first asks it for `op`. */
-const PAGE = (how, op) => `<!doctype html><html><head><title>Mover</title><style>
+/** A page with two buttons. It cannot move itself on the worker's ask: the ask rides the page channel's private port, which a
+ *  page script never hears. {@link moveOnAsk} moves it from the content script's end instead. */
+const PAGE = () => `<!doctype html><html><head><title>Mover</title><style>
 html,body{margin:0;background:#fff} button{position:absolute;border:0;padding:0;margin:0;width:200px;height:100px;font-size:0}
 #a{left:50px;top:40px;background:rgb(255,0,0)} #b{left:400px;top:300px;background:rgb(0,0,255)}
-</style></head><body><button id="a">Red</button><button id="b">Blue</button><script>
-let moved = false;
-window.addEventListener("message", (e) => {
-    const d = e.data;
-    if (moved || !d || d.type !== "PAGE_TOOL_RUN" || !d.geometry || d.geometry.op !== ${JSON.stringify(op)}) return;
-    moved = true;
-    ${how === "push" ? 'history.pushState({}, "", "/moved")' : how === "hash" ? 'location.hash = "#moved"' : 'location.href = "/navigated"'};
-}, true);
-</script></body></html>`;
+</style></head><body><button id="a">Red</button><button id="b">Blue</button></body></html>`;
+
+/** Move the page (`how`: pushState, a fragment, a full navigation) the first time the content script sends it a
+ *  `PAGE_TOOL_RUN` for `op`, ahead of that send: what the page's own capture-phase message listener did before the
+ *  channel went private. Watches the port's send side, whenever the port arrives. */
+function moveOnAsk(page, how, op) {
+    return onChannel(page, (_ch, a) => {
+        const side = globalThis.__mlPageChannel;
+        let moved = false;
+        const wrap = (port) => {
+            if (!port || port.__wrapped) return port;
+            const send = port.postMessage.bind(port);
+            port.__wrapped = true;
+            port.postMessage = (d, ...r) => {
+                if (!moved && d && d.type === "PAGE_TOOL_RUN" && d.geometry && d.geometry.op === a.op) {
+                    moved = true;
+                    if (a.how === "push") history.pushState({}, "", "/moved");
+                    else if (a.how === "hash") location.hash = "#moved";
+                    else location.href = "/navigated";
+                }
+                return send(d, ...r);
+            };
+            return port;
+        };
+        let held = wrap(side.port);
+        Object.defineProperty(side, "port", { configurable: true, get: () => held, set: (v) => { held = wrap(v); } });
+    }, { how, op });
+}
 
 /** Serve PAGE(how, op) on 127.0.0.1 for every path, an origin nobody approves. */
 async function servePage(how, op) {
-    const srv = http.createServer((_req, res) => { res.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" }); res.end(PAGE(how, op)); });
+    const srv = http.createServer((_req, res) => { res.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" }); res.end(PAGE()); });
     await new Promise((r) => srv.listen(0, "127.0.0.1", r));
     return { url: `http://127.0.0.1:${srv.address().port}/`, close: () => new Promise((r) => srv.close(r)) };
 }
@@ -50,6 +70,7 @@ async function moverRun(how, op, args, side, cfg = {}) {
     await page.setViewportSize({ width: 800, height: 600 });
     await page.goto(site.url);
     await waitForMl(page, { approve: false });
+    await moveOnAsk(page, how, op);
     const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url?.startsWith(u))?.id, site.url);
     await ext.sw.evaluate((id) => globalThis.__mlStartUserRunForTest(id, { task: "find the red button", hud: "quiet", surface: "hud" }), tabId);
     const driver = () => fake.calls().filter((c) => c.tools?.length);

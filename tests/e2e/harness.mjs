@@ -291,6 +291,30 @@ export async function inShell(page, fn, arg, { timeout = 15000 } = {}) {
 }
 
 /**
+ * RUN `fn` AT THE CONTENT SCRIPT'S END OF THE PAGE CHANNEL (`page-channel.ts`), where a test stands in for either end:
+ * `ch.asInjected(data)` delivers `data` to the content scripts as if injected.js had sent it (a `__mlDebug` event, a
+ * sidebar shot ack), and `ch.asIsolated(data)` sends `data` down the port to injected.js as the sidebar would (a
+ * `__mlSessionSend`). A window `postMessage` from the page reaches neither, which is the point of the channel.
+ * `fn(ch, arg)` is serialized like {@link inShell}'s; `asIsolated` throws while injected.js holds no port.
+ * @template T
+ * @param {any} page the page
+ * @param {(ch: { asInjected: (data: any) => void, asIsolated: (data: any) => void }, arg: any) => T | Promise<T>} fn
+ * @param {any} [arg] JSON-serializable
+ * @param {{ timeout?: number }} [opts] how long to wait for the content script (default 15 s)
+ * @returns {Promise<T>}
+ */
+export async function onChannel(page, fn, arg, opts) {
+    return inShell(page, new Function("_roots", "arg", `
+        const side = globalThis.__mlPageChannel;
+        if (!side) throw new Error("onChannel: no page channel in the content script's world");
+        const ch = {
+            asInjected: (data) => { for (const l of side.listeners.slice()) l({ data }); },
+            asIsolated: (data) => { if (!side.port) throw new Error("onChannel: injected.js holds no port on this page"); side.port.postMessage(data); },
+        };
+        return (${fn.toString()})(ch, arg);`), arg, opts);
+}
+
+/**
  * Poll {@link inShell} until `fn` returns something truthy, and return it: `page.waitForFunction` for our closed roots.
  * A throw (the shell not mounted yet) counts as "not yet".
  * @template T
@@ -334,14 +358,57 @@ export async function clickInShell(page, which, selector, { timeout = 15000, but
 }
 
 /**
+ * HEAR EVERY `__mlDebug` EVENT injected.js SENDS the content scripts of `page`'s top frame, on every document it loads:
+ * the page's own run and chat events, in any debug mode, before the shell decides what to draw. It replaces the window
+ * listener specs used before SITE_PRESENCE step 2b; the page channel (`page-channel.ts`) carries nothing on the window.
+ *
+ * A listener added to the isolated world's `__mlPageChannel` over CDP calls a `Runtime.addBinding` binding, which
+ * reaches Node; it is installed in each new content-script world as the page navigates. An event sent before a new
+ * document's content script exists is missed, which a run's events are not (they start once the page has loaded).
+ * @param {any} page the page
+ * @param {(ev: any) => void} onEvent called once per event, in the order injected.js sent them
+ * @returns {Promise<{ close: () => Promise<void> }>}
+ */
+export async function tapPageChannel(page, onEvent) {
+    const cdp = await page.context().newCDPSession(page);
+    const binding = "__wmlTapPageChannel";
+    const install = `(() => {
+        if (window.top !== window || globalThis.__wmlTapped) return;
+        globalThis.__wmlTapped = true;
+        let tries = 0;
+        const go = () => {
+            const side = globalThis.__mlPageChannel, call = globalThis.${binding};
+            if (!side || typeof call !== "function") { if (++tries < 500) setTimeout(go, 20); return; }   // not ours, after 10 s
+            side.listeners.push((e) => { const d = e && e.data; if (d && d.__mlDebug) { try { call(JSON.stringify(d.__mlDebug)); } catch { /* not JSON */ } } });
+        };
+        go();
+    })()`;
+    /** @type {Set<number>} the content-script worlds the tap is installed in */
+    const ours = new Set();
+    /** @type {Set<string>} the world names the binding was added under */
+    const named = new Set();
+    cdp.on("Runtime.bindingCalled", (/** @type {any} */ e) => { if (e.name === binding && ours.has(e.executionContextId)) onEvent(JSON.parse(e.payload)); });
+    const onContext = async (/** @type {any} */ c) => {
+        if (c.auxData?.isDefault || c.auxData?.type !== "isolated" || !c.name || String(c.name).startsWith("__playwright")) return;
+        ours.add(c.id);
+        if (!named.has(c.name)) { named.add(c.name); await cdp.send("Runtime.addBinding", { name: binding, executionContextName: c.name }).catch(() => {}); }
+        await cdp.send("Runtime.evaluate", { contextId: c.id, expression: install }).catch(() => {});
+    };
+    cdp.on("Runtime.executionContextCreated", (/** @type {any} */ e) => { void onContext(e.context); });
+    cdp.on("Runtime.executionContextDestroyed", (/** @type {any} */ e) => ours.delete(e.executionContextId));
+    await cdp.send("Runtime.enable");   // reports the worlds that exist now, then each new one
+    return { close: () => cdp.detach().catch(() => {}) };
+}
+
+/**
  * WATCH A TAB'S RUN EVENTS from outside the page, the way the DevTools panel does: an extension page holds the
  * `ml-devtools` port for `page`'s tab and hands every event to `onEvent`, in Node, in the order it was fanned.
  *
  * The worker's events for a run never reach the page's window (docs/spec/SITE_ACCESS.md, attack 15), so a spec that
  * listened there for a background run's steps listens here instead. The worker fans a run's events to this port
- * whatever the debug mode. The page's OWN events (a run or chat the page hosts) still go to its window, and come here
- * too only in `debugMode: "devtools"`. The watcher is a popup page in a window of its own, so a capture of the run's
- * window never shows it.
+ * whatever the debug mode. The page's OWN events (a run or chat the page hosts) come here only in `debugMode:
+ * "devtools"`; in any mode {@link tapPageChannel} hears them where injected.js hands them to the content scripts. The
+ * watcher is a popup page in a window of its own, so a capture of the run's window never shows it.
  * @param {any} ext the launched extension (`launchExtension`'s result)
  * @param {any} page the page whose tab to watch; resolved to its tab by URL, so call it once the page has loaded
  * @param {(ev: any) => void} onEvent called once per event: the tab's buffered events first, then each new one

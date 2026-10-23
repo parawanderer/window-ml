@@ -10,7 +10,7 @@
 
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, onChannel, waitForMl } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server. */
 async function greenSite() {
@@ -70,7 +70,7 @@ const blockSoon = (page, ms) => page.evaluate((ms) => {
 
 // --- the oracle of worker-shot.spec.mjs is not vacuous ---
 
-test("the page's own window handshake still reaches the shell for a page-built run's shot, from an allowed page's own window only", async () => {
+test("a window post of the shot handshake hides nothing, from a hidden page, an allowed page or a subframe; only injected.js's port does", async () => {
     const { page, close } = await setup();
     try {
         const vis = () => page.evaluate(() => document.getElementById("ml-sb-root").style.visibility);
@@ -79,13 +79,13 @@ test("the page's own window handshake still reaches the shell for a page-built r
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "hide" }, "*"));
         await page.waitForTimeout(300);
         expect(await vis(), "a hidden page's hide hid the sidebar").toBe(shown);
-        // A page-built run needs an allowed page: allow this one, and its hide is heard.
+        // Allowed, the page's window still reaches nothing (step 2b): the handshake rides the page channel, and the shell
+        // hears nothing the page posts on window. Before 2b this window post hid the sidebar on an allowed page.
         await waitForMl(page);
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "hide" }, "*"));
-        await expect.poll(vis).toBe("hidden");
-        await page.evaluate(() => window.postMessage({ __mlSidebarShot: "show" }, "*"));
-        await expect.poll(vis).toBe(shown);
-        // A subframe's post is not injected.js's: it hides nothing.
+        await page.waitForTimeout(300);
+        expect(await vis(), "an allowed page's window post hid the sidebar").toBe(shown);
+        // A subframe's post is not injected.js's either: it hides nothing.
         await page.evaluate(() => new Promise((r) => {
             const f = document.createElement("iframe");
             f.srcdoc = "<script>parent.postMessage({ __mlSidebarShot: 'hide' }, '*')<\/script>";
@@ -93,6 +93,12 @@ test("the page's own window handshake still reaches the shell for a page-built r
             document.body.append(f);
         }));
         expect(await vis(), "a subframe's hide hid the sidebar").toBe(shown);
+        // Control: the same hide from injected.js's port is heard, so the shell does hide on the handshake and the
+        // refusals above are not a shell that never hides (the full handshake: review-look.spec.mjs "hide handshake").
+        await onChannel(page, (ch) => ch.asInjected({ __mlSidebarShot: "hide" }));
+        await expect.poll(vis).toBe("hidden");
+        await onChannel(page, (ch) => ch.asInjected({ __mlSidebarShot: "show" }));
+        await expect.poll(vis).toBe(shown);
     } finally { await close(); }
 });
 

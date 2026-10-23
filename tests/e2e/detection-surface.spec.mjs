@@ -102,7 +102,18 @@ const ISO_JS = "const n = document.querySelectorAll('button').length; document.g
 const clickLastPoint = (body) => { const t = JSON.stringify(body.messages).match(/@pt:[0-9a-f]+/g)?.at(-1); return t ? { tool: "click", args: { selector: t } } : { content: "no token" }; };
 
 
-/** What every page shows with the extension merely installed (observed today, on approved and unapproved pages alike). */
+/**
+ * The page's window carried no message of ours in this span (SITE_PRESENCE.md step 2b: injected.js and the content
+ * scripts talk on a MessagePort), and the probe's own ping was heard in it, so the empty list is not a listener that
+ * never ran.
+ * @param {ReturnType<typeof summarize>} span one span of a scenario's row
+ * @param {string} when which span, for the message
+ */
+function expectWindowSilent(span, when) {
+    expect(span.heardOwnPing, `the probe's window listener heard its own ping ${when}`).toBe(true);
+    expect(span.messages, `no window message of ours ${when}`).toEqual([]);
+}
+
 /** What a VISIBLE page sees with no run (an origin allowed to use window.ml; SITE_PRESENCE.md step 2). */
 function expectInstalledTrace(load) {
     expect(load.mlClosedRootsAtLoad, "no `__mlClosedRoots` global: the captured roots are in shadow-patch's closure").toBe(false);
@@ -112,7 +123,8 @@ function expectInstalledTrace(load) {
     expect(load.domAdded.filter((d) => /chrome-extension/.test(d)), "the page scripts are registered content scripts: no <script> tag").toEqual([]);
     expect(load.extIdLearnedBy, "injected.js runs before any page script, so no page wrapper sees its stack at load").toEqual([]);
     expect(load.extensionCallers, "nor its ready event's dispatchEvent").toEqual([]);
-    expect(load.messages).toEqual(expect.arrayContaining(["PAGE_ADOPT_HELLO"]));
+    expectWindowSilent(load, "at load");
+    expect(load.pageEvents, "the port hand-off and ml:ready fire at document_start, before any page script listens").toEqual([]);
     // The probe fetches by the id it learned, and it learns none now. A page that knows the id already (a web store
     // build's is fixed) can still fetch the sidebar's files until use_dynamic_url (detection-surface.md row 5).
     expect(load.warFetch, "nothing on the page names the id, so the probe has nothing to fetch by").toBe(null);
@@ -128,7 +140,7 @@ function expectHiddenTrace(load) {
     expect(load.closedRootReaderAtLoad, "no closed-root reader answers the ask").toBe(false);
     expect(load.attachShadowNative, "attachShadow is the browser's own").toBe(true);
     expect(load.domAdded.filter((d) => /ml-|chrome-extension/.test(d))).toEqual([]);
-    expect(load.messages, "no window message of ours").toEqual([]);
+    expectWindowSilent(load, "at load");
     expect(load.extIdLearnedBy, "nothing on the page names the extension's id").toEqual([]);
     expect(load.extensionCallers).toEqual([]);
     expect(load.warFetch, "the probe never learns the id, so it has nothing to fetch by").toBe(null);
@@ -138,7 +150,9 @@ function expectHiddenTrace(load) {
 function expectRunTrace(during) {
     expect(during.domAdded, "the HUD card is a popover <div> on <html>").toContain("html>div#ml-sb-card");
     expect(during.domAttrs).toContain("ml-sb-card@popover");
-    expect(during.messages, "the run's protocol rides the page's window").toEqual(expect.arrayContaining(["ADOPT_RUN", "RUN_ADOPTED_NOW", "PAGE_TOOL_RUN", "PAGE_TOOL_RESULT"]));
+    // Before step 2b the run's protocol rode the page's window (ADOPT_RUN, RUN_ADOPTED_NOW, PAGE_TOOL_RUN,
+    // PAGE_TOOL_RESULT); now it rides the page channel's MessagePort and the window carries none of it.
+    expectWindowSilent(during, "during the run");
     expect(during.globalsAdded, "the pierce flag is in dom.ts's closure").not.toContain("__mlPierceClosed");
     expect(during.extensionCallers, "page-side tool code calls the page's builtins from chrome-extension://<id>/injected.js").toEqual(expect.arrayContaining(["document.querySelector", "document.querySelectorAll"]));
 }
@@ -173,7 +187,7 @@ test.describe("baselines", () => {
         expect(row.load.cdpConsoleGetter).not.toContain("errStack");
         expect(row.load.final.windowMl).toBe("absent");
         expect(row.load.domAdded.filter((d) => /ml-|chrome-extension/.test(d))).toEqual([]);
-        expect(row.load.messages).toEqual([]);
+        expectWindowSilent(row.load, "with no extension");
     });
 
     test("a debugger client's Runtime.enable is invisible to every console-getter shape in this Chromium", async () => {
@@ -238,14 +252,16 @@ test.describe("installed, no run", () => {
         const row = await scenario("idle-unapproved", { host: "other.test" });
         expectHiddenTrace(row.load);
         expect(row.cdp).toEqual([]);
-        expect(row.during).toMatchObject({ domAdded: [], messages: [], ...NO_CDP });
+        expect(row.during).toMatchObject({ domAdded: [], ...NO_CDP });
+        expectWindowSilent(row.during, "with no run");
     });
 
     test("an approved page sees window.ml and its patched attachShadow, and nothing more until a run starts", async () => {
         const row = await scenario("idle-approved");
         expectInstalledTrace(row.load);
         expect(row.cdp).toEqual([]);
-        expect(row.during).toMatchObject({ domAdded: [], messages: [], ...NO_CDP });
+        expect(row.during).toMatchObject({ domAdded: [], ...NO_CDP });
+        expectWindowSilent(row.during, "with no run");
     });
 
     test("a page the person never allowed or ran on cannot tell that window.ml is installed", async () => {
@@ -255,7 +271,8 @@ test.describe("installed, no run", () => {
         const row = await scenario("idle-hidden", { host: "other.test" });
         expectHiddenTrace(row.load);
         expect(row.cdp).toEqual([]);
-        expect(row.during).toMatchObject({ domAdded: [], messages: [], ...NO_CDP });
+        expect(row.during).toMatchObject({ domAdded: [], ...NO_CDP });
+        expectWindowSilent(row.during, "with no run");
     });
 });
 
@@ -278,13 +295,14 @@ test.describe("exec", () => {
         expect(row.results[0]).not.toContain("page says during exec");
     });
 
-    test("main world with streaming: the same, plus PAGE_TOOL_STREAM on the window for the exec's own lines", async () => {
+    test("main world with streaming: the same, and the exec's streamed lines stay off the page's window", async () => {
         const row = await scenario("exec-main-stream", { req: { stream: true }, script: () => [{ tool: "exec", args: { js: `console.log('exec says'); ${EXEC_JS}` } }] });
         expect(row.cdp).toEqual([]);
         expect(row.during.consoleSwapped).toEqual([]);
         expect(row.results[0]).toContain("exec says");
         expect(row.results[0]).not.toContain("page says during exec");
-        expect(row.during.messages).toContain("PAGE_TOOL_STREAM");
+        // Before step 2b each streamed line was a PAGE_TOOL_STREAM window message any page listener read.
+        expectWindowSilent(row.during, "while the exec streams");
     });
 
     test("isolated world (unapproved page, CDP): Runtime.enable and nothing the page can see but the DOM effect", async () => {
@@ -294,6 +312,10 @@ test.describe("exec", () => {
         // observed today: the isolated world's btn.click() arrives untrusted but WITH user activation (userGesture: true).
         expect(row.during.pointer).toEqual([expect.objectContaining({ type: "click", isTrusted: false, activation: [true, true], clientXY: [0, 0], screenXY: [0, 0] })]);
         expect(row.during.pointer[0].stack, "no injected.js frame: the click came from another world").toBeUndefined();
+        // The run's protocol stays off the window here too; but this page ran before injected.js was put in for the run,
+        // so its listener sees the port hand-off and ml:ready (observed today: row 6's residual, a hidden page with a run).
+        expectWindowSilent(row.during, "during a run on a hidden page");
+        expect(row.during.pageEvents).toEqual(["ml-page-port", "ml:ready"]);
     });
 
     test("isolated world with streaming: the binding is named for the world, so the page never sees it", async () => {

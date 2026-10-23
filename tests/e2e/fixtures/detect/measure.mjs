@@ -90,7 +90,10 @@ export function summarize(reports, since = 0) {
         domAdded: uniq(rs.filter((e) => e.kind === "dom-add").map((e) => `${e.parent}>${e.tag}${e.id ? "#" + e.id : ""}${e.src ? `[src=${anonymize(e.src)}]` : ""}`)),
         domRemoved: uniq(rs.filter((e) => e.kind === "dom-remove").map((e) => `${e.parent}>${e.tag}${e.id ? "#" + e.id : ""}`)),
         domAttrs: uniq(rs.filter((e) => e.kind === "dom-attr").map((e) => `${e.target}@${e.name}`)),
-        messages: uniq(rs.filter((e) => e.kind === "message").map((e) => e.type)),
+        // Every window message but the probe's own pings, and whether a ping was heard in this span (the listener ran).
+        messages: uniq(rs.filter((e) => e.kind === "message" && e.type !== "__probePing").map((e) => e.type)),
+        heardOwnPing: rs.some((e) => e.kind === "message" && e.type === "__probePing"),
+        pageEvents: uniq(rs.filter((e) => e.kind === "page-event").map((e) => e.type)),
         extIdLearnedBy: uniq(ids.map((e) => e.how)),
         warFetch: probe ? { injected: probe.injected.status ?? probe.injected.error, sidebar: probe.sidebar.status ?? probe.sidebar.error, manifest: probe.manifest.status ?? probe.manifest.error, bogus: probe.bogus.status ?? probe.bogus.error } : null,
         extensionCallers: uniq(rs.filter((e) => e.kind === "caller-stack").map((e) => e.fn)).sort(),
