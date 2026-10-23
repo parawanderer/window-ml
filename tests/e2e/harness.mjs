@@ -304,14 +304,14 @@ export async function inShell(page, fn, arg, { timeout = 15000 } = {}) {
  * @returns {Promise<T>}
  */
 export async function onChannel(page, fn, arg, opts) {
-    return inShell(page, new Function("_roots", "arg", `
+    return inShell(page, /** @type {any} */ (new Function("_roots", "arg", `
         const side = globalThis.__mlPageChannel;
         if (!side) throw new Error("onChannel: no page channel in the content script's world");
         const ch = {
             asInjected: (data) => { for (const l of side.listeners.slice()) l({ data }); },
             asIsolated: (data) => { if (!side.port) throw new Error("onChannel: injected.js holds no port on this page"); side.port.postMessage(data); },
         };
-        return (${fn.toString()})(ch, arg);`), arg, opts);
+        return (${fn.toString()})(ch, arg);`)), arg, opts);
 }
 
 /**
