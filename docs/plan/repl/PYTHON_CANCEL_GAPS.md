@@ -67,6 +67,16 @@ and the full `npm test` before the push. Mutation check, in the PR body: with th
 reverted alone, which tests fail; with the spend reverted alone, which fail. Measure the cost of the spend on a cell that
 schedules nothing (one loop turn) and say the number.
 
+## How to work
+
+Read, in this order, before touching code: `AGENTS.md`; the README beside this file, "Decisions already made" and "How to
+work, and how to coordinate" (the clone, one root per PR, labels, the session line on every post, merge-when-green,
+session mail, when to ask the coordinator, what a result file holds; it is written for the numbered lanes, and every
+line of it applies to you with work slug `python-cancel`); `docs/dev/python-sandbox.md` and `docs/dev/working-in-the-repo.md`;
+`docs/plan/repl/PYODIDE_LOCKDOWN.md` step 5; then the test file. Start with `tmp/CHECKPOINT.md` in your clone, one block
+per stretch of work, and say when it is a good moment to compact. The coordinator is live as
+`[window-ml policies/python/desktop/manifests coordinator]` (ListAgents; SendMessage, no mail needed while it runs).
+
 ## Rules that bind
 
 Clone of your own (`git clone` into `~/git/window-ml-python-cancel`, `.env` and `pyodide-wheels` symlinked, `git config
