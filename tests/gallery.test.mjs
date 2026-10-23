@@ -15,6 +15,9 @@ const manifest = galleryManifest({ only: /^(ReplyBubble|PointerChip|CopyBtn|Filt
 const byName = (n) => manifest.components.find((c) => c.name === n);
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+const { chromium } = await import("@playwright/test");
+/** The unit job has no browser; the gallery job installs one and runs this file. */
+const HAVE_BROWSER = existsSync(chromium.executablePath());
 
 // --- discovery ------------------------------------------------------------------------------------------------------
 
@@ -136,7 +139,7 @@ test("a malformed hash falls back to the defaults, toggle by toggle", () => {
 
 // --- the CLI's shot ------------------------------------------------------------------------------------------------
 
-test("shot --variant screenshots the named variant's tile, not the first", () => {
+test("shot --variant screenshots the named variant's tile, not the first", { skip: !HAVE_BROWSER && "no Playwright Chromium here (the gallery CI job runs it)" }, () => {
     const dir = mkdtempSync(path.join(tmpdir(), "gallery-variant-"));
     try {
         const shot = (variant) => {
