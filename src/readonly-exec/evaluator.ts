@@ -44,9 +44,10 @@ const COMPILES_PATTERN = new Set(["match", "matchAll", "search"]);
  *  quadratic in its receiver (`"a".repeat(n).replace(/a/g, "$'")` is n²/2 characters). */
 const REPLACEMENT_REF = /\$(?:\$|[&`']|\d{1,2}|<[^>]*>)/g;
 
-/** Refuse a replace before it builds a result over {@link MAX_STRING}. */
-function tooMuchReplaced(size: number): never {
-    throw new NotInDialect(`a replace that would build ${size.toLocaleString("en-US")} characters, more than a value may hold without asking`);
+/** Refuse a replace before it builds a result over {@link MAX_STRING}. The count stops once past it, so the message
+ *  names the limit, not a size the replace would not have stopped at. */
+function tooMuchReplaced(): never {
+    throw new NotInDialect(`a replace that would build over ${MAX_STRING.toLocaleString("en-US")} characters, more than a value may hold without asking`);
 }
 
 /** String methods that only scan, hash or compare (HOST_SCAN_CHARS_PER_STEP); every other one builds (HOST_CHARS_PER_STEP). */
@@ -222,7 +223,7 @@ export class Evaluator {
         const n = str.length;
         let size = n + (global ? n + 1 : 1) * (text.length + refs.length * n);
         if (size > MAX_STRING && global) size = this.replacedSize(str, p, text, refs, search);
-        if (size > MAX_STRING) tooMuchReplaced(size);
+        if (size > MAX_STRING) tooMuchReplaced();
         this.tick(Math.floor(size / HOST_CHARS_PER_STEP));
     }
     /** The text a host call coerces a replacement to. A string, a String object or a primitive is its `String()`; an
@@ -265,7 +266,7 @@ export class Evaluator {
             throw new NotInDialect("a replacer that returns an object, which the host would turn into text by running its toString");
         const len = String(ret).length;
         rep.chars += len;
-        if (rep.chars > MAX_STRING) tooMuchReplaced(rep.chars);
+        if (rep.chars > MAX_STRING) tooMuchReplaced();
         this.tick(Math.floor(len / HOST_CHARS_PER_STEP));
     }
     /** How many parts `v` expands to when walked whole, counting a part as often as a walk would visit it (so an array

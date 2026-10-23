@@ -226,7 +226,7 @@ test("HALTING: a replace is refused before it builds a result over MAX_STRING, t
     // Refused by THIS check, before the host builds anything: the reason is the replace's own, not `sized`'s after it.
     for (const v of lifted("halting", "a replace is refused before it builds a result over MAX_STRING")) {
         const r = await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
-        assert.match(r.message, /a replace that would build [\d,]+ characters/, v.name);
+        assert.match(r.message, /a replace that would build over [\d,]+ characters/, v.name);
     }
 });
 
