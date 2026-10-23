@@ -89,6 +89,14 @@ and the sh-policy session, none of which is your subagent.
   a local file outside git that Shane keeps for you: READ it, never work in that clone; ask that session if the shape is
   unclear, it found it).
 - The model-written proposals appended to `tests/fixtures/policy-corpus.json` (`LANE_11_RESULT.md`, "Left by #961").
+  OPEN as #1041 (a Sonnet subagent of root-k, 2026-10-23, the janitor reviews): 110 model entries (206 occurrences), the
+  corpus from 221 to 331; by distinct source 45 of 74 lift (fetch 25 of 37, sh 20 of 37); the per-run figures reproduce
+  the documented ones with the scorer's own extract and lift (run A fetch 33 of 52 and sh 24 of 53; run B fetch 46 of
+  52; run C fetch 41 of 49); no lifted tree disagrees with its source; the two sh answers that cannot be enumerated are
+  compared on their need's calls, now a committed assertion. Judgment calls, stated in the entries' notes: run B (the
+  withdrawn details text) included and labelled; Gemini-flash's 12:15Z fetch attempt excluded (setup unidentifiable);
+  the 19 entries marked `no` had no rewrite attempted. Not recomputed: the counts in
+  `tests/e2e/panel/policy-proposals.md`, which root 3's rerun recomputes.
 
 Not yours, said so you do not take them: `riskyRegex` stays as it is (ruled, lane 11); the python cancel gaps are
 `[window-ml python-cancel]`'s; site access and presence are `[window-ml security] Site access`'s; the Pyodide fork is
