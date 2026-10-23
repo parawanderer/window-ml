@@ -285,13 +285,39 @@ listed as remaining is DONE unless named below.
      reviewed by the red team, not the finder): each search is priced on its pattern and its input (`regex-cost.ts`)
      and charged to the step budget; the todo at `:189` is a plain test, failed on main, passes. Two follow-ups #988
      did not cause, named in its PR: a Python cell calling through the ml wire has no shared step meter, so each search
-     gets the per-call cap (handed to the repl follow-up session); a `replace` whose replacement uses `$'` or `` $` ``
+     gets the per-call cap (handed to the repl follow-up session; BUILT in #1007, merged 9ec17928, 2026-10-23: one ml-wire
+     step budget a cell, `ML_WIRE.md` "One budget a cell", the red team's grep `-A/-B/-C` quadratic fixed with it;
+     named there and unowned: the unpiped stored-text read and `serveWireCall`'s argument copies are uncharged); a `replace` whose replacement uses `$'` or `` $` ``
      builds output quadratic in its input while only the input's length is charged. ASSIGNED 2026-10-23 on Shane's word
      (relayed by the quadratic-regex session) to that session: [`REPLACE_OUTPUT_BOUND.md`](REPLACE_OUTPUT_BOUND.md); the
      red team found it and reviews nothing, the janitor reviews. Measured since: memory, not halting (V8 refuses the
      string at about 0.5G characters in milliseconds). Built in #1010 (merged a83afab2, 2026-10-23, the janitor reviewed): the
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
-     output bound at all, now held to `MAX_STRING`.
+     output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
+     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost, unowned.
+- **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
+  (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
+  named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped
+  manifest describes a program inside a workspace root (red team rechecked). #992 (51526abc): reading the agent files a
+  person already keeps, an idea; a measurement a decision rests on is a notebook. #995 (5acd17e7): JSON Schemas for
+  program and library manifests. #999 (7d2127ba): a policy may answer `ask`; precedence deny > ask > allow > builtin;
+  the card names it and offers no remember. #1007 (above). #1019 (93d34a3c): `POLICIES.md` "A policy kept in a file
+  (proposed, not built)" and "Where a policy can live". Shane's decisions with it (2026-10-23, in `POLICIES.md` via
+  #1019, nothing built): a policy kept in a FILE (a repo is one channel, not the main case) applies its `deny`/`ask`
+  live, its `allow` only from an accepted, hash-pinned snapshot entering the store as `origin: "file"`; loading is a
+  proposal card; committing or pushing a policy file asks by default, an endorsement; every gate is a default a person
+  may widen. Worked example and future test: "merge only through my script" = deny `gh` and non-read-only `git`, allow
+  one pinned user script; open under it whether the host refuses a denied program started INDIRECTLY (`npm run`,
+  `xargs`, a git alias). Two of Shane's not yet in a spec: a policy is CO-WRITTEN with the model interactively, never
+  filled in as a builder or JSON, safe only when the person approves the system's deterministic rendering of the rule
+  plus breadth evidence (calls it would and would not match), never the model's paraphrase; a classifier never decides
+  what runs automatically, at most after-the-fact detection. The red team's recheck of #999 (the page's own `ml.fetch`
+  free tiers and the page-hosted loop skip an `ask`) is settled by design, not open: those tiers are reads the page can
+  make itself with `fetch()`, and the page-hosted loop's `approve` is the page's own callback, so a card there binds
+  nothing (`docs/dev/policies.md`, "What an ask cannot reach"; `tests/redteam-policy-ask-free-tiers.test.mjs`). Still
+  open from it: a URL consented BEFORE an ask existed stays usable by the page's `ml.fetch`, and an ask saved between
+  `decide` and host start is not re-checked (only deny is). Unstarted and unrequested: the
+  symlink link as a second claim resource; `RIPGREP_CONFIG_PATH`; the lost-POLICIES-add race (awaits Shane).
 
 ## The lanes
 
