@@ -67,6 +67,8 @@ export function storeRefusal(r: ManifestRequest, stored: readonly StoredManifest
     if (r.scope === "workspace" ? !isAbsolute(r.root) : r.scope !== "global" || r.root !== undefined)
         return "a workspace manifest names its root (an absolute path); a global one names none";
     const m = r.manifest;
+    // B2 for both kinds: an entrypoint manifest naming a shipped program would be read before the shipped one too.
+    if (shipped[m.program]) return `${m.program} is described by the shipped manifest src/shell/manifests/${m.program}.json, which a stored one does not replace`;
     if (m.entrypoint) {
         if (r.pin !== undefined) return "a script's manifest is pinned by its entrypoint's sha256, not by a program pin";
         if (r.scope !== "workspace") return `${m.entrypoint.path} arrived with a repository, so its manifest belongs to that workspace, not global`;
@@ -78,7 +80,6 @@ export function storeRefusal(r: ManifestRequest, stored: readonly StoredManifest
         // A version is read only for a manifest that says how (`versionOf`): pinned to one it never reads, every call misses.
         if (p.version !== undefined && (m.version.range === "*" || !m.version.args.length))
             return `${m.program}'s manifest reads no version, so its pin cannot name one`;
-        if (shipped[m.program]) return `${m.program} is described by the shipped manifest src/shell/manifests/${m.program}.json, which a stored one does not replace`;
         if (p.inRoot && r.scope !== "workspace") return `${p.path} is inside a workspace root, so only that workspace may describe it`;
         if (p.inRoot && !(p.path === normalRoot(r.root!) || p.path.startsWith(normalRoot(r.root!) + "/")))
             return `${p.path} is not inside the workspace ${r.root} it is registered for`;
