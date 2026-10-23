@@ -210,7 +210,7 @@ handler strips each line's newline). (5) asyncio pending handles are cancelled
 before a cell's result is returned: every `asyncio.Task` from `all_tasks()` and every uncancelled `asyncio.Handle` that
 `gc.get_objects()` reaches (#998; the route matrix in #987). Two classes that sweep does not reach, found by the red
 team on 2026-10-23 and held as failing-first `{ todo }` tests in `tests/redteam-python-sandbox.test.mjs` (on main since
-#987, 8c312e6a), with no owner yet: a callable handed to a JS scheduler the strip keeps (`setTimeout`, `queueMicrotask`, `Promise.then`,
+#987, 8c312e6a), assigned 2026-10-23 to the session `[window-ml python-cancel]` (`docs/plan/repl/PYTHON_CANCEL_GAPS.md`; the property, ruled there: nothing the cell scheduled runs AFTER its result is returned, so its `finally` running during the cancel, inside the cell's own time, satisfies it): a callable handed to a JS scheduler the strip keeps (`setTimeout`, `queueMicrotask`, `Promise.then`,
 through `create_once_callable`/`create_proxy`) makes no Handle and fires after the result; and a started task kept on a
 module keeps a live `_coro` that a later cell drives with `throw`, so the first cell's `finally` runs after its result
 (the fix is to spend the coroutine in the cancel, not to leave it pending). The strip, the harness capture and the wrapper are

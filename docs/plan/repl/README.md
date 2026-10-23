@@ -276,7 +276,9 @@ listed as remaining is DONE unless named below.
      route. #987 (the site-access session, Sonnet) was since tests only, the route matrix guarding the sweep, reviewed
      clear, MERGED 2026-10-23 as 8c312e6a. The red team's review names two classes the sweep does not reach, now
      failing-first `{ todo }` tests on main in `tests/redteam-python-sandbox.test.mjs` (six todos there: the red
-     team's five plus `scheduleCallback`), UNOWNED, the red team builds and reviews neither: a
+     team's five plus `scheduleCallback`), ASSIGNED 2026-10-23 on Shane's word (his session) to a new session
+     `[window-ml python-cancel]` (Opus): [`PYTHON_CANCEL_GAPS.md`](PYTHON_CANCEL_GAPS.md); the janitor reviews; the red
+     team found both and builds and reviews neither: a
      callable handed to a kept JS scheduler (`setTimeout`, `queueMicrotask`, `Promise.then`) makes no Handle; a started
      task kept on a module keeps a live `_coro` a later cell can `throw` into. Also: the two existing `finally` tests
      never started the coroutine, so they would have passed with the cancel deleted; #987 reshaped them.
