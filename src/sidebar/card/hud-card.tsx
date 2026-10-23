@@ -238,6 +238,11 @@ export function CardApp() {
     // A site's start card (card-start.tsx) is an approval too, and waits behind an open tool gate of the same run.
     const asking = !pendingStep && startAskPending(run ?? undefined);
     const pending = !!pendingStep || asking;
+    // Deny with a note, as the transcript's ApprovalRow offers: keyed by the gate it was opened for, so a new gate
+    // never inherits an open note field.
+    const gateKey = run && pendingStep?.seq != null ? stepKey(run.hash, pendingStep.seq) : "";
+    const [sayingFor, setSayingFor] = useState("");
+    const saying = !!gateKey && sayingFor === gateKey;
     // The other asks waiting on this card: the pill and the head say how many (1.1, "Queued behind a pending tool approval").
     const moreWaiting = runs.filter((s) => s.hash !== run?.hash && runIsPending(s)).length + (pendingStep && startAskPending(run ?? undefined) ? 1 : 0);
     // Terminal ONLY when the run isn't mid-turn: a follow-up run() keeps the PRIOR summary set, so without
@@ -396,7 +401,7 @@ export function CardApp() {
         return () => ro.disconnect();
         // `showWork`: the ResizeObserver can't catch a Show-work toggle (the iframe body is height-pinned
         // by the shell, so content growth doesn't resize body) — so re-measure explicitly on the toggle.
-    }, [state, r, showWork]);
+    }, [state, r, showWork, saying]);
     // Post the STATE *after* the height effect (both fire on a state change; effects run in definition
     // order). So on orb→expanded the shell learns the new content's height FIRST (silently — the orb uses a
     // fixed size), then applies "expanded" with the fresh cardAutoH. Posting state first made it lay out the
@@ -407,7 +412,8 @@ export function CardApp() {
     // page-side global hotkey routed in would reopen the forgery hole, so we deliberately don't do that).
     // We ask the shell to focus the card frame when an approval appears, so the keys work without a click.
     useEffect(() => {
-        if (!run || !pendingStep || pendingStep.seq == null) return;
+        // While the note field is open, Enter is a newline and Esc closes the field: the window keys stand down.
+        if (!run || !pendingStep || pendingStep.seq == null || saying) return;
         const h = run.hash, seq = pendingStep.seq;
         const canKeep = hasPersistGrants(pendingStep.grants);
         // Not for a run a SITE started (Q15): the page decides when its gates appear, and could raise one as the person
@@ -426,7 +432,7 @@ export function CardApp() {
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [pending, pendingStep?.seq, pendingAsk?.id]);
+    }, [pending, pendingStep?.seq, pendingAsk?.id, saying]);
 
     if (composing) return <ComposerCard />;   // the blob reshapes into the task input (container morphs shell-side)
     // Backend GONE: a run that's still "starting"/"working" against a dead box would otherwise hang on the
@@ -463,12 +469,13 @@ export function CardApp() {
     const doneN = runs.filter(runIsDone).length;
     const anyPend = runs.some(runIsPending);   // a run needs approval — must stay visible even in the summary
     const summaryHead = anyPend ? "Approval needed" : doneN === runs.length ? "All tasks complete" : doneN > 0 ? "Some tasks complete" : "Tasks running…";
-    const decide = (ok: boolean, persist = false) => {
+    const decide = (ok: boolean, persist = false, feedback?: string) => {
         if (!pendingStep || pendingStep.seq == null) return;
+        setSayingFor("");
         if (pendingAsk) { decidedSteps.add(askKey(run.hash, pendingStep.seq, pendingAsk.id)); sendApproval(run.hash, pendingStep.seq, ok, false, undefined, pendingAsk.id); rev.value++; return; }
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
         clearHighlight();
-        void decideGate(pendingStep, run.hash, pendingStep.seq, ok, persist);   // fetch_url: grant its host in-gesture
+        void decideGate(pendingStep, run.hash, pendingStep.seq, ok, persist, feedback);   // fetch_url: grant its host in-gesture
         rev.value++;
     };
     const onClose = (e: Event) => {
@@ -618,16 +625,46 @@ export function CardApp() {
                     return <div class="card-foot card-foot-appr">
                         {pendingStep.askWhy ? <AskWhyLine why={pendingStep.askWhy} /> : null}
                         {showGrants ? <GrantCard grants={pendingStep.grants!} /> : null}
-                        <div class="card-foot-row">
-                            <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
-                            <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
-                            {showGrants ? <button class="appr-btn yes remember" title="Approve — and let the agent fetch these URLs WITHOUT approval for the rest of this session (results are cached)" onClick={() => decide(true, true)}>Keep <kbd class="kb">{KEEP_HINT}</kbd></button> : null}
-                        </div>
+                        {saying
+                            ? <DenyNote onCancel={() => setSayingFor("")} onSend={(t) => decide(false, false, t || undefined)} />
+                            : <div class="card-foot-row">
+                                {/* Deny splits as the transcript's does: the chevron is "deny, and say why", which is
+                                    how a person redirects the model (a proposed policy refined in words included). */}
+                                <span class="appr-deny-wrap">
+                                    <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
+                                    <button class="appr-btn no appr-deny-more" aria-label="Deny with a message"
+                                        {...cursorTipOn("Deny with a message")} onClick={() => setSayingFor(gateKey)}><IconChevron /></button>
+                                </span>
+                                <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
+                                {showGrants ? <button class="appr-btn yes remember" title="Approve — and let the agent fetch these URLs WITHOUT approval for the rest of this session (results are cached)" onClick={() => decide(true, true)}>Keep <kbd class="kb">{KEEP_HINT}</kbd></button> : null}
+                            </div>}
                     </div>;
                   })()
                 : done && !(startAskExpired(run) && run.startAsk?.askOnly) ? <><SiteWaitPrompt s={run} /><CardReply hash={run.hash} /></>
                     : steering ? <CardSteer hash={run.hash} onClose={() => { cardSteerHash.value = ""; }} />
                         : null}
+        </div>
+    );
+}
+
+/** The HUD gate's "deny, and say why": an inline field in the card's footer, not the transcript's dialog, since the
+ *  card is a small frame over the page. ⌘/Ctrl+Enter sends, Esc goes back to the buttons. */
+export function DenyNote({ onCancel, onSend }: { onCancel: () => void; onSend: (text: string) => void }) {
+    const note = useRef<HTMLTextAreaElement>(null);
+    useEffect(() => { note.current?.focus(); }, []);
+    const send = () => onSend(note.current?.value.trim() || "");
+    return (
+        <div class="card-deny-note">
+            <textarea ref={note} class="chat-dialog-field appr-say" rows={3} aria-label="Why you are denying this"
+                placeholder="Say what to do instead. The model reads this rather than a bare no."
+                onKeyDown={e => {
+                    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onCancel(); }
+                    else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+                }} />
+            <div class="card-foot-row">
+                <button class="appr-btn" onClick={onCancel}>Cancel</button>
+                <button class="appr-btn no" onClick={send}>Deny with this</button>
+            </div>
         </div>
     );
 }

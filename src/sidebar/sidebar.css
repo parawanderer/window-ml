@@ -2633,6 +2633,11 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-foot-appr .card-foot-row:has(.appr-btn.remember) .appr-btn { padding: 6px 12px; }
 /* the collapsed grant card in the HUD card foot sits above the buttons. */
 .card-foot .appr-grant { font-size: 0.95em; }
+/* The HUD gate's deny note (DenyNote): the field above its two buttons, filling the footer's width. */
+.card-deny-note { display: flex; flex-direction: column; gap: 8px; }
+.card-deny-note .appr-say { margin: 0; }
+/* The split Deny in the footer: its halves take the footer's button padding, not the transcript's. */
+.card-foot .appr-deny-wrap .appr-deny-more { padding: 6px 8px; }
 /* Inline reply on the finished card. Two states: a quiet collapsed GHOST affordance (icon + "Reply…", does
    NOT look like a chat box) that blooms in with a hue→black glow instead of flashing; and, on click, the
    real one-line input whose send button lives INSIDE the field, appearing only once you type. Continues the
