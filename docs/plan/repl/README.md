@@ -271,8 +271,12 @@ listed as remaining is DONE unless named below.
      under `except Exception`; a `BaseException` raised there ends `wrapUserScript` before the cancel runs.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
-     an input cap tied to the pattern's quantifiers. The readonly dialect has no REPL lane; the site-access session has
-     offered to take it after its presence step 2.
+     an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
+     reviewed by the red team, not the finder): each search is priced on its pattern and its input (`regex-cost.ts`)
+     and charged to the step budget; the todo at `:189` is a plain test, failed on main, passes. Two follow-ups #988
+     did not cause, named in its PR: a Python cell calling through the ml wire has no shared step meter, so each search
+     gets the per-call cap (handed to the repl follow-up session); a `replace` whose replacement uses `$'` or `` $` ``
+     builds output quadratic in its input while only the input's length is charged (unassigned, Shane's call).
 
 ## The lanes
 
