@@ -157,8 +157,8 @@ surfaces it.
 one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
-and continue. The janitor reviews every open code PR in dependency order: #1052, #1042, #1048, #1055, #1051, #1045,
-#1041, #1046, then (d), then #1068, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046 are merged): #1048, #1055, #1051, #1045,
+#1041, then (d), then #1068, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -379,9 +379,12 @@ listed as remaining is DONE unless named below.
   branch `manifests/propose`, head 5ee9eb92, `redteam-propose-manifest.test.mjs` on its branch): twelve pins, all six
   boundary properties hold against c0ca2a09, mutation-checked, no gap; it merges after #1055, the janitor reviews it.
   #1068's entrypoint todo is a passing pin since 4d80c878 (root-k's fix 01f3952f on `manifests/store`). The janitor's
-  re-reviews cleared #1048 and #1063 on 2026-10-23. BLOCKED the same day, Shane's call: #1048's base is #1042's branch
-  (`owners/extension-cpu-owner`, green, review non-blocking) and `merge-when-green` refuses #1042 while #1048 is stacked
-  on it; root-k's session was refused permission to retarget #1048 to `main` and to merge host #28, and stopped there.
+  re-reviews cleared #1048 and #1063 on 2026-10-23. Blocked the same day: #1048's base was #1042's branch and
+  `merge-when-green` refuses a PR another is stacked on; root-k's session was refused permission to retarget #1048 or
+  to merge host #28, and stopped there. Shane cleared it himself the same afternoon: #1042 MERGED b7e9a3c1 (the host's
+  owner table and CPU time read; the worker never registers), host #28 MERGED ae7284e6, #1048 retargeted to `main`.
+  Root-k merged `main` into `manifests/store`; main's backup inventory then failed on the store's two keys, classified
+  `never` backed up in a48e9743, a commit the janitor has not yet seen (asked the same hour; #1048 waits on CI).
 
 ## The lanes
 
