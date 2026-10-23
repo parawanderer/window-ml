@@ -39,9 +39,13 @@ function solidPng(w, h, [r, g, b]) {
 
 // The image is 240×160 at its source and drawn at 120×80: a crop of the capture is 120×80, a fetch of the src 240×160.
 const PIC = solidPng(240, 160, [0, 255, 0]);
+// #b sits at (400, 50) so its centre (500, 100) is clear of the HUD card: an open click/type approval
+// rests the card at bottom-right as `expanded`, whose measured rect is ~(470, 322) 392×339 on this 800×600
+// viewport. `workerShot`'s mask paints that rect, so a python shot landing while the card is up (or still
+// animating away from) the approval state would grey out #b's centre and out[4] would read [128,128,128].
 const PAGE = `<!doctype html><html><head><title>Ratchet</title><style>
 html,body{margin:0;background:#fff} button,input,img{position:absolute;border:0;padding:0;margin:0}
-button{width:200px;height:100px;font-size:0} #a{left:50px;top:40px;background:rgb(255,0,0)} #b{left:400px;top:300px;background:rgb(0,0,255)}
+button{width:200px;height:100px;font-size:0} #a{left:50px;top:40px;background:rgb(255,0,0)} #b{left:400px;top:50px;background:rgb(0,0,255)}
 #f{left:50px;top:300px;width:200px;height:40px;background:#eee;font-size:16px} #pic{left:600px;top:60px;width:120px;height:80px}
 </style></head><body><button id="a" onclick="this.dataset.clicked='1'">Red</button><button id="b">Blue</button>
 <input id="f" aria-label="Name"><img id="pic" alt="green" src="/pic.png"></body></html>`;
@@ -197,8 +201,8 @@ async function expectTheRun(r, page, result, skip = 0) {
     expect(out[2]).toContain("Here's the area where you clicked");
     expect(out[3]).toContain("Here's the field input#f after you typed it");
     expect(out[4], "python saw #b's crop: 100 rows, 200 columns, blue").toContain("[100,200,3,0,0,255]");
-    // (100, 50) in #b's crop is (500, 350) on the page: #b's centre.
-    expect(out[5]).toMatch(/→ @pt:[0-9a-f]+ at \(500, 350\)/);
+    // (100, 50) in #b's crop is (500, 100) on the page: #b's centre.
+    expect(out[5]).toMatch(/→ @pt:[0-9a-f]+ at \(500, 100\)/);
     expect(out[6], "the cast's token resolved in the page's registry").not.toMatch(/Unknown point token|Error/);
     expect(await page.evaluate(() => document.querySelector("#a").dataset.clicked), "the verified click landed").toBe("1");
     expect(await page.evaluate(() => document.querySelector("#f").value)).toBe("hello");
