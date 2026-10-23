@@ -106,9 +106,13 @@ its input before it runs ([`readonly-exec.md`](../dev/readonly-exec.md), the Hal
 budget's worth. That bounds a call, not a loop: a cell calling `dereference` with a search priced just under the cap
 in a loop held the worker's one thread about a second a call until the cell's watchdog, and every other run and tab
 with it. So the pipe charges
-the client at the dialect's rates (what each stage reads and makes, and what its searches can cost), and a call that
-would go past what is left answers `OverBudget` before the work runs. A call that does no metered work (`config`, a
-read with no pipe) still answers. The next cell's client starts whole.
+the client at the dialect's rates (what each stage reads and makes, at 64 characters a step, and what its searches
+can cost), and holds each stage to the dialect's `MAX_STRING`. A search or a stage's input past what is left answers
+`OverBudget` before it runs; a stage's output is charged once made, so the call that crosses the line has spent at
+most one stage past it, and a stage that would build more than `MAX_STRING` (`sed`, pretty-printed JSON) is refused
+before it builds. A call that does no metered work (`config`, a read with no pipe) still answers. The next cell's
+client starts whole. In figures: a stage over a 1 MB text costs about 16k steps to read and as much again for what
+it makes, so a cell can pipe such a text about ninety times.
 
 Per cell, not per run: the person approves a cell, or the dialect admits it, one at a time, and the model can only
 spend one more cell by making one more call. A budget per run would make a late, cheap cell fail for what an early

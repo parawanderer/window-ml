@@ -506,7 +506,7 @@ export const untrackRun = (tabId: number, runId: string): void => {
 
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
-export const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => DerefRead>();
+export const derefByRun = new Map<string, (ref: string, pipe?: string | string[], limits?: import("../pointers/text-pipe").PipeLimits) => DerefRead>();
 /** The pointer reads sent with a run's in-flight approved `exec` (named-reads.ts): a stored table's columns are read
  *  for that call only when its key is among them (VALUE_COLUMNS). Set and cleared around the one call. */
 export const execReads = new Map<string, import("../pointers/named-reads").PreRead[]>();   // state: plumbing

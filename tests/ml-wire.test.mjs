@@ -103,6 +103,51 @@ test("a cell's piped dereferences share one step budget: a loop of calls each un
     assert.equal(second.answers.length, first.answers.length, "the next cell's client starts with a whole budget");
 });
 
+test("calls a cell makes at once draw on the same budget as calls in turn: Promise.all buys no extra work", T, async () => {
+    const url = "https://data.example/a.txt";
+    const cells = [];
+    const call = (bg, wire) => wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep a+b" }]);
+    await wireRun(async (wire, bg) => {
+        if (!cells.length) {
+            let n = 0;
+            for (; n < 80; n++) if ((await call(bg, wire)).error) break;
+            cells.push({ answered: n });
+        } else {
+            const all = await Promise.all(Array.from({ length: 80 }, () => call(bg, wire)));
+            cells.push({ answered: all.filter((a) => "value" in a).length, codes: [...new Set(all.filter((a) => a.error).map((a) => a.error.code))] });
+        }
+    }, { body: "a".repeat(3900) + "\n", url, calls: [
+        { name: "fetch_url", args: { url } },
+        { name: "python_exec", args: { code: "print(1)", mode: "readonly" } },
+        { name: "python_exec", args: { code: "print(2)", mode: "readonly" } },
+    ] });
+    assert.equal(cells.length, 2, "positive control: both cells ran");
+    assert.ok(cells[0].answered >= 10 && cells[0].answered < 80, `in turn: ${cells[0].answered}`);
+    assert.equal(cells[1].answered, cells[0].answered, "at once: the same number answer");
+    assert.deepEqual(cells[1].codes, ["OverBudget"], "and the rest are refused by the budget");
+});
+
+test("a stage with no regex charges what it reads and makes, and a sed that would build past MAX_STRING is refused before it builds", T, async () => {
+    // A stored megabyte: `head` reads and makes about 16k steps' worth each way, so no search is needed to spend the budget.
+    const url = "https://data.example/big.txt";
+    const got = {};
+    await wireRun(async (wire, bg) => {
+        got.sed = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: `sed s/a/${"x".repeat(20)}/g` }]);
+        let n = 0;
+        for (; n < 200; n++) {
+            const a = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "head 1" }]);
+            if (a.error) { got.last = a; break; }
+            if (n === 0) got.first = a;
+        }
+        got.answered = n;
+    }, { body: "a".repeat(1_000_000) + "\n", url, store: true });
+    assert.equal(got.sed.error?.code, "OverBudget", JSON.stringify(got.sed).slice(0, 200));
+    assert.match(got.sed.error.message, /too much for one call to build/);
+    assert.equal(got.first?.value?.text?.length, 1_000_000, "positive control: the whole stored text is read, not its preview");
+    assert.equal(got.last?.error?.code, "OverBudget");
+    assert.ok(got.answered >= 60 && got.answered < 200, `head alone answered ${got.answered} times`);
+});
+
 // --- the server's rules, without a worker ---
 
 test("ask: a gated call answers ask first, then its value or a Denied once the person decides", async () => {
