@@ -274,19 +274,31 @@ if (args.includes("--check-genres")) {
  * Run exactly these test files, refusing first if any of them would boot a STALE bundle.
  *
  * Most of this suite loads the real sources into a `node:vm` and needs no build at all — but `loadSidebarWorld`
- * boots `dist/sidebar-app.js`, so those files test whatever was built last. That is the same silent failure the
+ * boots `dist/sidebar-app.js` and `loadBackground` boots `dist/background.js`, so those files test whatever was built
+ * last (a stale background made a fixed `grep -A` read as the old quadratic loop, #1007). That is the same silent failure the
  * Playwright suite guards (`check-dist-fresh.mjs`), one layer down, and it cost a session the day the Playwright
  * guard was written. Scoped to the files in THIS run, and to `dist/` alone, so a run of pure-module tests is never
  * stopped over a bundle nothing is about to open.
  */
+/** Whether a test file, or a test helper it imports by a relative path (`./ml-wire-harness.mjs`), boots a bundle. */
+function bootsBundle(file, seen = new Set()) {
+    if (seen.has(file)) return false;
+    seen.add(file);
+    let text;
+    try { text = readFileSync(file, "utf8"); } catch { return false; }
+    if (/loadSidebarWorld|loadBackground/.test(text)) return true;
+    const local = [...text.matchAll(/(?:from\s+|require\(\s*|import\(\s*)["'](\.\/[^"']+)["']/g)].map((m) => path.join(path.dirname(file), m[1]));
+    return local.some((f) => bootsBundle(f, seen));
+}
+
 function runFiles(list) {
     // Slowest first: a long file that starts last decides the wall clock while every other slot has gone idle.
     const ordered = orderSlowestFirst(list);
-    const needsBundle = ordered.filter((f) => /loadSidebarWorld/.test(readFileSync(path.join(ROOT, "tests", f), "utf8")));
+    const needsBundle = ordered.filter((f) => bootsBundle(path.join(ROOT, "tests", f)));
     if (needsBundle.length) {
         const report = stalenessReport(["dist"]);
         if (report) {
-            console.error(`${report}\n\n  ${needsBundle.length} file(s) in this run boot dist/sidebar-app.js.`);
+            console.error(`${report}\n\n  ${needsBundle.length} file(s) in this run boot a bundle from dist/.`);
             process.exit(1);
         }
     }
