@@ -89,7 +89,10 @@ and the sh-policy session, none of which is your subagent.
   left"; `LANE_11_ENDED_RECORD_DESIGN.md`), and K3b's open item that the deadline kill's record is consumed once
   (`README.md`, "K3b"). Host side.
 - The two uncharged reads named in #1007's body: the unpiped stored-text read and `serveWireCall`'s argument copies
-  (`ML_WIRE.md`, "One budget a cell").
+  (`ML_WIRE.md`, "One budget a cell"). DONE as #1053 (root-k, merged bb881ed7, 2026-10-23): both charged their size at
+  the pipe rate before the copy, so a loop of either stops like a loop of pipes (`ML_WIRE.md`, same section). Its e2e
+  failed twice on site-access attack 13 ("cannot be cancelled by the page") with the diff untouched and passed on
+  rerun: that attack is flaky, not #1053's.
 - `sed`'s size bound over-counts (`s/a/$'/g` refused at 4,000 lines; `src/readonly-exec/replace-size.ts`, the
   `replaceCharge` row of `docs/dev/readonly-exec.md`): exact where the worst case is wrong, never looser than exact.
   DONE as #1045 (a Sonnet subagent of root-k, 2026-10-23), a NEGATIVE result on the stated bug: the 4,000-line refusal
