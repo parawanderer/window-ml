@@ -269,6 +269,13 @@ listed as remaining is DONE unless named below.
      runs after the result has returned. Python side of window-ml, not the fork; lane 3 or 12 would have held it.
   2. `tests/redteam-python-sandbox.test.mjs:315` (P2-escape): `_ml_dumps`'s `default=` calls `str()` on the cell's object
      under `except Exception`; a `BaseException` raised there ends `wrapUserScript` before the cancel runs.
+     BOTH BUILT in #987 (open, the site-access session `2dfb7129` on Sonnet, opened 2026-10-22): the wrapper patches
+     `call_soon`/`call_later`/`call_at` on the loop's class for the cell and cancels the recorded Handles after the
+     tasks; the epilogue's result, render and table steps catch `BaseException`. Both todos are plain tests, failing
+     first on main. As of 2026-10-23 it is unreviewed and CONFLICTING with main (#998 touched `python-runtime.ts`); the
+     builder rebases, Shane names the reviewer (the janitor found both and may not review; the coordinator's suggestion
+     is the red team). It leaves three routes as new `{ todo }` tests: `pyodide.webloop.scheduleCallback`, a
+     done-callback on a task the cell made, and the original scheduler through `call_later.__closure__`.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
