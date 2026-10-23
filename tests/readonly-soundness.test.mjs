@@ -216,6 +216,52 @@ test("the regex charge leaves ordinary searches alone: words, delimiters, log li
     }
 });
 
+// --- HALTING: a replace is charged for the text it builds ----------------------------------------------------------
+
+// `$'` and `` $` `` insert the text after and before each match, so `"a".repeat(n).replace(/a/g, "$'")` builds n²/2
+// characters in one host call. The check after the call (`sized`) came once the string was in memory, up to V8's
+// limit (0.5 GB at n = 30,000, a RangeError past it), and a result under MAX_STRING was charged as its receiver: 300
+// replaces of 8.8 million characters each ran without asking. Each replace is now sized before it runs.
+test("HALTING: a replace is refused before it builds a result over MAX_STRING, through every way a script replaces", async () => {
+    // Refused by THIS check, before the host builds anything: the reason is the replace's own, not `sized`'s after it.
+    for (const v of lifted("halting", "a replace is refused before it builds a result over MAX_STRING")) {
+        const r = await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+        assert.match(r.message, /a replace that would build over [\d,]+ characters/, v.name);
+    }
+});
+
+test("HALTING: a replace is charged for the text it builds, so a loop of them under the limit runs out of budget", async () => {
+    for (const v of lifted("halting", "a replace is charged for the text it builds")) await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+});
+
+test("HALTING: a replacement is a string or an arrow: an object, an array or a builtin is not a way past the size", async () => {
+    for (const v of lifted("halting", "a replacement is a string or an arrow")) {
+        const r = await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
+        assert.match(r.message, /a replace(r|ment) that/, v.name);
+    }
+});
+
+test("the replace charge leaves ordinary rewrites alone: a date rewrite, $& around words, a delimiter, a replacer arrow", async () => {
+    for (const v of lifted("halting", "the replace charge leaves ordinary rewrites alone")) {
+        const r = await inWorker(v.js, { stepBudget: v.budget });
+        assert.deepEqual(r, { value: v.expect.value, logs: 0 }, v.name);
+    }
+});
+
+test("a replacer arrow that returns its match is counted at the receiver's size, not twice it", async () => {
+    // The first version started at the receiver and added every return without taking away the match it replaced, so
+    // an identity over 5.5 million characters counted 11 million and was refused. A raised budget pays for the 5.5
+    // million calls, which the shipped one never would: the size is what this checks.
+    const r = await inWorker(`"a".repeat(5500000).replace(/a/g, (c) => c).length`, { stepBudget: 30_000_000, ms: 20_000 });
+    assert.deepEqual(r, { value: 5500000, logs: 0 });
+});
+
+test("replaceAll with a RegExp that is not global throws the host's own TypeError, not one from the size check", async () => {
+    const r = await inWorker(`"abc".replaceAll(/b/, "$'".repeat(1000000))`);
+    assert.equal(r.threw, "TypeError", JSON.stringify(r));
+    assert.match(r.message, /replaceAll called with a non-global RegExp/);
+});
+
 // --- FAILURE: a survey refused by a new check leaves nothing behind ---------------------------------------------------
 
 test("FAILURE: a survey that curates its answer and then trips an expansion, a cost charge or a page RegExp has changed nothing", async () => {

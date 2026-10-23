@@ -335,6 +335,17 @@ test("sed: substitutes on each line, with g and i", () => {
     assert.equal(P("2026-09-04", "sed s/(\\d+)-(\\d+)-(\\d+)/$3\\/$2\\/$1/"), "04/09/2026");
 });
 
+test("sed: a caller that names no maxChars is still held to MAX_STRING, so $' cannot build a quadratic line", () => {
+    // A tool's `pipe` and an `@tool:` pipe call runPipe with no limits; there `s/a/$'/g` on one line of 30,000 "a"
+    // built 450 million characters.
+    assert.throws(() => runPipe("a".repeat(30000), `sed "s/a/$'/g"`), /would produce over 10,000,000 characters/);
+    assert.equal(runPipe("a".repeat(1000), `sed "s/a/$'/g"`).length, 1000 * 999 / 2, "under the limit it runs as before");
+    // Each match is counted at what it inserts, less the character it replaces: 7,998,000 characters runs, where an
+    // upper bound that added the whole line per `$'` refused it.
+    assert.equal(runPipe("a".repeat(4000), `sed "s/a/$'/g"`).length, 4000 * 3999 / 2);
+    assert.equal(runPipe("a".repeat(3000000), `sed "s/a/$&/g"`).length, 3000000, "an identity is the line's own size");
+});
+
 test("sed: another delimiter for a pattern full of slashes — QUOTED, since | separates stages", () => {
     // Unquoted, `|` would split the pipeline itself, which is why the description says to quote it.
     assert.equal(runPipe("https://a/b", "sed 's|https://a|X|'"), "X/b");
