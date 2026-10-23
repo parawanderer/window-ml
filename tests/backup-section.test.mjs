@@ -87,7 +87,7 @@ test("the key screen shows the groups once, with copy, download and print, and s
     const host = show(M.RecoveryKeyBody, recovery({ stage: "show" }));
     assert.deepEqual([...host.querySelectorAll(".bk-group")].map((g) => g.textContent), GROUPS);
     assert.deepEqual(buttons(host).slice(0, 3), ["Copy", "Download as .txt", "Print"]);
-    assert.match(host.textContent, /If you lose both the passphrase and this key, nobody can open these files, including us\./);
+    assert.match(host.textContent, /If you lose both the passphrase and this key, nobody can open these files\./);
 });
 
 test("the passphrase step states why the length matters and holds Continue until both match", async () => {
