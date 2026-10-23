@@ -11,9 +11,12 @@
 // runs, so a cell that monkeypatches `ast.parse` or `json.loads` cannot change what the harness reports.
 // `docs/plan/repl/PYODIDE_LOCKDOWN.md` is the spec; `docs/dev/python-sandbox.md` is the implementation note.
 import "ses";
+import { installCellGate, type CellGate } from "./cell-gate";
 
 /** Once per realm: `lockdown()` freezes the intrinsics and throws if called twice. */
 let locked = false;   // state: plumbing — the realm's lockdown latch, one-way
+/** The realm's cell gate, installed with the lockdown (cell-gate.ts). */
+let gate: CellGate | null = null;   // state: plumbing — installed once per realm, before `lockdown()`
 
 /**
  * The names a worker's `globalThis` must keep after the strip: the JS intrinsics Pyodide needs, plus a
@@ -84,6 +87,16 @@ class _MlHarnessMod(_ml_t.ModuleType):
     def __delattr__(self, name):
         raise AttributeError(f"{name} is frozen")
 
+# THE CELL GATE (cell-gate.ts): the wrapper opens its window and revokes what the cell handed to JavaScript. Held
+# in closures, so the harness's refs are Python functions and no JsProxy lands in a cell's namespace.
+def _ml_gate_calls(g):
+    def begin():
+        g.begin()
+    def revoke():
+        g.revoke()
+    return begin, revoke
+_ml_cell_begin, _ml_cell_revoke = _ml_gate_calls(globals().pop("_ml_gate_js"))
+
 _h = _MlHarnessMod("_ml_harness")
 object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "ast_parse": _ml_a.parse,
@@ -120,7 +133,10 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     # code (LANE_1_PR2_DESIGN.md).
     "inspect": _ml_i,
     "asyncio": _ml_aio,
+    "cell_begin": _ml_cell_begin,
+    "cell_revoke": _ml_cell_revoke,
 })
+del _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke
 _h
 `;
 
@@ -160,8 +176,14 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
         } catch { /* already an accessor or non-configurable */ }
         // Warm up the basic eval path too (cheap, keeps the first cell from being the first conversion).
         try { await py.runPythonAsync("1", { globals: py.globals }); } catch { /* unwarmable: the later cells will say so */ }
+        // The cell gate wraps `Promise.prototype.then`/`finally`, so it goes in before `lockdown()` freezes them.
+        // It throws on a Pyodide without the internals it hooks: no worker boots then, rather than one whose cells
+        // can schedule Python past their result (cell-gate.ts).
+        // Once per realm, apart from the `locked` latch: a `lockdown()` that throws leaves the latch unset.
+        gate ??= installCellGate(py);
         try { (globalThis as any).lockdown({ errorTaming: "unsafe" }); locked = true; } catch { /* already locked */ }
     }
+    if (!gate) throw new Error("lockdownReadonly: this realm is already locked down, so the cell gate cannot be installed");
 
     // 2. Capture what the relay needs BEFORE the strip: the worker's `onmessage` is defined once and
     //    frozen; the closure holds `postMessage` so the relay can still answer.
@@ -210,6 +232,8 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
         // `HARNESS_BOOT` ends with `_h` as its trailing expression: `runPython` returns the module object
         // directly. It is NOT placed in `sys.modules` — `import _ml_harness` must fail, and the wrapper
         // deletes `_ml_harness` from the cell's namespace after extracting the refs.
+        // The gate reaches the boot as a temporary global the boot pops: the cell's namespace never holds it.
+        py.globals.set("_ml_gate_js", { begin: () => gate!.begin(), revoke: () => gate!.revoke() });
         harness = py.runPython(HARNESS_BOOT);
     } catch { /* the wrapper falls back */ }
 
