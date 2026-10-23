@@ -176,7 +176,7 @@ out`);
     assert.deepEqual(r.value, { api: ["config"], module: false, runPythonInternal: "ImportError", again: ["config"] });
 });
 
-test("step4: the import hook registers no JsProxy of the API; asyncio.run and run_until_complete still work, also after a pop", { skip }, async () => {
+test("step4: the import hook registers no JsProxy of the API; asyncio.run and run_until_complete still work on the API's own flag, also after a pop", { skip }, async () => {
     const r = await cell(`import sys, asyncio
 import _pyodide._importhook as h
 out = {"hook": sorted(h.jsfinder.jsproxies.keys())}
@@ -186,10 +186,18 @@ async def f():
 out["run"] = asyncio.run(f())
 sys.modules.pop("pyodide_js", None); sys.modules.pop("pyodide_js._api", None)
 out["run_after_pop"] = asyncio.run(f())
+import pyodide_js
+out["flag"] = bool(pyodide_js._api.config.enableRunUntilComplete)
+x = asyncio.get_event_loop().run_until_complete(f())
+out["ruc"] = "scheduled" if asyncio.isfuture(x) else x
 out`);
     assert.equal(r.error, null, `the cell must run, got ${r.error}`);
-    assert.deepEqual(r.value, { hook: ["js", "pyodide_js"], run: 7, run_after_pop: 7 });
+    // The stand-in's flag is the real one, and run_until_complete took the branch it names: a result when set, a
+    // scheduled task when not. A wrong flag would still pass asyncio.run, through the native path.
+    const flag = !!py._api.config.enableRunUntilComplete;
+    assert.deepEqual(r.value, { hook: ["js", "pyodide_js"], run: 7, run_after_pop: 7, flag, ruc: flag ? 7 : "scheduled" });
     const registered = py.runPython("import _pyodide._importhook as h\nh.jsfinder.jsproxies['pyodide_js']");
     assert.ok(registered !== py && registered !== py._api && registered !== py._module, "the import hook must hand out the stand-in, never the API");
     assert.deepEqual(Object.keys(registered._api), ["config"]);
+    assert.equal(registered._api.config.enableRunUntilComplete, flag, "the stand-in must carry the API's own flag");
 });
