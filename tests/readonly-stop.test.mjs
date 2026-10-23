@@ -11,6 +11,7 @@ import { evalReadonly, Stopped, NotInDialect } from "../src/readonly-exec.ts";
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { registerRun, runDelegatedTool, endRun, stopSurvey, installToolDelegation } from "../src/agent/run-delegation.ts";
 import { readonlyRefused } from "../src/agent/approval.ts";
+import helpers from "./helpers.js";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hi</p></body>").window.document;
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
@@ -223,20 +224,39 @@ test("nothing is emitted after a stopped step's DONE: a late line, and a late re
 
 // --- red team: what a page that posts PAGE_TOOL_CANCEL itself gets (run-delegation.ts installToolDelegation) ---
 //
-// The page shares the main world with the bridge, sees every PAGE_TOOL_RUN (so every run id) and can post the stop
-// message itself. These drive the bridge the way the page reaches it: window messages whose source is the window.
+// The page shares the main world with the bridge. Since SITE_PRESENCE step 2b the bridge hears only its port to the content
+// scripts, never the page's window; but a page given injected.js after it loaded can take that port from the hand-off, and
+// then sees every PAGE_TOOL_RUN (so every run id) and can post the stop itself. These drive the bridge from that port.
 
-/** The page leg's window bridge over a fresh JSDOM page, with `ml` as `window.ml`. `post` dispatches a window message
- *  as the page (or as `source`) would; `survey` posts a PAGE_TOOL_RUN read-only try and resolves to its envelope. */
+// The bridge's side of the channel is a module singleton, so it is installed once for the file, over the vm worlds' fake
+// channel (a real Node MessagePort with a listener keeps the test process alive). `iso` is the port the content script holds.
+const delegation = { iso: null, results: new Map() };
+function installOnce(win) {
+    if (delegation.iso) return;
+    globalThis.MessageChannel = helpers.FakeMessageChannel;
+    globalThis.MessageEvent = helpers.FakeMessageEvent;
+    const dispatch = win.dispatchEvent.bind(win);
+    win.dispatchEvent = (e) => {
+        if (!(e instanceof helpers.FakeMessageEvent)) return dispatch(e);
+        if (e.type === "ml-page-port" && e.ports?.[0]) delegation.iso ??= e.ports[0];
+        return true;
+    };
+    installToolDelegation();
+    delegation.iso.onmessage = (e) => { if (e.data?.type === "PAGE_TOOL_RESULT") delegation.results.set(e.data.callId, e.data.envelope); };
+}
+
+/** The page leg's bridge over a fresh JSDOM page, with `ml` as `window.ml`. `post` sends on the bridge's port, as a page
+ *  holding it would; `postOnWindow` posts on the page's window; `survey` sends a PAGE_TOOL_RUN read-only try and resolves
+ *  to its envelope. */
 function pageBridge(ml = slowMl()) {
     const d = new JSDOM("<!doctype html><title>T</title><p class='x'>A</p>", { url: "https://evil.example/" });
     const prev = [globalThis.document, globalThis.Element, globalThis.window];
     globalThis.document = d.window.document; globalThis.Element = d.window.Element; globalThis.window = d.window;
     d.window.ml = ml;
-    installToolDelegation();
-    const results = new Map();
-    d.window.addEventListener("message", (e) => { if (e.data?.type === "PAGE_TOOL_RESULT") results.set(e.data.callId, e.data.envelope); });
-    const post = (data, source = d.window) => d.window.dispatchEvent(new d.window.MessageEvent("message", { data, source }));
+    installOnce(d.window);
+    const results = delegation.results;
+    const post = (data) => delegation.iso.postMessage(data);
+    const postOnWindow = (data, source = d.window) => d.window.dispatchEvent(new d.window.MessageEvent("message", { data, source }));
     let ran = 0;
     const tool = [{ name: "exec", description: "", parameters: { type: "object", properties: {} }, requiresApproval: true, capabilities: [], run: () => { ran++; return "THE TOOL RAN"; } }];
     const survey = (callId, runId, js = SLOW) => {
@@ -244,7 +264,7 @@ function pageBridge(ml = slowMl()) {
         return (async () => { for (let i = 0; i < 400 && !results.has(callId); i++) await tick(10); return results.get(callId); })();
     };
     const restore = () => { globalThis.document = prev[0]; globalThis.Element = prev[1]; globalThis.window = prev[2]; };
-    return { d, post, survey, register: (id) => registerRun(id, tool), ran: () => ran, restore };
+    return { d, post, postOnWindow, survey, register: (id) => registerRun(id, tool), ran: () => ran, restore };
 }
 
 test("a page's forged PAGE_TOOL_CANCEL refuses only its own survey: readonly:false with no result, and the tool never runs", { timeout: 10000 }, async () => {
@@ -266,15 +286,15 @@ test("a page's forged PAGE_TOOL_CANCEL refuses only its own survey: readonly:fal
     } finally { b.restore(); }
 });
 
-test("a PAGE_TOOL_CANCEL stops only the run it names: another run's survey, a non-string runId and another window's message stop nothing", { timeout: 10000 }, async () => {
+test("a PAGE_TOOL_CANCEL stops only the run it names: another run's survey, a non-string runId and one posted on the page's window stop nothing", { timeout: 10000 }, async () => {
     const b = pageBridge();
-    const other = new JSDOM("").window;   // an iframe's window, posting into this one
     try {
         b.register("rtB1"); b.register("rtB2");
         const p1 = b.survey("b1", "rtB1"), p2 = b.survey("b2", "rtB2");
         await tick(50);
-        for (const runId of [{ toString: () => "rtB2" }, ["rtB2"], 7, null, undefined]) b.post({ type: "PAGE_TOOL_CANCEL", runId });
-        b.post({ type: "PAGE_TOOL_CANCEL", runId: "rtB2" }, other);
+        // A function does not clone through a port, so the object form is the plain one a port carries.
+        for (const runId of [{ toString: "rtB2", valueOf: "rtB2" }, ["rtB2"], 7, null, undefined]) b.post({ type: "PAGE_TOOL_CANCEL", runId });
+        b.postOnWindow({ type: "PAGE_TOOL_CANCEL", runId: "rtB2" });   // the window: the bridge no longer hears it
         b.post({ type: "PAGE_TOOL_CANCEL", runId: "rtB1" });   // positive control: the named run's survey stops
         const [e1, e2] = await Promise.all([p1, p2]);
         assert.equal(e1?.readonly, false, "the named run's survey was stopped");

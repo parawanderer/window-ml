@@ -599,6 +599,14 @@ is a kill anyone with the uid can arm on any group, wider than declared ownershi
 need. The extension side of this PR reads only: `owner(pid)`, `status`'s registered rows and `cpuMs` in the shell
 client, no page-reachable route, no `register` sent by the worker; the agent-status line stays `AGENT_MAIL.md` step 1's,
 whoever builds it.
+Two more, ruled 2026-10-23 on the host PR (window-ml-host #28, where the builder chose them with the rulings silent;
+both are the narrow reading and stand): (R4) `owner(pid)` asked over the hub reads only the caller's own rows, never
+another host's ledger, since those rows name other people's sessions; a pid outside the caller's rows answers
+`{owner:null}` there, the same as an unregistered one. (R5) a registered row counts toward the host's running slots
+(32), the same as a group the host started: a slot is a bound on what the host is answerable for, not on what it
+spawned. Measured on #28: a spinning child reads about 1 s of CPU per 1 s of wall (the Mach timebase at 1/1 instead of
+125/3 read 24 ms per 1005 ms, the unit check fails on it); with R2's ancestor check disabled, registering the test's
+own process group and closing the port killed the runner and its shell.
 
 ## The host's language: Rust, a sibling of the box connector (decided 2026-10-15, replacing Node)
 

@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, onChannel } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 test.describe.configure({ mode: "default" });
@@ -213,17 +213,16 @@ test("a PAGE-hosted run reads its stored table too, and only on the tab the work
     const other = await ext.context.newPage();
     await other.goto(`${fake.url}/api/version`);
     await waitForMl(other);
-    const refused = await other.evaluate(async (key) => {
-        const r = await new Promise((resolve) => {
-            const id = "probe";
-            window.addEventListener("message", function onMsg(e) {
-                if (e.data?.type !== "PAGE_VALUE_COLUMNS_RESULT" || e.data?.id !== id) return;
-                window.removeEventListener("message", onMsg); resolve(e.data);
-            });
-            window.postMessage({ type: "PAGE_VALUE_COLUMNS", id, runId: "anything", key, names: ["revenue"] }, "*");
-        });
-        return r.error || "READ IT";
-    }, stored.key);
+    // The page cannot post to the content script any more (the channel is a private port), so the probe is sent as
+    // injected.js would send it, and the answer is read where it leaves the content script for injected.js.
+    const refused = await onChannel(other, (ch, key) => new Promise((resolve) => {
+        const id = "probe", side = globalThis.__mlPageChannel, port = side.port, send = port.postMessage.bind(port);
+        port.postMessage = (d, ...r) => {
+            if (d && d.type === "PAGE_VALUE_COLUMNS_RESULT" && d.id === id) { delete port.postMessage; resolve(d.error || "READ IT"); return; }
+            return send(d, ...r);
+        };
+        ch.asInjected({ type: "PAGE_VALUE_COLUMNS", id, runId: "anything", key, names: ["revenue"] });
+    }), stored.key);
     expect(refused, "another tab holding the key is not entitled to the value").toMatch(/No run on this page holds a stored table to read/);
     await other.close();
 

@@ -5,7 +5,7 @@
 // /api/info + /api/ps over time: capacity refreshing as models load, and a GAP appearing because polling
 // really did stop while the panel was closed. The narrated version of the same script is resource-demo.mjs.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, onChannel, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { TOPOLOGIES, pci } from "../fixtures/boxes.mjs";
 
@@ -47,6 +47,7 @@ async function openPanel(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
+    await waitForMl(page);   // an allowed page: a hidden one drops the events the specs send as injected.js
     await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
     await inShell(page, (roots) => {
         const root = roots.sidebar;
@@ -810,10 +811,10 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         // Sample for a while: an event outside the window is correctly dropped, so there must BE a window.
         await sleep(9000);
 
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 7000;
             const at = (f) => now - Math.round(span * f);
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             const hash = "e2e-run";
             post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
                    task: "check the page", model: "gemma4:31b", maxSteps: 4, config: null });
@@ -1084,9 +1085,9 @@ test("resource panel: no two lane bars overlap on the same row", async () => {
 
         // Deliberately adversarial: sub-calls that OVERLAP each other, sub-calls that merely touch, and a
         // couple of instant-length ones — the case where the widening for visibility creates the overlap.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 8000, t0 = now - span;
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             const hash = "overlap";
             post({ kind: "agent", id: hash, ts: t0, save: false, session: { hash, turn: 0 },
                    task: "t", model: "gemma4:31b", maxSteps: 4, config: null });
@@ -1212,10 +1213,10 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
 
         // A run long enough to have somewhere to scroll to, and a load in front of a step so the abutting
         // case the packing was getting wrong is actually present.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 7000;
             const at = (f) => now - Math.round(span * f);
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             const hash = "e2e-scope";
             post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
                    task: "a long run", model: "gemma4:31b", maxSteps: 20, config: null });
@@ -1516,10 +1517,10 @@ test("resource panel: hovering a lane block dims the rest of the log, and clicki
         await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(9000);
 
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 7000;
             const at = (f) => now - Math.round(span * f);
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             const hash = "e2e-focus";
             post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
                    task: "three steps", model: "gemma4:31b", maxSteps: 6, config: null });
@@ -1591,10 +1592,10 @@ test("resource panel: hiding a model hides its events too, and unhiding brings t
         await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(9000);
 
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 7000;
             const at = (f) => now - Math.round(span * f);
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             const hash = "e2e-hide";
             post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
                    task: "two steps", model: "gemma4:31b", maxSteps: 4, config: null });
@@ -1693,10 +1694,10 @@ test("resource panel: hovering another session's block leaves the open session's
         await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(9000);
 
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 7000;
             const at = (f) => now - Math.round(span * f);
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             for (const [hash, model, off] of [["sess-a", "gemma4:31b", 0], ["sess-b", "qwen3.5:35b", 0.35]]) {
                 post({ kind: "agent", id: hash, ts: at(0.95 - off), save: false, session: { hash, turn: 0 },
                        task: `task ${hash}`, model, maxSteps: 4, config: null });
@@ -1758,9 +1759,9 @@ test("resource panel: an ml.embed() session is never presented as a chat", async
         await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(9000);
 
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now();
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             const hash = "e2e-embed";
             post({ kind: "chat", id: "c1", ts: now - 6000, save: false, session: { hash, turn: 0 },
                    streaming: false, sessionKind: "embed", config: null,
@@ -2013,10 +2014,10 @@ test("resource panel: dragging the event lane shows the selection box, and a tin
         // landing where nothing was measured is correctly dropped, so seeding events before there is history
         // to hold them draws an empty lane and this would pass by having nothing to drag on.
         await sleep(9000);
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), span = 7000;
             const at = (f) => now - Math.round(span * f);
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             post({ kind: "agent", id: "bl1", ts: at(1), save: false, session: { hash: "bl1", turn: 0 },
                    task: "t", model: "gemma4:31b", maxSteps: 4, config: null });
             for (let i = 1; i <= 3; i++) {
@@ -2147,10 +2148,10 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
         // The lane draws NOTHING when there are no events at all, and half this test is about the lane taking
         // the gesture — so there has to be something in it, or that half would pass by never running.
-        await page.evaluate(() => window.postMessage({ __mlDebug: {
+        await onChannel(page, (ch) => ch.asInjected({ __mlDebug: {
             kind: "agent", id: "pz1", ts: Date.now() - 4000, save: false,
             session: { hash: "pz1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null,
-        } }, "*"));
+        } }));
         await sleep(8000);   // enough history that there is a window worth narrowing
 
         /** One pinch event, as a trackpad sends it: a wheel with ctrlKey, at a point inside the target. */
@@ -4923,10 +4924,10 @@ test("resource panel: a long trackpad swipe parks the window at the end of the s
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
         // Something in the lane, or the lane is not drawn and a third of this test runs over nothing.
-        await page.evaluate(() => window.postMessage({ __mlDebug: {
+        await onChannel(page, (ch) => ch.asInjected({ __mlDebug: {
             kind: "agent", id: "sw1", ts: Date.now() - 4000, save: false,
             session: { hash: "sw1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null,
-        } }, "*"));
+        } }));
         await sleep(14000);   // the session outgrows the 6 s window, so there is somewhere to scroll to
 
         // Where the window box sits on its track, in the track's own pixels.
@@ -4971,9 +4972,9 @@ test("resource panel: swiping the window back and forth keeps its width, and it 
         await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
         await sleep(6000);
         // A short FINISHED run in the middle of a longer history: history before it, and after.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now(), hash = "e2e-swipe";
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             post({ kind: "agent", id: hash, ts: now - 3000, save: false, session: { hash, turn: 0 }, task: "a short run", model: "gemma4:31b", maxSteps: 5, config: null });
             for (let i = 1; i <= 3; i++) post({ kind: "agent-step", id: hash, ts: now - 3000 + i * 600, save: false, session: { hash, turn: i },
                 step: i, seq: i, tool: "exec", toolMs: 200, arguments: { js: `s${i}` }, result: "ok", usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 200 } });

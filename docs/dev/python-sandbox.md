@@ -193,9 +193,17 @@ a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own sur
 the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
 respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
-(1) Agoric `ses` `lockdown()` after one `runPythonAsync("1")` warmup (Pyodide's result path
-assigns `.constructor`, which `lockdown()` then freezes — lock first and every later call
-throws `ConversionError`); (2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
+(1) Agoric `ses` `lockdown()` with `overrideTaming: "severe"`, after one `runPythonAsync("1")` warmup. Pyodide's
+`getPyProxyClass` assigns `.constructor` on a plain object, which a frozen `Object.prototype` refuses for every PyProxy
+kind no warmup made (6 of 14 kinds measured: tuple, set, generator, ndarray, iterator, memoryview); `severe` is ses's
+own override fix, a setter that defines an OWN property and refuses `Object.prototype` itself. An accessor we define
+ourselves is refused by ses's permit check ("Accessor not expected"): that was main's state until 2026-10-23, the throw
+swallowed and the realm never frozen. A lockdown that leaves the realm unfrozen now fails the boot (`realmLocked()` is
+the latch). (1b) `pyodide_js` out of a cell's reach: unregistered once `pyodide.webloop` and the package loader have
+bound what they import at load, purged from `sys.modules`, its old `JsLoader`s cleared, and re-registered as a stand-in
+holding only `_api.config` (`webloop.run_until_complete` and the patched `asyncio.run` import it at call time).
+`tests/python-lockdown.test.mjs` holds both, with a gc walk for any JsProxy of the API, `_api` or `_module`.
+(2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
 needs and a few capability-free host APIs stay; `eval`, `Function`, `fetch`, `importScripts`,
 `postMessage`, `navigator`, `chrome`, every Node module go. There is no deny list to keep
 current. (3) The harness's module references (`ast.parse`, `json.loads`, `textwrap.indent`,
@@ -206,14 +214,21 @@ parses, encodes or injects — and the wrapper looks the harness up in the NAMES
 `sys.modules["_ml_harness"]` cannot force the import fallback onto patched modules. (4) No
 JsProxy lands in the Python namespace: injected inputs are `None`/`str` via `undefined`, and
 the stdout tee is Pyodide's JS-side `setStdout`, given the exact bytes (`stdoutWriter`; the `batched`
-handler strips each line's newline). (5) asyncio pending handles are cancelled
-before a cell's result is returned: every `asyncio.Task` from `all_tasks()` and every uncancelled `asyncio.Handle` that
-`gc.get_objects()` reaches (#998; the route matrix in #987). Two classes that sweep does not reach, found by the red
-team on 2026-10-23 and held as failing-first `{ todo }` tests in `tests/redteam-python-sandbox.test.mjs` (on main since
-#987, 8c312e6a), assigned 2026-10-23 to the session `[window-ml python-cancel]` (`docs/plan/repl/PYTHON_CANCEL_GAPS.md`; the property, ruled there: nothing the cell scheduled runs AFTER its result is returned, so its `finally` running during the cancel, inside the cell's own time, satisfies it): a callable handed to a JS scheduler the strip keeps (`setTimeout`, `queueMicrotask`, `Promise.then`,
-through `create_once_callable`/`create_proxy`) makes no Handle and fires after the result; and a started task kept on a
-module keeps a live `_coro` that a later cell drives with `throw`, so the first cell's `finally` runs after its result
-(the fix is to spend the coroutine in the cancel, not to leave it pending). The strip, the harness capture and the wrapper are
+handler strips each line's newline). (5) Nothing a cell scheduled runs AFTER its result is returned (`docs/plan/repl/PYTHON_CANCEL_GAPS.md`; its `finally`
+or `except` running during the cancel, inside the cell's own time, satisfies that). The wrapper's cancel, before the
+epilogue, in this order: restore the running loop; SPEND every task (`cancel()`, then let the loop turn, so its
+coroutine takes the `CancelledError` and finishes; a task that catches it and awaits again is cancelled again, at most
+8 rounds, and one still pending refuses the cell's result with an error naming it); REVOKE what the cell handed to
+JavaScript (`cell-gate.ts`); then cancel every uncancelled `asyncio.Handle` that `gc.get_objects()` reaches (#998).
+The gate sits on Pyodide's three doors from a Python callable to JavaScript, never on the registries: every PyProxy
+(`Module.pyproxy_new`, revoked by pointing it at an inert callable), every once-callable (it registers with
+`Module.finalizationRegistry` and calls `Module.callPyObject`, revoked by blocking its pointer there) and every promise
+handle (`Promise.prototype.then`/`finally`, wrapped before `lockdown()`). A revoked callable that fires is a silent
+no-op, counted and recorded in the run log (`python`/`dropped`), because a THROW there would reach the worker's
+`onerror` and kill it; a later cell that hands JavaScript the same callable while a revoked wrapper of it lives is
+refused in that cell. Revoke comes after the spend, never before it: webloop's own wakeups are once-callables the cell
+made, and a task's step revoked first never runs to take its cancel. Sound only while a cell cannot reach `pyodide_js`
+(an approved cell can today: two `{ todo }` tests, the red team's lane). The strip, the harness capture and the wrapper are
 **escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
 cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
@@ -475,5 +490,7 @@ Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
 - **`readonly` mode hardens the sandbox and may auto-approve; `full` always asks.**
+- **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a
+  destroyed proxy throws when a timer fires it, and the throw kills the worker. Revoke after the spend, never before.
 - **The wheels (`pyodide-wheels/`) are gitignored, and a missing set fails only at run time**, as
   `No module named 'numpy'`.

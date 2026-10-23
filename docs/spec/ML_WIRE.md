@@ -110,7 +110,7 @@ the client at the dialect's rates (what each stage reads and makes, at 64 charac
 can cost), and holds each stage to the dialect's `MAX_STRING`. A search or a stage's input past what is left answers
 `OverBudget` before it runs; a stage's output is charged once made, so the call that crosses the line has spent at
 most one stage past it, and a stage that would build more than `MAX_STRING` (`sed`, pretty-printed JSON) is refused
-before it builds. A call that does no metered work (`config`, a read with no pipe) still answers. The next cell's
+before it builds. An unpiped read of a stored text and a call's arguments are charged their size too, at the same rate and before the copy, so a loop of either is stopped like a loop of pipes. A call that does no metered work (`config`) still answers. The next cell's
 client starts whole. In figures: a stage over a 1 MB text costs about 16k steps to read and as much again for what
 it makes, so a cell can pipe such a text about ninety times.
 

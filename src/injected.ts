@@ -38,6 +38,7 @@ import { agent } from "./ml/ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 import { mlSchema } from "./ml/ml-schema";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-result";
+import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
@@ -526,8 +527,8 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
     // background releases the navigation barrier. We DRIVE it (post PAGE_ADOPT_HELLO now that this listener
     // exists) so content.ts only sends ADOPT_RUN after we're listening — avoiding a missed message on the
     // async <script> injection.
-    window.addEventListener("message", (e: MessageEvent) => {
-        if (e.source !== window || !e.data || e.data.type !== "ADOPT_RUN") return;
+    onIsolated((e: ChannelMessage) => {
+        if (!e.data || e.data.type !== "ADOPT_RUN") return;
         const { runId, rebuild, reply } = e.data as { runId?: string; rebuild?: RebuildConfig; reply?: string };
         if (!runId || !rebuild) return;
         try { (window.ml as unknown as MlApi)._adoptRun(runId, rebuild); }
@@ -537,22 +538,22 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
         const pageInfo = pageContext(n => (rebuild.toolNames || []).includes(n));
         // A run the WORKER is starting here (sw-run-start.ts) asked for this adopt and is waiting on its own reply id:
         // it is not a navigation, so it must not release a barrier or leave a page context for a `navigate` to read.
-        if (reply) { window.postMessage({ type: "RUN_ADOPTED_NOW", reply, pageInfo }, "*"); return; }
-        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo }, "*");
+        if (reply) { toIsolated({ type: "RUN_ADOPTED_NOW", reply, pageInfo }); return; }
+        toIsolated({ type: "RUN_READOPTED", runId, pageInfo });
     });
-    window.postMessage({ type: "PAGE_ADOPT_HELLO" }, "*");
+    toIsolated({ type: "PAGE_ADOPT_HELLO" });
 
     // Sidebar hover-highlight for @pt/@box: the shell (a content script) can't read this main-world
     // point/box registry, so it asks us to resolve a token to viewport coords, then draws the overlay
     // itself (in its shadow root — no page mutation). `seq` echoes back so a stale hover is ignored. A SELECTOR is
     // never asked here: the shell resolves it in its own world, so the page neither hears it nor answers for it
     // (docs/spec/SITE_ACCESS.md, attack 18).
-    window.addEventListener("message", (e: MessageEvent) => {
-        if (e.source !== window || !e.data || e.data.type !== "ML_HL_RESOLVE") return;
+    onIsolated((e: ChannelMessage) => {
+        if (!e.data || e.data.type !== "ML_HL_RESOLVE") return;
         const token = String(e.data.token || "");
         const point = resolvePoint(token);
         const box = point ? null : resolveBox(token);
-        window.postMessage({ type: "ML_HL_AT", seq: e.data.seq, point: point || null, box: box || null }, "*");
+        toIsolated({ type: "ML_HL_AT", seq: e.data.seq, point: point || null, box: box || null });
     });
 
     // Sidebar/HUD composer → drive a handle-backed session by hash. The app decides which to send from the
@@ -578,14 +579,14 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
         finally { if (chatInflight.get(hash) === ctrl) chatInflight.delete(hash); }
     }
 
-    window.addEventListener("message", (e: MessageEvent) => {
-        if (e.source !== window || !e.data) return;
+    onIsolated((e: ChannelMessage) => {
+        if (!e.data) return;
         const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string; surface?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; maxSteps?: number; reqId?: string } };
         // A request the shell relayed from an extension page (the chat page) carries a `reqId` and wants to hear what
         // happened, so the page can say "steered", "started a turn" or "not on this page" instead of guessing.
         const reqId = d.__mlSessionSend?.reqId ?? d.__mlCancelSession?.reqId ?? d.__mlContinueRun?.reqId;
         const done = (outcome: "steer" | "turn" | "cancelled" | "continued" | "busy" | "none"): void => {
-            if (typeof reqId === "string") window.postMessage({ __mlSessionDone: { reqId, outcome } }, "*");
+            if (typeof reqId === "string") toIsolated({ __mlSessionDone: { reqId, outcome } });
         };
         try {
             if (d.__mlContinueRun) {
@@ -651,7 +652,7 @@ import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-resu
                 // background aborts the run's OWN controller AND resolves any open approval gate (mirrors the
                 // __mlSessionSend agentRegistry fallback). Without this, the composer's Stop button was inert
                 // cross-page — the run stayed stuck "waiting for your approval…" with no way to cancel it.
-                if (agentRegistry.has(hash)) { window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: hash } }, "*"); done("cancelled"); return; }
+                if (agentRegistry.has(hash)) { toIsolated({ type: "CANCEL_RUN_REQUEST", payload: { runId: hash } }); done("cancelled"); return; }
                 const inflight = chatInflight.get(hash);   // chat turn started from the composer
                 inflight?.abort();
                 done(inflight ? "cancelled" : "none");

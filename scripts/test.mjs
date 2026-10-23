@@ -61,6 +61,12 @@ const GENRES = {
         about: "the session archive: its SQL under two SQLite builds, the phone's bridge to it, and the folder section",
         files: ["archive-db.test.mjs", "archive-portable.test.mjs", "archive-bridge.test.mjs", "archive-section.test.mjs"],
     },
+    // Backup and restore (docs/dev/backup.md): the file format and the keys, the storage-key inventory held to the sources,
+    // the settings collect/preview/apply, the backup file over the archive's SQLite, and the sequence that drives them.
+    backup: {
+        about: "backup and restore: the file format, the key inventory against the sources, settings preview and apply, the file, the keyring",
+        files: ["backup-format.test.mjs", "backup-inventory.test.mjs", "backup-settings.test.mjs", "backup-file.test.mjs", "backup-keyring.test.mjs", "backup-run.test.mjs", "chat-record.test.mjs"],
+    },
     // The read-only exec dialect: the parser and mediated evaluator, and each member a survey may call for free
     // (`ml.pipe`, `ml.jsonPath`, `ml.current`). Four files, so a change to the dialect has its own suite; its rule
     // (adversarial + halting + failure tests on every extension) is in AGENTS.md.
@@ -143,7 +149,7 @@ const GENRES = {
             "bench-specs.test.mjs", "bench-viewer.test.mjs", "bench-files.test.mjs", "bench-page.test.mjs",
             "bench-scores.test.mjs", "bench-sweeps.test.mjs", "bench-memory.test.mjs", "bench-box.test.mjs", "bench-lanes.test.mjs", "bench-sync.test.mjs", "bench-stream.test.mjs", "bench-regress.test.mjs", "bench-spend.test.mjs", "bench-cost.test.mjs", "bench-live-spend.test.mjs", "bench-memory-budget.test.mjs", "bench-memory-card.test.mjs", "bench-status.test.mjs", "bench-memory-limit.test.mjs", "bench-spend-predict.test.mjs", "bench-cli-help.test.mjs", "bench-electricity.test.mjs"],
     },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
 const claimed = new Set(Object.values(GENRES).flatMap((g) => g.files));

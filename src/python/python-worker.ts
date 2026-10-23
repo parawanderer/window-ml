@@ -19,6 +19,7 @@ import { DIALECT_FILES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
 import { dialectSetup } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
+import { cellBoundary, cellDropped } from "./cell-gate";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
 // in this file goes through `post`, never `self.postMessage` — which is gone once `lockdownReadonly` runs
@@ -29,13 +30,15 @@ const post = self.postMessage.bind(self);
 const READONLY = self.name !== "full";
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, re-bound into every cell's namespace
+/** How many cells this worker has started: the `afterCell` a dropped callback is reported against (cell-gate.ts). */
+let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string; dropped?: { count: number; afterCell: number } };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -213,7 +216,14 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // the queue ahead of it, or the imports in front of it (see runInWorker in offscreen.ts and the
     // "queued behind another" e2e). A setup that hangs is still the START bound's to clear.
     let t0 = Date.now();
-    const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}), ...(prewarm ? { prewarm } : {}) });
+    // Callables an earlier cell handed to JavaScript that fired after its result, revoked and so running nothing
+    // (cell-gate.ts). They fire between cells, so this cell reports them, against the cell before it: every cell of
+    // this worker is the same principal's. The bench path sets no inputs, so the boundary is closed here too.
+    cellBoundary();
+    const late = cellDropped();
+    const dropped = late ? { count: late, afterCell: cellSeq } : null;
+    cellSeq++;
+    const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}), ...(prewarm ? { prewarm } : {}), ...(dropped ? { dropped } : {}) });
     // Where this run executes: a kept namespace (the bench's per-mode one, or ROOT C's per-run dict), or
     // the main one a one-off `python_exec` resets. A run's dict is the ROOT C namespace (PYTHON_DIALECT.md):
     // cells of the same run share it, RESET never wipes it, and injected names are assigned into it.
