@@ -29,6 +29,7 @@ import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ON
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
 import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, handleJobsDump, senderOrigin } from "./sw/sw-housekeeping";
@@ -1069,6 +1070,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // Settings' archive folder section: its state, or what to do after a click. Extension pages only.
         if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: the archive folder is for extension pages." }); return; }
         folderAction((message.payload as { action?: unknown } | undefined)?.action).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "BACKUP") {
+        // Settings' backup and restore: `create`, `offer`, `restore`. Extension pages only; a restore writes settings and the site lists.
+        if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: backup is for extension pages." }); return; }
+        backupAction(message.payload).then((data) => sendResponse({ data }), (e) => sendResponse(backupFailure(e)));
         return true;
 
     } else if (message.type === "HUB_RUNTIME") {

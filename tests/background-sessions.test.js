@@ -733,3 +733,97 @@ test("HUB_RUNTIME: refused to a web page, and an unpaired browser says so to its
     assert.deepEqual((await bg.send({ type: "HUB_RUNTIME", payload: { action: "devices" } }, PAGE)).data, [], "no allowlist while unpaired");
     assert.equal((await bg.send({ type: "HUB_RUNTIME", payload: { action: "revoke", principal: "ab".repeat(32) } }, PAGE)).data, "unpaired");
 });
+
+// --- BACKUP: create, offer and restore, for extension pages only ---
+
+/** An archive worker that answers the backup ops from a file holding `settings`, and records every op in order. */
+function backupWorker(file) {
+    const ops = [];
+    const onArchiveOp = (msg) => {
+        ops.push(msg.op);
+        if (msg.op === "backupFinish") return { ok: true, result: { size: 10, sessions: 0, form: msg.args.form } };
+        if (msg.op === "restoreInspect") {
+            if (file.needsKey && !msg.args?.secret) return { ok: false, error: "this file needs a passphrase", reason: "needs-key" };
+            return { ok: true, result: { sessions: 2, newSessions: 2, settings: JSON.stringify(file.settings), created: null } };
+        }
+        if (msg.op === "restoreSessions") return { ok: true, result: { imported: file.imported ?? 0 } };
+        return { ok: true, result: null };
+    };
+    return { ops, onArchiveOp };
+}
+const settingsFile = (sync, local) => ({ format: "wml-settings", v: 1, created: "2026-10-23T00:00:00Z", apiKeyIncluded: false, sync, local });
+const SETTINGS_PAGE = { url: "chrome-extension://test/settings.html" };
+
+test("BACKUP from a page is refused for every action: no archive op, no storage write", T, async () => {
+    const worker = backupWorker({ settings: settingsFile({ model: "evil" }, {}) });
+    const bg = loadBackground({ config, onArchiveOp: worker.onArchiveOp });
+    const before = JSON.stringify(bg.stored);
+    for (const payload of [{ action: "create", form: "plain" }, { action: "offer" }, { action: "restore", plan: { changes: [{ area: "sync", key: "model", after: "evil" }] }, sessions: true, settings: true }, {}]) {
+        const res = await bg.send({ type: "BACKUP", payload }, tab(5));
+        assert.match(res.error, /Refused: backup is for extension pages/, JSON.stringify(payload));
+        assert.equal(res.data, undefined);
+    }
+    assert.deepEqual(worker.ops, [], "the archive worker was not asked");
+    assert.equal(JSON.stringify(bg.stored), before, "no setting was written");
+    assert.ok(Object.keys(bg.localStore).every((k) => /^ml_site_/.test(k)), "only the test harness's own site approval is in local storage");
+});
+
+test("BACKUP create validates the form and calls the worker ops in order: begin, finish", T, async () => {
+    const worker = backupWorker({ settings: null });
+    const bg = loadBackground({ config, indexedDB: new (require("fake-indexeddb").IDBFactory)(), onArchiveOp: worker.onArchiveOp });
+    const bad = await bg.send({ type: "BACKUP", payload: { action: "create", form: "rot13" } }, SETTINGS_PAGE);
+    assert.match(bad.error, /form must be/);
+    assert.match((await bg.send({ type: "BACKUP", payload: { action: "burn" } }, SETTINGS_PAGE)).error, /unknown backup action/);
+    assert.deepEqual(worker.ops, [], "a refused payload reached no op");
+    const ok = await bg.send({ type: "BACKUP", payload: { action: "create", form: "gzip" } }, SETTINGS_PAGE);
+    assert.equal(ok.data.form, "gzip");
+    assert.deepEqual(worker.ops, ["backupBegin", "backupFinish"]);
+});
+
+test("BACKUP offer carries a BackupError's reason to the page: needs-key, then the plan once a secret is given", T, async () => {
+    const worker = backupWorker({ needsKey: true, settings: settingsFile({ model: "restored" }, {}) });
+    const bg = loadBackground({ config, onArchiveOp: worker.onArchiveOp });
+    const first = await bg.send({ type: "BACKUP", payload: { action: "offer" } }, SETTINGS_PAGE);
+    assert.equal(first.reason, "needs-key");
+    assert.match(first.error, /passphrase/);
+    const second = await bg.send({ type: "BACKUP", payload: { action: "offer", secret: { passphrase: "pw" } } }, SETTINGS_PAGE);
+    assert.deepEqual(second.data.plan.changes.map((c) => c.key), ["model"]);
+    assert.match((await bg.send({ type: "BACKUP", payload: { action: "offer", secret: { passphrase: 5 } } }, SETTINGS_PAGE)).error, /passphrase or a recovery key/);
+});
+
+test("BACKUP restore writes only the changes the worker's own plan has AND the page's plan lists; a key the file lacks is not written", T, async () => {
+    const worker = backupWorker({ settings: settingsFile({ model: "restored", chatUrl: "http://other/v1" }, {}), imported: 0 });
+    const bg = loadBackground({ config, onArchiveOp: worker.onArchiveOp });
+    const offer = (await bg.send({ type: "BACKUP", payload: { action: "offer" } }, SETTINGS_PAGE)).data;
+    assert.deepEqual(offer.plan.changes.map((c) => c.key).sort(), ["chatUrl", "model"]);
+    // The page declined chatUrl and sneaks in a key the file never held, and a forged value for model.
+    const plan = { changes: [{ ...offer.plan.changes.find((c) => c.key === "model"), after: "forged" }, { area: "local", key: "ml_site_always", kind: "added", group: "sites", after: ["https://evil.example"] }] };
+    const res = await bg.send({ type: "BACKUP", payload: { action: "restore", plan, sessions: false, settings: true } }, SETTINGS_PAGE);
+    assert.deepEqual(res.data.written, { sync: ["model"], local: [] });
+    assert.equal(bg.stored.model, "restored", "the value is the file's, not the page's");
+    assert.equal(bg.stored.chatUrl, config.chatUrl, "a change the page did not list is not written");
+    assert.equal(bg.localStore.ml_site_always, undefined, "a key outside the file's plan is not written");
+});
+
+test("BACKUP restore waits for the site-access migration before it writes, and schedules a folder sync only when sessions were added", T, async () => {
+    for (const imported of [0, 2]) {
+        const worker = backupWorker({ settings: settingsFile({ model: "restored" }, {}), imported });
+        const bg = loadBackground({ config, onArchiveOp: worker.onArchiveOp });
+        // The migration starts when the worker loads, on a microtask: hold its first (keyed) read before it runs.
+        const local = bg.context.chrome.storage.local, get = local.get;
+        let release; const held = new Promise((r) => { release = r; });
+        local.get = async (key) => { if (key != null) await held; return get.call(local, key); };
+        const delays = [], realSet = bg.context.setTimeout;
+        bg.context.setTimeout = (fn, ms, ...a) => { if (ms === 30_000) { delays.push(ms); return 0; } return realSet(fn, ms, ...a); };
+        const offer = (await bg.send({ type: "BACKUP", payload: { action: "offer" } }, SETTINGS_PAGE)).data;
+        const done = bg.send({ type: "BACKUP", payload: { action: "restore", plan: offer.plan, sessions: true, settings: true } }, SETTINGS_PAGE);
+        await flush(30);
+        assert.equal(bg.stored.model, "default-model", "nothing is written while the migration has not settled");
+        release();
+        const res = await done;
+        assert.equal(res.data.sessionsAdded, imported);
+        assert.equal(bg.stored.model, "restored");
+        assert.equal(delays.length, imported > 0 ? 1 : 0, `imported ${imported}: the folder sync is scheduled only when sessions were added`);
+        assert.ok(worker.ops.includes("backupFileRemove"));
+    }
+});

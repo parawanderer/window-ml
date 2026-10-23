@@ -56,6 +56,7 @@ export type BackgroundMessageType =
     | "DUMP_RUN_LOG"   // extension pages only: one run's mechanics, for the Execution log panel (run-log.ts)
     | "SESSION_STORAGE_STATS"   // extension pages only: where the saved-session store's bytes go (session-storage-stats.ts)
     | "ARCHIVE_FOLDER"   // extension pages only: the archive folder's state, or an action after a click (pick, sync, import)
+    | "BACKUP"   // extension pages only: make a backup, preview a restore, or apply one (sw-backup.ts)
     | "HUB_RUNTIME"   // extension pages only: this browser's hub connection state, or `paired` / `left` from the page that paired it
     | "STORAGE_HISTORY"   // extension pages only: the Storage section's daily history, today's picture and the largest sessions
     | "PRICE_CALLS"   // extension pages only: what each of a session's model calls cost, priced on read (sw-prices.ts)
