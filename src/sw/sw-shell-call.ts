@@ -18,7 +18,7 @@ import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, p
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
-import { judgeCall, lapsedLine, lapsedSentence } from "./sw-policies";
+import { judgeCall, askWhyOf, askedByPolicy } from "./sw-policies";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
@@ -227,9 +227,10 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; pol
         const policy = (j.by as { label?: string } | undefined)?.label ?? "?";
         return { by: `policy "${policy}"`, policy };
     }
-    // No policy answers (or the store is not loaded yet): the person does, on a card inside the running step.
-    const why = j.lapsed ? { line: lapsedLine(j.lapsed), detail: lapsedSentence(j.lapsed), cause: j.lapsed.cause, policy: j.lapsed.label } : undefined;
-    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy } });
+    // No policy answers, an `ask` policy matched (it beats an allow and the built-in default), or the store is not loaded
+    // yet: the person does, on a card inside the running step. The card offers no "remember" (an ask's card never does).
+    const why = askWhyOf(j);
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };
@@ -282,7 +283,7 @@ async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Pr
     // claims are the judge's facts, so `git --version` gets write none like any other probe).
     const judged: ShFacts = { ...shFacts(probe), effects: [] };
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(judged), "host-sandbox");
-    // Only an allow starts it: a store not loaded yet ("ask") or no answer would need a card, which a probe never raises.
+    // Only an allow starts it: a store not loaded yet, an `ask` policy or no answer would need a card, which a probe never raises.
     if (j.decision !== "allow") { await drop(); log(j.decision === "deny" ? "denied" : "would-ask"); return null; }
     if (ctx.signal.aborted) { await drop(); return null; }
     let version: string | null = null;

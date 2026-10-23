@@ -12,6 +12,7 @@
 import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
+import type { AskWhy, PersistGrant } from "../contract";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
@@ -37,13 +38,15 @@ export interface StoredPolicy {
 }
 
 /** What judging one call decided: the answer, the policy that gave it, and every policy that broke on the way.
- *  `"ask"` means the saved policies are not read yet: nothing below a policy may answer for the person either. */
+ *  `"ask"` with no `by` means the saved policies are not read yet; with `by` an `ask` policy matched. Either way the call
+ *  goes to the person and nothing below the judge (a remembered consent, a free tier) may answer for them. */
 export interface PolicyJudgement {
-    decision: PolicyEffect | "ask" | undefined;
+    decision: PolicyEffect | undefined;
     /** Set only when `decision` is `undefined`: a policy that would have allowed this call is gone, and why. TEXT for the
      *  ask, never an input to the decision (a reason never re-allows). */
     lapsed?: LapsedAsk;
-    /** The policy that decided, or `"builtin"` for the built-in default (the effect algebra's free tier). */
+    /** The policy that decided, or `"builtin"` for the built-in default (the effect algebra's free tier). Absent on the
+     *  `"ask"` of a store not loaded yet. */
     by?: StoredPolicy | "builtin";
     broken: { policy: StoredPolicy; reason: string }[];
 }
@@ -159,7 +162,7 @@ function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
     if (!Array.isArray(v)) return [];
     return v.filter((p): p is StoredPolicy => !!p && typeof p === "object"
         && typeof p.id === "string" && typeof p.source === "string" && typeof p.label === "string"
-        && (p.effect === "allow" || p.effect === "deny") && CONSUMERS.has(p.consumer) && p.scope === scope);
+        && (p.effect === "allow" || p.effect === "deny" || p.effect === "ask") && CONSUMERS.has(p.consumer) && p.scope === scope);
 }
 
 /** Whether storage held a well-formed lapsed policy. */
@@ -270,7 +273,7 @@ export function editPolicy(id: string, patch: Partial<Pick<StoredPolicy, "source
     const apply = (p: StoredPolicy): StoredPolicy => ({
         ...p,
         ...(typeof patch.source === "string" ? { source: patch.source } : {}),
-        ...(patch.effect === "allow" || patch.effect === "deny" ? { effect: patch.effect } : {}),
+        ...(patch.effect === "allow" || patch.effect === "deny" || patch.effect === "ask" ? { effect: patch.effect } : {}),
         ...(typeof patch.label === "string" ? { label: patch.label } : {}),
     });
     brokenWhy.delete(id);
@@ -305,14 +308,17 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
 }
 
 /**
- * Judge one call against the global policies and the run's. `deny` wins over `allow` across both scopes; a policy that
- * breaks is no opinion (and recorded); with no person's answer, the built-in default allows a call whose effects are
- * inside what its placement bounds (`free`, effects.ts) and otherwise the tiers above decide (`undefined`).
+ * Judge one call against the global policies and the run's. The strictest answer wins across both scopes: `deny`, then
+ * `ask`, then `allow`; a policy that breaks is no opinion (and recorded). An `ask` puts the call to the person where an
+ * `allow` or the built-in default would have run it. With no person's answer, the built-in default allows a call whose
+ * effects are inside what its placement bounds (`free`, effects.ts) and otherwise the tiers above decide (`undefined`).
  *
  * Two rules every consumer keeps (docs/spec/POLICIES.md, "A change takes effect at once"):
  * - **A store not yet loaded means ASK, free tiers included.** Until the saved policies are read after a worker wake
- *   this returns `"ask"`, and the consumer must put the call to the person without letting any free tier of its own
- *   answer: an unloaded `deny` is an unenforced one. This function carries the rule so a consumer cannot forget it.
+ *   this returns `"ask"` (no `by`), and the consumer must put the call to the person without letting any free tier of
+ *   its own answer: an unloaded `deny` is an unenforced one. A matching `ask` policy returns the same `"ask"` WITH `by`,
+ *   and the consumer treats it the same way, adding the policy's label to the card (`askWhyOf`). This function carries
+ *   the rule so a consumer cannot forget it.
  * - **Judge again at the choke point.** A consumer whose call runs somewhere other than its gate (the worker's fetch,
  *   the host's process start) calls this again there, over the same facts, rather than trusting the gate's answer.
  * @param runId the run's session hash, or undefined for a call no run made
@@ -325,14 +331,16 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
     if (!loaded) return { decision: "ask", broken: [] };
     const all = [...globals, ...(runId ? byRun.get(runId) ?? [] : [])].filter((p) => p.consumer === consumer);
     const broken: PolicyJudgement["broken"] = [];
-    let allow: StoredPolicy | undefined;
+    let allow: StoredPolicy | undefined, ask: StoredPolicy | undefined;
     for (const p of all) {
         const r = evalPolicy(p.source, facts, p.effect);
         if (r.broken) { brokenWhy.set(p.id, r.broken); broken.push({ policy: { ...p }, reason: r.broken }); continue; }
         brokenWhy.delete(p.id);
         if (r.decision === "deny") return { decision: "deny", by: { ...p }, broken };
+        if (r.decision === "ask" && !ask) ask = p;
         if (r.decision === "allow" && !allow) allow = p;
     }
+    if (ask) return { decision: "ask", by: { ...ask }, broken };
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
     const gone = lapsedCover(runId, consumer, facts);
@@ -367,6 +375,50 @@ const CAUSE_TEXT: Record<LapseCause, string> = {
 /** The one sentence the model reads when a call asks because a policy that used to cover it is gone. */
 export function lapsedSentence(l: LapsedAsk): string {
     return `This call needed approval because the policy "${speakable(l.label)}", which allowed calls like it, ${CAUSE_TEXT[l.cause]} (${new Date(l.at).toISOString()}); the call itself did not change.`;
+}
+
+/** The `AskWhy.cause` of a call that asks because an `ask` policy matched it. */
+export const ASK_POLICY_CAUSE = "ask-policy";
+
+/** Whether a call asks because an `ask` policy matched it, so its card offers no "remember" (an `allow` the `ask` overrides). */
+export const askedByPolicy = (why: AskWhy | undefined): boolean => why?.cause === ASK_POLICY_CAUSE;
+
+/**
+ * Why a judged call asks, as text for the card and the model: the `ask` policy that matched it, or the gone policy that
+ * used to allow it. Undefined when neither applies (an unloaded store, or no policy involved). Text only: it never
+ * changes the decision.
+ * @param j the judgement
+ */
+export function askWhyOf(j: PolicyJudgement): AskWhy | undefined {
+    if (j.decision === "ask" && j.by && j.by !== "builtin")
+        return { line: `Asking because the policy "${speakable(j.by.label)}" asks about calls like this.`,
+            detail: `This call needed approval because the policy "${speakable(j.by.label)}" asks the person about calls like it; the call itself did not change.`,
+            cause: ASK_POLICY_CAUSE, policy: speakable(j.by.label) };
+    return j.lapsed ? { line: lapsedLine(j.lapsed), detail: lapsedSentence(j.lapsed), cause: j.lapsed.cause, policy: j.lapsed.label } : undefined;
+}
+
+/**
+ * The grants a card may offer to remember, less the URLs an `ask` policy matches: remembering one makes an `allow` the `ask`
+ * overrides, so offering it would promise a free pass the next call does not get. The card says which policy that is.
+ * @param runId the run
+ * @param grants what the call's arguments would have the person remember
+ * @returns the grants still offered (a grant left with no URL is dropped), and why any URL was left out
+ */
+export function withoutAsked(runId: string, grants: PersistGrant[]): { grants: PersistGrant[]; why?: AskWhy } {
+    let why: AskWhy | undefined;
+    const kept: PersistGrant[] = [];
+    for (const g of grants) {
+        if (g.kind !== "fetch-url") { kept.push(g); continue; }
+        const urls = g.urls.filter((u) => {
+            // A grant carries no options, so an `ask` about a rendered fetch counts as well as one about a plain fetch.
+            const w = [false, true].map((rendered) => judgeCall(runId, "fetch", fetchFacts(u, { credentials: false, rendered })))
+                .map((j) => (j.decision === "ask" ? askWhyOf(j) : undefined)).find(Boolean);
+            if (w) why ??= w;
+            return !w;
+        });
+        if (urls.length) kept.push({ ...g, urls });
+    }
+    return { grants: kept, ...(why ? { why } : {}) };
 }
 
 /** The same, short, for the approval card's line. */

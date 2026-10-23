@@ -225,3 +225,63 @@ test("fetch_url of the page the tab is ON is free in every mode, as-you included
     assert.equal(deps.approvals.length, 1, "only the as-you read of ANOTHER page asked");
     assert.equal(deps.approvals[0].arguments?.url ?? deps.approvals[0].args?.url, "https://site.example/inbox?id=4");
 });
+
+// --- an `ask` policy on a fetch_url call: no free tier answers, and a denial is final ---
+
+test("a fetch_url an ask policy matched asks, past every free tier: the page you are on, same origin, an approved URL, a self-source read", async () => {
+    const here = "https://site.example/inbox?id=3", same = "https://site.example/other", seen = "https://seen.example/a", cred = "https://site.example/c";
+    const own = "https://raw.githubusercontent.com/parawanderer/window-ml/main/src/util.ts";
+    const urls = [here, same, seen, cred, own];
+    const deps = baseDeps({
+        callModel: scriptedModel([
+            ...urls.map((url, i) => call("fetch_url", { url, ...(url === cred ? { credentials: true } : {}) }, `c${i}`)),
+            answer("done"),
+        ]),
+        fetchIsCurrentPage: (url) => url === here,
+        fetchSameOrigin: (url) => url.startsWith("https://site.example/"),
+        fetchNeedsConsent: () => false,   // every URL was approved before: the remembered tier would run it
+        fetchPolicy: (url) => ({ decision: "ask", label: "ask about everything" }),
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "SYS", tools: [{ name: "fetch_url", requiresApproval: true }], autoApproveSameOriginAuth: true, autoApproveSelfSource: true }, deps);
+    assert.deepEqual(deps.approvals.map((a) => (a.arguments ?? a.args)?.url), urls, "each one went to the person");
+});
+
+test("the control: the same calls with no ask run without asking, which is what the ask overrode", async () => {
+    const here = "https://site.example/inbox?id=3", same = "https://site.example/other", seen = "https://seen.example/a";
+    const own = "https://raw.githubusercontent.com/parawanderer/window-ml/main/src/util.ts";
+    const deps = baseDeps({
+        callModel: scriptedModel([...[here, same, seen, own].map((url, i) => call("fetch_url", { url }, `c${i}`)), answer("done")]),
+        fetchIsCurrentPage: (url) => url === here,
+        fetchSameOrigin: (url) => url.startsWith("https://site.example/"),
+        fetchNeedsConsent: () => false,
+        fetchPolicy: () => undefined,
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "SYS", tools: [{ name: "fetch_url", requiresApproval: true }], autoApproveSelfSource: true }, deps);
+    assert.equal(deps.approvals.length, 0);
+    assert.equal(deps.delegated.length, 4);
+});
+
+test("an ask policy over an allow policy: the call asks; when the person denies it, nothing runs (an ask never runs a call by itself)", async () => {
+    const url = "https://seen.example/a";
+    const deps = baseDeps({
+        callModel: scriptedModel([call("fetch_url", { url }), answer("done")]),
+        fetchNeedsConsent: () => false,
+        fetchPolicy: () => ({ decision: "ask", label: "ask about seen.example" }),
+        approve: async (req) => { deps.approvals.push(req); return false; },
+    });
+    const { result } = await runBackgroundAgent({ task: "t", systemPrompt: "SYS", tools: [{ name: "fetch_url", requiresApproval: true }] }, deps);
+    assert.equal(deps.approvals.length, 1);
+    assert.equal(deps.delegated.length, 0, "denied at the card: the fetch never ran");
+    assert.match(result.transcript[0].result, /Denied by the user/);
+});
+
+test("a deny still refuses with no card while an ask exists: the fetchPolicy answer is one, and deny is the stricter", async () => {
+    const url = "https://seen.example/a";
+    const deps = baseDeps({
+        callModel: scriptedModel([call("fetch_url", { url }), answer("done")]),
+        fetchPolicy: () => ({ decision: "deny", label: "never seen.example" }),
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "SYS", tools: [{ name: "fetch_url", requiresApproval: true }] }, deps);
+    assert.equal(deps.approvals.length, 0);
+    assert.equal(deps.delegated.length, 0);
+});

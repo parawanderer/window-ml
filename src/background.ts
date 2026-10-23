@@ -635,11 +635,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
         const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
-        const effect = p.effect === "allow" || p.effect === "deny" ? p.effect : undefined;
+        const effect = p.effect === "allow" || p.effect === "deny" || p.effect === "ask" ? p.effect : undefined;
         if (p.op === "add") {
             const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
             const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
-            if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow or deny), a label and its code" }); return; }
+            if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow, deny or ask), a label and its code" }); return; }
             addGlobalPolicy({ consumer, effect, source, label });
         } else if (p.op === "edit") {
             const id = str(p.id, 100);

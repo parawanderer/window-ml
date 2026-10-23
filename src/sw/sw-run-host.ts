@@ -33,8 +33,8 @@ import { sealedDescribe } from "../tools/tools";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
-import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy, lapsedLine, lapsedSentence, takeArchiveNotice } from "./sw-policies";
+import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
+import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
@@ -1435,7 +1435,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                     return env && env.precheckFailed ? (env.result || "") : null;
                 },
-                approve: async ({ tool, arguments: args, seq, step, askWhy }) => {
+                approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // Ask the page to compute the In render for THIS call (without running the tool) so the
                     // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
                     // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
@@ -1473,8 +1473,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // button #3: statically extract the persistable egress grants (e.g. this exec's inline
                     // ml.fetch literals) ONCE, background-side. The SAME list feeds the descriptor/step the
                     // human reviews AND the persistence below, so what's shown IS what's remembered.
-                    const grants = extractGrants(tool, args);
-                    if (askWhy?.policy !== undefined) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
+                    // A call an `ask` policy raised offers nothing to remember, and an exec's fetch literals an `ask` policy
+                    // matches are not offered: the only result of remembering them would be an `allow` the `ask` overrides.
+                    const byAsk = askedByPolicy(gateWhy);
+                    const offered = byAsk ? { grants: [] } : withoutAsked(runId, extractGrants(tool, args));
+                    const grants = offered.grants;
+                    const askWhy = gateWhy ?? offered.why;
+                    if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -1503,7 +1508,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                         // on the tab, even when this worker lost the run's state (an eviction): then nothing is
                                         // granted and the call is refused, rather than lent to the page. Else the tab's.
                                         if (u && byWorker() && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
-                                        else if (u) { if (cred) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                                        // A fetch an `ask` policy raised is approved for this one call: the tab remembers nothing.
+                                        else if (u) { if (cred) grantCredFetch(tabId, u); else if (byAsk) grantOnceFetch(tabId, u); else consentFetch(tabId, u); }
                                     }
                                     // button #3: "Approve + remember" — the exec's static ml.fetch literals become RUN
                                     // policies (sw-policies.ts), one per URL the person saw: kept with the session, and
@@ -1561,15 +1567,20 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 askWhy: (name, a) => {
                     // A Python cell asks because it is outside the dialect: where the inside try left it, keyed by its source.
                     if (name === "python_exec") return pythonOutsideWhy(pyOutside.get(String(a.code ?? "")));
-                    if (name !== "fetch_url" || a.credentials || !byWorker() || !runsInWorker(p, "fetch_url")) return undefined;
-                    const l = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered })).lapsed;
-                    return l ? { line: lapsedLine(l), detail: lapsedSentence(l), cause: l.cause, policy: l.label } : undefined;
+                    if (name !== "fetch_url") return undefined;
+                    const j = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered }));
+                    // An `ask` policy is named for any fetch_url the loop gates; a policy that is GONE only for an uncredentialed
+                    // fetch the worker runs, the only kind an `allow` ever covered.
+                    if (j.decision === "ask") return askWhyOf(j);
+                    return a.credentials || !byWorker() || !runsInWorker(p, "fetch_url") ? undefined : askWhyOf(j);
                 },
                 fetchPolicy: (url, o) => {
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
-                    if (j.decision === "ask") return "unknown";   // not loaded yet: the call asks, free tiers included
+                    if (j.decision === "ask" && !j.by) return "unknown";   // not loaded yet: the call asks, free tiers included
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "fetch_url" } });
                     if (!j.decision || !j.by || j.by === "builtin") return undefined;
+                    // An `ask` policy puts the call to the person where a free tier or a remembered consent would run it; it
+                    // judges any run the loop gates, as a `deny` does.
                     if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;
                     recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
                     return { decision: j.decision, label: j.by.label };

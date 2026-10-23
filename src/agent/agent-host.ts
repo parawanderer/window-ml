@@ -100,8 +100,8 @@ export interface RunAgentHostDeps {
     // approved this session → auto-approve (no re-prompt). Trusted (background-side, per-URL), not forgeable.
     fetchNeedsConsent?(url: string): boolean;
     /** What the person's policies say about a fetch_url call (sw-policies.ts), or undefined when none decides. A `deny`
-     *  refuses it without a card; an `allow` skips the card for an uncredentialed fetch only. */
-    fetchPolicy?(url: string, opts: { credentials: boolean; rendered: boolean }): { decision: "allow" | "deny"; label: string } | "unknown" | undefined;
+     *  refuses it without a card; an `allow` skips the card for an uncredentialed fetch only; an `ask` always shows the card. */
+    fetchPolicy?(url: string, opts: { credentials: boolean; rendered: boolean }): { decision: "allow" | "deny" | "ask"; label: string } | "unknown" | undefined;
     // true → this UNCREDENTIALED fetch is same-origin as the run (its own / consented origins) → FREE (no
     // prompt), like a same-origin navigate: the page could fetch its own origin itself. Background-decided.
     fetchSameOrigin?(url: string): boolean;
@@ -201,6 +201,9 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 // may answer for the person, and the call asks.
                 if (pol === "unknown") return null;
                 if (pol?.decision === "deny") return { approval: "denied", refused: `Refused by the policy "${pol.label}", without asking. Do not retry this fetch; the person set this rule.` };
+                // An `ask` policy matched: the person is asked, and nothing below answers for them (the page you are on, a
+                // same-origin fetch, the self-source setting, a URL approved earlier, an `allow` policy).
+                if (pol?.decision === "ask") return null;
                 if (deps.fetchIsCurrentPage?.(url)) return "same-origin";   // the page you are on: any mode, no prompt
                 const sameOrigin = !!deps.fetchSameOrigin?.(url);
                 if ((args as { credentials?: unknown }).credentials) {

@@ -16,3 +16,16 @@ test("until the saved policies are read, judgeCall answers ASK, whatever the pol
     assert.equal(P.judgeCall("h", "fetch", P.fetchFacts("https://a.example/")).decision, "ask", "not allow: a deny may be unread");
     assert.equal(P.judgeCall("h", "fetch", { kind: "fetch", url: "c", host: "", effects: [] }).decision, "ask", "not even the built-in default answers");
 });
+
+// --- an unloaded store and an `ask` policy are told apart ---
+
+test("an unloaded store's ask names no policy; an ask POLICY's judgement does, so a consumer can tell the two apart", () => {
+    const j = P.judgeCall("h", "fetch", P.fetchFacts("https://a.example/"));
+    assert.equal(j.decision, "ask");
+    assert.equal(j.by, undefined, "no policy decided: the store is not read");
+    assert.equal(P.askWhyOf(j), undefined, "so the card says nothing about a policy");
+    P.addRunPolicy("h", { consumer: "fetch", effect: "ask", source: "(c) => true", label: "asks", origin: "person" });
+    const again = P.judgeCall("h", "fetch", P.fetchFacts("https://a.example/"));
+    assert.equal(again.decision, "ask", "still ask until the store is read, whatever the policy says");
+    assert.equal(again.by, undefined, "an unloaded store never claims a policy decided");
+});

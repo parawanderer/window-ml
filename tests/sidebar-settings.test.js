@@ -941,6 +941,31 @@ test("policy page: Edit then Save sends op edit with only the changed fields", a
     assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "edit", id: "a", effect: "deny", source: '(c) => c.host === "z.test"' } });
 });
 
+test("policy page: an ask policy reads \"asks\", both effect selectors offer it, and Add and Edit send it", async () => {
+    const { w, calls } = await settingsWithPolicies(policyView({ global: [policy("a", { effect: "ask" })], runs: [], broken: {} }));
+    const sec = () => section(w, "Policies");
+    assert.equal(sec().querySelector('.pol-row[data-policy-id="a"] .pol-effect').textContent, "asks");
+    assert.ok(sec().querySelector('.pol-row[data-policy-id="a"] .pol-effect').classList.contains("pol-ask"));
+    const eff = sec().querySelector('select[aria-label="New policy effect"]');
+    assert.deepEqual([...eff.options].map((o) => o.value), ["allow", "ask", "deny"]);
+    eff.value = "ask"; fire(w, eff, "change");
+    const lab = sec().querySelector('input[aria-label="New policy label"]'); lab.value = "check rm"; fire(w, lab, "input");
+    await w.flush();
+    [...sec().querySelectorAll(".pol-add button.test-btn")].find((b) => b.textContent === "Add").click();
+    await w.flush();
+    assert.equal(calls.at(-1).payload.effect, "ask");
+    const row = () => sec().querySelector('.pol-row[data-policy-id="a"]');
+    [...row().querySelectorAll("button.test-btn")].find((b) => b.textContent === "Edit").click();
+    await w.flush();
+    const sel = row().querySelector('select[aria-label="Effect"]');
+    assert.equal(sel.value, "ask", "the editor starts at the stored effect");
+    sel.value = "allow"; fire(w, sel, "change");
+    await w.flush();
+    [...row().querySelectorAll("button.test-btn")].find((b) => b.textContent === "Save").click();
+    await w.flush();
+    assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "edit", id: "a", effect: "allow" } });
+});
+
 test("policy page: Add sends op add with the effect, label and source typed", async () => {
     const { w, calls } = await settingsWithPolicies(policyView());
     const sec = () => section(w, "Policies");

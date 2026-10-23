@@ -90,8 +90,8 @@ card shows the call's resolved facts, not the script.
 
 ## What a policy decides, and what it cannot
 
-- A policy answers `allow`, `deny`, or nothing. `deny` wins over `allow` across policies; nothing means the tiers above
-  decide. **"Always reject" is a policy like any other** (Shane, 2026-10-13): a call it matches is refused without a
+- A policy answers `allow`, `deny`, `ask` (next bullet), or nothing. `deny` wins over `allow` across policies; nothing
+  means the tiers above decide. **"Always reject" is a policy like any other** (Shane, 2026-10-13): a call it matches is refused without a
   card, and the model is told which policy refused it, so it can stop trying rather than rephrase.
 - **A policy may also answer `ask`** (Shane, 2026-10-22; found while ruling the default for a nested `rm`, #990). Across
   policies the stricter answer wins: `deny`, then `ask`, then `allow`, then nothing (the built-in default). A matching
@@ -101,14 +101,28 @@ card shows the call's resolved facts, not the script.
   1. **The narrow direction, like `deny`.** An `ask` whose evaluation read a `null` fact fires (docs/dev/policies.md, "A
      null fact is unknown"). Over an undescribed call (`effects: "unknown"`) an `ask` that needs a resource's field to
      hold does not fire, and the call asks anyway; one that tests an absence fires. Either way no `ask` fails open.
+     A BROKEN `ask` is no opinion, like a broken `deny`: a call an `allow` or the built-in default frees still runs, and
+     the policy page shows the `ask` as broken.
   2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
      an `allow` the `ask` overrides.
   3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored
      `ask` read by an older build is dropped and the default decides there: a downgrade loses the ask, never a refusal.
      The new build reads a fixture of the old store unchanged, and an `ask` it stores survives its own reload.
 
-  An `ask` is the one answer a model may propose with the least at stake: wrong, it costs the person a click. NOT BUILT;
-  the judge (`judgeCall`), the store, the policy page and the card each take it.
+  An `ask` is the one answer a model may propose with the least at stake: wrong, it costs the person a click.
+
+  BUILT (2026-10-22): `judgeCall` returns `decision: "ask"` WITH `by` (the policy) for an `ask`, where the unloaded store
+  returns `"ask"` with no `by`, and every consumer puts the call to the person in both cases with no free tier of its own
+  answering (the `sh` decision and the version probe, `fetch_url`'s `autoApprove` before the current page, same origin,
+  self-source, a remembered approval and an `allow`). The store, the policy page, `propose_policy` and the model's
+  `ml.current.policies` take `ask`. The card names the policy (`AskWhy.cause` `ask-policy`) and an exec card's "Keep"
+  leaves out the fetch URLs an `ask` matches. How: [`docs/dev/policies.md`](../dev/policies.md), "The `ask` answer".
+
+  An `ask` binds only where the extension decides. A read the page can make itself (its own origin, the page it is on,
+  an uncredentialed read of window.ml's public repository) stays free to the page's own `ml.fetch`, and a run the page
+  hosts (`window.ml.agent`) answers its cards with the page's own `approve`: a card in either place would bind nothing,
+  since the page can skip it with a plain `fetch()`. What the page could NOT do itself, it loses: a consent the tab
+  remembers from an earlier approval is withdrawn while an `ask` or a `deny` matches the URL (red-team recheck of #999).
 - It changes only **whether the person is asked**, never what is enforced: whatever bounds the call (for a shell call
   the container, the OS sandbox and the workspace roots) bounds it whatever a policy says.
 - It never reaches the refused tier: a call from a page, or one made from the page's world, is refused before any policy

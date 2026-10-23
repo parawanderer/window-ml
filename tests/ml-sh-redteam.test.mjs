@@ -78,7 +78,7 @@ function heldHost(opts = {}, { holdStart = false, holdDone = false, rewriteError
  * Like isolated-harness.mjs `runOn`, but each step is a full tool call (so an exec can carry `world`), isolation and the
  * page's approval are chosen, and every exec the PAGE is sent is recorded (`pageExecs`): the main world's oracle.
  */
-async function drive(steps, { userScripts = true, cdp = false, approved = true, onNative, configExtra = {}, onStep, onExecute, ticks = 4000 } = {}) {
+async function drive(steps, { userScripts = true, cdp = false, approved = true, localExtra = {}, onNative, configExtra = {}, onStep, onExecute, ticks = 4000 } = {}) {
     let n = 0, bg;
     const pageExecs = [];
     const worlds = new Map();
@@ -95,7 +95,7 @@ async function drive(steps, { userScripts = true, cdp = false, approved = true, 
     bg = loadBackground({
         siteGate: true, userScripts: us, ...(onNative ? { onNative } : {}),
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off", autoApproveReadonly: false, cdp, ...configExtra },
-        local: approved ? { ml_site_always: ["https://site.example"] } : {},
+        local: { ...(approved ? { ml_site_always: ["https://site.example"] } : {}), ...localExtra },
         openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
         onFetch: async (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -217,6 +217,27 @@ test("a script that names ml.sh never runs in the page's world: world \"page\", 
     const ok = await drive([...exec({ js: 'JSON.stringify(await ml.sh.run(["ls"]))' }), ...exec({ js: "document.title", world: "page" })], { onNative: host.onNative, configExtra: ON });
     assert.match(ok.results[0], /"ok":true/, `positive control: ran isolated: ${ok.results[0].slice(0, 200)}`);
     assert.deepEqual(ok.pageExecs, ["document.title"], "positive control: the page's world is reachable for a plain script");
+});
+
+test("an ask policy lifts none of those refusals: the same scripts are refused with one stored, no card is raised and the host is never reached", T, async () => {
+    const exec = (args) => [{ name: "exec", args }];
+    const js = 'await ml.sh.run(["ls"])';
+    const ask = { id: "p-ask", scope: "global", consumer: "sh", effect: "ask", source: "(c) => true", label: "ask about every call", origin: "person", created: 1 };
+    const cases = [
+        ["world page, isolation available", exec({ js, world: "page" }), {}],
+        ["no isolation, no world", exec({ js }), { userScripts: false }],
+        ["unapproved page, no isolation", exec({ js }), { userScripts: false, approved: false }],
+        ["unapproved page, world page", exec({ js, world: "page" }), { approved: false }],
+    ];
+    for (const [label, steps, o] of cases) {
+        const host = fakeNativeHost();
+        const asked = [];
+        const { results, pageExecs } = await drive(steps, { onNative: host.onNative, configExtra: ON, localExtra: { ml_policies_global: [ask] }, onStep: (_bg, ev) => { asked.push(...(ev.asks ?? [])); }, ...o });
+        assert.equal(pageExecs.length, 0, `${label}: the page's world was sent the script`);
+        assert.match(results[0] ?? "", /^Error:/, `${label}: refused: ${results[0]?.slice(0, 200)}`);
+        assert.deepEqual(host.calls.filter((c) => c.call === "spawn"), [], `${label}: the host was reached`);
+        assert.deepEqual(asked, [], `${label}: a nested ask was raised for a call that is refused outright`);
+    }
 });
 
 test("a script that reaches ml.sh by a name the router does not read gets no ml.sh, in whatever world it runs, and the host is never reached", T, async () => {
@@ -455,6 +476,22 @@ test("the version probe never runs while the policy store is not loaded (then, o
     const r2 = await shRun(ctxFor("run-loaded"), [["git", "status"]]);
     assert.equal(r2.ok?.ok, true, JSON.stringify(r2));
     assert.equal(host.calls.filter((c) => c.call === "start" && host.calls.some((s) => s.call === "spawn" && s.id === c.args.id && s.args.argv[1] === "--version")).length, 1, "positive control: the probe started once loaded");
+});
+
+test("the version probe never runs while an ask policy matches it: only an allow starts it", T, async () => {
+    const P = await import("../src/sw/sw-policies.ts");
+    const host = useHost(fakeNativeHost({ facts: gitFacts(false, "9:9:9:9"), done: gitDone }));
+    const probes = () => host.calls.filter((c) => c.call === "start" && host.calls.some((s) => s.call === "spawn" && s.id === c.args.id && s.args.argv[1] === "--version")).length;
+    const ask = P.addGlobalPolicy({ consumer: "sh", effect: "ask", source: '(c) => c.argv.includes("--version")', label: "ask on version probes" });
+    try {
+        const r = await shRun(ctxFor("run-probe-ask"), [["git", "status"]]);
+        assert.equal(probes(), 0, "the probe started although an ask policy matches it");
+        assert.equal(r.code, "Denied", `the call itself needed the person, and there was none: ${JSON.stringify(r)}`);
+    } finally { P.removePolicy(ask.id); }
+    // Positive control: the same program, with the ask gone, is probed (a new fingerprint is not needed: nothing was cached).
+    const r2 = await shRun(ctxFor("run-probe-free"), [["git", "status"]]);
+    assert.equal(r2.ok?.ok, true, JSON.stringify(r2));
+    assert.equal(probes(), 1, "positive control: probed once the ask is gone");
 });
 
 test("the version probe never runs a program inside the workspace roots, nor on the plain host", T, async () => {

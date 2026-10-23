@@ -217,6 +217,25 @@ test("a policy added while an ask waits answers it only when its facts carry res
     unhost();
 });
 
+test("an ASK policy resolves no pending card, and it keeps an allow from answering one; a deny still refuses it", async () => {
+    const { addGlobalPolicy, removePolicy } = await import("../src/sw/sw-policies.ts");
+    const { r, unhost } = run();
+    const facts = { argv: ["ls"], effects: [] };
+    const ask = (seq) => raiseAsk(r.runId, seq, { kind: "sh", facts, consumer: "sh", placement: "host-sandbox" });
+    const pending = ask(2);
+    const asking = addGlobalPolicy({ consumer: "sh", effect: "ask", source: "(c) => true", label: "ask on every sh call" });
+    await tick();
+    assert.equal(keysOf(r.runId).length, 1, "an ask policy added while the card waits answers nothing");
+    const allowing = addGlobalPolicy({ consumer: "sh", effect: "allow", source: "(c) => true", label: "every sh call" });
+    await tick();
+    assert.equal(keysOf(r.runId).length, 1, "and an allow added after it does not answer for the person either");
+    const denying = addGlobalPolicy({ consumer: "sh", effect: "deny", source: "(c) => true", label: "no sh at all" });
+    await tick();
+    assert.deepEqual([(await pending).allowed, (await pending).state], [false, "denied"], "a deny beats the ask and refuses the pending card");
+    for (const p of [asking, allowing, denying]) removePolicy(p.id);
+    unhost();
+});
+
 // --- red team: what an answer may name ---
 
 test("an answer reaches only the ask it names exactly: a guessed id, another run's key or a malformed id resolves nothing", async () => {

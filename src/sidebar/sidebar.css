@@ -3096,10 +3096,12 @@ html[data-focus] .action-verb { font-weight: 500; }
 .pol-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 /* The policy's label, the sentence the person reads. */
 .pol-label { flex: 1 1 10em; min-width: 0; overflow-wrap: anywhere; }
-/* The chip saying whether a policy allows or refuses ("allows" / "refuses"). */
+/* The chip saying whether a policy allows or refuses ("allows" / "asks" / "refuses"). */
 .pol-effect { font-size: 0.8em; font-weight: 600; padding: 1px 7px; border-radius: 9px; background: var(--bg); border: 1px solid var(--border); }
 /* The effect chip of an allow policy. */
 .pol-allow { color: var(--ok); }
+/* The effect chip of an ask policy. */
+.pol-ask { color: var(--notice); }
 /* The effect chip of a deny policy. */
 .pol-deny { color: var(--err); }
 /* A small tag on a policy row: its consumer, or where it came from ("from a card", "proposed by the model"). */

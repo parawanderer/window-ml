@@ -184,9 +184,10 @@ export type AskState = "pending" | "allowed" | "denied" | "cancelled" | "timeout
 export interface AskWhy {
     line: string;
     detail: string;
-    /** Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), or `outside-dialect`. */
+    /** Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, or `ask-policy`
+     *  (an `ask` policy matched, and the card offers no "remember"). */
     cause: string;
-    /** The gone policy's label; absent when no policy is involved. */
+    /** The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved. */
     policy?: string;
 }
 

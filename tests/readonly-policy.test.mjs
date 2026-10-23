@@ -241,6 +241,41 @@ test("one evaluation's null read does not leak into the next, though the parse i
     assert.equal(run(src, gitStatus(false)).decision, "allow");
 });
 
+test("an ASK that read a null fact fires, as a DENY does, however null is tested; the same terms as an ALLOW do not (POLICIES.md, ask rule 1)", () => {
+    for (const src of ["(c) => c.repoConfigRunsCode === null", "(c) => c.repoConfigRunsCode !== true", "(c) => !c.repoConfigRunsCode",
+        "(c) => c.program.version === null", "(c) => typeof c.repoConfigRunsCode === \"object\"", "(c) => `${c.repoConfigRunsCode}` === \"null\""]) {
+        const got = ["ask", "deny", "allow"].map((effect) => run(src, gitStatus(null), effect).decision);
+        assert.deepEqual(got, ["ask", "deny", undefined], src);
+    }
+    // The control: where the fact is known the ask follows the predicate, both ways.
+    assert.equal(run("(c) => c.repoConfigRunsCode === true", gitStatus(true), "ask").decision, "ask");
+    assert.equal(run("(c) => c.repoConfigRunsCode === true", gitStatus(false), "ask").decision, undefined);
+});
+
+test("an ask over an unknown fact inside a list or a coerced read fires too: nothing about the route makes an ask fail open", () => {
+    const withList = { ...gitStatus(false), env: { set: ["A", null] } };
+    assert.equal(run("(c) => c.argv[0] === \"git\"", withList, "ask").decision, "ask");
+    assert.equal(run("(c) => c.argv[0] === \"git\"", withList, "allow").decision, undefined, "the control: an allow over the same list is silent");
+    assert.equal(run("(c) => JSON.stringify(c).includes(\"sha256\")", gitStatus(false), "ask").decision, "ask");
+    assert.equal(run("(c) => JSON.stringify(c).includes(\"sha256\")", gitStatus(false), "allow").decision, undefined, "JSON of a null-holding fact is a null read");
+});
+
+test("an ask over effects \"unknown\": one that needs a resource's field is silent, one that tests an absence or asks the set fires, none is broken", () => {
+    const facts = { argv: ["rm", "x"], effects: "unknown" };
+    for (const [src, want] of [
+        ["(c) => c.effects.writes.some((r) => r.inRoot === true)", undefined],
+        ["(c) => c.effects.reads.some((r) => r.path === \"/r/a\")", undefined],
+        ["(c) => c.effects.writes.every((r) => !r.secret)", "ask"],
+        ["(c) => c.effects.has(\"write\")", "ask"],
+        ["(c) => c.effects.uses(\"rm\")", "ask"],
+        ["(c) => c.effects.unknown", "ask"],
+    ]) {
+        const r = run(src, facts, "ask");
+        assert.equal(r.broken, undefined, src);
+        assert.equal(r.decision, want, src);
+    }
+});
+
 // --- == and != are refused here, and only here ---
 
 test("== and != are refused in a policy, wherever they appear", () => {

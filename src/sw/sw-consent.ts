@@ -82,7 +82,8 @@ export function resolveApproval(key: string, decision: ApprovalDecision): boolea
  * Judge every card still showing again, after a policy changed (POLICIES.md, "A change takes effect at once"): a new
  * `deny` refuses it and a new `allow` answers it, and the card closes saying which policy did. Only a card whose
  * descriptor carries `consumer` and `facts` is judged, the facts the worker resolved when it opened. A store not yet
- * loaded, the built-in default and no answer leave the card for the person.
+ * loaded, an `ask` policy (it resolves nothing, and it beats an `allow`), the built-in default and no answer leave the
+ * card for the person.
  * @returns how many cards a policy answered
  */
 export function rejudgePending(): number {
@@ -164,6 +165,31 @@ export const grantCredFetch = (tabId: number, url: string): void => {
 export const takeCredFetch = (tabId: number | undefined, url: string): boolean => {
     if (tabId == null) return false;
     const s = credFetchGrants.get(tabId);
+    if (!s?.has(url)) return false;
+    s.delete(url);
+    return true;
+};
+
+/** One-time grants for an UNCREDENTIALED fetch that an `ask` policy put to the person: approving the card runs that one
+ *  call and remembers nothing, so the next fetch of the URL asks again (docs/spec/POLICIES.md, the `ask` answer). */
+export const onceFetchGrants = new Map<number, Set<string>>();
+defineState({
+    id: "grants.askedFetch", scope: "tab", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "Fetches an ask policy put to you and you approved, each usable once and not yet used.",
+    read: ({ tabId }) => { const s = tabId == null ? undefined : onceFetchGrants.get(tabId); return s?.size ? [...s] : undefined; },
+});
+
+/** Mint the ONE-TIME grant for an uncredentialed fetch an `ask` policy raised, consumed by `takeOnceFetch`. */
+export const grantOnceFetch = (tabId: number, url: string): void => {
+    let s = onceFetchGrants.get(tabId);
+    if (!s) { s = new Set(); onceFetchGrants.set(tabId, s); }
+    s.add(url);
+};
+
+/** Consume a one-time asked-fetch grant for (tabId, url): true if it existed (and is now spent), else false. */
+export const takeOnceFetch = (tabId: number | undefined, url: string): boolean => {
+    if (tabId == null) return false;
+    const s = onceFetchGrants.get(tabId);
     if (!s?.has(url)) return false;
     s.delete(url);
     return true;

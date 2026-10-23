@@ -3,11 +3,12 @@
 import { isSelfSourceUrl } from "../agent/self-source";
 import { BUILD_INFO } from "../build-info.gen";
 import { isCurrentPage } from "../dom/dom";
-import { senderTrust, takeCredFetch, tabGrants, fetchConsent } from "./sw-consent";
+import { senderTrust, takeCredFetch, takeOnceFetch, tabGrants, fetchConsent } from "./sw-consent";
 import { fetchRenderedContent, fetchUrlContent } from "./sw-fetch";
 import { getConfig } from "./sw-llm";
 import type { FetchResult } from "../contract";
-import { pageValueSession } from "./sw-runs";
+import { pageValueSession, activeRuns } from "./sw-runs";
+import { judgeCall, fetchFacts } from "./sw-policies";
 import { storeFetchedBody, claimValue } from "./sw-values";
 
 /** Who an `ml.fetch` is for: a page through the relay, or a run's tool answered in the worker. */
@@ -27,6 +28,14 @@ export interface FetchCaller {
     /** Record a stored table's key as disclosed to the tab (`pageValueSession`), which entitles a page-hosted run there
      *  to read it. False for a run's own fetch in the worker: the key never reaches the page. */
     disclose: boolean;
+}
+
+/** Whether the person's policies withdraw the tab's remembered consent for this fetch: an `ask` or a `deny` matches it,
+ *  judged over the global policies and those of every run the tab hosts. A store not loaded yet withdraws it too. */
+function withdrawn(tabId: number, url: string, rendered: boolean): boolean {
+    const facts = fetchFacts(url, { credentials: false, rendered });
+    const runs: (string | undefined)[] = [undefined, ...(activeRuns.get(tabId) ?? [])];
+    return runs.some((r) => { const d = judgeCall(r, "fetch", facts).decision; return d === "ask" || d === "deny"; });
 }
 
 /** A fetch through the page relay, as the router hands it over. */
@@ -107,7 +116,12 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // flag. Enforced HERE, trusted-side (the client autoApprove only skips the prompt; the background is
             // the authority — a forged "self-source" can't make this true for a non-self URL). See self-source.ts.
             const selfSrc = !!cfg.autoApproveSelfSource && !rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl);
-            if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(caller.consented ? caller.consented(url) : tabId != null && !!fetchConsent.get(tabId)?.has(url))) {
+            // A consent the tab REMEMBERS is an approval from an earlier call, so a person's `ask` or `deny` over the fetch
+            // withdraws it: the page's script is refused and the agent's fetch_url puts the call to the person. The free
+            // tiers above are not judged: the page can make those reads itself with a plain fetch(), so no card there
+            // could stop it (docs/dev/policies.md, "What an ask cannot reach").
+            const remembered = !caller.consented && tabId != null && !!fetchConsent.get(tabId)?.has(url) && !withdrawn(tabId, url, rendered);
+            if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(caller.consented ? caller.consented(url) : tabId != null && (remembered || takeOnceFetch(tabId, url)))) {
                 const inExec = tabId != null && !!tabGrants(tabId)?.fetchUrls;
                 return { error: inExec
                     ? `Refused: "${url}" is not spelled out in the approved script, so it was not approved. Write the URL as a string literal in ml.fetch("…"), or fetch it with the fetch_url tool.`
