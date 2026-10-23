@@ -691,7 +691,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
             // user also has one open) stuck on the connect-time replay — the "panel stopped updating" bug.
             relayDebugEvent(tabId, event);
-            ingestSessionEvent(event, { tabId, trusted: true });
+            ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
@@ -703,7 +703,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (p.crossPage !== false) bufferReplay(tabId, event);
             // The site's mark and its turns reach the session index too (it takes them from the worker only), so the chat
             // page names the site on its turns as every other surface does.
-            if (event.kind === "agent-site" || event.kind === "agent-site-say") ingestSessionEvent(event, { tabId, trusted: true });
+            if (event.kind === "agent-site" || event.kind === "agent-site-say") ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
         };
         // Fan a lightweight run event verbatim (no step/seq offset) to every surface — used for the
         // "seen" indicator (agent-say-seen), which keys off its own id, not a step position.
@@ -711,7 +711,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (abortCtl.signal.aborted) return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
             relayDebugEvent(tabId, event);   // always feed a connected panel (see emitStep — no double, no-op if none)
-            ingestSessionEvent(event, { tabId, trusted: true });
+            ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
@@ -752,7 +752,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
             // connected panel (stuck on "running"). No double (page-side isn't fanning here); no-op without a panel.
             relayDebugEvent(tabId, event);
-            ingestSessionEvent(event, { tabId, trusted: true });
+            ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
         };
         endSession = (error) => emitLifecycle({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, summary: "", steps: 0, hitCap: false, error });
         // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card

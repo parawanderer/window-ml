@@ -25,6 +25,9 @@ export interface IngestSource {
     tabId?: number;
     /** produced by the background itself, rather than forwarded from a page */
     trusted: boolean;
+    /** whether the worker hosts the run's loop; when false the event is relayed on behalf of a page-built run and
+     *  must not flip `hostedBy` to "background" (the page still hosts). Defaults to `trusted`. */
+    hosts?: boolean;
     /** the sender tab's own URL and title as the browser reports them, never the event's claim */
     page?: { url: string; title?: string };
 }
@@ -196,9 +199,13 @@ export class SessionIndex {
         let reset = false;
         if (s) {
             if (src.trusted) {
-                // A background run on a different tab than the page that created this record: the page squatted the
-                // hash (or reported a session it does not host). The run's record replaces it.
-                if (s.hostedBy === "page" && s.owner != null && src.tabId != null && s.owner !== src.tabId) {
+                if (src.hosts === false) {
+                    // Relayed on behalf of a page-built run: the worker produced this event but the page hosts the
+                    // loop, so `hostedBy` stays "page". Still the worker's voice, so ownership is not challenged.
+                    if (s.owner == null && src.tabId != null) s.owner = src.tabId;
+                } else if (s.hostedBy === "page" && s.owner != null && src.tabId != null && s.owner !== src.tabId) {
+                    // A background run on a different tab than the page that created this record: the page squatted the
+                    // hash (or reported a session it does not host). The run's record replaces it.
                     this.drop(s);
                     s = undefined;
                     reset = true;
@@ -244,7 +251,7 @@ export class SessionIndex {
         const now = this.now();
         const s: Indexed = {
             id: { runtime: this.runtime, hash }, kind, gen, ring: [], seen: 0, bytes: 0, lostThrough: -1, lastCursor: 0,
-            owner: src.tabId, hostedBy: src.trusted ? "background" : "page", hasStart: false,
+            owner: src.tabId, hostedBy: src.trusted && src.hosts !== false ? "background" : "page", hasStart: false,
             ended: false, endedStep: -1, endStatus: "done", gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(), seenResumes: new Set(), interrupted: false,
             summary: { id: { runtime: this.runtime, hash }, kind, status: "running", createdTs: now, lastTs: now, pendingApprovals: 0, saved: false },
             summaryJson: "", reportedTs: 0,
