@@ -9,8 +9,9 @@
 //
 // chrome-free, like python-worker.ts: the wasm is found next to this script's own URL.
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
-import { folderState, monthFiles, writableFolder, writeMonthFile, type FolderState } from "./archive-folder";
+import { archiveStats, dirtyMonths, listArchived, markAllDirty, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
+import { folderState, monthFolder, moveMonthFilesAside, writableFolder, type FolderState } from "./archive-folder";
+import { adoptFolder, importMonths, surveyFolder, syncMonths, type SyncOutcome } from "./folder-sync";
 
 /** The operations this worker answers, and what each takes. */
 export type ArchiveOp =
@@ -24,8 +25,12 @@ export type ArchiveOp =
     | { op: "folder"; args?: undefined }
     /** write every dirty month into the folder, when it is writable */
     | { op: "sync"; args?: undefined }
-    /** a folder was just picked: every month is dirty, then sync */
+    /** a folder was just picked: import what it holds, then every month is dirty, then sync */
     | { op: "resync"; args?: undefined }
+    /** a folder was just picked and the person chose to start fresh: its month files moved aside, then as `resync` */
+    | { op: "fresh"; args?: undefined }
+    /** what the folder already holds, before anything is written to it */
+    | { op: "survey"; args?: undefined }
     /** copy every month file in the folder into the archive (a restore into a fresh profile) */
     | { op: "import"; args?: undefined }
     /** up to `limit` PNG images still to re-encode as WebP, as data URLs, and how many wait in all */
@@ -45,6 +50,14 @@ export interface FolderReport {
     written?: string[];
     removed?: string[];
     imported?: { files: number; sessions: number };
+    /** sessions a sync took into the archive from the folder's files before rewriting them */
+    merged?: number;
+    /** month files that could not be read as an archive: left as they were, and still waiting */
+    skipped?: SyncOutcome["skipped"];
+    /** what the folder held when it was surveyed: how many month files, and their range */
+    found?: { files: number; first?: string; last?: string };
+    /** where "start fresh" moved the files the folder held */
+    movedAside?: { folder: string; files: number };
 }
 
 /** `raw` is sqlite-wasm's own handle, which `exportMonth`/`importBytes` need for its pointer; `db` is the neutral
@@ -83,14 +96,24 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "replacePngs": return replacePngs(db, req.args.items);
         case "export": return exportBytes();
         case "folder": return folderReport(db);
-        case "resync": markAllDirty(db); return sync(db, raw, sqlite3);
+        case "resync": return sync(db, raw, sqlite3, "adopt");
+        case "fresh": {
+            const dir = await writableFolder();
+            if (!dir) return folderReport(db);
+            const movedAside = await moveMonthFilesAside(dir);
+            markAllDirty(db);
+            return { ...(await sync(db, raw, sqlite3)), movedAside };
+        }
         case "sync": return sync(db, raw, sqlite3);
+        case "survey": {
+            const dir = await writableFolder();
+            return { ...(await folderReport(db)), ...(dir ? { found: await surveyFolder(monthFolder(dir)) } : {}) };
+        }
         case "import": {
             const dir = await writableFolder();
             if (!dir) return folderReport(db);
-            let files = 0, sessions = 0;
-            for (const f of await monthFiles(dir)) { sessions += importBytes(sqlite3, raw, await f.read()); files++; }
-            return { ...(await folderReport(db)), imported: { files, sessions } };
+            const { files, sessions, skipped } = await importMonths({ sqlite3, raw }, monthFolder(dir));
+            return { ...(await folderReport(db)), imported: { files, sessions }, ...(skipped.length ? { skipped } : {}) };
         }
     }
 }
@@ -101,21 +124,21 @@ async function folderReport(db: ArchiveDb): Promise<FolderReport> {
 }
 
 /**
- * Write every dirty month into the folder, when it is writable; otherwise nothing, and the months stay dirty until it
- * is. A month left with no sessions (all deleted) has its file removed, so a delete reaches the folder too.
+ * Write every dirty month into the folder, each merged with the file it replaces (folder-sync.ts), when the folder is
+ * writable; otherwise nothing, and the months stay dirty until it is. `adopt` (a folder just picked) imports every file
+ * the folder holds first and then writes every month.
  */
-async function sync(db: ArchiveDb, raw: Database, sqlite3: Sqlite3Static): Promise<FolderReport> {
+async function sync(db: ArchiveDb, raw: Database, sqlite3: Sqlite3Static, mode: "sync" | "adopt" = "sync"): Promise<FolderReport> {
     const dir = await writableFolder();
     if (!dir) return folderReport(db);
-    const written: string[] = [], removed: string[] = [];
-    for (const month of dirtyMonths(db)) {
-        const { bytes, sessions } = exportMonth(sqlite3, raw, month);
-        if (sessions) { await writeMonthFile(dir, month, bytes); written.push(month); }
-        else { await dir.removeEntry(`${month}.sqlite`).catch(() => { /* never written */ }); removed.push(month); }
-        markClean(db, month);
-    }
+    const h = { sqlite3, raw }, folder = monthFolder(dir);
+    const r = mode === "adopt" ? await adoptFolder(h, folder) : await syncMonths(h, folder);
     metaSet(db, "last_sync", String(Date.now()));
-    return { ...(await folderReport(db)), written, removed };
+    return {
+        ...(await folderReport(db)), written: r.written, removed: r.removed, merged: r.merged,
+        ...(r.skipped.length ? { skipped: r.skipped } : {}),
+        ...(mode === "adopt" && "imported" in r ? { imported: (r as { imported: { files: number; sessions: number } }).imported } : {}),
+    };
 }
 
 // In order: each request waits for the one before it.

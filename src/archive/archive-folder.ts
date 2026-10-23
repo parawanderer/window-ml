@@ -144,3 +144,35 @@ export async function monthFiles(dir: FileSystemDirectoryHandle): Promise<{ mont
     }
     return out.sort((a, b) => a.month.localeCompare(b.month));
 }
+
+/** The picked directory as a sync sees it (folder-sync.ts): its month files by `YYYY-MM`. */
+export function monthFolder(dir: FileSystemDirectoryHandle): import("./folder-sync").MonthFolder {
+    return {
+        months: async () => (await monthFiles(dir)).map((f) => f.month),
+        read: async (month) => {
+            const file = await dir.getFileHandle(`${month}.sqlite`).catch(() => null);
+            return file ? new Uint8Array(await (await file.getFile()).arrayBuffer()) : null;
+        },
+        write: (month, bytes) => writeMonthFile(dir, month, bytes),
+        remove: (month) => dir.removeEntry(`${month}.sqlite`).catch(() => { /* never written */ }),
+    };
+}
+
+/**
+ * "Start fresh" in a folder that already holds month files: move them into a subfolder (`earlier-YYYY-MM-DD`, with a
+ * number added when that exists) rather than delete or overwrite anything. A copy, then the original removed only
+ * once its copy is completely written. Returns the subfolder's name and how many files went into it.
+ */
+export async function moveMonthFilesAside(dir: FileSystemDirectoryHandle, now = new Date()): Promise<{ folder: string; files: number }> {
+    const files = await monthFiles(dir);
+    const base = `earlier-${now.toISOString().slice(0, 10)}`;
+    let name = base;
+    for (let n = 2; await dir.getDirectoryHandle(name).then(() => true, () => false); n++) name = `${base}-${n}`;
+    if (!files.length) return { folder: name, files: 0 };
+    const aside = await dir.getDirectoryHandle(name, { create: true });
+    for (const f of files) {
+        await writeMonthFile(aside, f.month, await f.read());
+        await dir.removeEntry(`${f.month}.sqlite`);
+    }
+    return { folder: name, files: files.length };
+}

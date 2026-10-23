@@ -15,6 +15,7 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 | `sw-offscreen.ts` | The ONE offscreen document, shared with the Python sandbox; nothing closes it. |
 | `sw-archive.ts` | `archiveCall(op, args)`: the worker side's messenger, with one retry when the document was torn down. |
 | `session-store.ts` | The `archive` option on eviction: move, and only then forget. |
+| `folder-sync.ts` | What a sync does over any folder of month files (`MonthFolder`): `syncMonths` merges each dirty month's file in before rewriting it, `importMonths`, `adoptFolder` (a pick), `surveyFolder`. chrome-free, tested in Node against a Map (`tests/folder-sync.test.mjs`). |
 | `archive-folder.ts` | The picked folder: its handle in IndexedDB (`ml-archive-folder`), its `FolderState`, picking and re-granting (a page, in a click), and reading and writing `YYYY-MM.sqlite`. chrome-free: the page and the worker both use it. |
 | `sidebar/archive-section.tsx` | The archive folder, in Settings → Storage under "Archive sessions instead of deleting them" (shown only while that is on). `ArchiveFolderBody` is pure (report + actions as props) so a remote runtime's view can render it; `LocalArchiveFolder` wires it to this browser. |
 
@@ -47,6 +48,10 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 - **Dirty months, not "the current month".** A write marks its month dirty, and the month it moved from; a remove
   marks its month. A sync rewrites exactly the dirty months, and removes the file of a month left empty. That is
   how a delete reaches a month that closed long ago.
+- **A sync MERGES before it writes** (`folder-sync.ts`): a month's file is imported first, so sessions it holds that the
+  archive lacks are kept, and a picked folder is imported whole before the first write. What the archive removed on
+  purpose (`removed`) is skipped, or a delete would come back from the old copy. A file that is not a readable archive
+  is never overwritten; its month stays pending. Why, and the cross-machine limit: `backup.md`, "merge before write".
 - **Built in memory, never as a temporary file.** `exportMonth` attaches `:memory:`, copies the month in and
   serializes it (`sqlite3_js_db_export(db, "snap")`); `importBytes` deserializes a file into an attached `:memory:` and
   copies in what is new (`INSERT OR IGNORE`, sessions by hash, images by content hash). The file header is checked
@@ -55,6 +60,9 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 - **The worker writes; a page only picks and re-grants.** Both need a click. A sync runs 30 s after an archive write,
   on the six-hourly alarm, and from Settings. While the grant is `prompt`, nothing is written and the months stay
   dirty ("pending" in Settings).
+- **A picked folder that already holds month files is asked about** before anything is written: import them (the
+  default), or start fresh, which moves them into `earlier-<date>/`. A pick with no one to ask (an attention card's
+  fix) imports them.
 - **Four states in Settings:** none (pick), connected (write now, import, change, stop), needs re-grant (reconnect,
   choose "Allow on every visit", which survives a restart), unsupported (Brave: the flag to copy). Inside the in-page
   overlay (a frame in someone's site) the browser refuses the picker and the prompt, so the section says to open
