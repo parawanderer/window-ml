@@ -40,7 +40,14 @@ that needs a decision goes to the coordinator, who writes the ruling into the sp
    failure keeps it sandbox-only and is stored on the entry for (d)'s page; zero recorded free calls means no evidence,
    sandbox-only, said on the card, never a synthetic call. Measuring before the card was refused: an execution no card
    covered. Scope is the model's choice, B3 forcing workspace for an in-root program or a script, said on the card; the
-   tool is offered only to a worker-built run with `ml.sh` bound, like `propose_policy`. (c) is a
+   tool is offered only to a worker-built run with `ml.sh` bound, like `propose_policy`. BUILT as #1055 (stacked on
+   #1048; the red team's tool pass, the janitor's review). Ruled on it 2026-10-23: the tool is offered on the DECLARED
+   settings (`ml.sh` enabled with roots), never on the measured host status, which is empty in a just-woken worker until
+   its refresh lands; a run started in that window must not lose the tool to timing. When the host does not answer, the
+   precheck tells the model and no card is shown (a committed test). Measured in tests: 0 starts before the card is
+   answered (asserted); the evidence run passes, fails on each of five causes, covers no calls and the plain host, on the
+   FAKE host only. (c) stays "built, not measured on a real host" until one real evidence run on the sandboxed macOS
+   host over a real recorded call is carried in `ROOT_K_RESULT_2.md`, a negative result included. (c) is a
    new tool and (b) adds message types: each gets the red-team pass AGENTS.md requires, written by a separate agent with
    tests that fail first (`tests/redteam.test.js`; the `redteam` skill). The sh-policy session's #990 (destructive
    programs, no shipped manifest inside a workspace root) and #995 (the manifest JSON Schemas) are K's edges, already on
