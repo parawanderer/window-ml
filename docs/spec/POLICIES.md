@@ -29,6 +29,14 @@ sessions (read, message, steer: a directional grant, which agent-to-agent coordi
 The three layers every consumer is built from (describe, decide, enforce), and why a policy is only ever the middle
 one: [`EFFECTS.md`](EFFECTS.md), "Three layers, said out loud".
 
+**What runs without asking is decided by a policy, never by a classifier** (Shane, 2026-10-23). A classifier guessing a
+call's intent is probabilistic: the same call can pass today and be refused tomorrow, and nobody can read why. Whether a
+call runs unasked is a deterministic answer over its resolved facts, which the person can read, test and change. A
+classifier may still DETECT afterwards (flag an edit or a run for review); it never decides what runs. A decision that
+cannot be made from a call's facts belongs in a script the person owns ("A condition about the outside world is a
+pinned script" below), not in a model's guess. What keeps a secret from leaving is a separate means
+([`SECRET_HANDLES.md`](SECRET_HANDLES.md)), not this one.
+
 ## A policy is a function over the call
 
 **A policy is a function over one call, evaluated by the read-only dialect** (Shane, 2026-10-13). The person can say
@@ -323,6 +331,18 @@ fragment and a MEASURED one when it does not, and says which. The rule: a policy
 the calls this run has made and the ones it would allow next, checked against it before it is granted, and a plain
 statement of its breadth (which programs it can match at all, and whether any matched call writes or reaches the
 network). A builder of typed nodes that renders to a sentence and to the same predicate is the stronger form.
+
+**A policy is co-written with the model, not typed into a builder** (Shane, 2026-10-23). The person says what they
+want in their own words and the model drafts it; they refine it in conversation, never by filling in a form of typed
+fields or typing JSON. That is safe for one reason: what the person approves is never the model's paraphrase of the
+rule. Each draft reaches them as a proposal card, which shows what the SYSTEM renders from the rule (the code, and the
+sentence and predicate rendered from a tree once there is one, "The tree, ruled" below) and its breadth evidence: the
+calls it would and would not match. A refinement is the card's own "deny, with a note", which the model reads to
+propose again, so no new answer is added to the card ("Widening is a policy" above). That note is the gate's generic
+deny feedback (`agent-loop.ts`, "Denied by …: <note>"); today the transcript's card sends it and the HUD card does not.
+Not built as a loop: `propose_policy` (`fetch` only today) and its card exist. Open: whether a conversation that drafts
+several policies needs more than one card at a time, and whether a proposed policy the person then edits in the policy
+editor becomes theirs (`editPolicy` keeps `origin: "proposed"` today).
 
 **Code first, a tree later, and only as an option** (Shane, 2026-10-15). Policies are code in the read-only dialect, since
 a code policy is dynamic and covers more than a tree can. If a typed-node tree turns out to cover enough of what people
