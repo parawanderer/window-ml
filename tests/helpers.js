@@ -140,8 +140,9 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
+// `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -287,6 +288,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                         // read, so a test can deliver a message to a worker that has not restored its runs yet.
                         // A copy, as the browser's storage returns: a worker that changes what it read does not change storage.
                         if (key == null) { if (holdRestore) await holdRestore; return structuredClone(localStore); }
+                        if (holdPolicies && Array.isArray(key) && key.includes("ml_policies_global")) await holdPolicies;   // the policy store's first read
                         const keys = typeof key === "string" ? [key] : Array.isArray(key) ? key : Object.keys(key || {});
                         const out = {};
                         for (const k of keys) if (k in localStore) out[k] = structuredClone(localStore[k]);
