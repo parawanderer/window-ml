@@ -76,6 +76,20 @@ starts from main.
    `asyncio.run` works, also after a cell pops the stand-in. OPEN, the red team's probe in its test-only PR: in Node
    `run_js` still answers under the stand-in scope; in the worker that rests on step 3's strip removing eval, measured
    only in the real worker.
+   RULED 2026-10-23 (coordinator, on the builder's question after running the red team's #1060 against #1046's branch):
+   #1046 merges as ruled, the stand-in and nothing wider. (i) `run_js` is OPEN, now with its route: `pyodide/code.py`'s
+   `run_js` does `from js import eval`, not `pyodide_js`, and `from js import Function` is the same route, so the
+   stand-in cannot close it and a clean `lockdown()` does not either (the kept `Function` binding still evaluates);
+   closing it is a step 3 property (the strip) or a refusal of `js` in an approved cell, which is a NEW defence with a
+   corpus cost: widening, Shane's call, parked under the 2026-10-23 freeze. (ii) The red team's todos that ask for
+   `import js`, `pyodide.ffi`, `pyodide.webloop` and `import asyncio` to fail in an approved cell ask for that same
+   widening; they stay `todo`, labelled as parked, not as #1046's debt. (iii) Its todos that ask for `pyodide_js` not to
+   import assert a property wider than the ruled one; the ruled property is "`pyodide_js` imports as a config-only
+   stand-in with no `_module` and no `_api` beyond `config`", and the red team, never the builder (rule 10), rewrites
+   those todos against it or keeps them as a record of the wider ask. (iv) The finder's and the builder's tests live in
+   separate files: the red team's keep `redteam-python-lockdown.test.mjs` (on #1060's branch); #1046 renames its own to a non-`redteam-`
+   name before it is marked ready, so neither PR merges the other's file. Severity, from #1060: the bridge imports reach
+   from an APPROVED cell; the auto-approved inside path refuses every import form unasked.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
