@@ -63,7 +63,9 @@ and the sh-policy session, none of which is your subagent.
   `replaceCharge` row of `docs/dev/readonly-exec.md`): exact where the worst case is wrong, never looser than exact.
 - An `ask` saved between `decide` and host start is not re-checked, only a deny is (`docs/dev/policies.md`, "What an ask
   cannot reach" and the sh-policy session's #999).
-- The lost-POLICIES-add race (the sh-policy session's note; ask it for the shape, it found it).
+- The lost-POLICIES-add race (the sh-policy session's note; its record is `~/git/window-ml-sh-policy/tmp/CHECKPOINT.md`,
+  a local file outside git that Shane keeps for you: READ it, never work in that clone; ask that session if the shape is
+  unclear, it found it).
 - The model-written proposals appended to `tests/fixtures/policy-corpus.json` (`LANE_11_RESULT.md`, "Left by #961").
 
 Not yours, said so you do not take them: `riskyRegex` stays as it is (ruled, lane 11); the python cancel gaps are
@@ -76,7 +78,8 @@ Read, in this order, before touching code: `AGENTS.md`; `README.md` beside this 
 to work, and how to coordinate" (the clone, one root per PR, labels, the session line on every post, merge-when-green,
 session mail, when to ask the coordinator, the result file; written for the numbered lanes, every line applies to you
 with work slug `root-k`); `docs/dev/shell.md`, `docs/dev/policies.md`, `docs/dev/state.md`, `docs/dev/working-in-the-repo.md`;
-then the three specs. Keep `tmp/CHECKPOINT.md` in your clone, one block per stretch, and say when it is a good moment to
+then the three specs; then `~/git/window-ml-sh-policy/tmp/CHECKPOINT.md`, the sh-policy session's own record of where
+roots 3 to 5's edges ended (read only). Keep `tmp/CHECKPOINT.md` in your clone, one block per stretch, and say when it is a good moment to
 compact. The coordinator is live as `[window-ml policies/python/desktop/manifests coordinator]` (ListAgents; SendMessage,
 no mail needed while it runs); message it at each root's PR, at each ruling you need, and with every number you measure
 (rule 8: nothing is claimed before it is measured; rule 9: a finding goes to its owner the same day). Your reviewer for
