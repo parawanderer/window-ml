@@ -4147,6 +4147,57 @@ pre.code.dlines > code.hljs { display: block; }
 .arch-primary { font-weight: 600; }
 .arch-msg { color: var(--fg); }
 
+/* The Settings BACKUP AND RESTORE section (backup-section.tsx): one block per job (backup, restore, decrypt, passphrase),
+   the recovery screen replacing them while it is up. Fields, hints and buttons are the settings' own. */
+.bk-root { display: flex; flex-direction: column; gap: 14px; }
+/* One screen of the section: a title, hints and fields stacked, buttons at the end. */
+.bk { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; max-width: 100%; }
+.bk > .set-field, .bk > .set-hint, .bk > .set-warn { align-self: stretch; }
+/* A screen's heading inside the section (backup, restore, decrypt, passphrase, recovery key). */
+.bk-title { color: var(--fg-dim); font-size: .9em; font-weight: 600; margin: 0 4px; }
+/* A screen's row of buttons, wrapping on a narrow panel. */
+.bk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The backup form radios (encrypted, compressed, plain), one per line. */
+.bk-choices { display: flex; flex-direction: column; }
+/* What a finished backup or restore reports, under its button. */
+.bk-result { margin: 4px; }
+/* The quiet half of a row: the kind of change, a date, a size. */
+.bk-dim { color: var(--fg-faint); font-size: .92em; }
+/* Monospace for what is typed back or copied exactly: the recovery key and one of its groups. */
+.bk-mono, .bk-group { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+/* A progress line: the page-load sweep (`.pbar`) over its label. */
+.bk-progress { display: flex; flex-direction: column; gap: 4px; align-self: stretch; color: var(--fg-dim); font-size: .9em; }
+/* The recovery key as it is shown: its groups in monospace, wrapping as whole groups; also what a print shows. */
+.bk-print { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--panel); align-self: stretch; }
+.bk-print-line { color: var(--fg-dim); font-size: .85em; margin-bottom: 6px; }
+/* The recovery key's groups in one wrapping row. */
+.bk-groups { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+/* One group of four characters of the recovery key, selectable whole. */
+.bk-group { font-size: 1.15em; font-weight: 600; user-select: all; }
+@media print {
+    body * { visibility: hidden; }
+    .bk-print, .bk-print * { visibility: visible; }
+    .bk-print { position: fixed; left: 0; top: 0; border: none; background: none; color: #000; }
+    .bk-print-line { color: #000; }
+}
+/* A restore's preview: headed groups in the plan's order, each a list of rows. */
+.bk-preview-root, .bk-preview { display: flex; flex-direction: column; gap: 8px; align-self: stretch; min-width: 0; }
+/* One headed group of a restore preview (sites, policies, risky settings, the rest). */
+.bk-group-block ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.bk-group-block > summary { cursor: pointer; }
+/* A preview group's heading; the summary line of the collapsed group. */
+.bk-h { color: var(--fg); font-weight: 600; font-size: .92em; }
+/* A policy's predicate or a whole setting value: monospace, wrapping off, scrolling both ways so a long rule is read, not clipped. */
+.bk-src { margin: 4px 0 0; padding: 6px 8px; max-height: 9em; overflow: auto; white-space: pre; background: var(--panel-2); border-radius: 4px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A setting's value now and after, wrapping anywhere so a long address is read in full. */
+.bk-diff { overflow-wrap: anywhere; }
+/* The list of sessions a restore would add: scrolls past a dozen rows. */
+.bk-sessions { list-style: none; padding: 0; margin: 4px 0 0; max-height: 12em; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+/* A session's title in that list, wrapping rather than widening the panel. */
+.bk-title-cell { overflow-wrap: anywhere; }
+/* A text button inside a hint: looks like a link, keeps the button's keyboard behaviour. */
+.bk-link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+
 /* THE PAIRING SCREENS (pairing-ui.tsx): joining an account, creating one, pairing a device. Standalone, so they carry
    their own buttons and fields rather than borrowing a surface's; each is one card that sits in any settings pane. */
 .pair-card { display: flex; flex-direction: column; gap: 10px; max-width: 560px; padding: 0 12px; }

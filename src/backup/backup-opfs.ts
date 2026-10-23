@@ -25,6 +25,14 @@ export async function writeBackupSlot(slot: BackupSlot, bytes: Uint8Array<ArrayB
     catch (e) { await w.abort().catch(() => {}); throw e; }
 }
 
+/** Replace a slot's file with a picked `Blob`, streamed, so a backup of hundreds of megabytes is never held in the page's memory. */
+export async function copyIntoBackupSlot(slot: BackupSlot, blob: Blob): Promise<void> {
+    const handle = await (await root()).getFileHandle(NAMES[slot], { create: true });
+    const w = await handle.createWritable();
+    try { await blob.stream().pipeTo(w); }   // pipeTo closes the writable on success and aborts it on failure
+    catch (e) { await w.abort().catch(() => {}); throw e; }
+}
+
 /** A slot's file as a `File` (a `Blob` the page can stream out), or null when there is none. */
 export async function backupSlotFile(slot: BackupSlot): Promise<File | null> {
     try { return await (await (await root()).getFileHandle(NAMES[slot])).getFile(); }
