@@ -199,6 +199,117 @@ test("GAIN blocked — a page cannot approve ITSELF: SITE_ACCESS answers extensi
     assert.deepEqual(ok.data.lists.session, ["https://ok.example"]);
 });
 
+// --- the MANIFESTS store is the extension's alone (docs/spec/PROGRAM_MANIFEST.md, "The store, as built") ---
+// A stored manifest makes a program's calls free under the sandbox (B5), so a page that could store one would be
+// describing its own way in, and one that could read the store learns the pin of a program the person registered.
+// `MANIFESTS` answers extension pages only (background.ts, `isExtensionSender`). The red-team pass for the type.
+
+/** A stored entry whose every field is a marker the leak check can recognise. */
+const MARKED = {
+    program: "rt-marker-tool",
+    version: { range: "*", args: [], pattern: "" },
+    command: { effects: ["read"], paths: "operands", flags: {} },
+};
+const MARKED_PIN = { path: "/opt/rt-marker/bin/rt-marker-tool", fingerprint: "1:2:3:4-rt-marker", inRoot: false };
+const EXT_PAGE = { url: "chrome-extension://test/sidebar.html" };
+
+test("GAIN blocked — a page cannot list, add or remove a manifest: MANIFESTS is the extension's alone", async () => {
+    // Not a page-started type and not a page request type, so the content script drops it before the background
+    // sees it; and the handler's own gate refuses it if it ever does. The oracle: nothing stored, nothing spent.
+    assert.ok(!PAGE_STARTED_TYPES.has("MANIFESTS"), "MANIFESTS is page-startable");
+    assert.ok(!("MANIFESTS" in HANDLE_MAP) && !Object.values(HANDLE_MAP).some((e) => e.type === "MANIFESTS" || e.responseType === "MANIFESTS"), "MANIFESTS is in HANDLE_MAP");
+    const relayed = await pageRelays(
+        { type: "CONFIG_REQUEST", requestId: "ctrl", payload: {} },   // positive control
+        { type: "MANIFESTS", requestId: "a", payload: { op: "list" } },
+        { type: "MANIFESTS_REQUEST", requestId: "b", payload: { op: "list" } },
+        { type: "MANIFESTS", requestId: "c", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN } },
+    );
+    assert.ok(relayed.includes("GET_CONFIG"), "positive control: a real request type still relays");
+    assert.deepEqual(relayed.filter((t) => t !== "GET_CONFIG"), [], `relayed: ${relayed}`);
+
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
+    const payloads = [
+        {},
+        { op: "list" },
+        { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN },
+        { op: "add", scope: "workspace", root: "/work/rt", manifest: MARKED, pin: { ...MARKED_PIN, inRoot: true } },
+        { op: "remove", id: "man-x" },
+    ];
+    for (const payload of payloads) {
+        const before = { fetches: bg.calls.length, toTabs: bg.tabMessages.length, captured: bg.captures.length };
+        const res = await bg.send({ type: "MANIFESTS", payload }, hostilePage());
+        await tick();
+        assert.equal(res?.error, "refused", `a page sender is refused: ${JSON.stringify(payload)}`);
+        assert.deepEqual(
+            { fetched: bg.calls.length - before.fetches, toTabs: bg.tabMessages.length - before.toTabs, captured: bg.captures.length - before.captured },
+            { fetched: 0, toTabs: 0, captured: 0 }, `${JSON.stringify(payload)}: nothing reached the backend, a tab or the screen`);
+    }
+    assert.equal(bg.localStore.ml_manifests_global, undefined, "nothing the page sent was stored");
+    assert.equal(bg.localStore.ml_manifests_workspace, undefined, "nothing the page sent was stored, in either scope");
+    // Positive control: the extension's own registration page does all three.
+    const added = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN } }, EXT_PAGE)));
+    assert.equal(added.data.global.length, 1, "positive control: an extension page can add");
+    assert.deepEqual((await bg.send({ type: "MANIFESTS", payload: {} }, EXT_PAGE)).data.global.length, 1, "positive control: an extension page can list");
+    const removed = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: { op: "remove", id: added.data.global[0].id } }, EXT_PAGE)));
+    assert.deepEqual(removed.data.global, [], "positive control: an extension page can remove");
+});
+
+test("GAIN blocked — a stored manifest never reaches a page", async () => {
+    // Store one with a marker in every field, then read every page-reachable surface. The store is the person's
+    // (a pin names a file on THIS machine), so a page that can read it learns what they registered.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    const added = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN, origin: "proposed" } }, EXT_PAGE)));
+    assert.equal(added.data.global.length, 1, "positive control: the extension page stored one");
+    const markerId = added.data.global[0].id;
+    const MARKERS = ["rt-marker-tool", "/opt/rt-marker", "1:2:3:4-rt-marker", markerId, "ml_manifests_global"];
+    const pageSender = hostilePage();
+    // The MANIFESTS route itself: refused, with no data.
+    for (const payload of [{}, { op: "list" }, { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN }, { op: "remove", id: markerId }]) {
+        const res = await bg.send({ type: "MANIFESTS", payload }, pageSender);
+        assert.equal(res?.error, "refused", `MANIFESTS ${JSON.stringify(payload)}`);
+        assert.equal(res?.data, undefined, `MANIFESTS ${JSON.stringify(payload)}: no view reaches a page`);
+    }
+    // Every page-started type, with a payload that asks for the store by name: none of them answer with it.
+    assert.ok(PAGE_STARTED_TYPES.size >= 30, `enumerated ${PAGE_STARTED_TYPES.size} types — the relay list was not read`);
+    for (const type of PAGE_STARTED_TYPES) {
+        const res = await bg.send({
+            type,
+            payload: { messages: [{ role: "user", content: "hi" }], url: "https://example.com/", runId: "run-x", op: "list", scope: "global", id: markerId, name: "manifests" },
+            requestId: "r1", event: { kind: "chat", id: "x", ts: 1, session: { hash: "x", turn: 0 } },
+        }, pageSender);
+        await tick();
+        const seen = JSON.stringify([res, bg.tabMessages, bg.captures]);
+        for (const m of MARKERS) assert.ok(!seen.includes(m), `${type} handed a page the stored manifest (${m}): ${seen.slice(0, 200)}`);
+    }
+    // Positive control: the extension page's own list still carries every marker.
+    const view = JSON.stringify((await bg.send({ type: "MANIFESTS", payload: {} }, EXT_PAGE)).data);
+    for (const m of ["rt-marker-tool", "/opt/rt-marker", "1:2:3:4-rt-marker", markerId]) assert.ok(view.includes(m), `positive control: the extension page reads ${m}`);
+});
+
+test("GAIN blocked — a page cannot mint a stored entry with origin \"proposed\" or \"person\"", async () => {
+    // `origin` decides how widely a manifest describes a call (B5: "person" on both placements, "proposed" only
+    // under the OS sandbox). A page that could claim either would be choosing its own privilege. The handler
+    // hardcodes the person's word and reads no `origin` from the payload, so the claim never becomes an entry.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true });
+    for (const origin of ["proposed", "person", "shipped", "", undefined, null, 42, { toString: () => "person" }]) {
+        const res = await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN, origin } }, hostilePage());
+        assert.equal(res?.error, "refused", `origin ${JSON.stringify(origin)}: the page is refused before origin is read`);
+    }
+    assert.equal(bg.localStore.ml_manifests_global, undefined, "no entry was minted under any claimed origin");
+    assert.equal(bg.localStore.ml_manifests_workspace, undefined, "no entry was minted in either scope");
+    // Even a page that got through the gate could not claim "proposed": the handler's add is always the person's.
+    // (Which is the RIGHT direction for a page — it cannot downgrade itself to the sandbox-only draft either.)
+    const ext = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN, origin: "proposed" } }, EXT_PAGE)));
+    assert.equal(ext.data.global[0].origin, "person", "the extension page's word is the person's; a payload origin is never read");
+    // And an entry whose stored `origin` is neither of the two is dropped on read, never repaired into one.
+    // (A fresh worker: the store reads storage once at boot, so a forged entry is met on that read.)
+    const forged = { id: "man-forged", scope: "global", created: 1, manifest: MARKED, origin: "shipped", pin: MARKED_PIN };
+    const again = loadBackground({ config: baseConfig(), local: { ml_manifests_global: [forged] } });
+    await tick();
+    const reloaded = JSON.parse(JSON.stringify(await again.send({ type: "MANIFESTS", payload: {} }, EXT_PAGE)));
+    assert.deepEqual(reloaded.data.global, [], "a forged origin does not survive a read");
+});
+
 test("GAIN blocked — a site trusted to self-gate (pageApprovalDomains) is approved over https, never over plain http", async () => {
     const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, { tab: { id: 2, url: "https://trusted.example/" }, url: "https://trusted.example/" });
