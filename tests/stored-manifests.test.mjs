@@ -76,6 +76,14 @@ test("B2: a key a shipped manifest describes is refused at store time, naming th
     }
 });
 
+test("B2: a script's manifest naming a shipped program is refused at store time, and the call path never reads one", () => {
+    const ENTRY = { program: "git", entrypoint: { path: "scripts/x.mjs", sha256: "a".repeat(64) }, command: { effects: [], paths: "none", flags: {} } };
+    assert.match(S.storeRefusal({ scope: "workspace", root: "/w", manifest: ENTRY, origin: "person" }, [], SHIPPED_MANIFESTS) ?? "kept", /src\/shell\/manifests\/git\.json/);
+    assert.equal(S.storeRefusal({ scope: "workspace", root: "/w", manifest: { ...ENTRY, program: "node" }, origin: "person" }, [], SHIPPED_MANIFESTS), undefined, "positive control: a script run by an unshipped program is kept");
+    const planted = { id: "man-ent", scope: "workspace", root: "/w", manifest: ENTRY, origin: "person", created: 1 };
+    assert.equal(manifestsFor([planted], ["/w"]).list.includes(ENTRY), false, "an entry that reached the list another way is skipped");
+});
+
 test("B3: a program inside a root is describable by that workspace only; a global entry or another workspace's is refused", () => {
     const inRoot = { ...PIN, path: "/w/bin/mytool", inRoot: true };
     assert.equal(S.storeRefusal({ scope: "workspace", root: "/w", manifest: MYTOOL, origin: "person", pin: inRoot }, [], SHIPPED_MANIFESTS), undefined);

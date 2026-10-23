@@ -46,7 +46,8 @@ export interface ManifestPlace { cwd: string; roots: readonly string[]; rootOf?:
  *  entry never shares a key with a shipped manifest (the store refuses one), so the order only settles workspace over
  *  global. */
 export function manifestsFor(stored: readonly StoredManifest[] | undefined, roots: readonly string[]): { list: readonly ProgramManifest[]; rootOf: (m: ProgramManifest) => string | undefined; entryOf: (m: ProgramManifest) => StoredManifest | undefined } {
-    const here = applicable(stored ?? [], roots);
+    // B2 at call time too: the store and its load refuse an entry for a shipped program, and this keeps one from shadowing it if any arrives another way.
+    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program]);
     const byManifest = new Map(here.map((s) => [s.manifest, s]));
     return {
         list: here.length ? [...here.map((s) => s.manifest), ...SHIPPED_LIST] : SHIPPED_LIST,
