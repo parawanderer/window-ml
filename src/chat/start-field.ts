@@ -26,7 +26,7 @@ import { holdStill, splash, stepWater, STEP_HZ, water, type Water } from "./star
 /**
  * The field's knobs, read every frame: the shader's as uniforms, the water's as its constants. One object so a tuning
  * panel can bind to it (the web build exposes it as `__startField`); nothing else writes it. The defaults are the
- * values settled on in that panel.
+ * values settled on in that panel, `tests/e2e/start-field-tune.html`.
  */
 export const FIELD = {   // state: ui
     /** the grid's pitch, CSS px (a change rebuilds the grid and stills the water) */

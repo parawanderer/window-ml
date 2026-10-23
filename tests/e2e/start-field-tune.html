@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- start-field-tune.html — the TUNING PAGE for the start page's dot field (src/chat/start-field.ts): the chat page in
+     a full-window frame, with lil-gui bound to its live FIELD object (window.__startField). Values persist in this
+     browser; "copy values" puts them on the clipboard to paste into FIELD. Served at /start-field-tune.html by
+     `SERVE=1 node tests/e2e/chat-shots.mjs` (build first); tests/start-field.test.mjs holds it to FIELD's keys. -->
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Field tuning</title>
+<style>html,body{margin:0;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}
+.lil-gui.root{position:fixed;top:0;right:0;z-index:10}</style></head>
+<body><iframe id="f" src="./"></iframe>
+<script type="module">
+import GUI from "https://cdn.jsdelivr.net/npm/lil-gui@0.20.0/+esm";
+const frame = document.getElementById("f");
+const KEY = "start-field-tune-5";
+function build() {
+  const F = frame.contentWindow.__startField;
+  if (!F) return setTimeout(build, 200);
+  const defaults = { ...F };
+  try { Object.assign(F, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch {}
+  const gui = new GUI({ title: "Start field" });
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(F)); } catch {} };
+  const add = (folder, k, min, max, step) => folder.add(F, k, min, max, step).onChange(save);
+  const ink = gui.addFolder("Ink");
+  ink.addColor(F, "inkDark").name("dark: colour").onChange(save); add(ink, "opacityDark", 0, 1, 0.01).name("dark: opacity");
+  ink.addColor(F, "inkLight").name("light: colour").onChange(save); add(ink, "opacityLight", 0, 1, 0.01).name("light: opacity");
+  const perf = gui.addFolder("Cost");
+  add(perf, "fps", 10, 120, 5); add(perf, "renderScale", 0.25, 1, 0.05); perf.add(F, "still").name("still (one frame)").onChange(save);
+  const g = gui.addFolder("Grid & calm");
+  add(g, "pitch", 10, 48, 1); add(g, "calmPx", 0, 700, 10);
+  const s = gui.addFolder("Swell");
+  add(s, "swell", 0, 3, 0.05); add(s, "swellSpeed", 0, 4, 0.05); add(s, "swellScale", 0.2, 3, 0.05);
+  const p = gui.addFolder("Projection");
+  add(p, "lift", 0, 60, 1); add(p, "parallax", 0, 0.06, 0.001);
+  const d = gui.addFolder("Dots");
+  add(d, "dotSize", 0.5, 5, 0.1); add(d, "dotGrow", 0, 3, 0.05);
+  add(d, "alpha", 0, 1, 0.01); add(d, "alphaDepth", 0, 1, 0.01); add(d, "alphaPatch", 0, 1, 0.01);
+  const pl = gui.addFolder("Pills");
+  pl.add(F, "pills").name("pills (slope)").onChange(save); add(pl, "pillLength", 0, 6, 0.05); add(pl, "pillMax", 0, 40, 1);
+  pl.add(F, "pillAcross").name("along contours").onChange(save);
+  const ab = gui.addFolder("Aberration");
+  add(ab, "aberration", 0, 120, 1); add(ab, "aberrationMax", 0, 10, 0.25);
+  const c = gui.addFolder("Clearing");
+  add(c, "fadePx", -100, 400, 5); add(c, "fadeSoft", 0, 600, 5); add(c, "fadeWobble", 0, 300, 5); add(c, "fadeWobbleScale", 0.1, 4, 0.05); add(c, "fadeWobbleSpeed", 0, 5, 0.05);
+  const w = gui.addFolder("Water");
+  add(w, "waterLift", 0, 4, 0.05); add(w, "refract", 0, 60, 1);
+  add(w, "drop", 0, 2, 0.05); add(w, "dropMax", 0, 5, 0.1); add(w, "press", 0, 8, 0.1); add(w, "splashRadius", 0.5, 5, 0.1);
+  add(w, "waveK", 0.01, 0.49, 0.005); add(w, "damp", 0.95, 0.9995, 0.0005); add(w, "level", 0, 0.01, 0.0001);
+  gui.add({ copy: () => navigator.clipboard.writeText(JSON.stringify(F, null, 2)) }, "copy").name("copy values");
+  gui.add({ reset: () => { Object.assign(F, defaults); localStorage.removeItem(KEY); gui.controllersRecursive().forEach((c) => c.updateDisplay()); } }, "reset").name("reset to defaults");
+}
+frame.addEventListener("load", build);
+</script></body></html>

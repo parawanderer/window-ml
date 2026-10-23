@@ -14,6 +14,7 @@ node scripts/build-web.mjs                     # dist-web/ only (npm run build d
 node tests/e2e/chat-shots.mjs                  # 12 PNGs, phone + desktop, into tests/e2e/artifacts/chat/
 THEME=light OUT=/tmp/shots node tests/e2e/chat-shots.mjs
 SERVE=1 node tests/e2e/chat-shots.mjs          # serve dist-web/ and print the URL; open it and poke at it
+                                               # …/start-field-tune.html: sliders over the start page's dot field
                                                # <url>/client.html is the standalone client (a real hub, no fake)
 npx playwright test tests/e2e/chat-web.spec.mjs  # the spec, ~2s; E2E_DIST_WEB=<dir> for a build elsewhere
 node tests/e2e/chat-stream-demo.mjs            # narrated: a run streaming in the calm view, events by hand

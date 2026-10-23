@@ -4,8 +4,9 @@
 // (`node tests/e2e/chat-shots.mjs`), not a test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { water, stepWater, splash, holdStill, energy, WAVE_K, DAMP, STEP_HZ } from "../src/chat/start-water.ts";
-import { fieldGrid, sdBox, rgbOf, hexRgb, isDark, waterAttr, stillReason, lowBattery, LOW_BATTERY, frameWatch } from "../src/chat/start-field.ts";
+import { FIELD, fieldGrid, sdBox, rgbOf, hexRgb, isDark, waterAttr, stillReason, lowBattery, LOW_BATTERY, frameWatch } from "../src/chat/start-field.ts";
 
 const at = (w, x, y) => w.h[y * w.cols + x];
 const steps = (w, n) => { for (let i = 0; i < n; i++) stepWater(w); };
@@ -159,4 +160,13 @@ test("a stutter that recovers starts the count again", () => {
     for (let i = 0; i < 40; i++) w(60);        // 2.4 s slow
     for (let i = 0; i < 120; i++) w(16);       // recovers
     for (let i = 0; i < 40; i++) assert.equal(w(60), false, "only 2.4 s since it was last fast");
+});
+
+// --- the tuning page ---
+
+test("the tuning page binds every knob FIELD has, and no name FIELD lacks", () => {
+    const page = fs.readFileSync(new URL("./e2e/start-field-tune.html", import.meta.url), "utf8");
+    // Each control is `add(folder, "name", …)` or `folder.add(F, "name")` / `addColor(F, "name")`.
+    const bound = [...page.matchAll(/(?:\badd\(\w+|\bF), "(\w+)"/g)].map((m) => m[1]);
+    assert.deepEqual([...new Set(bound)].sort(), Object.keys(FIELD).sort());
 });
