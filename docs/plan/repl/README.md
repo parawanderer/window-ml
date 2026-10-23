@@ -273,12 +273,13 @@ listed as remaining is DONE unless named below.
      `gc.get_objects()` reaches, and runs before the epilogue; both todos are plain tests there. RULE 10 NOT HELD: #998 was
      built by the janitor, which found both gaps, and merged with no review posted; the red team's review of #987 at
      0abddc51 (2026-10-23, named by Shane) checked main's sweep after the fact and found it holds on every scheduling
-     route. #987 (the site-access session, Sonnet) is since tests only, the route matrix guarding the sweep, reviewed
-     clear; the builder merges it. The red team's review names two classes the sweep does not reach, failing-first
-     `{ todo }` tests on `redteam/python-cancel-gaps` (148875e0), UNOWNED, the red team builds and reviews neither: a
+     route. #987 (the site-access session, Sonnet) was since tests only, the route matrix guarding the sweep, reviewed
+     clear, MERGED 2026-10-23 as 8c312e6a. The red team's review names two classes the sweep does not reach, now
+     failing-first `{ todo }` tests on main in `tests/redteam-python-sandbox.test.mjs` (six todos there: the red
+     team's five plus `scheduleCallback`), UNOWNED, the red team builds and reviews neither: a
      callable handed to a kept JS scheduler (`setTimeout`, `queueMicrotask`, `Promise.then`) makes no Handle; a started
      task kept on a module keeps a live `_coro` a later cell can `throw` into. Also: the two existing `finally` tests
-     never start the coroutine, so they would pass with the cancel deleted; the builder of #987 reshapes them.
+     never started the coroutine, so they would have passed with the cancel deleted; #987 reshaped them.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
@@ -315,8 +316,9 @@ listed as remaining is DONE unless named below.
   free tiers and the page-hosted loop skip an `ask`) is settled by design, not open: those tiers are reads the page can
   make itself with `fetch()`, and the page-hosted loop's `approve` is the page's own callback, so a card there binds
   nothing (`docs/dev/policies.md`, "What an ask cannot reach"; `tests/redteam-policy-ask-free-tiers.test.mjs`). Still
-  open from it: a URL consented BEFORE an ask existed stays usable by the page's `ml.fetch`, and an ask saved between
-  `decide` and host start is not re-checked (only deny is). Unstarted and unrequested: the
+  open from it: an ask saved between `decide` and host start is not re-checked (only deny is); a URL consented BEFORE
+  an ask existed is already refused while an ask or deny matches (`sw-fetch-url.ts` `withdrawn`; `docs/dev/policies.md`,
+  "A remembered consent yields to an `ask` or a `deny`"). Unstarted and unrequested: the
   symlink link as a second claim resource; `RIPGREP_CONFIG_PATH`; the lost-POLICIES-add race (awaits Shane).
 
 ## The lanes
