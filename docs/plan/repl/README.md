@@ -289,6 +289,15 @@ listed as remaining is DONE unless named below.
      callable handed to a kept JS scheduler (`setTimeout`, `queueMicrotask`, `Promise.then`) makes no Handle; a started
      task kept on a module keeps a live `_coro` a later cell can `throw` into. Also: the two existing `finally` tests
      never started the coroutine, so they would have passed with the cancel deleted; #987 reshaped them.
+     FIXED 2026-10-23: #1051 merged 5dd5a1fc (reviewed by the janitor, two rounds), result
+     [`LANE_PYTHON_CANCEL_RESULT.md`](LANE_PYTHON_CANCEL_RESULT.md) merged 7fbb8eca. The spend cancels every task and
+     turns the loop up to 8 rounds, a task still pending refuses the cell's result, named; the cell gate
+     (`src/python/cell-gate.ts`) hooks Pyodide's three doors from Python to JS before `lockdown()`, once per realm,
+     non-configurable, and a revoked callable that fires is a silent counted no-op reported on the next cell. Order:
+     spend, then revoke (ruled). The six todos are plain tests; gate reverted alone fails 21 tests, spend alone 1.
+     Left, named in the result: two todos through `pyodide_js` that turn plain when #1046 lands; drops after a run's
+     last cell unreported, and a task that never yields hangs to the run's timeout, both unowned. Lane STOPPED
+     2026-10-23 under the freeze; clone removed.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
