@@ -23,7 +23,13 @@ that needs a decision goes to the coordinator, who writes the ruling into the sp
    for interpreted scripts; (b) extension, the manifests store with workspace and global scope (declared in the state
    registry from its first commit; read `docs/dev/state.md` first); (c) `propose_manifest`, a builtin tool in the tool
    registry, drafting a program manifest from `--help` or script source, or a library manifest from module source, into a
-   card with sandbox or probe evidence, loaded live on approval; (d) the registration page in DevTools Settings. (c) is a
+   card with sandbox or probe evidence, loaded live on approval; (d) the registration page in DevTools Settings. RULED
+   2026-10-23: (c) is PROGRAM manifests only this round; a library manifest needs the Tier 3 admission check or the
+   Tier 1 isolated probe (`READONLY_LIBRARY_MANIFEST.md`, "Generating and importing a manifest into the runtime"),
+   neither built, and a Tier 1 `@lift` entry suspends the in-process gate, so it is its own root. (c2), after (c) merges
+   and only if time allows: Tier 3 (`@cost interpret`) entries only, sha256-pinned, delivered through the existing
+   `src/python/dialect-data.ts` path to the fork's `load_manifests`, no fork change; Tier 1 stays out of root K, listed
+   for Shane. (c) is a
    new tool and (b) adds message types: each gets the red-team pass AGENTS.md requires, written by a separate agent with
    tests that fail first (`tests/redteam.test.js`; the `redteam` skill). The sh-policy session's #990 (destructive
    programs, no shipped manifest inside a workspace root) and #995 (the manifest JSON Schemas) are K's edges, already on
@@ -61,6 +67,11 @@ and the sh-policy session, none of which is your subagent.
   (`ML_WIRE.md`, "One budget a cell").
 - `sed`'s size bound over-counts (`s/a/$'/g` refused at 4,000 lines; `src/readonly-exec/replace-size.ts`, the
   `replaceCharge` row of `docs/dev/readonly-exec.md`): exact where the worst case is wrong, never looser than exact.
+  DONE as #1045 (a Sonnet subagent of root-k, 2026-10-23), a NEGATIVE result on the stated bug: the 4,000-line refusal
+  does not reproduce on main; the real defect was `replaceSize` stopping on built plus rest, which peaks above the
+  final length (16 `a`: peak 121, built 120, so a limit of 120 refused); the fix stops on the built part only, which
+  never decreases. Accepted residual: the replacer-arrow path keeps the running total and can refuse transiently near
+  the limit, erring toward asking.
 - An `ask` saved between `decide` and host start is not re-checked, only a deny is (`docs/dev/policies.md`, "What an ask
   cannot reach" and the sh-policy session's #999).
 - The lost-POLICIES-add race (the sh-policy session's note; its record is `~/git/window-ml-sh-policy/tmp/CHECKPOINT.md`,
