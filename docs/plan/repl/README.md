@@ -273,8 +273,7 @@ listed as remaining is DONE unless named below.
      `call_soon`/`call_later`/`call_at` on the loop's class for the cell and cancels the recorded Handles after the
      tasks; the epilogue's result, render and table steps catch `BaseException`. Both todos are plain tests, failing
      first on main. As of 2026-10-23 it is unreviewed and CONFLICTING with main (#998 touched `python-runtime.ts`); the
-     builder rebases, Shane names the reviewer (the janitor found both and may not review; the coordinator's suggestion
-     is the red team). It leaves three routes as new `{ todo }` tests: `pyodide.webloop.scheduleCallback`, a
+     builder rebases; the red team reviews (named by Shane 2026-10-23; the janitor found both and may not review). It leaves three routes as new `{ todo }` tests: `pyodide.webloop.scheduleCallback`, a
      done-callback on a task the cell made, and the original scheduler through `call_later.__closure__`.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
