@@ -409,6 +409,92 @@ for (const [what, tag, body] of [
     });
 }
 
+// JS callback registries the lockdown KEEPS (setTimeout/setInterval refuse a string argument but take a
+// callable; queueMicrotask and Promise.then take one too). None of them makes an asyncio.Handle, so the
+// cancel's gc sweep finds nothing and the callback runs after the result. The `scheduleCallback` todo below
+// is one door into this class; these are the others. Each body reports "sched-ok" so a refused schedule is a
+// failure, not a pass.
+const jsRoutes = [
+    ["js.setTimeout + create_once_callable", `_rt_p2js1`, `try:
+    from js import setTimeout
+    from pyodide.ffi import create_once_callable as _co
+    setTimeout(_co(lambda: _m.woke.append("ran")), 10)
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__)`],
+    ["js.setTimeout + create_proxy", `_rt_p2js2`, `try:
+    from js import setTimeout
+    from pyodide.ffi import create_proxy as _cp
+    setTimeout(_cp(lambda: _m.woke.append("ran")), 10)
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__)`],
+    ["js.queueMicrotask + create_once_callable", `_rt_p2js3`, `try:
+    from js import queueMicrotask
+    from pyodide.ffi import create_once_callable as _co
+    queueMicrotask(_co(lambda: _m.woke.append("ran")))
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__)`],
+    ["js.Promise.resolve().then + create_once_callable", `_rt_p2js4`, `try:
+    from js import Promise
+    from pyodide.ffi import create_once_callable as _co
+    Promise.resolve().then(_co(lambda *_a: _m.woke.append("ran")))
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__)`],
+];
+for (const [what, tag, body] of jsRoutes) {
+    test(`P2-handle residual: ${what} schedules without the loop, and runs after the result`, {
+        skip,
+        todo: "a JS callback registry the lockdown keeps (setTimeout/queueMicrotask/Promise) takes a callable and makes no asyncio Handle, so the cancel's gc sweep finds nothing and the callback runs after the result",
+    }, async () => {
+        const r = await scheduledThenAsk(tag, `${body}\n_m.woke.append("armed")\n"x"`);
+        // Positive control first: the schedule itself succeeded (the body reached "sched-ok").
+        assert.ok(r.woke.includes("sched-ok") || r.woke[0]?.startsWith("sched-fail:"), `probe must report how the schedule went, got ${JSON.stringify(r)}`);
+        assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: the JS registry must accept the callable, got ${JSON.stringify(r)}`);
+        assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run after the result returned, got ${JSON.stringify(r)}`);
+    });
+}
+
+// The tests above never START the task (ensure_future, then return: the coroutine never reaches its try) and
+// never keep a reference to it. A hostile cell does both: it awaits a tick so the task suspends at its await
+// point, stores the Task on the recorder module, and a LATER cell drives the still-pending coroutine through
+// `_coro`. The sweep cancels the task and the wakeup Handle, which leaves the task pending — its `finally` is
+// one `throw` away on an object the next cell can hold.
+test("P2-handle: a started task kept on the module cannot be resumed from a later cell through its _coro", {
+    skip,
+    todo: "the sweep cancels the wakeup and leaves the task pending; a later cell that holds the Task calls `task._coro.throw(CancelledError())` and the first cell's `finally` runs after its result",
+}, async () => {
+    const r = await scheduledThenAsk("_rt_p2co", `async def _c():
+    _m.started = True
+    try:
+        await asyncio.sleep(10)
+    finally:
+        _m.woke.append("finally-ran")
+_m.t = asyncio.ensure_future(_c())
+await asyncio.sleep(0)
+_m.woke.append("armed")
+"x"`);
+    // Positive controls: the result saw only "armed", and the task DID start (its try is live).
+    assert.deepEqual(r, { woke: ["armed"] }, `after the result, got ${JSON.stringify(r)}`);
+    const armed = (await cell(`import sys\n_m = sys.modules["_rt_p2co"]\n{"woke": list(_m.woke), "started": bool(getattr(_m, "started", False)), "pending": (not _m.t.done())}`)).value;
+    assert.equal(armed.started, true, `positive control: the task must have started and suspended inside its try, got ${JSON.stringify(armed)}`);
+    assert.equal(armed.pending, true, `positive control: the sweep must have left it pending rather than finished, got ${JSON.stringify(armed)}`);
+    assert.deepEqual(armed.woke, ["armed"], `a passive later cell (gc.collect + sleep) still runs none of it, got ${JSON.stringify(armed)}`);
+
+    // Defended: driving the kept coroutine from the later cell must not run the first cell's finally.
+    const g = (await cell(`import sys, asyncio
+_m = sys.modules["_rt_p2co"]
+try:
+    _m.t._coro.throw(asyncio.CancelledError())
+    _m.woke.append("threw")
+except BaseException as e:
+    _m.woke.append("throw:" + type(e).__name__)
+{"woke": list(_m.woke)}`)).value;
+    assert.deepEqual(g, { woke: ["armed"] }, `a later cell must not be able to run the first cell's finally through the kept _coro, got ${JSON.stringify(g)}`);
+});
+
 test("P2-escape: a result whose serialization raises a BaseException still has the cell's tasks cancelled", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2e", `async def _t():
     await asyncio.sleep(0.01)
