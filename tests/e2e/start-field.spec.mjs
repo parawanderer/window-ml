@@ -89,6 +89,25 @@ test("closing the list slides it off the field: the canvas keeps its size and is
     await page.close();
 });
 
+test("a row's menu over the field opens at its row and takes the click: the frost behind the list is not a containing block", async () => {
+    const { page, errors } = await startPage();
+    // A `backdrop-filter` on the list itself made it the containing block of the fixed-position row menu, which then
+    // opened offset by the list and slid with it; three list tests on main timed out clicking "Pin to the top".
+    expect(await page.locator(".chat-list").first().evaluate((l) => getComputedStyle(l).backdropFilter)).toBe("none");
+    // A plain finished chat (chat-shots' fixture), as the list's own pin test uses: a row that needs you stays there.
+    const key = "laptop:7b21d4e8";
+    const more = page.locator(`.chat-row-wrap:has(.chat-row[data-session="${key}"]) .chat-row-more`).first();
+    await more.click();
+    const item = page.getByRole("menuitem", { name: "Pin to the top" });
+    await expect(item).toBeVisible();
+    const [btn, menu] = [await more.boundingBox(), await page.locator(".chat-row-menu").boundingBox()];
+    expect(Math.abs(menu.y - (btn.y + btn.height)) < 60 || Math.abs(menu.y + menu.height - btn.y) < 60, JSON.stringify({ btn, menu })).toBe(true);
+    await item.click();
+    await expect(page.locator(`.chat-pinned .chat-row[data-session="${key}"]`)).toHaveCount(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // --- it stops when the page is left ---
 
 /** Counts every WebGL draw on the page, from before its scripts run: whether the field is still drawing. */
