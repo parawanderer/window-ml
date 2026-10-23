@@ -5,7 +5,8 @@
 //
 //   node tests/e2e/chat-shots.mjs                 # into tests/e2e/artifacts/chat/
 //   OUT=/some/dir THEME=light node tests/e2e/chat-shots.mjs
-//   SERVE=1 node tests/e2e/chat-shots.mjs         # just serve dist-web/ and print the URL, until Ctrl+C
+//   SERVE=1 node tests/e2e/chat-shots.mjs         # just serve dist-web/ and print the URL, until Ctrl+C; the start
+//                                                 # page's field tuning page is at /start-field-tune.html
 //
 // Build first: `npm run build` (or `node scripts/build-web.mjs` for the web bundle alone).
 import { chromium } from "@playwright/test";
@@ -15,8 +16,12 @@ import { serveStatic } from "./static-server.mjs";
 
 const ROOT = path.resolve(process.env.E2E_DIST_WEB || "dist-web");
 if (!fs.existsSync(path.join(ROOT, "chat.js"))) { console.error(`no web build at ${ROOT}: run node scripts/build-web.mjs`); process.exit(1); }
-const server = await serveStatic(ROOT);
-if (process.env.SERVE) { console.log(`serving ${ROOT} at ${server.url}`); await new Promise(() => {}); }
+const TUNE = path.join(import.meta.dirname, "start-field-tune.html");
+const server = await serveStatic(ROOT, { files: { "/start-field-tune.html": TUNE } });
+if (process.env.SERVE) {
+    console.log(`serving ${ROOT} at ${server.url}\nthe dot field's tuning page: ${server.url}start-field-tune.html`);
+    await new Promise(() => {});
+}
 
 const OUT = path.resolve(process.env.OUT || "tests/e2e/artifacts/chat");
 fs.mkdirSync(OUT, { recursive: true });

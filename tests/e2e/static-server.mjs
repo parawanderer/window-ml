@@ -6,12 +6,18 @@ import path from "node:path";
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".png": "image/png", ".svg": "image/svg+xml" };
 
-/** Serve `root` on 127.0.0.1. Resolves to its base URL (with a trailing slash) and a `close`. */
-export async function serveStatic(root, { port = 0, host = "127.0.0.1" } = {}) {
+/** Serve `root` on 127.0.0.1, plus `files` ({"/url-path": file on disk}) beside it. Resolves to its base URL (with a
+ *  trailing slash) and a `close`. */
+export async function serveStatic(root, { port = 0, host = "127.0.0.1", files = {} } = {}) {
     const base = path.resolve(root);
     const srv = http.createServer((req, res) => {
         let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
         if (p.endsWith("/")) p += "index.html";
+        if (Object.hasOwn(files, p)) {
+            res.writeHead(200, { "content-type": TYPES[path.extname(p)] || "application/octet-stream", "cache-control": "no-store" });
+            fs.createReadStream(files[p]).pipe(res);
+            return;
+        }
         const f = path.join(base, p);
         // A PAGE ADDRESS as a path (`/settings/devices`): the chat page routes in the hash (src/chat/route.ts), since
         // the extension and the phone app cannot serve paths, so a path that is not a file goes to its hash.
