@@ -9,6 +9,7 @@ const { liftPolicy } = await import("../src/readonly-exec/policy-lift.ts");
 const { evalPolicy } = await import("../src/readonly-exec.ts");
 const { CONSUMER_FIELDS } = await import("../src/readonly-exec/policy-lift.ts");
 const { evalTree, treeVerdict, cells, asView } = await import("./fixtures/policy-tree-cells.mjs");
+const { NEEDS } = await import("./e2e/panel/policy-proposals.score.ts");
 
 const corpus = JSON.parse(fs.readFileSync(new URL("./fixtures/policy-corpus.json", import.meta.url), "utf8"));
 const measured = corpus.policies.filter((e) => e.tree);
@@ -91,6 +92,17 @@ test("every lifted corpus policy agrees with its source, in the real policy real
         catch (err) {
             // A model's long proposal can induce more cells than the generator enumerates (it throws past its cap, never samples).
             if (e.author !== "model" || !/past the test's cap/.test(err.message)) throw err;
+            // Compared instead on the need's hand-labelled calls, the facts the bench scored it on.
+            const need = NEEDS[e.consumer].find((x) => x.id === e.notes[1].split(" ")[0]);
+            assert.ok(need, `${e.src}: its notes name no need`);
+            let n = 0;
+            for (const v of need.vectors) {
+                const o = evalPolicy(e.src, v.facts, need.effect);
+                if (o.broken) continue;
+                n++;
+                assert.equal(treeVerdict(tree, asView(v.facts), CONSUMER_FIELDS[e.consumer], need.effect), o.decision === need.effect, `${e.src}\n  disagrees on ${v.name}`);
+            }
+            assert.ok(n > 0, `${e.src}: some call of ${need.id} must evaluate`);
             tooBig.push(e.src);
             continue;
         }
@@ -98,8 +110,8 @@ test("every lifted corpus policy agrees with its source, in the real policy real
         assert.ok(r.compared > 0, `${e.src}: some cell must evaluate (broken on all ${r.broken})`);
         assert.equal(r.flat, undefined, `${e.src}: no cell makes ${JSON.stringify(r.flat)} take both values`);
     }
-    // Pinned, so a third one is noticed: two sh answers (S2, S3) read too many fields to enumerate. Their trees were
-    // compared with the source on the need's hand-labelled calls when they were added (tests/e2e/panel/policy-proposals.score.ts).
+    // Pinned, so a third one is noticed: two sh answers (S2, S3) read too many fields to enumerate, and are compared on
+    // their need's calls only.
     assert.equal(tooBig.length, 2, `sources too big to enumerate:\n${tooBig.join("\n---\n")}`);
 });
 
