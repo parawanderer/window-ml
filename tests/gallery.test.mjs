@@ -3,13 +3,18 @@
 // placeholder values; and the page's URL state (src/gallery/gallery-url.ts). docs/spec/COMPONENT_GALLERY.md.
 import { test } from "node:test";
 import assert from "node:assert";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { galleryManifest, parseTags, placeholder, customEntryFiles } from "../scripts/gallery-gen.mjs";
 import { parseHash, formatHash, encodeJson, decodeJson, DEFAULT_STATE } from "../src/gallery/gallery-url.ts";
 
 // One manifest for the file: building the checker is the slow part (~2 s).
 const manifest = galleryManifest({ only: /^(ReplyBubble|PointerChip|CopyBtn|FilterChips|Stepper|ComponentTile|SessionList)$/ });
 const byName = (n) => manifest.components.find((c) => c.name === n);
+
+const ROOT = path.resolve(import.meta.dirname, "..");
 
 // --- discovery ------------------------------------------------------------------------------------------------------
 
@@ -127,4 +132,19 @@ test("a malformed hash falls back to the defaults, toggle by toggle", () => {
     assert.strictEqual(s.width, "phone");
     assert.deepStrictEqual(parseHash(""), DEFAULT_STATE);
     assert.strictEqual(decodeJson(encodeJson({ a: "é" })).a, "é");
+});
+
+// --- the CLI's shot ------------------------------------------------------------------------------------------------
+
+test("shot --variant screenshots the named variant's tile, not the first", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "gallery-variant-"));
+    try {
+        const shot = (variant) => {
+            const out = path.join(dir, `${variant}.png`);
+            execFileSync("node", ["scripts/gallery.mjs", "shot", "Disclosure", "--variant", variant, "--out", out], { cwd: ROOT, stdio: "pipe", timeout: 180_000 });
+            return readFileSync(out);
+        };
+        const closed = shot("closed"), open = shot("open");
+        assert.ok(!closed.equals(open), "the closed and open variants of Disclosure rendered the same PNG");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });
