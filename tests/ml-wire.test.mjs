@@ -148,25 +148,28 @@ test("a stage with no regex charges what it reads and makes, and a sed that woul
     assert.ok(got.answered >= 60 && got.answered < 200, `head alone answered ${got.answered} times`);
 });
 
-test("grep's context assembly is priced with the stage: a -A over many matching lines is refused, not run", { ...T, todo: "inRange scans the whole match list per line (lines x matched) and the charge sees only chars and the regex search: 40k matching lines cost 3,048 of 3,000,000 steps for 2.9s of thread" }, async () => {
-    // `grep -A/-B/-C` marks every line within range of a match by scanning the WHOLE match list per line
-    // (text-pipe.ts `inRange`, `matched.some(...)` per k): lines x matched, quadratic when the pattern is common.
-    // The charge sees only what the stage reads (chars / PIPE_CHARS_PER_STEP) and the regex search itself, so
-    // 40,000 matching lines is about 1.6e9 comparisons — measured seconds here — for roughly 1.3k steps. The
-    // budget exists to stop a cell holding the worker's one thread; this stage holds it and the budget never
-    // moves. Defended: the assembly is priced with the stage and the call answers OverBudget before that loop.
+test("grep's context assembly is linear in the lines it reads, so a -A over many matching lines answers at the cost it is charged", T, async () => {
+    // Red-team on #1007: `inRange` asked every match per line (lines x matched), so 40,000 matching lines held the
+    // thread for seconds while the charge, which sees chars and the regex search, moved 3,048 steps. A cell could do
+    // it about a thousand times. The assembly now walks the matches with one cursor.
     const url = "https://data.example/lines.txt";
-    const body = ("x\n").repeat(40_000);
+    const body = ("x\n").repeat(120_000);
     const got = {};
     await wireRun(async (wire, bg) => {
-        got.context = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep -A 1 x" }]);
+        let t0 = performance.now();
         got.plain = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep x" }]);
+        got.plainMs = performance.now() - t0;
+        t0 = performance.now();
+        got.context = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep -A 1 x" }]);
+        got.ms = performance.now() - t0;
         got.small = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "head 20 | grep -A 1 x" }]);
     }, { body, url, store: true });
     assert.ok("value" in got.plain, "positive control: the same grep without a context flag answers");
-    assert.ok("value" in got.small, "positive control: a context flag on a small input answers");
-    assert.match(got.small.value.text, /^x/m, "and it still marks context");
-    assert.equal(got.context.error?.code, "OverBudget", `the context loop is priced and refused, not run: ${JSON.stringify(got.context).slice(0, 200)}`);
+    assert.match(got.small.value.text, /^x/m, "a context flag on a small input answers and still marks context");
+    assert.equal(got.context.value?.text.split("\n").length, 120_000, `every line is in range: ${JSON.stringify(got.context).slice(0, 200)}`);
+    // Relative to the same read without context, so a slow machine slows both. At 120,000 lines the plain grep took
+    // 14 ms and lines x matched 2,378 ms; the cursor takes about what the plain grep does.
+    assert.ok(got.ms < 5 * got.plainMs + 100, `-A took ${Math.round(got.ms)} ms against ${Math.round(got.plainMs)} ms for the plain grep`);
 });
 
 // --- the server's rules, without a worker ---

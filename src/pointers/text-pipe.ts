@@ -240,11 +240,13 @@ function grep(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     if (!A && !B) return matched.map(k => (n ? `${k + 1}:${lines[k]}` : lines[k]));
     // With context (-A/-B/-C): grep marks a match line with `:` and a context line with `-`, and separates
     // non-adjacent groups with `--`.
-    const inRange = (k: number): boolean => matched.some(mi => k >= mi - B && k <= mi + A);
+    // `matched` is ascending, so one cursor walks it beside `k`: the first match whose range has not ended is the
+    // only one that can cover `k`. Asking every match per line was lines x matched, seconds on a common pattern.
     const out: string[] = [];
-    let last = -Infinity;
+    let last = -Infinity, j = 0;
     for (let k = 0; k < lines.length; k++) {
-        if (!inRange(k)) continue;
+        while (j < matched.length && matched[j] + A < k) j++;
+        if (j === matched.length || matched[j] - B > k) continue;
         if (out.length && k - last > 1) out.push("--");
         const sep = matchedSet.has(k) ? ":" : "-";
         out.push(n ? `${k + 1}${sep}${lines[k]}` : lines[k]);

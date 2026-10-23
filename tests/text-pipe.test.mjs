@@ -44,6 +44,22 @@ test("grep -A/-B/-C: context with `:`/`-` markers and `--` separators", () => {
     assert.equal(runPipe(t, "grep -B1 HIT"), "a\nHIT\n--\nd\nHIT");
     assert.equal(runPipe(t, "grep -n -C1 HIT"), "1-a\n2:HIT\n3-b\n--\n5-d\n6:HIT\n7-e");
 });
+test("grep -A/-B/-C: the one-cursor walk marks what asking every match per line marked, on every 0/1 pattern of up to 9 lines", () => {
+    // The reference is the definition: a line is shown when some match is within B before or A after it.
+    for (let len = 1; len <= 9; len++) for (let bits = 0; bits < 1 << len; bits++) for (const [A, B] of [[0, 1], [1, 0], [1, 1], [2, 0], [0, 3], [2, 3]]) {
+        const lines = Array.from({ length: len }, (_, k) => (bits >> k & 1 ? "H" : "."));
+        const hits = lines.flatMap((l, k) => (l === "H" ? [k] : []));
+        const want = [];
+        let last = -Infinity;
+        for (let k = 0; k < len; k++) {
+            if (!hits.some(h => k >= h - B && k <= h + A)) continue;
+            if (want.length && k - last > 1) want.push("--");
+            want.push(`${k + 1}${lines[k] === "H" ? ":" : "-"}${lines[k]}`);
+            last = k;
+        }
+        assert.equal(runPipe(lines.join("\n"), `grep -n -A ${A} -B ${B} H`), want.join("\n"), `${lines.join("")} -A ${A} -B ${B}`);
+    }
+});
 test("grep: an invalid regex is an actionable error steering to -F", () => {
     assert.throws(() => runPipe("x", "grep '('"), /invalid regex.*-F/s);
 });
