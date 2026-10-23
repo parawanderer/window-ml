@@ -302,8 +302,9 @@ listed as remaining is DONE unless named below.
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
      ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day to the red team as
      the lockdown's lane (it did not find this one), the janitor reviews, the finder builds and reviews nothing on it;
-     item 2's fix is sound only once this is closed. Severity open until the finder measures whether the dialect
-     predicate admits the import unasked.
+     item 2's fix is sound only once this is closed. Severity MEASURED the same day: the dialect refuses every import form
+     involved, so this and item 2's six routes escape an APPROVED readonly cell, not the auto-approved path; the
+     attribute-gate route is the red team's to probe with the fix.
 - **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
   (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
   named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped

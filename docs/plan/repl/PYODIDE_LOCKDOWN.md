@@ -61,9 +61,13 @@ starts from main.
    import scheduleCallback` keeps working; a gc-walk test that no live Python object holds a JsProxy of `Module` or
    the API; every other way to the API object enumerated. The finder's PR carries the two failing-first `{ todo }`
    tests (the string-run route; the un-revoke) and makes its own hooks non-writable; the cancel fix of step 5 is sound
-   only once this is closed. Open the same day: whether the dialect's membership predicate admits `import pyodide_js`
-   unasked (the finder measures), which says whether this is an escape of the auto-approved path or of an approved
-   readonly cell only.
+   only once this is closed. MEASURED the same day by the finder on the fork core in `dist/pyodide`, through `wrapUserScript` as
+   `python-dialect-inside.test.mjs` runs it: the dialect does NOT admit these routes unasked. `import pyodide_js`,
+   `import js`, `from js import setTimeout`, `import pyodide.ffi`, `import pyodide.webloop`, `import asyncio`,
+   `__import__('pyodide_js')` and the full string-run cell are each refused inside, so the cell asks. So this, and
+   all six cancel-gap routes of step 5, escape an APPROVED readonly cell, not the auto-approved path. Limit of the
+   measurement: import forms only; reaching those modules through an admitted object's attributes (the dialect's
+   attribute gate) is the red team's to probe with the fix.
 5. **Cancel the asyncio loop's pending handles before a cell's result is returned**, so nothing scheduled by one cell
    runs during the next, even with the strip in place.
 6. **The harness binds its own module functions at boot** (red-team property P5, 2026-10-15). A cell that monkeypatches
