@@ -2,7 +2,7 @@
 // a committed v1 file that must open forever. Argon2 is run cheap in most tests; the fixture and one timing test use the real cost.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, mkdtempSync, symlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, symlinkSync, linkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -436,6 +436,8 @@ test("gunzip: output at the cap is returned, one byte past it is over-budget", a
     await rejects(gunzip(packed, 0), "over-budget");
     assert.equal((await gunzip(await gzip(new Uint8Array(0)), 0)).length, 0);
     await rejects(gunzip(packed, -1), "over-budget");
+    // NaN compares false with everything: it must not lift the cap.
+    await rejects(gunzip(packed, NaN), "over-budget");
 });
 
 test("a gzip bomb is refused as soon as it passes the cap, through every entry point", async () => {
@@ -601,10 +603,14 @@ test("the decryptor refuses an output path equal to the input, by name or by lin
     }
     const link = path.join(toolDir, "link.wmlbak");
     symlinkSync(p, link);
-    const r = spawnSync(process.execPath, [TOOL, p, link], { input: "x\n", encoding: "utf8", timeout: 15000 });
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /the output path is the input path/);
-    assert.equal(readFileSync(p, "utf8"), "not even a backup");
+    const hard = path.join(toolDir, "hard.wmlbak");
+    linkSync(p, hard);
+    for (const out of [link, hard]) {
+        const r = spawnSync(process.execPath, [TOOL, p, out], { input: "x\n", encoding: "utf8", timeout: 15000 });
+        assert.notEqual(r.status, 0, out);
+        assert.match(r.stderr, /the output path is the input path/);
+        assert.equal(readFileSync(p, "utf8"), "not even a backup");
+    }
 });
 
 test("the decryptor reports a missing input in one line", () => {

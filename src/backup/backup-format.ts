@@ -167,7 +167,8 @@ export async function gzip(b: Uint8Array): Promise<Bytes> {
  * `over-budget` without being expanded.
  */
 export async function gunzip(b: Uint8Array, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
-    const cap = Math.min(maxOutput, LIMITS.outputBytes);
+    // NaN would compare false forever and lift the budget: a cap that is not a number refuses everything instead.
+    const cap = Number.isNaN(maxOutput) ? -1 : Math.min(maxOutput, LIMITS.outputBytes);
     const reader = new Blob([b as Bytes]).stream().pipeThrough(new DecompressionStream("gzip")).getReader();
     const parts: Uint8Array[] = [];
     let total = 0;

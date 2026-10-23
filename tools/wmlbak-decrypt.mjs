@@ -9,7 +9,7 @@
 // SELF-CONTAINED ON PURPOSE: it imports nothing from the extension, so a person can copy this one file out alone. The
 // byte layout it reads is docs/spec/BACKUP_FORMAT.md; src/backup/backup-format.ts is the extension's reader of the
 // same layout, and tests/backup-format.test.mjs holds the two to identical output.
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { webcrypto as crypto } from "node:crypto";
@@ -126,9 +126,14 @@ function checkWraps(wraps) {
     }
 }
 
-/** The output path may not be the input path, by name or through a link: that would overwrite the only encrypted copy. */
+/** The output path may not be the input path, by name or through a symlink or hard link (the same device and inode):
+ *  that would overwrite the only encrypted copy. */
 function refuseSamePath(inPath, outPath) {
-    const same = resolve(inPath) === resolve(outPath) || (existsSync(outPath) && existsSync(inPath) && realpathSync(inPath) === realpathSync(outPath));
+    const sameFile = () => {
+        const [a, b] = [statSync(inPath), statSync(outPath)];
+        return a.dev === b.dev && a.ino === b.ino;
+    };
+    const same = resolve(inPath) === resolve(outPath) || (existsSync(outPath) && existsSync(inPath) && sameFile());
     if (same) fail("the output path is the input path; that would overwrite the encrypted file. Nothing was read or written.");
 }
 
