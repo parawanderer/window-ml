@@ -258,15 +258,17 @@ export function eventsIn(events: ResourceEvent[], from: number, to: number): Res
 }
 
 /**
- * What the tooltip says of one `ml.sh` call's memory: the peak against the bound, or that the host killed it past the
- * bound. Bytes go through `formatBytes` here and nowhere else. A field the host did not report (older than 0.3.0)
- * says nothing: absent is not "0 B".
+ * What the tooltip says of one `ml.sh` call's memory and CPU: the peak against the bound, or that the host killed it
+ * past the bound, then the CPU time it used (host 0.7.0). Bytes go through `formatBytes` here and nowhere else. A field
+ * the host did not report (memory older than 0.3.0, CPU older than 0.7.0) says nothing: absent is not "0 B" or "0 ms".
  * @param c the call's span
- * @returns the sentence, or null when the host reported neither a peak nor a kill
+ * @returns the sentence, or null when the host reported neither a peak, a kill nor a CPU time
  */
 export function shCallText(c: ShCallSpan): string | null {
     const bound = c.memoryBound !== undefined ? formatBytes(c.memoryBound) : null;
-    if (c.killed === "oom") return bound ? `killed: past its ${bound} memory bound` : "killed: past its memory bound";
-    if (c.peakFootprint === undefined) return null;
-    return bound ? `peak ${formatBytes(c.peakFootprint)} of ${bound} bound` : `peak ${formatBytes(c.peakFootprint)}`;
+    const cpu = c.cpuMs === undefined ? null : `cpu ${c.cpuMs < 1000 ? `${c.cpuMs} ms` : `${(c.cpuMs / 1000).toFixed(1)} s`}`;
+    const mem = c.killed === "oom" ? (bound ? `killed: past its ${bound} memory bound` : "killed: past its memory bound")
+        : c.peakFootprint === undefined ? null
+        : bound ? `peak ${formatBytes(c.peakFootprint)} of ${bound} bound` : `peak ${formatBytes(c.peakFootprint)}`;
+    return [mem, cpu].filter((x) => x !== null).join(" · ") || null;
 }

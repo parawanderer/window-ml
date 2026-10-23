@@ -367,7 +367,8 @@ export function EventTipBody({ e, clipped = false, opts = {} }: { e: ResourceEve
             ))}
             {/* THE ml.sh CALLS this step made, under its phases: they ran inside the tool phase and share its time, so they
                 are rows of their own rather than phases. Each says its program and how long, and the host's memory
-                figure when it reported one: the peak against the bound, or that it was killed past the bound. */}
+                and CPU figures when it reported them: the peak against the bound, or that it was killed past the
+                bound, and the CPU time it used. */}
             {(e.shCalls || []).map((c, i) => {
                 const mem = shCallText(c);
                 return (

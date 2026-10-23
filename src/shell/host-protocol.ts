@@ -24,6 +24,11 @@ export interface HostHello {
     platform: string;
     sandbox: { kind: "seatbelt" | "bwrap" | null; available: boolean; reason?: string; landlockAbi?: number | null };
     modes: ("host" | "container")[];
+    /** Whether the owner table is mirrored to a ledger, and whether `register` is offered (host 0.7.0; false over the
+     *  hub). Absent from an older host. */
+    owners?: { ledger: boolean; register?: boolean };
+    /** What `cpuMs` counts (host 0.7.0): user and system time, with reaped children. Absent from an older host. */
+    cpu?: { metric: string };
 }
 
 /** The worker's narrowing envelope on `start`/`pipe`. Both keys are required and there are no others. `"today"` is the
@@ -143,6 +148,9 @@ export interface HostDone {
     /** The highest physical footprint the host measured, in bytes, and the bound it ran under (host 0.3.0). */
     peakFootprint?: number;
     memoryBound?: number;
+    /** The CPU time of the call's members at the host's last sample, in milliseconds (host 0.7.0): measured, never
+     *  bounded. Absent from an older host: unknown, never zero. */
+    cpuMs?: number;
     /** The scope the host APPLIED (host K3). Absent from an older host: unknown, never "narrow". */
     envelope?: HostDoneEnvelope;
     /** What changed among the roots' protected names DURING the call (host K3b), `[]` when nothing; absent from an
@@ -155,6 +163,32 @@ export interface HostDone {
 /** One protected name that changed during a call: the root as the host resolved it, the name under it (`.envrc`,
  *  `.git/hooks/pre-commit`), and how. Sorted by root and name on the wire. */
 export interface HostProtectedChange { root: string; name: string; change: "created" | "modified" | "removed" }
+
+/** Who a row of the host's owner table belongs to and what it measures: a call the host spawned, or a process group a
+ *  connection on that machine started itself and declared with `register` (`kind`, host 0.7.0; absent from an older
+ *  host, which spawns only). */
+export interface HostOwnerRow {
+    id: string;
+    pid: number;
+    owner: unknown;
+    startedMs: number;
+    footprint?: number;
+    cpuMs?: number;
+    kind?: "spawned" | "registered";
+}
+
+/** `status`: this session's running calls, the orphans other host processes left, and the calls that ended with no
+ *  one to read their `done`, each returned once (PROTOCOL.md, `status`). */
+export interface HostStatus {
+    running: (HostOwnerRow & { memoryBound: number; peakFootprint: number; onOwnerLoss: { policy: "kill" | "orphan"; timeoutMs?: number } })[];
+    orphans: (HostOwnerRow & { deadlineMs: number })[];
+    ended?: { id: string; owner: unknown; cause: string; killed: boolean; kind?: "registered" }[];
+}
+
+/** `owner`'s answer (host 0.7.0): the row whose members reach the pid, or `owner: null` when none does. A process no
+ *  row reaches is nobody's: the host looks only through its owner tables, never at the rest of the machine. */
+export type HostOwnerAnswer = { owner: null }
+    | { owner: unknown; id: string; kind: "spawned" | "registered"; pgid: number; host: "this" | "other"; orphan: boolean };
 
 /** `read`'s answer: a range of held output, as base64 bytes. */
 export interface HostRead { ptr: string; offset: number; length: number; size: number; eof: boolean; data: { $bytes: string } }
@@ -284,6 +318,15 @@ export class HostClient {
         return this.call("start", envelope === undefined ? { id } : { id, envelope });
     }
     discard(id: string): Promise<Record<string, never>> { return this.call("discard", { id }); }
+    /** The owner table (PROTOCOL.md, `status`). Reading it consumes the `ended` records it returns. */
+    status(): Promise<HostStatus> { return this.call("status"); }
+    /**
+     * Whose process `pid` is, by the host's owner tables (host 0.7.0; an older host answers `BadRequest`). The worker
+     * only ASKS: it never sends `register`, which is for a connection declaring processes it started itself (SHELL.md,
+     * the ownership ruling of 2026-10-23).
+     * @param pid the process to ask about
+     */
+    owner(pid: number): Promise<HostOwnerAnswer> { return this.call("owner", { pid }); }
     cancel(id: string): Promise<{ signalled: boolean }> { return this.call("cancel", { id }); }
     release(ptr: string): Promise<Record<string, never>> { return this.call("release", { ptr }); }
 

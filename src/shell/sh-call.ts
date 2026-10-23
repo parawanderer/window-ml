@@ -528,6 +528,8 @@ export interface ShResult {
     /** The highest physical footprint the host measured, in bytes (absent from a host older than 0.3.0). */
     peakFootprint?: number;
     memoryBound?: number;
+    /** The CPU time the host measured, in milliseconds (host 0.7.0); absent from an older host. */
+    cpuMs?: number;
     /** What was asked of the host on `start`, after the host-version gate; absent = nothing was sent (today's floor). */
     asked?: HostEnvelope;
     /** What the host reported it applied. `null` = an older host reported nothing: unknown, never narrow. */
@@ -603,6 +605,7 @@ export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, desc
         ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
         ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),
         ...(typeof done.memoryBound === "number" ? { memoryBound: done.memoryBound } : {}),
+        ...(typeof done.cpuMs === "number" ? { cpuMs: done.cpuMs } : {}),
     };
 }
 

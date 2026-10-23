@@ -2380,6 +2380,10 @@
           "type": "string",
           "const": "oom"
         },
+        "cpuMs": {
+          "description": "The CPU time the host measured, in milliseconds (host 0.7.0): a second fact beside memory, never bounded. Absent from an older host: absent is not zero.",
+          "type": "number"
+        },
         "unasked": {
           "description": "Set when the call ran with no one asked (a policy or the built-in default allowed it); a call the person approved is recorded on its ask instead (`StepAsk.outcome`).",
           "$ref": "#/$defs/ShUnasked"

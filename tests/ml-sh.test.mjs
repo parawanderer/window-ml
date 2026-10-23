@@ -258,18 +258,19 @@ test("each spawn names its run and step as its owner; a script cannot name one",
 });
 
 test("a call the host killed past its memory bound is a result with killed oom and its peak, and the run log says so", T, async () => {
-    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0, killed: "oom", peakFootprint: 140 << 20, memoryBound: 128 << 20 }) });
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0, killed: "oom", peakFootprint: 140 << 20, memoryBound: 128 << 20, cpuMs: 1520 }) });
     const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
     const r = valueOf(results[0]);
     assert.equal(r.ok, false);
     assert.equal(r.killed, "oom");
     assert.equal(r.peakFootprint, 140 << 20);
     assert.equal(r.memoryBound, 128 << 20);
+    assert.equal(r.cpuMs, 1520, "the CPU time the host measured (host 0.7.0)");
     assert.match(r.error, /memory bound/);
     const ran = (await bg.context.__mlRunLog.all()).filter((x) => x.run === hash && x.subsystem === "shell" && x.kind === "run");
     assert.equal(ran.length, 1);
     assert.equal(ran[0].level, "warn");
-    assert.deepEqual([ran[0].detail.killed, ran[0].detail.peakFootprint], ["oom", 140 << 20]);
+    assert.deepEqual([ran[0].detail.killed, ran[0].detail.peakFootprint, ran[0].detail.cpuMs], ["oom", 140 << 20, 1520]);
 });
 
 test("an older host's done (no footprint fields) still makes a result, with none of them", T, async () => {
@@ -277,14 +278,14 @@ test("an older host's done (no footprint fields) still makes a result, with none
     const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
     const r = valueOf(results[0]);
     assert.equal(r.ok, true);
-    assert.deepEqual([r.killed, r.peakFootprint, r.memoryBound], [undefined, undefined, undefined]);
+    assert.deepEqual([r.killed, r.peakFootprint, r.memoryBound, r.cpuMs], [undefined, undefined, undefined, undefined], "absent is unknown, never 0");
 });
 
 // --- the event lane gets each call's footprint on the step that made it ---
 
 test("the finished step carries its ml.sh calls with peak and bound; a killed one says so; an older host's carries neither", T, async () => {
     for (const [done, expect] of [
-        [{ peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576 }, { peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576 }],
+        [{ peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576, cpuMs: 840 }, { peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576, cpuMs: 840 }],
         [{ killed: "oom", peakFootprint: 5000 * 1048576, memoryBound: 4096 * 1048576 }, { killed: "oom", peakFootprint: 5000 * 1048576, memoryBound: 4096 * 1048576 }],
         [{}, {}],
     ]) {
