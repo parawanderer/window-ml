@@ -309,7 +309,7 @@ listed as remaining is DONE unless named below.
   proposal card; committing or pushing a policy file asks by default, an endorsement; every gate is a default a person
   may widen. Worked example and future test: "merge only through my script" = deny `gh` and non-read-only `git`, allow
   one pinned user script; open under it whether the host refuses a denied program started INDIRECTLY (`npm run`,
-  `xargs`, a git alias). Two of Shane's not yet in a spec: a policy is CO-WRITTEN with the model interactively, never
+  `xargs`, a git alias). Two more of Shane's, in `POLICIES.md` since #1026 (0b32d25a, 2026-10-23; open there: more than one card per drafting conversation, whether a proposed policy the person edits becomes theirs, and the HUD card sends no deny note so a proposal there cannot be refined): a policy is CO-WRITTEN with the model interactively, never
   filled in as a builder or JSON, safe only when the person approves the system's deterministic rendering of the rule
   plus breadth evidence (calls it would and would not match), never the model's paraphrase; a classifier never decides
   what runs automatically, at most after-the-fact detection. The red team's recheck of #999 (the page's own `ml.fetch`
