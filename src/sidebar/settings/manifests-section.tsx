@@ -43,13 +43,22 @@ export function pinText(s: Pick<StoredManifest, "manifest" | "pin">): string {
     return `pinned to ${s.pin.path} (fingerprint ${s.pin.fingerprint}${s.pin.version ? `, version ${s.pin.version}` : ""})`;
 }
 
-/** Where the entry describes calls (B5), and the evidence it rests on: a label, its tone, and the line under it. */
-export function evidenceOf(s: Pick<StoredManifest, "origin" | "evidence" | "evidenceFailure">): { label: string; tone: "allow" | "ask" | "deny"; detail?: string } {
-    if (s.origin === "person") return { label: "with or without the sandbox", tone: "allow" };
+/** What a script's entry says about where it applies: outside the sandbox nothing bounds what the script imports. */
+const SCRIPT_SANDBOX_ONLY = "A script is described under the sandbox only, whoever added it: outside it nothing bounds what the script imports.";
+
+/**
+ * Where the entry describes calls, and the evidence it rests on: a label, its tone, and the line under it. A script is
+ * sandbox-only whatever its origin or evidence (`entrypointMisses`, sh-call.ts); a proposed program until its evidence passes (B5).
+ */
+export function evidenceOf(s: Pick<StoredManifest, "manifest" | "origin" | "evidence" | "evidenceFailure">): { label: string; tone: "allow" | "ask" | "deny"; detail?: string } {
     const when = (at: number) => new Date(at).toLocaleString();
-    if (s.evidence) return { label: "with or without the sandbox", tone: "allow", detail: `Evidence: ${s.evidence.calls} call${s.evidence.calls === 1 ? "" : "s"} re-run under the sandbox with writes refused, all as it says (${when(s.evidence.at)}).` };
-    if (s.evidenceFailure) return { label: "under the sandbox only", tone: "deny", detail: `Evidence failed on ${s.evidenceFailure.argv.join(" ")}: ${s.evidenceFailure.why} (${when(s.evidenceFailure.at)}).` };
-    return { label: "under the sandbox only", tone: "ask", detail: "No evidence: no call of it was re-run." };
+    const ev = s.origin === "person" ? undefined
+        : s.evidence ? { tone: "allow" as const, line: `Evidence: ${s.evidence.calls} call${s.evidence.calls === 1 ? "" : "s"} re-run under the sandbox with writes refused, all as it says (${when(s.evidence.at)}).` }
+        : s.evidenceFailure ? { tone: "deny" as const, line: `Evidence failed on ${s.evidenceFailure.argv.join(" ")}: ${s.evidenceFailure.why} (${when(s.evidenceFailure.at)}).` }
+        : { tone: "ask" as const, line: "No evidence: no call of it was re-run." };
+    if (s.manifest.entrypoint) return { label: "under the sandbox only", tone: ev?.tone === "deny" ? "deny" : "ask", detail: [ev?.line, SCRIPT_SANDBOX_ONLY].filter(Boolean).join(" ") };
+    if (!ev || ev.tone === "allow") return { label: "with or without the sandbox", tone: "allow", ...(ev ? { detail: ev.line } : {}) };
+    return { label: "under the sandbox only", tone: ev.tone, detail: ev.line };
 }
 
 /**
@@ -58,6 +67,7 @@ export function evidenceOf(s: Pick<StoredManifest, "origin" | "evidence" | "evid
  * @group settings
  * @gallery person {"entry": {"id": "man-1", "scope": "global", "manifest": {"program": "mytool", "version": {"range": "*", "args": [], "pattern": ""}, "command": {"effects": ["read"], "paths": "operands", "flags": {}}}, "origin": "person", "created": 1760000000000, "pin": {"path": "/opt/homebrew/bin/mytool", "fingerprint": "16777232:4242:183920:1760000000", "inRoot": false}}}
  * @gallery proposed with evidence {"entry": {"id": "man-2", "scope": "global", "manifest": {"program": "file", "version": {"range": "*", "args": [], "pattern": ""}, "command": {"effects": ["read"], "paths": "operands", "flags": {}}}, "origin": "proposed", "created": 1760000000000, "pin": {"path": "/usr/bin/file", "fingerprint": "16777232:99:52000:1750000000", "inRoot": false}, "evidence": {"calls": 1, "at": 1760000000000}}}
+ * @gallery script added by hand {"entry": {"id": "man-4", "scope": "workspace", "root": "/Users/me/src/proj", "manifest": {"program": "node", "entrypoint": {"path": "scripts/report.mjs", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}, "command": {"effects": ["read"], "paths": "operands", "flags": {}}}, "origin": "person", "created": 1760000000000}}
  * @gallery proposed failed {"entry": {"id": "man-3", "scope": "workspace", "root": "/Users/me/src/proj", "manifest": {"program": "node", "entrypoint": {"path": "scripts/gen.mjs", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, "command": {"effects": ["read"], "paths": "operands", "flags": {}}}, "origin": "proposed", "created": 1760000000000, "evidenceFailure": {"argv": ["node", "/Users/me/src/proj/scripts/gen.mjs", "out.json"], "why": "it exited 1, not one of 0", "at": 1760000000000}}}
  * @param entry the stored entry
  * @param onRemove removes it

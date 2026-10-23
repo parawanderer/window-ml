@@ -79,15 +79,27 @@ test("a proposed entry whose evidence failed, or that has none, says it describe
     assert.match(host.textContent, /Shipped with the extension, not replaceable here: cat, git\./);
 });
 
-test("evidenceOf branches on origin and evidence, and the person's entry never reads as sandbox-only", () => {
+test("evidenceOf branches on kind, origin and evidence: a program the person added reads as unsandboxed, a script never does", () => {
+    const BIN = PERSON.manifest, SCR = SCRIPT.manifest;
+    const ANYWHERE = "with or without the sandbox", SANDBOX = "under the sandbox only";
     const cases = [
-        [{ origin: "person" }, "allow"],
-        [{ origin: "person", evidenceFailure: FAILED.evidenceFailure }, "allow"],
-        [{ origin: "proposed" }, "ask"],
-        [{ origin: "proposed", evidence: PASSED.evidence }, "allow"],
-        [{ origin: "proposed", evidenceFailure: FAILED.evidenceFailure }, "deny"],
+        [{ manifest: BIN, origin: "person" }, "allow", ANYWHERE],
+        [{ manifest: BIN, origin: "person", evidenceFailure: FAILED.evidenceFailure }, "allow", ANYWHERE],
+        [{ manifest: BIN, origin: "proposed" }, "ask", SANDBOX],
+        [{ manifest: BIN, origin: "proposed", evidence: PASSED.evidence }, "allow", ANYWHERE],
+        [{ manifest: BIN, origin: "proposed", evidenceFailure: FAILED.evidenceFailure }, "deny", SANDBOX],
+        // A script is sandbox-only for good (entrypointMisses, sh-call.ts): its imports are unbounded on the plain host.
+        [{ manifest: SCR, origin: "person" }, "ask", SANDBOX],
+        [{ manifest: SCR, origin: "proposed", evidence: PASSED.evidence }, "ask", SANDBOX],
+        [{ manifest: SCR, origin: "proposed" }, "ask", SANDBOX],
+        [{ manifest: SCR, origin: "proposed", evidenceFailure: FAILED.evidenceFailure }, "deny", SANDBOX],
     ];
-    for (const [s, tone] of cases) assert.equal(M.evidenceOf(s).tone, tone, JSON.stringify(s));
+    for (const [s, tone, label] of cases) {
+        const got = M.evidenceOf(s);
+        assert.deepEqual([got.tone, got.label], [tone, label], JSON.stringify(s));
+        if (s.manifest.entrypoint) assert.match(got.detail, /under the sandbox only, whoever added it: outside it nothing bounds what the script imports/);
+    }
+    assert.match(M.evidenceOf({ manifest: SCR, origin: "proposed", evidence: PASSED.evidence }).detail, /^Evidence: 2 calls re-run/, "a script keeps its evidence line");
     assert.equal(M.pinText({ manifest: { program: "x" } }), "not pinned");
     assert.match(M.pinText({ manifest: { program: "x" }, pin: { ...PERSON.pin, version: "1.2.3" } }), /, version 1\.2\.3\)/);
 });
