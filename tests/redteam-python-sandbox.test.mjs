@@ -533,6 +533,35 @@ _O()`);
     assert.deepEqual(r, { woke: [] }, `a raise from the result's serialization must not skip the cancel, got ${JSON.stringify(r)}`);
 });
 
+// --- P2-spend. a task that will not take its cancel fails the cell closed --------------------------------------
+// A task that never yields is not here: the spend's `await sleep(0)` hands it the CPU and the cell hangs to the run's
+// timeout instead of refusing (the same class as a busy-loop task hanging the next pump).
+
+test("P2-spend: a task that catches every cancel through all the rounds refuses the cell's result, naming it", { skip }, async () => {
+    const r = await cell(`
+import asyncio, types, sys
+_m = types.ModuleType("_rt_ps")
+_m.stop = False
+_m.woke = []
+sys.modules["_rt_ps"] = _m
+async def _stubborn():
+    while not _m.stop:
+        try:
+            await asyncio.sleep(10)
+        except BaseException:
+            _m.woke.append("caught")
+asyncio.ensure_future(_stubborn()).set_name("stubborn")
+await asyncio.sleep(0)
+"x"`);
+    // Let it go: the next cell's spend cancels it once more, and with the flag set it returns.
+    const freed = await cell(`import sys\nsys.modules["_rt_ps"].stop = True\nlen(sys.modules["_rt_ps"].woke)`);
+    assert.match(String(r.error), /left a task running that would not stop: stubborn \(.*_stubborn\)/, `got ${JSON.stringify(r)}`);
+    assert.equal(r.value, null, `the refused cell's value must not be returned, got ${JSON.stringify(r)}`);
+    assert.equal(freed.value, 8, `positive control: the task caught each of the 8 rounds' cancels, got ${JSON.stringify(freed)}`);
+    const after = await cell(`1`);
+    assert.deepEqual([after.error, after.value], [null, 1], "the freed task was spent; the next cell is not refused");
+});
+
 // --- P2-gate. the cell gate's doors (cell-gate.ts): every way a Python callable reaches a JS registry -----------
 // The three doors are a PyProxy (`pyproxy_new`), a once-callable (`finalizationRegistry` + `callPyObject`) and a promise
 // handle (`Promise.prototype.then`/`finally`). Each route below must schedule successfully ("sched-ok", so a refused
@@ -569,6 +598,26 @@ class _T:
     def then(self, res, rej=None):
         _m.woke.append("ran")
 Promise.resolve(_cp(_T()))`],
+    // Evasion: the core's own makers, under `pyodide.ffi`'s wrappers, still make their proxy through door 1 or 2.
+    ["_pyodide_core.create_once_callable handed to setTimeout", "_rt_pg9", `import _pyodide_core as _c
+from js import setTimeout
+setTimeout(_c.create_once_callable(lambda: _m.woke.append("ran")), 10)`],
+    ["_pyodide_core.create_proxy handed to setTimeout", "_rt_pg10", `import _pyodide_core as _c
+from js import setTimeout
+setTimeout(_c.create_proxy(lambda: _m.woke.append("ran")), 10)`],
+    ["_pyodide_core.to_js of a function handed to setTimeout", "_rt_pg11", `import _pyodide_core as _c
+from js import setTimeout
+setTimeout(_c.to_js(lambda: _m.woke.append("ran")), 10)`],
+    // Evasion: js.globalThis's copies are the same JS objects as js's (a JsProxy per access, one target), so the
+    // hooked Promise.prototype and the doors are the ones they reach.
+    ["js.globalThis.setTimeout + create_proxy", "_rt_pg12", `import js
+from pyodide.ffi import create_proxy as _cp
+js.globalThis.setTimeout(_cp(lambda: _m.woke.append("ran")), 10)`],
+    ["js.globalThis.Promise's then with a raw Python callable", "_rt_pg13", `import js
+js.globalThis.Promise.resolve(1).then(lambda *_a: _m.woke.append("ran"))`],
+    ["js.globalThis.queueMicrotask + create_once_callable", "_rt_pg14", `import js
+from pyodide.ffi import create_once_callable as _co
+js.globalThis.queueMicrotask(_co(lambda: _m.woke.append("ran")))`],
 ];
 for (const [what, tag, body] of gateRoutes) {
     test(`P2-gate: ${what} schedules, and runs nothing after the result`, { skip }, async () => {
