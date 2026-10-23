@@ -1509,8 +1509,26 @@ button.chat-page-go:hover { color: var(--fg); }
    What the page is with nothing open: one pill to start the next session in, a little above the middle, and nothing
    else — no greeting, because this is a place to put a thought down, not a product saying hello. */
 .chat-home { position: relative; }
-.chat-start-page { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 16px; min-height: 0; overflow: auto; }
-.chat-start-col { width: 100%; max-width: var(--read, 42rem); margin-bottom: 12vh; }
+.chat-start-page { position: relative; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 16px; min-height: 0; overflow: auto; }
+.chat-start-col { position: relative; z-index: 1; width: 100%; max-width: var(--read, 42rem); margin-bottom: 12vh; }
+/* The dot field behind the start page (start-field.ts), which sets its own ink and opacity per theme. FIXED over the whole window rather than the start pane, so opening or closing the list slides
+   the list over it instead of resizing it (which rebuilt the grid and stilled the water). It takes no pointer events;
+   a press on the page's open ground stirs it. */
+.chat-start-field { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none;
+    /* Not drawn (no outline style): the page's colour under the field, which its colour fringes are composited
+       against (start-field.ts, the fragment shader). */
+    outline-color: var(--bg); }
+/* While a press is stirring it, a drag across the page selects nothing. */
+:root.start-field-stirring, :root.start-field-stirring * { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+/* THE LIST AND THE RAIL OVER THE FIELD: a frosted layer, nearly solid at the window's edge and thinning toward the
+   page, so the field runs on under them and fades out rather than stopping at a line. Only while the field is drawn;
+   anywhere else they keep their solid background. The rail is already lifted (absolute, z-index 4): only the list
+   needs raising, and giving the rail `position: relative` dropped it into the grid as a column of its own. */
+.chat:has(.chat-start-field) .chat-list { position: relative; z-index: 1; }
+.chat:has(.chat-start-field) :is(.chat-list, .chat-rail) {
+    background: linear-gradient(to right, var(--bg) 0%, color-mix(in srgb, var(--bg) 88%, transparent) 45%, color-mix(in srgb, var(--bg) 55%, transparent) 100%);
+    -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+}
 /* The pill: the text on top, the choices a start needs on one row under it, the send at the end of that row. */
 .chat-start-box {
     display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 10px 20px; border-radius: 26px;
