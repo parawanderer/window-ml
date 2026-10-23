@@ -126,6 +126,96 @@ test("button #3 (HUD card): plain Enter approves WITHOUT persisting (Keep is onl
     assert.equal(msg.persist, false, "…but does NOT persist — Keep requires the deliberate combo");
 });
 
+// --- the HUD card's deny with a note: what the transcript's split Deny offers, in the card foot --------------
+
+/** A HUD card with one pending click gate, and the approval messages it posts. */
+async function hudGate(hash) {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart(hash, "click something"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
+    await w.flush();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    return { w, posted, approvals: () => posted.filter(m => m.__mlSidebarApp === "approval") };
+}
+
+test("HUD card: the split Deny opens a note field, and 'Deny with this' posts the note as the denial's feedback", async () => {
+    const { w, approvals } = await hudGate("dn1");
+    const more = w.shadow.querySelector(".card-foot .appr-deny-more");
+    assert.ok(more, "the chevron half of Deny is drawn in the card foot");
+    assert.equal(more.getAttribute("aria-label"), "Deny with a message");
+    more.click();
+    await w.flush();
+    const field = w.shadow.querySelector(".card-foot .card-deny-note textarea");
+    assert.ok(field, "the note field replaced the button row");
+    assert.equal(approvals().length, 0, "opening the field decides nothing");
+    field.value = "  only the Save button, not Submit  ";
+    [...w.shadow.querySelectorAll(".card-deny-note .appr-btn")].find(b => /deny with this/i.test(b.textContent)).click();
+    const [msg] = approvals();
+    assert.ok(msg, "sending posts one approval");
+    assert.equal(msg.decision, false);
+    assert.equal(msg.feedback, "only the Save button, not Submit", "the note, trimmed, is the feedback the model reads");
+});
+
+test("HUD card: with the note field open, Enter in it approves nothing and Esc goes back to the buttons without denying", async () => {
+    const { w, approvals } = await hudGate("dn2");
+    w.shadow.querySelector(".card-foot .appr-deny-more").click();
+    await w.flush();
+    const field = w.shadow.querySelector(".card-deny-note textarea");
+    field.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    assert.equal(approvals().length, 0, "the window's Enter-approves stands down while a note is being written");
+    field.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await w.flush();
+    assert.equal(approvals().length, 0, "Esc in the field closes it; it is not the card's Esc-denies");
+    assert.equal(w.shadow.querySelector(".card-deny-note"), null, "the field is gone");
+    assert.ok(w.shadow.querySelector(".card-foot .appr-deny-more"), "the buttons are back");
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const [msg] = approvals();
+    assert.ok(msg && msg.decision === false && msg.feedback === undefined, "with the field closed, Esc is a plain deny again");
+});
+
+test("HUD card: ⌘/Ctrl+Enter in the note sends it; an empty note is a plain deny", async () => {
+    const { w, approvals } = await hudGate("dn3");
+    w.shadow.querySelector(".card-foot .appr-deny-more").click();
+    await w.flush();
+    const field = w.shadow.querySelector(".card-deny-note textarea");
+    field.value = "   ";
+    field.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    const [msg] = approvals();
+    assert.ok(msg && msg.decision === false, "Ctrl+Enter sends");
+    assert.equal(msg.feedback, undefined, "a blank note carries no feedback");
+});
+
+test("HUD card: × with a note open denies WITH the note, not a bare deny that drops what was typed", async () => {
+    const { w, approvals } = await hudGate("dn4");
+    w.shadow.querySelector(".card-foot .appr-deny-more").click();
+    await w.flush();
+    const field = w.shadow.querySelector(".card-deny-note textarea");
+    field.value = "not this one";
+    field.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    w.shadow.querySelector(".card-x").dispatchEvent(new w.window.Event("pointerdown", { bubbles: true }));
+    const [msg] = approvals();
+    assert.ok(msg && msg.decision === false, "× denies");
+    assert.equal(msg.feedback, "not this one");
+});
+
+test("HUD card: a note left open on a gate answered elsewhere does not mute the keys for a nested ask on the same step", async () => {
+    const { w, approvals } = await hudGate("dn5");
+    w.shadow.querySelector(".card-foot .appr-deny-more").click();
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".card-deny-note"), "the field is open on the step's gate");
+    // The gate is approved from the sidebar; the running step then raises a nested ask, which shares its seq.
+    const ask = { id: "a0123456789abcdef01234567", kind: "sh", state: "pending", raisedAt: 1000, facts: { argv: ["git", "status"], program: { path: "/usr/bin/git", inRoot: false }, cwd: { path: "/w", inRoot: true }, env: { set: [], free: true }, secrets: [], paths: [], repo: { root: "/w", reasons: [] }, repoConfigRunsCode: false, effects: "unknown", described: false, why: [], runner: false, mode: "host", sandboxed: false, placement: "host-plain" } };
+    await w.dispatch(agentStep("dn5", 1, { seq: 1, pending: true, awaitingApproval: false, approval: "user", tool: "click", arguments: { selector: "#go" }, asks: [ask] }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".card-body .astep-approve.ask"), "the ask has the card");
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const msg = approvals().find((m) => m.ask === ask.id);
+    assert.ok(msg && msg.decision === true, "Enter answers the ask: the stale note field did not keep the keys off");
+});
+
 // --- granting a host: the origin note, the Chrome prompt, and the settings list --------------------------
 
 test("host access (fetch_url): a first-time origin shows the note; approving requests that host in the same gesture", async () => {

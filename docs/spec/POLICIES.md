@@ -339,7 +339,8 @@ rule. Each draft reaches them as a proposal card, which shows what the SYSTEM re
 sentence and predicate rendered from a tree once there is one, "The tree, ruled" below) and its breadth evidence: the
 calls it would and would not match. A refinement is the card's own "deny, with a note", which the model reads to
 propose again, so no new answer is added to the card ("Widening is a policy" above). That note is the gate's generic
-deny feedback (`agent-loop.ts`, "Denied by …: <note>"); today the transcript's card sends it and the HUD card does not.
+deny feedback (`agent-loop.ts`, "Denied by …: <note>"), sent by the split Deny on both the transcript's card and the
+HUD card.
 Not built as a loop: `propose_policy` (`fetch` only today) and its card exist. Open: whether a conversation that drafts
 several policies needs more than one card at a time, and whether a proposed policy the person then edits in the policy
 editor becomes theirs (`editPolicy` keeps `origin: "proposed"` today).
