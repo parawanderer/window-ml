@@ -99,6 +99,27 @@ over the manifest's data so the profile is derived from the same source as the f
 - One page lists them, like the policy page: shipped, installed, proposed, each with its source, its pin and the
   measured evidence (calls run under it, failures under its envelope). It lives in DevTools Settings, the superset.
 
+**The store, ruled 2026-10-23** (coordinator, on the `[window-ml root-k]` session's reading before its PR; root 2(a), the
+host's `exec: program-only` and the `(program, entrypoint)` prefix, was found already on main from K1 and K3, with the
+plain-host import-closure hash unbuilt and K1's "applies only when `sandboxed: true`" standing in its place).
+
+- B1. Two keys in `chrome.storage.local`, never `sync`: `manifests.global` and `manifests.workspace` (the latter keyed by
+  the root's realpath), each declared in the state registry from the first commit. An entry is `{ id, scope, root?,
+  manifest, origin: "person" | "proposed", created }`; `manifestFor` reads shipped and stored.
+- B2. SHIPPED WINS this round. A stored entry whose key (`program`, or `program` + `entrypoint`) a shipped manifest
+  already describes is refused at store time with the shipped file named, on both placements: the same key is then
+  never read differently by placement, and the delete family cannot be made free on a person's word through the store.
+  Person-wins is a widening, Shane's later on a number. Among stored entries, workspace beats global.
+- B3. A program that resolves inside a workspace root is describable by workspace scope only, and only pinned; a global
+  entry for an in-root program is refused at store time, mirroring the shipped rule above.
+- B4. A binary is pinned by the host's `program.fingerprint` (`dev:ino:size:mtime`), plus the `version` string when the
+  program reports one; any change drops it to `unknown`. A content hash of a binary (past the 16 MiB path-argument cap;
+  `node` is about 100 MB) is a host change, on a need, not this round.
+- B5. `origin: "proposed"` (from `propose_manifest`) applies only when the call is sandboxed, until the tool's evidence
+  run marks it; `origin: "person"` applies on both placements.
+- The store's message types get the red-team pass from the red team's lane: a page cannot store, list or delete a
+  manifest, and a stored manifest never reaches a page.
+
 ### Interpreted script tools (`node scripts/<name>.mjs`, `python3 <script>.py`)
 
 In LLM agent workflows, almost every repository-specific CLI utility (`node scripts/index.mjs`,
