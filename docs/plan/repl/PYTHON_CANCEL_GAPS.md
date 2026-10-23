@@ -55,9 +55,17 @@ property the test checks after its positive controls.
 **Ruling on what "runs after the result" means** (coordinator, 2026-10-23, into `docs/dev/python-sandbox.md` point (5)
 with this brief): the property is that nothing the cell scheduled runs AFTER its result is returned. Its `finally` or
 `except` running DURING the cancel, inside the cell's own time, with its output in the cell's own stdout, satisfies it,
-and is what spending the coroutine does. The `_coro` test's first assertion (`woke == ["armed"]` after the result) was
-written before this ruling; if the fix makes `finally-ran` appear during the cell, reshape that assertion to accept it
-and say so in the PR body; the test's second half (the throw from a later cell does nothing) is the property, unchanged.
+and is what spending the coroutine does. The `_coro` test was written before this ruling (the red team agrees with it,
+2026-10-23, and says what moves): its assertion after cell 1 (`woke == ["armed"]`) forbids the `finally` from having run
+at all and is the one too strict, `["armed", "finally-ran"]` is fine there; the assertion after the passive cell and
+the throw is the defended half and must keep failing today, so the property it checks is that `woke` does not GROW
+between cell 1's result and the throw. Keep the two positive controls beside it, which stop the test passing when the
+task never ran: the task started and suspended inside its `try` stays as is; "the sweep left it pending" cannot stay,
+since a pending task is the gap, and its replacement pins the GENERATOR, not the Task (rule 5, no proxies): after the
+later cell's `_coro.throw`, a second `throw` raises (`StopIteration`, or "cannot reuse already awaited coroutine") instead
+of running the `finally`. `t.done()`/`t.cancelled()` are not pinned: the red team notes (2026-10-23) that a fix which
+drives `_coro` directly can exhaust the generator while the Task's own state still reads pending, so they are the
+mechanism's business; the PR body says what they read under the fix chosen. Say there which assertions moved and why.
 
 ## Tests, failing first
 
