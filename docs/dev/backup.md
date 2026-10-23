@@ -103,6 +103,7 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 | `src/backup/backup-file.ts` | `beginBackup`, `addSession`, `finishBackup`, `sealBackup`, `openBackupBytes`, `inspectBackup`, `inspectRestore`, `restoreNewSessions` |
 | `src/backup/backup-keyring.ts` | the data key at rest (IndexedDB `ml-backup-keyring`), `setupKeyring`, `changePassphrase` |
 | `src/backup/backup-opfs.ts` | the two origin-private files that carry a backup between a page and the archive worker |
+| `src/sw/sw-backup.ts` | the `BACKUP` message: the real `BackupDeps`, validation, the restore plan checked again |
 | `src/backup/backup-run.ts` | `createBackup`, `offerRestore`, `restoreBackup`: the sequence, every outside thing injected |
 | `src/archive/archive-worker.ts` | the ops `backupBegin`, `backupPut`, `backupFinish`, `backupAbort`, `restoreInspect`, `restoreSessions`, `backupFileRemove` |
 | `src/sw/policy-valid.ts` | the policy validator and the source and label bounds the worker and a restore share (moved out of `sw-policies.ts`) |
@@ -187,9 +188,19 @@ data key is usable but not readable. `changePassphrase` unwraps with the old pas
 replaces only the passphrase wrap; files already written keep their old wraps, so they open with the old passphrase and
 with the recovery key.
 
+**The service-worker binding (2b).** One message, `BACKUP`, from extension pages only (a page-relayed one is refused
+before anything runs, and it is not in `HANDLE_MAP`): `{action:"create", form, includeApiKey?}`, `{action:"offer",
+secret?}` and `{action:"restore", plan, sessions, settings, secret?}`, handled by `backupAction` in `sw-backup.ts`
+over the real `BackupDeps` (`archiveCall`, the worker's `sessionStore`, the three storage areas, `chromeStorageWriter`).
+A failure answers `{ error, reason }`, so the page can tell `needs-key` from `wrong-secret`. A restore does not trust
+the plan the page sends back: the worker plans again from the file and the storage as they are now, and writes only
+the changes of its own plan whose area and key the page's plan also lists (a key the file lacks, or a forged value,
+is never written). It waits for `siteSchemaReady()` before writing settings and calls `scheduleFolderSync()` only when
+sessions were added. Setting up and changing the passphrase are not messages: the page reaches the keyring in
+IndexedDB directly.
+
 **Not built in 2a.** The screens (including the recovery screen and its type-back check, the encryption switch, the
-export dialog, "Decrypt a file"); the service-worker binding that hands `createBackup` the real session store and
-storage and the message handlers behind the screens; adopting another install's data key on restore; rotating the
+export dialog, "Decrypt a file"); adopting another install's data key on restore; rotating the
 recovery key; a browser (e2e) run of the new worker ops and of the origin-private file transfer, which only a real
 Chromium can exercise (Node tests drive the same functions through a fake worker).
 
