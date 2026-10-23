@@ -202,7 +202,7 @@ swallowed and the realm never frozen. A lockdown that leaves the realm unfrozen 
 the latch). (1b) `pyodide_js` out of a cell's reach: unregistered once `pyodide.webloop` and the package loader have
 bound what they import at load, purged from `sys.modules`, its old `JsLoader`s cleared, and re-registered as a stand-in
 holding only `_api.config` (`webloop.run_until_complete` and the patched `asyncio.run` import it at call time).
-`tests/redteam-python-lockdown.test.mjs` holds both, with a gc walk for any JsProxy of the API, `_api` or `_module`.
+`tests/python-lockdown.test.mjs` holds both, with a gc walk for any JsProxy of the API, `_api` or `_module`.
 (2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
 needs and a few capability-free host APIs stay; `eval`, `Function`, `fetch`, `importScripts`,
 `postMessage`, `navigator`, `chrome`, every Node module go. There is no deny list to keep

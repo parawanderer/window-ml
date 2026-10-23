@@ -1,4 +1,4 @@
-// Red-team vectors for the readonly Python worker's BOOT itself: that `lockdownReadonly` leaves the realm frozen, and that a
+// python-lockdown.test.mjs — the readonly Python worker's BOOT itself: that `lockdownReadonly` leaves the realm frozen, and that a
 // cell cannot reach the Pyodide API (`pyodide_js`, its `_api` and `_module`). docs/plan/repl/PYODIDE_LOCKDOWN.md step 2 (the
 // DEFECT: our accessor made `lockdown()` throw, swallowed) and step 4 (the GAP: `import pyodide_js`).
 //
