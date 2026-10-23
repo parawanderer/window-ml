@@ -428,6 +428,14 @@ const fileKey = async (k: Keyring, salt: Uint8Array) =>
 
 /** Seal a plain SQLite file as a `.wmlbak`: gzip, cut into chunks, each chunk AES-GCM with the header as associated data. */
 export async function encryptFile(plain: Uint8Array, keyring: Keyring, o: { kind: FileKind; chunk?: number; created?: Date }): Promise<Bytes> {
+    return sealGzip(await gzip(plain), keyring, o);
+}
+
+/**
+ * Seal bytes that are ALREADY a gzip stream as a `.wmlbak`, the half of `encryptFile` after compressing. For a caller
+ * that compressed as a stream, so that the plaintext is never whole in memory (a test's 1 GiB decompression bomb).
+ */
+export async function sealGzip(packed: Uint8Array, keyring: Keyring, o: { kind: FileKind; chunk?: number; created?: Date }): Promise<Bytes> {
     const chunk = o.chunk ?? DEFAULT_CHUNK;
     if (!Number.isInteger(chunk) || chunk < 1 || chunk > LIMITS.chunkBytes) throw new RangeError("chunk size out of range");
     const fileSalt = random(32);
@@ -435,11 +443,10 @@ export async function encryptFile(plain: Uint8Array, keyring: Keyring, o: { kind
     const headerBytes = text.encode(JSON.stringify(header));
     const prefix = concat(new Uint8Array(MAGIC), u32(headerBytes.length), headerBytes);
     const key = await fileKey(keyring, fileSalt);
-    const packed = await gzip(plain);
     const count = Math.max(1, Math.ceil(packed.length / chunk));
     const parts: Uint8Array[] = [prefix];
     for (let i = 0; i < count; i++) {
-        const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce(i, i === count - 1), additionalData: prefix }, key, packed.subarray(i * chunk, (i + 1) * chunk)));
+        const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce(i, i === count - 1), additionalData: prefix }, key, packed.subarray(i * chunk, (i + 1) * chunk) as Bytes));
         parts.push(u32(ct.length), ct);
     }
     return concat(...parts);

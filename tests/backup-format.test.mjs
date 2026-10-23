@@ -2,12 +2,13 @@
 // a committed v1 file that must open forever. Argon2 is run cheap in most tests; the fixture and one timing test use the real cost.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, mkdtempSync, symlinkSync, linkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, symlinkSync, linkSync, statSync, statfsSync, rmSync } from "node:fs";
+import { createGzip } from "node:zlib";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import path from "node:path";
 import {
-    BackupError, DEFAULT_ARGON, LIMITS, createKeyring, decryptFile, encryptFile, gunzip, gzip, newRecoveryKey, parseRecoveryKey, readAnyForm, readHeader, rewrap, sniff, unlock,
+    BackupError, DEFAULT_ARGON, LIMITS, createKeyring, decryptFile, encryptFile, gunzip, gzip, newRecoveryKey, parseRecoveryKey, readAnyForm, readHeader, rewrap, sealGzip, sniff, unlock,
 } from "../src/backup/backup-format.ts";
 
 const CHEAP = { argon: { m: 64, t: 1, p: 1 } };
@@ -622,4 +623,54 @@ test("the decryptor reports a missing input in one line", () => {
 test("the decryptor still opens the committed v1 fixture under its budget", async () => {
     const r = spawnSync(process.execPath, [TOOL, FIXTURE.pathname, path.join(toolDir, "fx.sqlite")], { input: FIXTURE_PASS + "\n", encoding: "utf8", timeout: 30000 });
     assert.equal(r.status, 0, r.stderr);
+});
+
+// --- the standalone decryptor against a decompression bomb ---
+
+/** A gzip stream of `n` zero bytes, compressed as a stream so the plaintext is never whole in memory: about 1 MB per GiB. */
+async function zeroGzip(n) {
+    const z = createGzip({ level: 1 });
+    const parts = [];
+    z.on("data", (c) => parts.push(c));
+    const done = new Promise((ok, no) => { z.on("end", ok); z.on("error", no); });
+    const block = Buffer.alloc(1 << 20);
+    for (let left = n; left > 0; left -= block.length) {
+        if (!z.write(left >= block.length ? block : block.subarray(0, left))) await new Promise((ok) => z.once("drain", ok));
+    }
+    z.end();
+    await done;
+    return Buffer.concat(parts);
+}
+/** Run the decryptor on a sealed bomb with time to decompress a GiB. */
+function runBomb(file, out) {
+    const inp = path.join(toolDir, "bomb.wmlbak");
+    writeFileSync(inp, file);
+    return spawnSync(process.execPath, [TOOL, inp, out], { input: PASS + "\n", encoding: "utf8", timeout: 120000 });
+}
+// The tool holds up to `outputBytes` in memory before it refuses, and the at-the-limit case writes all of it to disk.
+const GiB = 1 << 30;
+const noRam = totalmem() < 6 * GiB && `needs 6 GiB of RAM (this machine has ${(totalmem() / GiB).toFixed(1)})`;
+const freeDisk = () => { const f = statfsSync(tmpdir()); return f.bavail * f.bsize; };
+
+test("the decryptor refuses a sealed decompression bomb one byte past the budget, and writes nothing", { skip: noRam }, async () => {
+    const { keyring } = await ring();
+    const packed = await zeroGzip(LIMITS.outputBytes + 1);
+    assert.ok(packed.length < 16 << 20, `a small plant: ${packed.length} B`);
+    const out = path.join(toolDir, "bomb-over.sqlite");
+    const r = runBomb(await sealGzip(packed, keyring, { kind: "backup" }), out);
+    assert.notEqual(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^wmlbak-decrypt: over budget: the file decompresses to more than 1073741824 bytes/);
+    assert.throws(() => statSync(out), /ENOENT/);
+});
+
+test("the decryptor opens a sealed file that decompresses to exactly the budget", { skip: noRam || (freeDisk() < 3 * GiB && "needs 3 GiB free on the temp disk") }, async () => {
+    const { keyring } = await ring();
+    const out = path.join(toolDir, "bomb-at.sqlite");
+    try {
+        const r = runBomb(await sealGzip(await zeroGzip(LIMITS.outputBytes), keyring, { kind: "backup" }), out);
+        assert.equal(r.status, 0, r.stderr);
+        assert.equal(statSync(out).size, LIMITS.outputBytes);
+    } finally {
+        rmSync(out, { force: true });
+    }
 });
