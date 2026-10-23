@@ -53,6 +53,15 @@ starts from main.
    the latch, so it holds either way. Property from the red team, ruled in: do NOT widen the `ses` permit to allow the
    accessor, since an accessor on `Object.prototype.constructor` is a write path to `Function` for anything that reaches
    the prototype; install it after `lockdown()`, or by a route `ses` does not treat as an intrinsic write.
+   FIX SHAPE ruled 2026-10-23 on the builder's candidate, measured in Node: drop our accessor and pass `ses`'s own
+   `overrideTaming: "severe"`, under which `lockdown()` installs the `Object.prototype.constructor` accessor itself
+   (getter returns the frozen original, setter refuses `this === Object.prototype` and otherwise defines an own
+   property); `lockdown()` then succeeds, the realm is frozen, and `n.constructor = v` on a plain object is an own
+   property. Narrower than ours, which would have redefined the accessor on the prototype itself. Carried in the PR:
+   the #735 DataFrame/table path in the real worker both ways; the `notebooks/python-dialect/` corpus under the new
+   boot against the old (cell count, any new failure) since "severe" puts accessors on every property of the tamed
+   intrinsics; boot time next to lane 1's 18 ms; a test that the freeze is real and the latch set, and that a cell
+   assigning `Object.prototype.constructor` is refused.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
