@@ -489,6 +489,16 @@ export const wrapUserScript = (code: string, persist: boolean | "run" = false, i
 result = None
 _ml_src = ${JSON.stringify(code)}${inside ? insideDefs(inside.nodes) : ""}
 _ml_persist = ${persist ? "True" : "False"}
+# The loop this run started on. A cell that calls asyncio.new_event_loop() REPLACES it (WebLoop.__init__
+# calls _set_running_loop), and a handle left on the orphan then crashes the next pump with
+# "Cannot enter into task" — the orphan is still the running loop, so the handle's task step passes the
+# running-loop check and collides with this run's finished task. Restoring the loop in the cancel below
+# turns that crash into the benign "loop is not the running loop" a cancelled handle never reaches.
+try:
+    import asyncio as _ml_aio0
+    _ml_orig_loop = _ml_aio0.get_running_loop()
+except Exception:
+    _ml_orig_loop = None
 # stdout capture that tees each write to the REAL stdout (Pyodide's \`setStdout\` wraps it on the JS side for
 # live streaming) — no JS callback in the namespace, so the namespace holds no JsProxy at all.
 class _MlTee(_ml_stringio):
@@ -516,6 +526,42 @@ ${inside ? INSIDE_CELL : FULL_CELL}        if _ret is not None:
     except BaseException:
         _err = _ml_fmt_exc()
         result = None
+# Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5): a task
+# left pending would run during the next cell's pump of the event loop, observing its source and injected
+# inputs. Cancel is enough — a cancelled task's coroutine throws at its await point and never continues.
+# The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the run machinery.
+# HANDLES are not tasks: call_soon/call_later/call_at make a Handle, and all_tasks() never sees one. A
+# handle left pending runs after the result returned (the P2-handle gap), and a handle on a loop the cell
+# made with new_event_loop() CRASHES the next pump with "Cannot enter into task" (see the note at the top
+# of this wrapper). WebLoop.close() is a no-op and its timers are JS setTimeouts whose only guard is
+# Handle.cancelled(), so cancelling the Handle is the one way to stop it. At this point the run machinery
+# holds no in-flight handle — this code runs synchronously inside its own task — so every Handle that
+# still exists is one the cell made. Restoring the running loop first is belt and braces: a handle that
+# somehow escapes the cancel then dies on "loop is not the running loop" instead of the crash.
+# HERE, not at the end of the wrapper: the epilogue below serialises the result, and a BaseException from
+# that serialisation (a __str__ that raises one) used to end the wrapper before the cancel, leaving every
+# task and handle the cell scheduled alive to run during the next cell (P2-escape).
+try:
+    import asyncio as _ml_aio
+    _ml_self = _ml_aio.current_task()
+    for _ml_task in _ml_aio.all_tasks():
+        if _ml_task is not _ml_self:
+            _ml_task.cancel()
+except Exception:
+    pass
+try:
+    import asyncio as _ml_aio2
+    if _ml_orig_loop is not None:
+        _ml_aio2._set_running_loop(_ml_orig_loop)
+except Exception:
+    pass
+try:
+    import asyncio as _ml_aio3, gc as _ml_gc
+    for _ml_obj in _ml_gc.get_objects():
+        if isinstance(_ml_obj, _ml_aio3.Handle) and not _ml_obj.cancelled():
+            _ml_obj.cancel()
+except Exception:
+    pass
 _stdout = _out.getvalue()${inside ? `
 if _ml_not_in_dialect is not None:
     _stdout = ""` : ""}
@@ -649,18 +695,6 @@ try:
                 _ipc_result = None
 except Exception:
     _json_table = None
-# Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5): a task
-# left pending would run during the next cell's pump of the event loop, observing its source and injected
-# inputs. Cancel is enough — a cancelled task's coroutine throws at its await point and never continues.
-# The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the run machinery.
-try:
-    import asyncio as _ml_aio
-    _ml_self = _ml_aio.current_task()
-    for _ml_task in _ml_aio.all_tasks():
-        if _ml_task is not _ml_self:
-            _ml_task.cancel()
-except Exception:
-    pass
 `;
 
 /**

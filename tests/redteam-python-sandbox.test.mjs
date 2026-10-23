@@ -19,6 +19,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 import { wrapUserCode, harden, unharden, injectInputs } from "../src/python/python-runtime.ts";
 
@@ -299,7 +300,7 @@ ${body}
     return (await cell(`import sys\n_m = sys.modules.get("${tag}")\n{"woke": list(_m.woke) if _m else "NO MARKER"}`)).value;
 }
 
-test("P2-handle: a callback a hardened cell hands the loop with call_later does not run once its result is returned", { skip, todo: "the cancel walks asyncio.all_tasks(); a Handle from call_soon/call_later is not a task (python-runtime.ts, the cancel at the end of wrapUserScript)" }, async () => {
+test("P2-handle: a callback a hardened cell hands the loop with call_later does not run once its result is returned", { skip }, async () => {
     // Positive control: the same recorder, written by a Task, is cancelled, so the probe can tell a run from no run.
     const control = await scheduledThenAsk("_rt_p2h_ok", `async def _t():
     await asyncio.sleep(0.01)
@@ -312,7 +313,7 @@ asyncio.ensure_future(_t())
     assert.deepEqual(r, { woke: [] }, `a call_later callback must not run after the result returned, got ${JSON.stringify(r)}`);
 });
 
-test("P2-escape: a result whose serialization raises a BaseException still has the cell's tasks cancelled", { skip, todo: "the epilogue's json.dumps default calls str() on the cell's object under `except Exception`; a BaseException ends the wrapper before the cancel (python-runtime.ts, `_json_result = _ml_dumps(...)`)" }, async () => {
+test("P2-escape: a result whose serialization raises a BaseException still has the cell's tasks cancelled", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2e", `async def _t():
     await asyncio.sleep(0.01)
     _m.woke.append("ran")
@@ -322,6 +323,34 @@ class _O:
     def __str__(self): raise _B()
 _O()`);
     assert.deepEqual(r, { woke: [] }, `a raise from the result's serialization must not skip the cancel, got ${JSON.stringify(r)}`);
+});
+
+// --- P2-handle crash: a handle on an orphan loop must not take the node process down ---------------
+// A cell that calls asyncio.new_event_loop().call_later(...) leaves a Handle on a WebLoop the cell made.
+// WebLoop.__init__ sets ITSELF as the running loop, so when that handle fires during the next cell's pump
+// its task step passes the running-loop check and collides with the previous run's finished task:
+// "Cannot enter into task ... while another task ... is being executed". The error is raised inside a JS
+// setTimeout callback, asyncio's exception handler prints it, and the process dies (exit 13) — killing
+// whatever test run was attached. The guard has to be a CHILD process: the crash is the finding.
+
+test("P2-orphan-loop: a cell that schedules on a loop it made with new_event_loop does not crash the next pump", { skip }, () => {
+    const script = `
+import { loadPyodide } from ${JSON.stringify(path.join(PYODIDE_DIR, "pyodide.mjs"))};
+const { wrapUserCode } = await import(${JSON.stringify(path.join(import.meta.dirname, "../src/python/python-runtime.ts"))});
+const py = await loadPyodide({ indexURL: ${JSON.stringify(PYODIDE_DIR)} });
+await py.loadPackage(["numpy", "pillow", "pandas", "beautifulsoup4", "html5lib", "sympy"]);
+await py.runPythonAsync(wrapUserCode("import asyncio\\nasyncio.new_event_loop().call_later(0.01, lambda: None)\\n\\"x\\"", true));
+await py.runPythonAsync("import asyncio\\nawait asyncio.sleep(0.1)");
+process.exit(0);
+`;
+    const r = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+        encoding: "utf8",
+        timeout: 60000,
+    });
+    // The crash shows up as a non-zero exit (13) with "Cannot enter into task" in stderr. A clean run
+    // exits 0 with neither. Assert on the EXIT, not the text: the text is the diagnosis, the exit is the bug.
+    assert.equal(r.status, 0, `the child crashed (status=${r.status}, signal=${r.signal}):\n${(r.stderr || "").slice(-800)}`);
+    assert.ok(!/Cannot enter into task/.test(r.stderr || ""), `the child hit the task-enter collision:\n${(r.stderr || "").slice(-800)}`);
 });
 
 // --- P3. a JsProxy in the namespace ----------------------------------------------------------------
