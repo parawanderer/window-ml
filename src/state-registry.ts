@@ -174,6 +174,16 @@ export function pageStateFrom(raw: unknown, taken: ReadonlySet<string>): { membe
     return { members, entries };
 }
 
+/** Whether a state entry's value is actual data rather than an empty placeholder: an empty array, object or string,
+ *  null and undefined all mean "the worker holds nothing", so a page-hosted run's page may answer for that member. */
+function holdsSomething(value: unknown): boolean {
+    if (value == null) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    if (typeof value === "string") return value.length > 0;
+    return true;
+}
+
 /**
  * The worker's snapshot of a run with what the run's page answered folded in. A page member the worker does not declare
  * is added as the page's. One the worker DOES declare is the worker's, and the page's entry for it is taken only for a
@@ -187,7 +197,10 @@ export function pageStateFrom(raw: unknown, taken: ReadonlySet<string>): { membe
  */
 export function withPageState(worker: { members: StateMember[]; entries: StateEntry[] }, raw: unknown, pageHosts: boolean): { members: StateMember[]; entries: StateEntry[] } | null {
     const workerIds = new Set(worker.members.map((m) => m.id));
-    const page = pageStateFrom(raw, pageHosts ? new Set(worker.entries.map((e) => e.id)) : workerIds);
+    // "Where the worker holds nothing" means entries with actual data, not empty placeholders: `persistRun` writes
+    // `messages: []` for a fresh turn, which must not block the page's `run.messages` on a page-hosted run.
+    const held = new Set(worker.entries.filter((e) => holdsSomething(e.value)).map((e) => e.id));
+    const page = pageStateFrom(raw, pageHosts ? held : workerIds);
     if (!page) return null;
     return {
         members: [...worker.members, ...page.members.filter((m) => !workerIds.has(m.id))],
