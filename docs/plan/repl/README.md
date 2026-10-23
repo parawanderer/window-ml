@@ -290,7 +290,7 @@ listed as remaining is DONE unless named below.
      did not cause, named in its PR: a Python cell calling through the ml wire has no shared step meter, so each search
      gets the per-call cap (handed to the repl follow-up session; BUILT in #1007, merged 9ec17928, 2026-10-23: one ml-wire
      step budget a cell, `ML_WIRE.md` "One budget a cell", the red team's grep `-A/-B/-C` quadratic fixed with it;
-     named there and unowned: the unpiped stored-text read and `serveWireCall`'s argument copies are uncharged); a `replace` whose replacement uses `$'` or `` $` ``
+     named there and since charged by #1053, merged bb881ed7, 2026-10-23: the unpiped stored-text read and `serveWireCall`'s argument copies); a `replace` whose replacement uses `$'` or `` $` ``
      builds output quadratic in its input while only the input's length is charged. ASSIGNED 2026-10-23 on Shane's word
      (relayed by the quadratic-regex session) to that session: [`REPLACE_OUTPUT_BOUND.md`](REPLACE_OUTPUT_BOUND.md); the
      red team found it and reviews nothing, the janitor reviews. Measured since: memory, not halting (V8 refuses the
