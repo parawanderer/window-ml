@@ -8,8 +8,8 @@ import { defineJob } from "../job-registry";
 
 /** Run one archive operation. Rejects with the archive's own message when it fails (no OPFS, a newer schema). */
 export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args"]): Promise<T> {
-    const send = () => ensureOffscreen().then(() => chrome.runtime.sendMessage({ type: "ARCHIVE_OP", op, args }) as Promise<{ ok: boolean; result?: unknown; error?: string } | undefined>);
-    let r: { ok: boolean; result?: unknown; error?: string } | undefined;
+    const send = () => ensureOffscreen().then(() => chrome.runtime.sendMessage({ type: "ARCHIVE_OP", op, args }) as Promise<{ ok: boolean; result?: unknown; error?: string; reason?: string } | undefined>);
+    let r: { ok: boolean; result?: unknown; error?: string; reason?: string } | undefined;
     try { r = await send(); }
     catch (err) {
         // The offscreen document was torn down while the worker slept: recreate it, once.
@@ -17,7 +17,8 @@ export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args
         forgetOffscreen();
         r = await send();
     }
-    if (!r?.ok) throw new Error(r?.error || "the archive did not answer");
+    // `reason` is a BackupError's, kept so a caller can tell a missing key from a wrong one.
+    if (!r?.ok) throw Object.assign(new Error(r?.error || "the archive did not answer"), r?.reason ? { reason: r.reason } : {});
     if (FOLDER_OPS.has(op)) noteFolder(r.result as FolderReport);
     return r.result as T;
 }

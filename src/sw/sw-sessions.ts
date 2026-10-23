@@ -2,6 +2,7 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
+import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession } from "../contract/contract-run";
 import { type MlDebugEvent } from "../contract/contract-debug";
@@ -824,6 +825,11 @@ export async function unarchiveSession(hash: string): Promise<boolean> {
     const got = await archiveCall<{ summary: SessionSummary; events: MlDebugEvent[]; history: SessionHistory | null } | null>("read", { hash }).catch(() => null);
     if (!got) return false;
     await sessionStore.restoreSession(got.summary, got.events, got.history, Date.now());
+    // A chat resumes from its `ml_session_` record, which the archive does not hold as such: put it back, never over a live one.
+    await restoreChatRecord(hash, got.history, {
+        get: async (k) => (await chrome.storage.local.get(k))[k],
+        set: (k, v) => chrome.storage.local.set({ [k]: v }),
+    }).catch(() => { /* storage unavailable: the chat reads, it just does not resume */ });
     sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }]));
     await archiveCall("remove", { hash }).catch(() => { /* in both until the next archive: harmless */ });
     scheduleFolderSync();
