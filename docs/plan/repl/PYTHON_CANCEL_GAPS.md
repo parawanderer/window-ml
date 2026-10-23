@@ -60,9 +60,12 @@ and is what spending the coroutine does. The `_coro` test was written before thi
 at all and is the one too strict, `["armed", "finally-ran"]` is fine there; the assertion after the passive cell and
 the throw is the defended half and must keep failing today, so the property it checks is that `woke` does not GROW
 between cell 1's result and the throw. Keep the two positive controls beside it, which stop the test passing when the
-task never ran: the task started and suspended inside its `try` stays as is; "the sweep left it pending" becomes its
-opposite under this fix, the sweep SPENT it (`t.done()` true, `t.cancelled()` true), since a pending task is the gap.
-Say in the PR body which assertions moved and why.
+task never ran: the task started and suspended inside its `try` stays as is; "the sweep left it pending" cannot stay,
+since a pending task is the gap, and its replacement pins the GENERATOR, not the Task (rule 5, no proxies): after the
+later cell's `_coro.throw`, a second `throw` raises (`StopIteration`, or "cannot reuse already awaited coroutine") instead
+of running the `finally`. `t.done()`/`t.cancelled()` are not pinned: the red team notes (2026-10-23) that a fix which
+drives `_coro` directly can exhaust the generator while the Task's own state still reads pending, so they are the
+mechanism's business; the PR body says what they read under the fix chosen. Say there which assertions moved and why.
 
 ## Tests, failing first
 
