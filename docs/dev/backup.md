@@ -7,7 +7,7 @@ in four PRs, and each section below says which parts exist yet.
 | Part | Status |
 | --- | --- |
 | A. The folder merges before it writes; a picked folder with old files is asked about | built |
-| 1. The file format: compression, encryption, keys; its byte-level spec; a standalone decryptor | planned |
+| 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
 | 2. Backup and restore of settings and sessions, in Settings and from the popup | planned |
 | 3. The encrypted archive folder, its upgrade from plaintext month files, tombstones across machines | planned |
 
@@ -44,7 +44,7 @@ sessions"), so there is still exactly one place each session lives.
   images are already WebP and do not.
 - **Every reader takes all three forms**, told apart by their first bytes, never by the name.
 
-The byte layout, precise enough to write a decryptor from, gets its own spec in `docs/spec/` with part 1. In outline:
+The byte layout, precise enough to write a decryptor from, is `docs/spec/BACKUP_FORMAT.md`; the code is `src/backup/backup-format.ts` and the standalone reader `tools/wmlbak-decrypt.mjs`. In outline:
 
 - One random 256-bit DATA KEY per install encrypts everything. Each file derives its own key from it (HKDF over a
   per-file salt), so nonces restart at zero in every file and never repeat under one key.
@@ -116,3 +116,5 @@ same to each other.
 - **An encrypted file's name is a hint.** Read the first bytes; a renamed `.sqlite` may be gzip or encrypted.
 - **The data key is never extractable after setup;** code that needs its raw bytes is code that should be unwrapping
   with the passphrase or the recovery key.
+- **Every reader goes through the budget.** `gunzip`, `readAnyForm` and `decryptFile` cap the output (`LIMITS`); a new
+  reader that decompresses without `maxOutput`, or reads a header without `parseHeader`, is a gzip bomb or an Argon2 bomb.
