@@ -300,16 +300,19 @@ listed as remaining is DONE unless named below.
      (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost, unowned.
   4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
-     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day to the red team as
-     the lockdown's lane (it did not find this one), the janitor reviews, the finder builds and reviews nothing on it;
+     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day (builder corrected within
+     the hour) to `[window-ml security] Site access`, which neither found nor probed it; the red team delivers the
+     attribute-gate probe as failing-first tests in its own PR; the janitor reviews; the finder builds and reviews nothing on it;
      item 2's fix is sound only once this is closed. Severity MEASURED the same day: the dialect refuses every import form
      involved, so this and item 2's six routes escape an APPROVED readonly cell, not the auto-approved path; the
      attribute-gate route is the red team's to probe with the fix.
   5. FOUND 2026-10-23 by `[window-ml python-cancel]`, reproduced by the coordinator: `lockdown()` THROWS on main (the
      `Object.prototype.constructor` accessor from #735 is refused by `ses`'s permit check), the `try/catch` swallows it, so
      the readonly realm is never frozen and the latch never sets; P1 still holds, nothing tests the freeze
-     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2, the DEFECT paragraph). ASSIGNED the same day to the red team
-     with item 4, the janitor reviews, the finder builds nothing on it.
+     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2, the DEFECT paragraph). ASSIGNED the same day with item 4 to
+     `[window-ml security] Site access` as builder (the red team's first assignment withdrawn under rule 10; it delivers
+     the frozen-realm tests), the janitor reviews, the finder builds nothing on it. Fix shape ruled: the accessor goes
+     in AFTER `lockdown()`, the `ses` permit is not widened.
 - **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
   (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
   named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped
