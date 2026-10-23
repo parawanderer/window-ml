@@ -798,6 +798,9 @@ test("ml.sh: a call the host killed past its bound says so, whatever peak it rea
 test("ml.sh: a call from a host that reported nothing draws no figure, never 0 B", () => {
     const tool = shStep([{ program: "ls", durationMs: 12 }]);
     assert.equal(shCallText(tool.shCalls[0]), null);
+    assert.equal(shCallText({ program: "rg", durationMs: 2000, peakFootprint: 312 * MiB, memoryBound: 4 * GiB, cpuMs: 1520 }), "peak 312.0 MiB of 4.00 GiB bound · cpu 1.5 s");
+    assert.equal(shCallText({ program: "ls", durationMs: 12, cpuMs: 4 }), "cpu 4 ms", "CPU alone, from a host that measured no peak");
+    assert.equal(shCallText({ program: "ls", durationMs: 12, cpuMs: 0 }), "cpu 0 ms", "a reported zero is a reading");
     assert.equal(shCallText({ program: "ls", durationMs: 12, peakFootprint: 0 }), "peak 0 B", "a reported zero is still a reading");
     assert.equal(shStep(undefined).shCalls, undefined, "a step with no ml.sh call carries no key");
     assert.equal(shStep([]).shCalls, undefined);

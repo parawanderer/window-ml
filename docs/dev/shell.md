@@ -100,6 +100,16 @@ person approved is described again from fresh facts, once; one the person approv
 and the run log's `shell`/`pin-changed` record keeps them. No script manifest ships: a pin is per repository, and the
 store that holds them is K2, so until then only tests pass their own list.
 
+**CPU is a second measured fact beside memory** (host 0.7.0, root 1 of ROOT_K.md). `done.cpuMs`, the user and system
+time of the call's members with the children they reaped, reaches `ShResult.cpuMs`, the span (`shSpanOf`), the
+`shell`/`run` record and the event lane's row (`shCallText`); it is never bounded, and absent from an older host.
+
+**Whose process is this** (SHELL.md, the ownership ruling of 2026-10-23, R1 to R5). The host answers `owner { pid }` from
+its owner tables, which hold what it spawned and the process groups a connection on that machine declared with
+`register`; `HostClient.owner` and `HostClient.status` read them. The worker only reads: it never sends `register`
+(`tests/sh-call.test.mjs` holds that no file in `src/` does), and no page-started type reaches either call. Nothing in
+the extension shows the answer yet: the agent-status line it is meant for is `AGENT_MAIL.md`'s first build step.
+
 ## Capabilities
 
 `shellCapabilities()` feeds the runtime's `RuntimeCapabilities` (sw-sessions.ts): `shellHost` when the host was

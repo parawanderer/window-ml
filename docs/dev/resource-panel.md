@@ -630,13 +630,13 @@ sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `Event
   hollow neutral so a wide bar can never read as work.
 - **`ml.sh` calls on a tool step are rows of its tooltip, not phases.** A call runs INSIDE the step's `tool` phase and
   shares its time, and calls can overlap or repeat, so a phase each would tile time twice. `shRun` leaves a span
-  (`ShCallSpan`: program basename, `durationMs`, and `peakFootprint`/`memoryBound` in bytes and `killed: "oom"` only when
-  the host sent them) in `spansByStep`; `withShCalls` (sw-run-host.ts) takes them when the step's tool returns and sets
+  (`ShCallSpan`: program basename, `durationMs`, and `peakFootprint`/`memoryBound` in bytes, `cpuMs`, and `killed: "oom"`
+  only when the host sent them) in `spansByStep`; `withShCalls` (sw-run-host.ts) takes them when the step's tool returns and sets
   `ToolRunResult.shCalls`, which the loop emits on the DONE event, the reducer keeps on the step, and `eventsFrom` copies
   to `ResourceEvent.shCalls`. No new message type and no proto frame: it travels with the step like `remoteMs`. The row
-  reads `peak 312.0 MiB of 4.00 GiB bound`, or `killed: past its 4.00 GiB memory bound` in the warn chip (`shCallText`,
-  the one place the bytes are formatted). A host older than 0.3.0 sends neither field, and the row then has its program
-  and duration only: absent is not `0 B`. The spans die with the worker (plumbing, `// state: plumbing`); the run log
+  reads `peak 312.0 MiB of 4.00 GiB bound`, or `killed: past its 4.00 GiB memory bound` in the warn chip, then
+  `· cpu 1.5 s` (`shCallText`, the one place the bytes are formatted). A host older than 0.3.0 sends no memory field and
+  one older than 0.7.0 no `cpuMs`, and the row then has only what was sent: absent is not `0 B` or `0 ms`. The spans die with the worker (plumbing, `// state: plumbing`); the run log
   keeps the same figures in its `shell`/`run` record.
 - **A generation is SPLIT by what the model was emitting** — `think` / `call` / `answer` phases inside the
   model's own stretch, beside `wait` and `tool`. Observable in exactly one place: `handleLine` in

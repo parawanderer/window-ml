@@ -742,6 +742,33 @@ test("start sends the envelope as `envelope`, and omits the key entirely when th
     ], "absent is the floor: no envelope key at all, never `envelope: null` (the host refuses null as malformed)");
 });
 
+test("owner and status are read calls: owner sends the pid and returns the host's answer, nobody's included", async () => {
+    const f = fakePort();
+    const c = new HostClient(f.port);
+    const mine = c.owner(51240), nobody = c.owner(7), st = c.status();
+    assert.deepEqual(f.sent.map((m) => [m.call, m.args]), [["owner", { pid: 51240 }], ["owner", { pid: 7 }], ["status", {}]]);
+    const row = { owner: { session: "abc", harness: "claude-code" }, id: "r4", kind: "registered", pgid: 51234, host: "other", orphan: false };
+    f.reply({ seq: f.sent[0].seq, value: row });
+    f.reply({ seq: f.sent[1].seq, value: { owner: null } });
+    f.reply({ seq: f.sent[2].seq, value: { running: [{ id: "r4", pid: 51234, owner: row.owner, startedMs: 1, kind: "registered", cpuMs: 1520 }], orphans: [] } });
+    assert.deepEqual(await mine, row);
+    assert.deepEqual(await nobody, { owner: null }, "a process no row reaches is nobody's");
+    assert.equal((await st).running[0].cpuMs, 1520);
+});
+
+test("the worker never registers a process group: the client has no register, and nothing in src/ sends one", async () => {
+    // SHELL.md, the ownership ruling of 2026-10-23: the worker only reads the owner table; `register` is for a
+    // connection declaring processes it started itself, and a worker that could would hold a kill over them.
+    const c = new HostClient(fakePort().port);
+    assert.equal(c.register, undefined);
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
+    const senders = walk(new URL("../src", import.meta.url).pathname)
+        .filter((p) => /\.(ts|tsx|mjs|js)$/.test(p) && /\bcall\(\s*["'`]register["'`]/.test(readFileSync(p, "utf8")));
+    assert.deepEqual(senders, []);
+});
+
 test("a done event that arrives before anyone waits is kept and claimed once", async () => {
     const f = fakePort();
     const c = new HostClient(f.port);

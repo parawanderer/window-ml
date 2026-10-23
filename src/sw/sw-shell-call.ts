@@ -59,10 +59,11 @@ const SPAN_STEPS_MAX = 256;
  * @param unasked what let it run without asking, for a call no one was asked about
  * @returns the span
  */
-export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed">, unasked?: ShUnasked): ShCallSpan {
+export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed" | "cpuMs">, unasked?: ShUnasked): ShCallSpan {
     return { program: program.split("/").pop() || program, durationMs: r.durationMs,
         ...(r.peakFootprint !== undefined ? { peakFootprint: r.peakFootprint } : {}),
         ...(r.memoryBound !== undefined ? { memoryBound: r.memoryBound } : {}),
+        ...(r.cpuMs !== undefined ? { cpuMs: r.cpuMs } : {}),
         ...(r.killed ? { killed: r.killed } : {}),
         ...(unasked ? { unasked } : {}) };
 }
@@ -183,7 +184,8 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             recordRunLog(ctx.runId, { ...(result.ok ? {} : { level: "warn" as const }), subsystem: "shell", kind: "run", reason: verdict.by === "person" ? "person" : verdict.by === "builtin" ? "builtin" : "policy",
                 ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
                     ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
-                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}), ...envelopeDetail(result) } });
+                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}),
+                    ...(result.cpuMs !== undefined ? { cpuMs: result.cpuMs } : {}), ...envelopeDetail(result) } });
             if (result.protectedChanged?.length) {
                 // Its own record, at warn: what someone reading the log after a surprise looks for.
                 recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "protected-changed", reason: f.placement,
