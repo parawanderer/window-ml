@@ -7,6 +7,7 @@ import { SITE_ACCESS_KEYS, levelsFor, originFromInput, uncoveredApprovals, type 
 import { cursorTipOn } from "../ui-kit";
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
+import { LocalBackup } from "./backup-section";
 import { signal } from "@preact/signals";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { filterSettings } from "./settings-search";
@@ -1654,6 +1655,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         <LocalArchiveFolder archiveOn={c.sessionArchive} />
                     </div>
                 ) : null}
+                {/* A backup is not the archive's folder: it holds the settings and every session, live ones too, so it does not wait for the switch. */}
+                <div class="set-sub" role="group" aria-label="Backup and restore">
+                    <div class="set-sub-title">Backup and restore</div>
+                    <LocalBackup />
+                </div>
                 <StorageBody
                     load={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "STORAGE_HISTORY" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
                     measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
