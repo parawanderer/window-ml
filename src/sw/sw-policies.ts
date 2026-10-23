@@ -184,8 +184,9 @@ export const policiesReady: Promise<void> = (() => {
             loaded = true;   // after the merge, in the same turn: no judgement sees `loaded` with memory unfilled
             const { globals: g, runs: r } = owed;
             owed.globals = owed.runs = false;
-            if (g) writeGlobals();
-            if (r) writeRuns();
+            // Through the saves, not the writes: the merge can hold more sessions than the cap, which `saveRuns` trims.
+            if (g) saveGlobals();
+            if (r) saveRuns();
         }).catch(() => {
             /* storage unavailable: nothing saved is honoured, so every call asks; adds made meanwhile are, and no save may
                replace the lists we could not read with a partial one */

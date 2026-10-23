@@ -55,6 +55,17 @@ test("a run policy added before the read keeps that run's stored policies", asyn
     assert.equal(P.judgeCall("h", "fetch", facts(P, "https://a.example/old")).decision, "allow");
 });
 
+test("the owed save after the merge keeps the run-session cap: a full store plus an early run writes the cap, the oldest dropped", async () => {
+    const full = { ml_policies_run: Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`s${i}`, [pol(`p${i}`, "run", "allow", "(c) => false")]])) };
+    const { P, stored, settle } = await boot(full);
+    P.addRunPolicy("early", NEW);
+    await settle();
+    const keys = Object.keys(stored.ml_policies_run);
+    assert.equal(keys.length, 500, "never more sessions than the cap");
+    assert.equal(keys.at(-1), "early");
+    assert.ok(!keys.includes("s0"), "the oldest stored session is the one dropped");
+});
+
 // --- shape 3: a save before the read must not overwrite storage ---
 
 test("no write reaches storage while the read is pending, and none ever drops a stored policy", async () => {
