@@ -244,7 +244,7 @@ test("on a hidden page whose page holds a port, nothing the worker sends reaches
 });
 
 for (const where of ["hidden", "visible"])
-test(`a port a page handed over before injected.js arrived is not the one a run on that page talks on (${where === "hidden" ? "a hidden page" : "a visible page whose content scripts were restored, sw-page-restore.ts"})`, { ...T, todo: "page-channel.ts isoSide() takes the FIRST port from any `ml-page-port` event, at any time, gate or no gate. A page that runs before injected.js can hand over its own port as soon as content.js listens, long before injected.js is put in: on a hidden origin (a person's run), one allowed while open, and also a VISIBLE one whose content scripts sw-page-restore.ts re-runs with executeScript (a tab open across an extension update, which a chat-page command or a run start restores; then injected.js follows after a few awaits). Then the run's ADOPT_RUN (runId, rebuild) and every PAGE_TOOL_RUN go to the page, which answers RUN_ADOPTED_NOW/PAGE_TOOL_RESULT as it likes, and injected.js's real port is ignored, so the run's page script never hears anything. Wider than the documented residual (taking the port AT the hand-off, on a hidden page or one allowed while open): no listener needed, any time before, and the restore path puts a visible origin in the same place. Narrowing: drop a port that arrived while the gate was not open (setGate(false)) and accept one only after the worker's word that it injected (ADOPT_RUN_NOW `injected`, PRESENCE_OPEN); a page racing the executeScript can still win, so it stays inherent without a secret the page cannot read." }, async () => {
+test(`a port a page handed over before injected.js arrived is not the one a run on that page talks on (${where === "hidden" ? "a hidden page" : "a visible page whose content scripts were restored, sw-page-restore.ts"})`, { ...T }, async () => {
     const w = loadPageWorld({ visible: where === "visible", beforeInjected: pagePort(1) + `
         __mine[0].onmessage = (e) => {
             __heard.push(e.data);
@@ -275,7 +275,7 @@ test("nothing of ours is posted on the page's window, and the only events dispat
     assert.equal(w.dispatchedEvents.filter((t) => t === "ml-page-port").length, 1, "the port was handed over more than once");
 });
 
-test("a page that wraps MessagePort.prototype.postMessage on a visible origin does not get injected.js's port, so cannot hear what content.js sends it", { ...T, todo: "page-channel.ts send() calls `side.port.postMessage(data)`, looked up at call time, so a page that wraps MessagePort.prototype.postMessage (after injected.js, as every page script on a visible origin runs) is handed injected.js's port1 as `this`: it can then replace port1.onmessage and read every message content.js and the shell send injected.js (ADOPT_RUN's rebuild, PAGE_TOOL_RUN's args, __mlSessionSend's text), and post on it as injected.js. The documented residual names only reading what injected.js SENDS. Not inherent on a visible origin: injected.js runs before any page script there, so page-channel.ts can keep MessagePort.prototype.postMessage and Reflect.apply from module load and call them through those copies (the way shadow-patch.ts keeps `apply`); the receiving side then reads `e.data` through MessageEvent.prototype's `data` getter, which needs the same treatment." }, async () => {
+test("a page that wraps MessagePort.prototype.postMessage on a visible origin does not get injected.js's port, so cannot hear what content.js sends it", { ...T }, async () => {
     const w = loadPageWorld({ visible: true, onRuntimeMessage: (m) => (m.type === "OLLAMA_INFO" ? { data: { ok: 1 } } : undefined) });
     await flush(10);
     w.pageRun(`
@@ -353,7 +353,7 @@ const AGENT_START = { kind: "agent", session: "s-forged", hash: "s-forged", task
 const SHELL_SETTINGS = { debugMode: "devtools", agentHudInDevtools: true };   // the corner card beside the DevTools panel
 
 for (const open of [true, false])
-test(`a run's start sent on the page channel mounts the corner card only on a page the worker said is visible (${open ? "positive control" : "a hidden page holding a port mounts nothing"})`, { ...T, ...(open ? {} : { todo: "The shell's onWindowMessage (sidebar/shell.ts) feeds `__mlDebug` to feedDebug with no gateOpen() check, and feedDebug mounts the corner card (#ml-sb-card, a host the page can see in its DOM) on an agent event in devtools mode with agentHudInDevtools. A hidden page can hand over its own port at any time (page-channel.ts keeps the first), post one forged `agent` event, and learn the extension is installed from the host that appears: the presence rule says a hidden page gets nothing of ours. Before step 2b the same post on window did it. Fix: drop page-channel `__mlDebug` (and `__mlSessionDone`, `ML_HL_AT`, `__mlSidebarShot`) while !gateOpen()." }) }, async () => {
+test(`a run's start sent on the page channel mounts the corner card only on a page the worker said is visible (${open ? "positive control" : "a hidden page holding a port mounts nothing"})`, { ...T, ...(open ? {} : {}) }, async () => {
     const world = shellWorld({ open, sync: SHELL_SETTINGS });
     await flush(10);
     const page = world.handOver();

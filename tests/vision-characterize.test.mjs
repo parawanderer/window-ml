@@ -287,7 +287,10 @@ async function startVisionRun({ model = "vlm-driver", turns = [], reader = () =>
         },
         // The shell (not loaded here) answers the worker's SHOT_RECTS: where the extension's own UI is, none on this page.
         onTabMessage: async (tabId, msg) => tabId !== SITE.id || !page ? undefined
-            : msg.type === "SHOT_RECTS" ? { vw: page.win.innerWidth, vh: page.win.innerHeight, rects: [] } : page.deliver(msg),
+            : msg.type === "SHOT_RECTS" ? { vw: page.win.innerWidth, vh: page.win.innerHeight, rects: [] }
+            // The page script is loaded with the page here, standing for the one the worker injects: the re-arm it sends
+            // just before injecting (page-channel.ts) has, in this harness, already happened.
+            : msg.type === "PAGE_PORT_ARM" ? true : page.deliver(msg),
     });
     const worker = makeWorkerRecorder();
     bg.context.__mlWorkerVisionForTest.useRaster(worker.raster);

@@ -70,10 +70,13 @@ runs it was not given, not that it sees nothing:
   script runs at `document_start` before any page script, creates the channel and hands one port to the content script;
   `PAGE_TOOL_RUN` and its siblings then never cross the page's window. The page still shares the world the main-world
   tools run in (rows 4 and 6 of the measurement), so this hides a run's traffic from spontaneous page code only.
-  As built (`src/page-channel.ts`): the hand-off is a synchronous `ml-page-port` event on `window`, and the isolated side
-  keeps the first port it is handed. On a page whose script is injected after it loaded (a run on a hidden page) the page
-  ran first and can take the port from the hand-off; there it hides nothing, which is no worse than the window was. A page
-  that wraps `MessagePort.prototype.postMessage` reads the traffic anywhere (`tests/redteam-exec-shared-world.test.mjs`).
+  As built (`src/page-channel.ts`): the hand-off is a synchronous `ml-page-port` event on `window`. The isolated side keeps
+  the first port it is handed while armed: from document_start, and again after the worker's `PAGE_PORT_ARM`, which
+  `injectPageScripts` sends before every late injection and which drops any port held. On a page whose script is injected
+  after it loaded (a run on a hidden page, a restored tab) the page ran first: one that listens for the hand-off, or keeps
+  handing ports over, can still take the run's channel, which is no worse than the window was. The main side calls the
+  port's builtins through copies kept at load, so on a visible origin a page that wraps them later gets no port; it still
+  reads what injected.js sends through a wrapped builtin it calls (`tests/redteam-exec-shared-world.test.mjs`).
 - **`console` is a parameter, not a swap.** The main-world exec already evaluates the model's code as
   `new Function("state", "ml", "src", "return eval(src);")` (`tools.ts`); `console` becomes a fourth parameter bound to
   the collector, so the page's own `console.log` lines no longer reach the model's result and the page's `console`

@@ -89,5 +89,8 @@ export async function isVisible(url: string | undefined): Promise<boolean> {
  */
 export async function injectPageScripts(tabId: number, documentId?: string): Promise<void> {
     const target = documentId ? { tabId, documentIds: [documentId] } : { tabId };
+    // First the content script drops any port the page handed it, so the one it takes next is injected.js's
+    // (page-channel.ts). No answer (no content script there yet) is no harm: a fresh one is armed already.
+    await chrome.tabs.sendMessage(tabId, { type: "PAGE_PORT_ARM" }, documentId ? { documentId } : { frameId: 0 }).catch(() => undefined);
     await chrome.scripting.executeScript({ target, world: "MAIN", files: PAGE_SCRIPT_FILES });
 }

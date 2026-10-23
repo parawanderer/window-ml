@@ -16,6 +16,8 @@ const { onSessionDone, relaySessionToPage } = await import("../src/sidebar/shell
 const { listenForPage } = await import("../src/page-channel.ts");
 listenForPage();
 const posted = globalThis.__mlPageChannel.queue;
+// A page the worker opened (a visible one): the relay sends nothing to any other (the last section).
+(await import("../src/page-gate.ts")).setGate(true);
 
 const reset = () => { posted.length = 0; };
 
@@ -90,10 +92,11 @@ test("an answer for an unknown request is dropped rather than throwing", () => {
 // --- a hidden page (closed gate) and the page channel ---
 // LAST in this file: it hands the isolated side a port, after which nothing goes to `posted` (the queue) any more.
 
-test("a session command sent to a hidden page reaches no port the page holds, now or once one arrives", { todo: "relaySessionToPage (shell-session-relay.ts) calls toPage without gateOpen(), unlike every other shell and content.js send: on a hidden page (the chat page or the DevTools composer sending to a tab that has since navigated to a hidden origin) the person's text is queued on the isolated side and flushed to the first port handed over, which a hidden page can hand over itself at any time (page-channel.ts takes the first). Before step 2b it went straight onto the hidden page's window. Fix: guard the three sends with gateOpen() and answer `none` at once." }, async () => {
+test("a session command sent to a hidden page reaches no port the page holds, now or once one arrives", {}, async () => {
     const { setGate } = await import("../src/page-gate.ts");
     const { FakeMessageChannel, FakeMessageEvent } = (await import("./helpers.js")).default;
     reset();
+    globalThis.__mlPageGate.state = "pending";   // a new document: the file's other tests opened the gate, which never closes again
     setGate(false);   // the worker said this page is hidden
     relaySessionToPage({ type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc12345", text: "SECRET-before", reqId: "h1" }, () => {});
     // The hidden page hands over a port of its own (no injected.js here to have done it first).

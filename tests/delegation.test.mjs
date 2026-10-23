@@ -317,12 +317,13 @@ test("a non-RUN_TOOL_IN_PAGE message is ignored by the reverse channel (returns 
 
 // --- the end of a turn of a run the worker holds: what the page's world is given ---
 
-test("a finish relays to the page's world as the run id alone: a summary in the worker's message is not posted on the page's window, and the page answers nothing", async () => {
+test("a finish relays to the page's world as the run id alone: a summary in the worker's message is not sent to the page's world, and the page answers nothing", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "ok" }) });
     world.ml._registerRun("run-F", []);
     const seen = [];
-    // Any script on the page reads what is posted on its window.
-    world.context.window.addEventListener("message", (e) => { if (e.data?.type === "PAGE_TOOL_RUN") seen.push(JSON.parse(JSON.stringify(e.data))); });
+    // What content.js sends injected.js: a page that took injected.js's port, or that wraps a builtin injected.js's tool
+    // code calls, reads it.
+    world.fromContent((e) => { if (e.data?.type === "PAGE_TOOL_RUN") seen.push(JSON.parse(JSON.stringify(e.data))); });
     const envelope = await world.fireRuntimeMessage({ type: "RUN_TOOL_IN_PAGE", payload: { runId: "run-F", finish: true, summary: "SUMMARY-SECRET-6060" } });
     assert.equal(seen.length, 1, "the finish reached the page's world");
     assert.ok(!JSON.stringify(seen).includes("SUMMARY-SECRET-6060"), `the summary was not posted: ${JSON.stringify(seen)}`);

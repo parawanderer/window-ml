@@ -664,6 +664,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         setTimeout, clearTimeout,
         Event: class Event { constructor(type) { this.type = type; } },
         MessageChannel: FakeMessageChannel,
+        MessagePort: FakeMessagePort,
         MessageEvent: FakeMessageEvent,
         window: win,
         // injected.js is a browser script — `location` is always present there (used for the run's
@@ -737,8 +738,12 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
     // The page's own scripts, run before injected.js: what a page given injected.js LATE (a run on a hidden page, an
-    // origin allowed while it is open) can do first. Never possible on a visible page, where injected.js is first.
-    if (beforeInjected) vm.runInContext(beforeInjected, context);
+    // origin allowed while it is open) can do first. Never possible on a visible page, where injected.js is first. A late
+    // injected.js always comes through the worker's injectPageScripts, which re-arms the content script first.
+    if (beforeInjected) {
+        vm.runInContext(beforeInjected, context);
+        for (const fn of runtimeMsgListeners) fn({ type: "PAGE_PORT_ARM" }, {}, () => {});
+    }
     let injectedSrc = fs.readFileSync(path.join(DIST, "injected.js"), "utf8");
     if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
         const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
@@ -800,6 +805,7 @@ function loadDomWorld(html = "", { url, beforeInjected } = {}) {
         Event: win.Event,
         CustomEvent: win.CustomEvent,
         MessageChannel: FakeMessageChannel,
+        MessagePort: FakeMessagePort,
         MessageEvent: FakeMessageEvent,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).

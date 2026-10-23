@@ -6,7 +6,7 @@
 import type { PageRequestType, BackgroundMessageType } from "./contract/contract-messages";
 import { HANDLE_MAP } from "./page-relay";
 import { gateOpen, gateState, setGate, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
-import { listenForPage, toPage, onPage, offPage, type ChannelMessage } from "./page-channel";
+import { listenForPage, toPage, onPage, offPage, rearmForPage, type ChannelMessage } from "./page-channel";
 
 // Before injected.js runs (a registered page script runs right after this, at document_start): take the port it hands
 // over (page-channel.ts). Nothing between us and the page script crosses the page's window.
@@ -118,6 +118,9 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
     // The worker asking whether this page was told it is hidden (an origin allowed since it loaded), and then opening
     // the gate once it has put the page script in (sw-presence.ts `showInOpenTabs`). Only the worker reaches this listener.
     if (message && message.type === "PRESENCE_CHECK") { sendResponse({ gate: gateState(), alive: pageAlive() }); return undefined; }
+    // The worker is about to put injected.js in (sw-presence.ts injectPageScripts): a port the page handed over before
+    // is dropped, and the next one taken (page-channel.ts).
+    if (message && message.type === "PAGE_PORT_ARM") { rearmForPage(); sendResponse(true); return undefined; }
     if (message && message.type === "PRESENCE_OPEN") { setGate(true); sendResponse(true); return undefined; }
     // A debug event from a background-hosted run is the SHELL's (sidebar/shell.ts receives ML_DEBUG_TO_PAGE itself). It
     // is not re-posted on the page window: this used to, and the page read every step of every run that reached the

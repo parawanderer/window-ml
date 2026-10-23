@@ -14,6 +14,7 @@
 // changes only through the session's events.
 import { cleanImages } from "../contract";
 import { toPage } from "../page-channel";
+import { gateOpen } from "../page-gate";
 
 /** Chat-page session actions waiting for the page to say what it did, by request id. */
 const sessionDoneWaiters = new Map<string, (outcome: string, hash?: string) => void>();
@@ -64,6 +65,11 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
     // (it is the one composer not in this document); anything arriving with a `reqId` came in as a session
     // COMMAND, which is the chat app. Neither can be forged by the page: both crossed the background first.
     const surface = typeof msg.surface === "string" ? msg.surface : reqId ? "chat" : undefined;
+    // A page the worker has not opened has no page script of ours to act on it; any port there is the page's own.
+    if (!gateOpen() && (msg.action === "send" || msg.action === "cancel" || msg.action === "continue")) {
+        if (reqId) { try { sendResponse({ outcome: "none" }); } catch { /* the background stopped waiting */ } }
+        return false;
+    }
     if (msg.action === "send") toPage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images as string[] | undefined), ...(ec ? { elementContext: ec } : {}), ...(surface ? { surface } : {}), reqId } });
     else if (msg.action === "cancel") toPage({ __mlCancelSession: { hash: msg.hash, reqId } });
     else if (msg.action === "continue") {

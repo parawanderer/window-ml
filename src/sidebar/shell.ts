@@ -870,6 +870,9 @@ const shot = pageShotGate({
 function onWindowMessage(e: ChannelMessage): void {
     const d = e.data;
     if (!d) return;
+    // Only from a page the worker opened: on a hidden one any port is the page's own (page-channel.ts), and what it
+    // sends could mount the card or answer a session command. Held while the gate is pending, dropped if it closes.
+    if (!gateOpen()) { whenOpen(() => onWindowMessage(e)); return; }
     // injected.js just loaded and is listening (a page-load race: it may have missed the
     // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
     if (d.__mlSidebar === "hello") { if (busLive()) handshake(); return; }

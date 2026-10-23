@@ -263,11 +263,15 @@ reader of it fails there.
   wait: a hidden page can forge a hello, and gets nothing for it.
 - **injected.js talks to the content scripts on a MessagePort, never the page's window** (step 2b, `page-channel.ts`).
   It makes the channel on first use and hands one port to the isolated world with a synchronous `ml-page-port` event on
-  `window`; content.js listens from `document_start` and keeps the FIRST port, so a page cannot swap its own in once
-  injected.js has handed one over. content.js and the shell hear nothing the page posts on `window`.
+  `window`; content.js listens from `document_start` and keeps the FIRST port while armed, so a page cannot swap its own
+  in once injected.js has handed one over. `injectPageScripts` sends `PAGE_PORT_ARM` before a late injection, which drops
+  any port the page handed over first. content.js and the shell hear nothing the page posts on
+  `window`, and nothing on the channel either while the gate is not open (the shell's handler and the session relay
+  check `gateOpen()` like every other send).
 - **Residuals:** a run on a hidden page exposes what it did before step 2 (rows 4 and 6 of detection-surface.md): there
-  injected.js arrives after the page's scripts, which can take the port from the hand-off and speak as injected.js. A page
-  that wraps `MessagePort.prototype.postMessage` reads the channel on any page. The sidebar's files stay web-accessible
+  injected.js arrives after the page's scripts, which can take the port from the hand-off (or race the injection with
+  ports of their own) and speak as injected.js. On a visible origin the main side keeps the port's builtins from load, so
+  a page that wraps them later is not handed the port. The sidebar's files stay web-accessible
   until `use_dynamic_url` (row 5).
 
 ## Starting agents
