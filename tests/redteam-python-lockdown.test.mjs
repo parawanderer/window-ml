@@ -1,4 +1,4 @@
-// tests/redteam-python-lockdown.test.mjs — the readonly worker's boot must freeze the JS realm, leave PyProxy kinds converting, and reach neither `run_js` nor `pyodide_js`/`js`/`pyodide.ffi`/`asyncio`.
+// tests/redteam-python-lockdown.test.mjs — the readonly worker's boot must freeze the JS realm, leave PyProxy kinds converting, and reach neither `run_js` nor the live Pyodide bridge through `pyodide_js`/`js`/`pyodide.ffi`/`asyncio`.
 
 // Red-team halves of the pyodide-lockdown gap (found by `[window-ml python-cancel]`, assigned to
 // `[window-ml security] Site access` as builder). Real Pyodide in Node (`dist/pyodide/`, self-SKIPS
@@ -10,6 +10,9 @@
 //   - the LOCKDOWN path (an APPROVED cell, `wrapUserCode`): `import pyodide_js` and `run_js` reach
 //     today because `lockdownReadonly` never calls `harden()` (which unregisters the JS bridges).
 //     These escape an approved cell, not the auto-approved path — the dialect refuses these imports.
+//     On this path the RULED property (PYODIDE_LOCKDOWN.md step 2, 2026-10-23) is that `pyodide_js`
+//     imports as a config-only stand-in with no `_module` and no `_api` beyond config; the wider
+//     ask (refuse `js`/`pyodide.ffi`/`pyodide.webloop`/`asyncio` outright) is parked by the freeze.
 //   - the DIALECT path (the auto-approved inside cell, `wrapUserScript(…, inside)`): the attribute
 //     gate refuses every route out of an ADMITTED object. Those routes HOLD and are pinned here so
 //     a change cannot flip one quietly.
@@ -245,14 +248,75 @@ run_js("typeof globalThis")`);
 // --- the LOCKDOWN path: a cell must not import the Python→outside bridges ------------------------
 // `harden()` unregisters `js` and `pyodide_js` and purges `sys.modules`; `lockdownReadonly` never
 // calls it. Measured after the boot: `import pyodide_js`, `import js`, `import pyodide.ffi`,
-// `import asyncio`, `sys.modules["pyodide_js"]` and the `__subclasses__` walk all reach. The fix
-// makes `pyodide_js`, `_module` and `_api` unreachable while Pyodide's own boot-time
-// `from pyodide_js._api import scheduleCallback` keeps working. These are APPROVED-cell escapes.
+// `import asyncio`, `sys.modules["pyodide_js"]` and the `__subclasses__` walk all reach. These are
+// APPROVED-cell escapes.
+//
+// Two properties, kept apart (PYODIDE_LOCKDOWN.md step 2, ruled 2026-10-23):
+//   - the RULED property: `pyodide_js` imports as a config-only stand-in with no `_module` and no
+//     `_api` beyond config. The four STANDIN_ROUTES assert it. Pyodide's own boot-time
+//     `from pyodide_js._api import scheduleCallback` keeps working; a user cell must not.
+//   - the WIDER property: `js`, `pyodide.ffi`, `pyodide.webloop` and `asyncio` are refused in an
+//     approved cell. Parked by the freeze (a new defence with a corpus cost, Shane's call).
 
-/** Each route a cell can try to the Python→outside bridges. The body reports what it got in `v`. */
-const BRIDGE_ROUTES = [
+/** Every live bridge key `pyodide_js._api` must not hand a user cell. */
+const LIVE_API_KEYS = ["scheduleCallback", "saveState", "restoreState", "destroyProxies"];
+
+/** Each route to the `pyodide_js` stand-in. Defended: it is config-only. */
+const STANDIN_ROUTES = [
     ["import pyodide_js", `import pyodide_js
-out = {"v": type(pyodide_js).__name__}`],
+live = []
+if getattr(pyodide_js, "_module", None) is not None: live.append("_module")
+api = getattr(pyodide_js, "_api", None)
+if api is not None:
+    for k in ${JSON.stringify(LIVE_API_KEYS)}:
+        if getattr(api, k, None) is not None: live.append("_api." + k)
+out = {"live": live}`],
+    ["__import__('pyodide_js')", `m = __import__("pyodide_js")
+live = []
+if getattr(m, "_module", None) is not None: live.append("_module")
+api = getattr(m, "_api", None)
+if api is not None:
+    for k in ${JSON.stringify(LIVE_API_KEYS)}:
+        if getattr(api, k, None) is not None: live.append("_api." + k)
+out = {"live": live}`],
+    ["sys.modules['pyodide_js']", `import sys
+m = sys.modules["pyodide_js"]
+live = []
+if getattr(m, "_module", None) is not None: live.append("_module")
+api = getattr(m, "_api", None)
+if api is not None:
+    for k in ${JSON.stringify(LIVE_API_KEYS)}:
+        if getattr(api, k, None) is not None: live.append("_api." + k)
+out = {"live": live}`],
+    ["pyodide_js._api", `import pyodide_js
+api = getattr(pyodide_js, "_api", None)
+live = []
+if api is not None:
+    for k in ${JSON.stringify(LIVE_API_KEYS)}:
+        if getattr(api, k, None) is not None: live.append(k)
+out = {"live": live}`],
+];
+
+for (const [label, body] of STANDIN_ROUTES) {
+    test(`a cell reaches only the config stand-in by ${label} after the boot`, { skip, todo: `ruled property (PYODIDE_LOCKDOWN.md step 2): ${label} must hand a config-only stand-in with no \`_module\` and no \`_api\` beyond config. Today the stand-in imports as a live module carrying both, so the route hands the cell the Pyodide bridge. Pyodide's own boot-time \`from pyodide_js._api import scheduleCallback\` keeps working; a user cell must not reach it. The wider ask (refuse the import form outright) is parked with js/ffi/webloop/asyncio below.` }, async () => {
+        // Positive control: a legitimate import still works — the probe runs on a live interpreter.
+        const ok = await cell(`import math
+out = {"pi": round(math.pi, 5)}
+out`);
+        assert.equal(ok.error, null, `control: import math must work, got: ${ok.error}`);
+        assert.equal(ok.value?.pi, 3.14159, `control: import math must work, got: ${JSON.stringify(ok.value)}`);
+
+        // Defended: whatever this route hands back is config-only. A refusal counts as closed.
+        const r = await cell(`${body}
+out`);
+        if (r.error) return; // refused at import or attribute: the route is closed
+        const live = r.value?.live;
+        assert.deepEqual(live, [], `${label} must hand only the config stand-in after the boot, got live keys ${JSON.stringify(live)}`);
+    });
+}
+
+/** Each route to a full Python→outside bridge. Wider property, parked by the freeze. */
+const BRIDGE_ROUTES = [
     ["import js", `import js
 out = {"v": type(js).__name__}`],
     ["from js import setTimeout", `from js import setTimeout
@@ -263,18 +327,10 @@ out = {"v": type(to_js).__name__}`],
 out = {"v": type(w).__name__}`],
     ["import asyncio", `import asyncio
 out = {"v": type(asyncio).__name__}`],
-    ["__import__('pyodide_js')", `m = __import__("pyodide_js")
-out = {"v": type(m).__name__}`],
-    ["sys.modules['pyodide_js']", `import sys
-out = {"v": type(sys.modules["pyodide_js"]).__name__}`],
-    ["pyodide_js._api", `import pyodide_js
-out = {"v": type(pyodide_js._api).__name__}`],
-    ["pyodide_js._module", `import pyodide_js
-out = {"v": type(pyodide_js._module).__name__}`],
 ];
 
 for (const [label, body] of BRIDGE_ROUTES) {
-    test(`a cell cannot reach the outside by ${label} after the boot`, { skip, todo: `the lockdown path leaves ${label} reachable (lockdownReadonly never calls harden(), which unregisters js/pyodide_js and purges sys.modules). Make pyodide_js/_module/_api unreachable while Pyodide's boot-time from pyodide_js._api import scheduleCallback keeps working.` }, async () => {
+    test(`a cell cannot reach the outside by ${label} after the boot`, { skip, todo: `wider property, parked by the freeze (PYODIDE_LOCKDOWN.md step 2, 2026-10-23): ${label} is refused in an APPROVED cell. Today lockdownReadonly never calls harden() (which unregisters js/pyodide_js and purges sys.modules), so it reaches. A new defence with a corpus cost; Shane's call after the freeze.` }, async () => {
         // Positive control: a legitimate import still works — the probe runs on a live interpreter.
         const ok = await cell(`import math
 out = {"pi": round(math.pi, 5)}
@@ -290,6 +346,23 @@ out`);
         assert.ok(!/module|JsProxy|function|builtin|type/.test(s), `${label} must not reach the outside after the boot, got ${s}`);
     });
 }
+
+// `pyodide_js._module` is the one stand-in attribute the fix removes outright (todo 16 in the
+// site-access per-todo list), so this turns plain when #1046 merges rather than being rewritten.
+test("a cell cannot reach pyodide_js._module after the boot", { skip, todo: "the ruled fix removes `_module` from the stand-in entirely, so this route is refused and the test turns plain when #1046 merges. Today the stand-in carries it: the Emscripten module, the JS side of the bridge." }, async () => {
+    const ok = await cell(`import math
+out = {"pi": round(math.pi, 5)}
+out`);
+    assert.equal(ok.error, null, `control: import math must work, got: ${ok.error}`);
+    assert.equal(ok.value?.pi, 3.14159, `control: import math must work, got: ${JSON.stringify(ok.value)}`);
+
+    const r = await cell(`import pyodide_js
+out = {"v": type(pyodide_js._module).__name__}
+out`);
+    if (r.error) return; // refused at import or attribute: the route is closed
+    const s = String(r.value?.v ?? r.value);
+    assert.ok(!/module|JsProxy|function|builtin|type/.test(s), `pyodide_js._module must not reach the outside after the boot, got ${s}`);
+});
 
 // --- the DIALECT's attribute gate: an ADMITTED object must not lead to the bridges ----------------
 // The auto-approved inside cell runs under the fork's `restricted.run_cell`. The finder measured
