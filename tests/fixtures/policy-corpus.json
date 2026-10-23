@@ -178,6 +178,10 @@
     {
       "where": "~/.claude/projects/-Users-sb-git-window-ml/memory",
       "found": 0
+    },
+    {
+      "where": "~/git/window-ml/tests/e2e/artifacts/bench/panel-policy-fetch and panel-policy-sh (gitignored; current and history/ answers of every cell, extracted with policy-proposals.score.ts's own extract)",
+      "found": 110
     }
   ],
   "policies": [
@@ -4234,27 +4238,2606 @@
       ],
       "shape": "template",
       "count": 0
+    },
+    {
+      "src": "(c) => (c.host === \"docs.python.org\" || c.host.endsWith(\".docs.python.org\")) && !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T13-42-10-714Z-80429f65/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by deepseek.deepseek-v4-pro, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host === 'docs.python.org' && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T11-50-48-211Z-4a887716/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"docs.python.org\" && !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.google-gemini-flash-latest/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-nemotron-3-nano-4b/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T12-50-28-365Z-b6a17751/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T13-41-49-747Z-aae72c93/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by litellm.google/gemini-flash-latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by nemotron-3-nano:4b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by litellm.google/gemini-flash-latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 4,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"docs.python.org\" && c.credentials !== true",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T11-47-46-631Z-72242643/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"docs.python.org\" && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-flash/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-v4-pro/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-gemma4-31b/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-moonshot.kimi-k3/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.5-9b/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.8-27b/r0/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T13-41-49-054Z-c6e02d9e/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T13-46-07-789Z-f4e3ea41/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T13-41-41-015Z-f0f27873/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T13-41-56-168Z-d0b9cf5d/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T11-47-47-517Z-cf1a05aa/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T13-41-52-396Z-0da0a144/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T11-47-47-431Z-3379cc7a/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T13-42-06-440Z-7d764a39/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T11-47-47-891Z-20601b0b/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T13-41-53-288Z-8b3b73b7/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T11-48-21-841Z-bb71e186/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T13-45-27-422Z-262a8b8f/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T11-48-38-397Z-d7cb0f29/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T13-45-45-889Z-d8d96b48/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by deepseek.deepseek-flash, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by deepseek.deepseek-v4-pro, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by gemma4:31b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by litellm.anthropic/claude-opus-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by litellm.anthropic/claude-sonnet-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by moonshot.kimi-k3, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by openrouter.openai/gpt-6-luna, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by qwen3.5:9b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by qwen3.8:27b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F1 by deepseek.deepseek-flash, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by gemma4:31b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by glm-4.7-flash:latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by litellm.anthropic/claude-opus-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by litellm.anthropic/claude-sonnet-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by moonshot.kimi-k3, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by openrouter.openai/gpt-6-luna, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by qwen3.5:9b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F1 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by qwen3.8:27b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 23,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.host.endsWith('.python.org') && !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T13-41-55-754Z-a00b39be/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by nemotron-3-nano:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.method === \"GET\" && c.host === \"docs.python.org\" && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T11-47-46-706Z-3bb3f7d7/outbox/turn-1.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T11-47-47-882Z-d16d1f3f/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F1 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "const allow_f1 = (c) => (c.host === \"docs.python.org\") && (!c.credentials)",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T11-54-06-545Z-3cdae4a4/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const allowedHosts = [\"docs.python.org\"];\nfunction when(c) {\n  const hostValid = allowedHosts.some((h) => c.host === h);\n  const noCredentials = !c.credentials;\n  return hostValid && noCredentials;\n}",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.5-4b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by qwen3.5:4b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policies = [\n  (c) => c.host === 'docs.python.org' && c.credentials === false\n]",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T11-48-45-473Z-b9b324a3/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => c.host === \"docs.python.org\" && !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-glm-4.7-flash-latest/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by glm-4.7-flash:latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const when = (c) => c.host.endsWith(\".python.org\") && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T13-45-31-465Z-9725e6b7/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by qwen3.5:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "function validateFetch() {\n  return (c) => {\n    const host = c.host;\n    const hasCredentials = c.credentials === true;\n    \n    // Only allow if it's a net resource and no credentials are sent\n    return host === 'docs.python.org' && !hasCredentials;\n  };\n}",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T11-47-22-994Z-570e9950/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F1 by qwen3.5:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "( c ) => c.host === \"raw.githubusercontent.com\" && c.url.endsWith( \"/acme/ \" ) && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T13-41-55-754Z-a00b39be/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by nemotron-3-nano:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "endsWith other than a host's subdomain"
+      }
+    },
+    {
+      "src": "( c ) => c.url.startsWith( \"https://raw.githubusercontent.com/acme/\" )",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-nemotron-3-nano-4b/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by nemotron-3-nano:4b, run C (#961 rerun, the details as shipped, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"github.com\" && c.url.startsWith(\"https://raw.githubusercontent.com/acme/\") && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T11-48-21-841Z-bb71e186/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"raw.githubusercontent.com\" && c.url.startsWith(\"https://raw.githubusercontent.com/acme/\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-flash/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T13-41-49-054Z-c6e02d9e/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T13-41-56-168Z-d0b9cf5d/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by deepseek.deepseek-flash, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by litellm.anthropic/claude-opus-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by deepseek.deepseek-flash, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by litellm.anthropic/claude-opus-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 4,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.method === \"GET\" && c.host === \"raw.githubusercontent.com\" && c.url.startsWith(\"https://raw.githubusercontent.com/acme/\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T11-47-46-706Z-3bb3f7d7/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.method === \"GET\" && c.host === \"raw.githubusercontent.com\" && c.url.startsWith(\"https://raw.githubusercontent.com/acme/\") && !/(^|\\/)(\\.|%2e){2}(\\/|$|\\?|#)/i.test(c.url.slice(\"https://raw.githubusercontent.com/acme/\".length)) && !/%2f|%5c|\\\\/i.test(c.url)",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T11-47-47-882Z-d16d1f3f/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a regex with flags; the realm refuses it on 2 of 10 of the need's calls"
+      }
+    },
+    {
+      "src": "(c) => c.url.startsWith('https://raw.githubusercontent.com/acme/')",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T11-50-48-211Z-4a887716/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.url.startsWith(\"https://raw.githubusercontent.com/acme/\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-v4-pro/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-gemma4-31b/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.google-gemini-flash-latest/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-moonshot.kimi-k3/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.5-9b/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.8-27b/r0/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T11-47-46-631Z-72242643/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T13-42-10-714Z-80429f65/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T13-46-07-789Z-f4e3ea41/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T13-41-52-396Z-0da0a144/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T12-50-28-365Z-b6a17751/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T13-41-49-747Z-aae72c93/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T11-47-47-431Z-3379cc7a/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T13-42-06-440Z-7d764a39/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T11-47-47-891Z-20601b0b/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T13-41-53-288Z-8b3b73b7/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T11-48-38-397Z-d7cb0f29/outbox/turn-2.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T13-45-45-889Z-d8d96b48/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by deepseek.deepseek-v4-pro, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by gemma4:31b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by litellm.anthropic/claude-sonnet-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by litellm.google/gemini-flash-latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by moonshot.kimi-k3, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by openrouter.openai/gpt-6-luna, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by qwen3.5:9b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by qwen3.8:27b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F2 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F2 by deepseek.deepseek-v4-pro, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by gemma4:31b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by litellm.anthropic/claude-sonnet-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F2 by litellm.google/gemini-flash-latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F2 by moonshot.kimi-k3, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F2 by openrouter.openai/gpt-6-luna, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F2 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F2 by qwen3.8:27b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 20,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.url.startsWith(\"https://raw.githubusercontent.com/acme/\") && c.host === \"raw.githubusercontent.com\"",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T11-47-47-517Z-cf1a05aa/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.url.startsWith(\"https://raw.githubusercontent.com/acme/\") && c.host === \"raw.githubusercontent.com\" && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T13-41-41-015Z-f0f27873/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by glm-4.7-flash:latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.url.startsWith(\"https://raw.githubusercontent.com/acme/\") && c.url.endsWith(\"/\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T13-45-27-422Z-262a8b8f/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by qwen3.5:9b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "endsWith other than a host's subdomain"
+      }
+    },
+    {
+      "src": "const allow_f2 = c => c.url.startsWith('https://raw.ghbusercontent.com/acme/') && !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T11-54-06-545Z-3cdae4a4/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policies = [\n  (c) => {\n    const parsed = new URL(c.url);\n    return parsed.origin === 'https://raw.githubusercontent.com' && parsed.pathname.startsWith('/acme/');\n  }\n]",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T11-48-45-473Z-b9b324a3/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => c.url.startsWith(\"https://raw.githubusercontent.com/acme/\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-glm-4.7-flash-latest/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by glm-4.7-flash:latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const when = (c) => c.url.startsWith(\"https://raw.githubusercontent.com/acme/\") && c.url.endsWith(\"/\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T13-45-31-465Z-9725e6b7/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by qwen3.5:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "function validateFetch() {\n  return (c) => {\n    const host = c.host;\n    const hasCredentials = c.credentials === true;\n    \n    // Must be over https only\n    if (!c.url.startsWith('https://')) {\n      return false;\n    }\n    \n    // Must be raw.githubusercontent.com\n    if (host !== 'raw.githubusercontent.com') {\n      return false;\n    }\n    \n    // No credentials allowed\n    return !hasCredentials;\n  };\n}",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T11-47-22-994Z-570e9950/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F2 by qwen3.5:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "(c)  => c.host.endsWith('.wikipedia.org') && !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T13-41-55-754Z-a00b39be/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by nemotron-3-nano:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c)  => c.host.includes(\"wikipedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-nemotron-3-nano-4b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by nemotron-3-nano:4b, run C (#961 rerun, the details as shipped, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "the call .includes(…) on host"
+      }
+    },
+    {
+      "src": "(c) => /\\.wikipedia\\.org$/.test(c.host) && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T11-48-21-841Z-bb71e186/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "a regex anchored only at the end, whose literal starts with a dot, is endsWith(\".wikipedia.org\"); the rewrite lifts and agrees with the source in the realm on every cell of its tree and the need's calls"
+      }
+    },
+    {
+      "src": "(c) => /^[^.]+\\.wikipedia\\.org$/.test(c.host)",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T11-47-47-891Z-20601b0b/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a regex that is not literal text"
+      }
+    },
+    {
+      "src": "(c) => /^[a-z]{2,3}(-[a-z]+)*(\\.m)?\\.wikipedia\\.org$/.test(c.host) || c.host === \"simple.wikipedia.org\"",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T11-47-47-517Z-cf1a05aa/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a regex that is not literal text; the realm refuses it on 10 of 10 of the need's calls"
+      }
+    },
+    {
+      "src": "(c) => /^[a-z0-9-]+\\.wikipedia\\.org$/.test(c.host)",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T12-50-28-365Z-b6a17751/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a regex that is not literal text"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"wikipedia.org\" || c.host.endsWith(\".wikipedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-flash/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-v4-pro/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-gemma4-31b/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-moonshot.kimi-k3/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.8-27b/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T13-42-10-714Z-80429f65/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by deepseek.deepseek-flash, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by deepseek.deepseek-v4-pro, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by gemma4:31b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by litellm.anthropic/claude-sonnet-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by moonshot.kimi-k3, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by qwen3.8:27b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by deepseek.deepseek-v4-pro, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 7,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host.endsWith('.wikipedia.org')",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T11-50-48-211Z-4a887716/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host.endsWith(\".wikipedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.google-gemini-flash-latest/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T13-41-49-054Z-c6e02d9e/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T11-47-46-631Z-72242643/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T13-46-07-789Z-f4e3ea41/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T13-41-41-015Z-f0f27873/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T13-41-56-168Z-d0b9cf5d/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T13-41-52-396Z-0da0a144/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T13-41-49-747Z-aae72c93/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T11-47-47-431Z-3379cc7a/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T13-42-06-440Z-7d764a39/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T13-41-53-288Z-8b3b73b7/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T13-45-27-422Z-262a8b8f/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T11-48-38-397Z-d7cb0f29/outbox/turn-3.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T13-45-45-889Z-d8d96b48/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by litellm.anthropic/claude-opus-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by litellm.google/gemini-flash-latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by openrouter.openai/gpt-6-luna, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F3 by deepseek.deepseek-flash, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F3 by gemma4:31b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by glm-4.7-flash:latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by litellm.anthropic/claude-opus-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by litellm.anthropic/claude-sonnet-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by litellm.google/gemini-flash-latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F3 by moonshot.kimi-k3, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by openrouter.openai/gpt-6-luna, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by qwen3.5:9b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F3 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F3 by qwen3.8:27b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 16,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host.endsWith(\".wikipedia.org\") && c.url.startsWith(\"https://\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.5-9b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by qwen3.5:9b, run C (#961 rerun, the details as shipped, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a character prefix of url (\"https://\") that does not end at a path segment"
+      }
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.method === \"GET\" && /^[a-z]{2,3}(-[a-z0-9]+)*\\.wikipedia\\.org$|^simple\\.wikipedia\\.org$/.test(c.host)",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T11-47-47-882Z-d16d1f3f/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a regex that is not literal text; the realm refuses it on 10 of 10 of the need's calls"
+      }
+    },
+    {
+      "src": "(c) => c.kind === \"fetch\" && c.method === \"GET\" && c.host.endsWith(\".wikipedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T11-47-46-706Z-3bb3f7d7/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "const allow_f3 = c => c.url.endsWith(\".wikipedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T11-54-06-545Z-3cdae4a4/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policies = [\n  (c) => /\\\\.wikipedia\\\\.org$/i.test(c.host)\n]",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T11-48-45-473Z-b9b324a3/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => c.host.endsWith(\".wikipedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-glm-4.7-flash-latest/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by glm-4.7-flash:latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const when = (c) => c.host.endsWith(\".wikipedia.org\") || c.host.endsWith(\".wikimedia.org\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T13-45-31-465Z-9725e6b7/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by qwen3.5:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "function validateFetch() {\n  return (c) => {\n    const host = c.host;\n    const hasCredentials = c.credentials === true;\n    \n    // Must use https only\n    if (!c.url.startsWith('https://')) {\n      return false;\n    }\n    \n    // Allow any .wikipedia.org domain over https with no credentials\n    return host.endsWith('.wikipedia.org') && !hasCredentials;\n  };\n}",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T11-47-22-994Z-570e9950/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F3 by qwen3.5:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "(c)   => c.host.endsWith('.pastebin.com')  &&  !c.credentials",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T13-41-55-754Z-a00b39be/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by nemotron-3-nano:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c)  => c.host.includes(\"pastebin.*.com\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-nemotron-3-nano-4b/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by nemotron-3-nano:4b, run C (#961 rerun, the details as shipped, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "the call .includes(…) on host"
+      }
+    },
+    {
+      "src": "(c) => /^(.+\\.)?pastebin\\.com$/.test(c.host)",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T11-50-48-211Z-4a887716/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "the optional-subdomain regex is the host or a subdomain of it; the rewrite lifts and agrees with the source in the realm on every cell of its tree and the need's calls"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"pastebin.com\" || c.host.endsWith(\".pastebin.com\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-flash/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-deepseek.deepseek-v4-pro/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-gemma4-31b/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-litellm.google-gemini-flash-latest/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-moonshot.kimi-k3/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.5-9b/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-qwen3.8-27b/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T11-47-46-706Z-3bb3f7d7/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-flash/r0/2026-10-21T13-41-49-054Z-c6e02d9e/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T11-47-46-631Z-72242643/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-deepseek.deepseek-v4-pro/r0/2026-10-21T13-42-10-714Z-80429f65/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-gemma4-31b/r0/2026-10-21T13-46-07-789Z-f4e3ea41/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T13-41-56-168Z-d0b9cf5d/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T11-47-47-517Z-cf1a05aa/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-sonnet-5-5/r0/2026-10-21T13-41-52-396Z-0da0a144/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T12-50-28-365Z-b6a17751/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.google-gemini-flash-latest/r0/2026-10-21T13-41-49-747Z-aae72c93/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T11-47-47-431Z-3379cc7a/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-moonshot.kimi-k3/r0/2026-10-21T13-42-06-440Z-7d764a39/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T11-47-47-891Z-20601b0b/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-openrouter.openai-gpt-6-luna/r0/2026-10-21T13-41-53-288Z-8b3b73b7/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T11-48-38-397Z-d7cb0f29/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.8-27b/r0/2026-10-21T13-45-45-889Z-d8d96b48/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by deepseek.deepseek-flash, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by deepseek.deepseek-v4-pro, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by gemma4:31b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by litellm.anthropic/claude-opus-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by litellm.anthropic/claude-sonnet-5-5, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by litellm.google/gemini-flash-latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by moonshot.kimi-k3, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by openrouter.openai/gpt-6-luna, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by qwen3.5:9b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by qwen3.8:27b, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "F4 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by deepseek.deepseek-flash, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by deepseek.deepseek-v4-pro, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by gemma4:31b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by litellm.anthropic/claude-opus-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by litellm.anthropic/claude-sonnet-5-5, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by litellm.google/gemini-flash-latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by moonshot.kimi-k3, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by openrouter.openai/gpt-6-luna, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "F4 by qwen3.8:27b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 26,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"pastebin.com\" || c.host.endsWith(\".pastebin.com\") && c.credentials === false",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T11-48-21-841Z-bb71e186/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host === \"pastebin.com\" || c.host.endsWith(\".pastebin.com\") || c.host === \"pastebin.com.\" || c.host.endsWith(\".pastebin.com.\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-litellm.anthropic-claude-opus-5-5/r0/2026-10-21T11-47-47-882Z-d16d1f3f/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "(c) => c.host.endsWith(\".pastebin.com\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T13-41-41-015Z-f0f27873/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-9b/r0/2026-10-21T13-45-27-422Z-262a8b8f/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by glm-4.7-flash:latest, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "F4 by qwen3.5:9b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "endsWith on a host is a subdomain"
+      }
+    },
+    {
+      "src": "const allow_f4 = c => c.url.includes('pastebin.com')",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-nemotron-3-nano-4b/r0/2026-10-21T11-54-06-545Z-3cdae4a4/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policies = [\n  (c) => c.host.match(/^pastebin\\.com$/i) && c.host.startsWith('pastebin.com')\n]",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-glm-4.7-flash-latest/r0/2026-10-21T11-48-45-473Z-b9b324a3/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => c.host === \"pastebin.com\" || c.host.endsWith(\".pastebin.com\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/policy-fetch/model-glm-4.7-flash-latest/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by glm-4.7-flash:latest, run C (#961 rerun, the details as shipped, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const when = (c) => c.host === \"pastebin.com\" || c.host.endsWith(\".pastebin.com\")",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T13-45-31-465Z-9725e6b7/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by qwen3.5:4b, run B (#961 rerun, the FIRST details text, later withdrawn, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "function validateFetch() {\n  return (c) => {\n    const host = c.host;\n    \n    // Allow if it's exactly pastebin.com or a subdomain of pastebin.com\n    // i.e., starts with \"pastebin.\" followed by more chars, or equals \"pastebin.com\"\n    return host === 'pastebin.com' || host.startsWith('pastebin.') && host !== 'pastebin';\n  };\n}",
+      "author": "model",
+      "consumer": "fetch",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-fetch/history/policy-fetch/model-qwen3.5-4b/r0/2026-10-21T11-47-22-994Z-570e9950/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-fetch bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-fetch/) and the bench store holds the durable copy",
+        "F4 by qwen3.5:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) =>\n  Array.isArray(c.argv) &&\n  c.argv.length === 2 &&\n  c.argv[0] === \"npm\" &&\n  c.argv[1] === \"test\" &&\n  c.cwd.inRoot === true",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-flash/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "Array.isArray(c.argv) is true on every call; dropped; the rewrite lifts and agrees with the source in the realm on every cell of its tree and the need's calls"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.argv.length === 2 &&\n  c.argv[0] === \"npm\" &&\n  c.argv[1] === \"test\" &&\n  c.cwd.inRoot &&\n  (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\"))",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.google-gemini-flash-latest/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.argv.length === 2 &&\n  c.argv[0] === \"npm\" &&\n  c.argv[1] === \"test\" &&\n  c.cwd.inRoot === true",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.8-27b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.argv.length === 2 &&\n  c.argv[0] === \"npm\" &&\n  c.argv[1] === \"test\" &&\n  c.cwd.inRoot === true &&\n  (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\"))",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-v4-pro/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.argv.length === 2 &&\n  c.argv[0] === \"npm\" &&\n  c.argv[1] === \"test\" &&\n  c.cwd.inRoot === true &&\n  c.program.inRoot !== undefined &&\n  c.env.free === true &&\n  c.repoConfigRunsCode !== true",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "c.program.inRoot is a boolean on every call, so !== undefined is true; dropped; the rewrite lifts and agrees with the source in the realm on every cell of its tree and the need's calls"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.argv.length === 2 &&\n  c.argv[0] === \"npm\" &&\n  c.argv[1] === \"test\" &&\n  c.program.inRoot === false &&\n  /(^|\\/)npm(\\.cmd|\\.js)?$/.test(c.program.path) &&\n  c.cwd.inRoot === true &&\n  (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\")) &&\n  c.env.set.length === 0 &&\n  c.secrets.length === 0",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "an unanchored regex"
+      }
+    },
+    {
+      "src": "(c) => {\n    const argv = c.argv;\n    return argv.length === 2 &&\n           argv[0] === \"npm\" &&\n           argv[1] === \"test\" &&\n           c.cwd.inRoot &&\n           c.cwd.path.startsWith(\"/w/proj\");\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.5-9b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a function body with statements"
+      }
+    },
+    {
+      "src": "(c) => c.argv.length === 2 && c.argv[0] === \"npm\" && c.argv[1] === \"test\" && c.cwd.inRoot === true",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-moonshot.kimi-k3/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.argv.length === 2 && c.argv[0] === \"npm\" && c.argv[1] === \"test\" && c.cwd.inRoot === true && (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\"))",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "(c) => c.argv.length === 2 && c.argv[0] === \"npm\" && c.argv[1] === \"test\" && c.cwd.path.startsWith(\"/w/proj\")",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-gemma4-12b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by gemma4:12b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a character prefix of cwd.path (\"/w/proj\") that does not end at a path component"
+      }
+    },
+    {
+      "src": "(c) => c.argv[0] === 'npm' && c.argv[1] === 'test' && c.argv.length === 2 && (c.cwd.path === '/w/proj' || c.cwd.path.startsWith('/w/proj/'))",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-gemma4-31b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "const policy = (c) => {\n  // The call must be a test run exactly, no extra arguments.\n  if (c.argv.length !== 3 || c.argv[0] !== 'npm' || c.argv[1] !== 'test') {\n    return false;\n  }\n\n  // It must be executed inside the workspace /w/proj or any of its subdirectories.\n  if (!c.cwd.inRoot || !c.cwd.path.endsWith('/w/proj')) {\n    return false;\n  }\n\n  // No secrets or special effects that could compromise the environment.\n  if (c.secrets.length || c.effects.has('exec') || c.effects.has('write', 'fs')) {\n    return false;\n  }\n\n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-granite4.1-3b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by granite4.1:3b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => {\n  if (!c || c.argv?.length !== 2) return false;\n  return c.argv[0] === 'npm' && c.argv[1] === 'test';\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-nemotron-3-nano-4b/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const s1 = (c) => {\n  // Must be running from /w/proj or a subdirectory\n  if (!c.cwd.path.startsWith('/w/proj')) {\n    return false;\n  }\n  // Must be exactly \"npm test\" with no additional arguments\n  if (c.argv[0] !== 'npm' || c.argv[1] !== 'test' || c.argv[2] !== undefined) {\n    return false;\n  }\n  // No secret usage\n  if (c.secrets !== undefined && c.secrets.length !== 0) {\n    return false;\n  }\n  // Environment must be safe (no external variables set)\n  if (!c.env.free) {\n    return false;\n  }\n  // No unknown effects\n  if (c.effects.unknown) {\n    return false;\n  }\n  // No filesystem access that could require approval\n  if (c.effects.reads.length !== 0 || c.effects.writes.length !== 0) {\n    return false;\n  }\n  // No network access\n  if (c.effects.net !== undefined && c.effects.net.length !== 0) {\n    return false;\n  }\n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-glm-4.7-flash-latest/r0/outbox/turn-1.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S1 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) =>\n  c.described &&\n  !c.effects.unknown &&\n  c.effects.pairs.length > 0 &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot &&\n      !p.res.secret &&\n      (p.res.path === \"/w/proj\" || p.res.path.startsWith(\"/w/proj/\"))\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.google-gemini-flash-latest/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under; a list's length against zero"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.described === true &&\n  c.effects.unknown === false &&\n  c.effects.pairs.length > 0 &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot === true &&\n      p.res.secret === false\n  ) &&\n  c.paths.every((p) => p.inRoot === true && p.secret === false)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a list's length against zero"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.described === true &&\n  c.effects.unknown === false &&\n  c.program.inRoot === false &&\n  c.env.free === true &&\n  c.secrets.length === 0 &&\n  c.repoConfigRunsCode !== true &&\n  c.effects.pairs.length > 0 &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot === true &&\n      p.res.secret === false &&\n      (p.res.path === \"/w/proj\" || p.res.path.startsWith(\"/w/proj/\"))\n  ) &&\n  c.paths.every(\n    (p) =>\n      p.inRoot === true &&\n      p.secret === false &&\n      (p.path === \"/w/proj\" || p.path.startsWith(\"/w/proj/\"))\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under; a list's length against zero"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.described === true &&\n  c.effects.unknown === false &&\n  c.secrets.length === 0 &&\n  c.effects.pairs.length > 0 &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot === true &&\n      p.res.secret === false\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-flash/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a list's length against zero"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.effects.unknown === false &&\n  !c.effects.has(\"write\") &&\n  !c.effects.has(\"exec\") &&\n  c.effects.reads.every(r => r.kind === \"fs\" && r.inRoot === true && r.secret === false)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.8-27b/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.effects.unknown === false &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot === true &&\n      p.res.secret !== true\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-v4-pro/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => !c.effects.unknown && c.effects.pairs.every(p => p.op === 'read' && p.res.kind === 'fs' && p.res.path.startsWith('/w/proj') && !p.res.secret)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-gemma4-31b/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a character prefix of @.res.path (\"/w/proj\") that does not end at a path component"
+      }
+    },
+    {
+      "src": "(c) => {\n    if (c.effects.has(\"write\")) return false;\n    if (c.effects.has(\"exec\")) return false;\n    if (c.effects.secrets.length > 0) return false;\n    for (const p of c.effects.pairs) {\n        if (p.op === \"read\") {\n            const res = p.res;\n            if (!res.path.startsWith(\"/w/proj\") || !res.inRoot || res.secret) {\n                return false;\n            }\n        }\n    }\n    return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.5-9b/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a function body with statements; the realm refuses it on 8 of 12 of the need's calls"
+      }
+    },
+    {
+      "src": "(c) => c.described === true && c.effects.unknown === false && c.effects.pairs.length > 0 && c.effects.pairs.every((p) => p.op === \"read\" && p.res.kind === \"fs\" && p.res.inRoot === true && p.res.secret === false)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a list's length against zero"
+      }
+    },
+    {
+      "src": "(c) => c.effects.unknown === false && c.effects.pairs.every((p) => p.op === \"read\") && c.effects.reads.every((r) => r.kind === \"fs\" && r.inRoot === true && r.secret === false)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-moonshot.kimi-k3/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "const policy = (c) {\n  if (!c.cwd || !c.cwd.inRoot) return false;\n  const hasOtherEffects = c.effects.pairs.some(e => e.op !== 'read');\n  if (hasOtherEffects) return false;\n  for (const e of c.effects.pairs) {\n    if (e.op !== 'read') return false;\n    if (e.kind !== 'fs') return false;\n    if (e.path.inRoot !== true) return false;\n    if (e.path.secret === true) return false;\n  }\n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-nemotron-3-nano-4b/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => {\n  // Must read only non‑secret files inside the workspace /w/proj.\n  if (c.effects.reads.some(res => res.kind === 'fs' && !res.path.endsWith('/w/proj')) ||\n      c.effects.uses.includes('.env') ||\n      c.effects.has('write') ||\n      c.effects.has('exec') ||\n      c.effects.has('use') ||\n      c.effects.has('alloc') ||\n      c.effects.has('secret') ||\n      c.effects.unknown) {\n    return false;\n  }\n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-granite4.1-3b/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by granite4.1:3b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const s2 = (c) => {\n  // Must be inside /w/proj or a subdirectory\n  if (!c.cwd.path.startsWith('/w/proj')) {\n    return false;\n  }\n  \n  // Must be described by the host (can't allow unknown operations)\n  if (!c.described) {\n    return false;\n  }\n  \n  // No writes, deletions, or renames\n  if (c.effects.writes.length !== 0) {\n    return false;\n  }\n  \n  // No running other programs\n  if (c.effects.exec !== undefined) {\n    return false;\n  }\n  \n  // No network access\n  if (c.effects.net !== undefined && c.effects.net.length !== 0) {\n    return false;\n  }\n  \n  // Must only read files; no secret files may be read\n  if (c.effects.reads.length !== 0) {\n    for (const file of c.effects.reads) {\n      if (file.secret) {\n        return false;\n      }\n      if (!file.path.startsWith('/w/proj')) {\n        return false;\n      }\n    }\n  }\n  \n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-glm-4.7-flash-latest/r0/outbox/turn-2.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S2 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "(c) => {\n    const prog = c.program;\n    if (!prog.inRoot || !prog.path.startsWith(\"/w/proj\")) return false;\n    if (c.repoConfigRunsCode) return false;\n    const argv = c.argv;\n    const gitReads = [\"status\", \"diff\", \"log\", \"show\"];\n    if (argv[0] !== \"git\" || !gitReads.includes(argv.slice(1, 3).join(\" \"))) return false;\n    for (const p of c.effects.pairs) {\n        if (p.op === \"write\" || p.op === \"exec\") return false;\n        const res = p.res;\n        if (res && res.kind === \"process\") return false;\n    }\n    return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.5-9b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a function body with statements"
+      }
+    },
+    {
+      "src": "(c) => c.described === true && c.effects.unknown === false && c.argv[0] === \"git\" && [\"status\", \"diff\", \"log\", \"show\"].includes(c.argv[1]) && c.cwd.inRoot === true && (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\")) && c.repoConfigRunsCode === false && c.effects.pairs.every((p) => p.op === \"read\" && p.res.kind === \"fs\")",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "a prefix ending at a segment is under"
+      }
+    },
+    {
+      "src": "const allowed = ['status', 'diff', 'log', 'show'];\n(c) => c.argv[0] === 'git' && allowed.includes(c.argv[1]) && c.repoConfigRunsCode !== true && c.cwd.path.startsWith('/w/proj') && !c.effects.unknown && c.effects.pairs.every(p => p.op === 'read')",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-gemma4-31b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a character prefix of cwd.path (\"/w/proj\") that does not end at a path component"
+      }
+    },
+    {
+      "src": "const ALLOWED_SUBCOMMANDS = [\"status\", \"diff\", \"log\", \"show\"];\n\n(c) =>\n  c.argv.length > 1 &&\n  c.argv[0] === \"git\" &&\n  ALLOWED_SUBCOMMANDS.includes(c.argv[1]) &&\n  c.cwd.inRoot &&\n  (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\")) &&\n  c.repoConfigRunsCode === false &&\n  c.described &&\n  !c.effects.unknown &&\n  !c.effects.has(\"write\") &&\n  !c.effects.has(\"exec\")",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.google-gemini-flash-latest/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "drop `c.argv.length >= 2`, which `includes(c.argv[1])` already implies (and a Set of literals as the list it is); the rewrite lifts and agrees with the source in the realm on the need's calls (its cell grid is past the test's cap)"
+      }
+    },
+    {
+      "src": "const CMDS = [\"status\", \"diff\", \"log\", \"show\"];\n(c) => c.argv[0] === \"git\" && c.argv.length >= 2 && CMDS.includes(c.argv[1]) && c.cwd.inRoot === true && c.repoConfigRunsCode === false && c.effects.unknown === false && c.effects.pairs.every((p) => p.op === \"read\")",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-moonshot.kimi-k3/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "drop `c.argv.length >= 2`, which `includes(c.argv[1])` already implies (and a Set of literals as the list it is); the rewrite lifts and agrees with the source in the realm on every cell of its tree and the need's calls"
+      }
+    },
+    {
+      "src": "const GIT_READ = new Set([\"status\", \"diff\", \"log\", \"show\"]);\n\n(c) =>\n  c.argv.length >= 2 &&\n  c.argv[0] === \"git\" &&\n  GIT_READ.has(c.argv[1]) &&\n  c.repoConfigRunsCode === false &&\n  c.cwd.inRoot === true &&\n  (c.cwd.path === \"/w/proj\" || c.cwd.path.startsWith(\"/w/proj/\")) &&\n  c.effects.unknown === false &&\n  !c.effects.pairs.some((p) => p.op === \"write\" || p.op === \"exec\")",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-v4-pro/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "drop `c.argv.length >= 2`, which `includes(c.argv[1])` already implies (and a Set of literals as the list it is); the rewrite lifts and agrees with the source in the realm on the need's calls (its cell grid is past the test's cap)"
+      }
+    },
+    {
+      "src": "const policy = (c) => {\n  // Must be a git command that only reads.\n  if (!['git status', 'git diff', 'git log', 'git show'].includes(c.argv[0])) {\n    return false;\n  }\n\n  // Must be executed inside the workspace /w/proj.\n  if (!c.cwd.inRoot || !c.cwd.path.endsWith('/w/proj')) {\n    return false;\n  }\n\n  // Must not have any write or exec effects.\n  if (c.effects.has('write') || c.effects.has('exec') ||\n      c.effects.has('use') || c.effects.has('alloc') ||\n      c.effects.has('secret') || c.effects.unknown) {\n    return false;\n  }\n\n  // If the repository's config can run a program, disallow.\n  if (c.repoConfigRunsCode === true) {\n    return false;\n  }\n\n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-granite4.1-3b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by granite4.1:3b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => { if (!c.cwd || !c.cwd.inRoot) return false; if (c.argv?.length < 2 || c.argv[0] != 'git') return false; if (c.repoConfigRunsCode !== null) return false; for (const e of c.effects?.pairs || []) { if (e.op != 'read') return false; if (e.kind != 'fs' || !e.path) return false; if (e.path.secret === true) return false; } return true; }",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-nemotron-3-nano-4b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const READ_ONLY = [\"status\", \"diff\", \"log\", \"show\"];\n\n(c) =>\n  c.argv.length >= 2 &&\n  c.argv[0] === \"git\" &&\n  READ_ONLY.includes(c.argv[1]) &&\n  c.cwd.inRoot === true &&\n  c.repoConfigRunsCode === false &&\n  c.described === true &&\n  c.effects.unknown === false &&\n  c.secrets.length === 0 &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot === true &&\n      p.res.secret === false\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-flash/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "drop `c.argv.length >= 2`, which `includes(c.argv[1])` already implies (and a Set of literals as the list it is); the rewrite lifts and agrees with the source in the realm on the need's calls (its cell grid is past the test's cap)"
+      }
+    },
+    {
+      "src": "const READONLY = [\"status\", \"diff\", \"log\", \"show\"];\n(c) =>\n  c.argv[0] === \"git\" &&\n  READONLY.includes(c.argv[1]) &&\n  c.cwd.inRoot === true &&\n  c.repoConfigRunsCode !== true &&\n  !c.effects.has(\"write\") &&\n  !c.effects.has(\"exec\")",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.8-27b/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "mechanical",
+        "why": "the const list inlines"
+      }
+    },
+    {
+      "src": "const s3 = (c) => {\n  // Must be inside the workspace /w/proj\n  if (!c.cwd.path.startsWith('/w/proj')) {\n    return false;\n  }\n\n  // Must be one of the allowed git subcommands\n  if (c.argv[0] !== 'git' ||\n      ![ 'status', 'diff', 'log', 'show' ].includes(c.argv[1])) {\n    return false;\n  }\n\n  // No repository that runs its own program\n  if (c.repoConfigRunsCode === true) {\n    return false;\n  }\n\n  // No writes or deletions\n  if (c.effects.writes.length !== 0) {\n    return false;\n  }\n\n  // No exec effect (no subprocesses)\n  if (c.effects.exec !== undefined) {\n    return false;\n  }\n\n  // All reads must be safe: no secrets and within /w/proj\n  for (const file of c.effects.reads) {\n    if (file.secret) {\n      return false;\n    }\n    if (!file.path.startsWith('/w/proj')) {\n      return false;\n    }\n  }\n\n  return true;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-glm-4.7-flash-latest/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const SUBCOMMANDS = [\"status\", \"diff\", \"log\", \"show\"];\nconst BANNED_FLAGS = [\n  \"--output\",\n  \"--ext-diff\",\n  \"--textconv\",\n  \"--no-index\",\n  \"--exec\",\n  \"--upload-pack\",\n  \"--config\",\n  \"--open-files-in-pager\",\n  \"--paginate\",\n  \"-p-pager\",\n];\nconst ROOT = \"/w/proj\";\nconst inProj = (p) => p === ROOT || p.startsWith(ROOT + \"/\");\n\n(c) =>\n  c.argv.length >= 2 &&\n  c.argv[0] === \"git\" &&\n  SUBCOMMANDS.includes(c.argv[1]) &&\n  c.argv.slice(2).every(\n    (a) => !BANNED_FLAGS.some((f) => a === f || a.startsWith(f + \"=\"))\n  ) &&\n  c.program.inRoot === false &&\n  /(^|\\/)git(\\.exe)?$/.test(c.program.path) &&\n  c.repoConfigRunsCode === false &&\n  c.cwd.inRoot === true &&\n  inProj(c.cwd.path) &&\n  c.env.set.length === 0 &&\n  c.secrets.length === 0 &&\n  c.described === true &&\n  c.effects.unknown === false &&\n  !c.effects.has(\"write\") &&\n  !c.effects.has(\"exec\") &&\n  c.effects.pairs.every(\n    (p) =>\n      (p.op === \"read\" &&\n        p.res.kind === \"fs\" &&\n        p.res.inRoot === true &&\n        p.res.secret === false &&\n        inProj(p.res.path)) ||\n      (p.op === \"alloc\" && p.res.kind === \"heap\")\n  ) &&\n  c.paths.every(\n    (p) => p.inRoot === true && p.secret === false && inProj(p.path)\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "a const that is not a literal or a list of literals"
+      }
+    },
+    {
+      "src": "const subs = [\"status\", \"diff\", \"log\", \"show\"];\n(c) =>\n  c.argv.length >= 2 &&\n  c.argv[0] === \"git\" &&\n  subs.includes(c.argv[1]) &&\n  c.described === true &&\n  c.effects.unknown === false &&\n  c.cwd.inRoot === true &&\n  c.repoConfigRunsCode === false &&\n  c.effects.pairs.length > 0 &&\n  c.effects.pairs.every(\n    (p) =>\n      p.op === \"read\" &&\n      p.res.kind === \"fs\" &&\n      p.res.inRoot === true &&\n      p.res.secret === false\n  ) &&\n  c.paths.every((p) => p.inRoot === true && p.secret === false)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-3.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S3 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "helpers+arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "drop `c.argv.length >= 2`, which `includes(c.argv[1])` already implies (and a Set of literals as the list it is); the rewrite lifts and agrees with the source in the realm on the need's calls (its cell grid is past the test's cap)"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.described &&\n  !c.effects.unknown &&\n  c.effects.pairs.some(\n    (p) => p.op === \"write\" && p.res.kind === \"fs\" && p.res.names === true\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.google-gemini-flash-latest/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by litellm.google/gemini-flash-latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.effects.pairs.some(\n    (p) =>\n      p.op === \"write\" &&\n      p.res.kind === \"fs\" &&\n      p.res.names === true\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-flash/r0/outbox/turn-4.md",
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-sonnet-5-5/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by deepseek.deepseek-flash, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "S4 by litellm.anthropic/claude-sonnet-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 2,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.effects.pairs.some(\n    (p) => p.op === \"write\" && p.res.kind === \"fs\" && p.res.names === true\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-deepseek.deepseek-v4-pro/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by deepseek.deepseek-v4-pro, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) =>\n  c.effects.unknown === false &&\n  c.effects.pairs.some(\n    (p) =>\n      p.op === \"write\" &&\n      p.res.kind === \"fs\" &&\n      \"names\" in p.res &&\n      p.res.names === true\n  )",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-litellm.anthropic-claude-opus-5-5/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by litellm.anthropic/claude-opus-5-5, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "no",
+        "why": "does not parse: 'in' is not available; read the field itself, or compare it with `undefined` on an object whose keys you know; the realm refuses it on 13 of 13 of the need's calls"
+      }
+    },
+    {
+      "src": "(c) => {\n    for (const p of c.effects.pairs) {\n        if (p.op === \"write\" && p.res.names) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.5-9b/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by qwen3.5:9b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "hand",
+        "why": "the loop that returns true on the first write with names is a `some`; the rewrite lifts and agrees with the source in the realm on every cell of its tree and the need's calls"
+      }
+    },
+    {
+      "src": "(c) => c.effects.pairs.some((p) => p.op === \"write\" && p.res.kind === \"fs\" && p.res.names === true)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-openrouter.openai-gpt-6-luna/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by openrouter.openai/gpt-6-luna, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.effects.unknown || c.effects.pairs.some(p => p.op === 'write' && p.res.kind === 'fs' && p.res.names === true)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-gemma4-31b/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by gemma4:31b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.effects.writes.some((r) => r.kind === \"fs\" && r.names === true)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-moonshot.kimi-k3/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by moonshot.kimi-k3, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "(c) => c.effects.writes.some(r => r.kind === \"fs\" && r.names === true)",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-qwen3.8-27b/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by qwen3.8:27b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)"
+      ],
+      "shape": "arrow",
+      "count": 1,
+      "tree": {
+        "group": "consumer",
+        "fit": "as-written"
+      }
+    },
+    {
+      "src": "const policy  =  (c)   => {\n  if  (!c.Effects?.writes || !c.Effects.writes.every(ws  =>  ws.operation   !==  'write') ) return false;\n  const isBad  =  c.Effects.writes.some(ws  =>  ws.kind  ===  'fs' && ws.exists === true);\n  return !bool(isBad);  // true means allowed\n};  // return true for non-deletion/renaming actions",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-nemotron-3-nano-4b/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by nemotron-3-nano:4b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const policy = (c) => {\n  // Refuse any call that writes, deletes, or renames a file or directory.\n  if (c.effects.has('write') ||\n      c.effects.has('exec') ||\n      c.effects.has('use') ||\n      c.effects.has('alloc') ||\n      c.effects.has('secret') ||\n      c.effects.has('fs') && (c.effects.reads.some(r => r.path.endsWith('/w/proj')) || c.effects.writes.some(w => w.path.endsWith('/w/proj')))) {\n    return true; // deny\n  }\n  return false; // allow\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-granite4.1-3b/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by granite4.1:3b, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
+    },
+    {
+      "src": "const s4 = (c) => {\n  for (const op of c.effects.pairs) {\n    if (op.op === 'delete' || op.op === 'rename') {\n      return true;\n    }\n  }\n  return false;\n}",
+      "author": "model",
+      "consumer": "sh",
+      "adversarial": false,
+      "roles": [
+        "functional"
+      ],
+      "locations": [
+        "tests/e2e/artifacts/bench/panel-policy-sh/policy-sh/model-glm-4.7-flash-latest/r0/outbox/turn-4.md"
+      ],
+      "notes": [
+        "model-written in the policy-sh bench interview; the sweep directories are gitignored (main clone, tests/e2e/artifacts/bench/panel-policy-sh/) and the bench store holds the durable copy",
+        "S4 by glm-4.7-flash:latest, run A (#934, the first sweep, no propose_policy details, 2026-10-21)",
+        "extracted by policy-proposals.score.ts and counted there as stays-code, but not a complete (c) => … so not measured here (no tree field)"
+      ],
+      "shape": "not-an-arrow",
+      "count": 1
     }
   ],
   "meta": {
     "repo": "window-ml",
-    "commit": "2aab7263",
-    "unique_entries": 221,
-    "total_occurrences": 275,
+    "commit": "aab4216a",
+    "unique_entries": 331,
+    "total_occurrences": 480,
     "by_author_unique": {
       "test": 195,
       "builtin": 4,
-      "doc": 22
+      "doc": 22,
+      "model": 110
     },
     "role_legend": {
       "functional": "meant to evaluate normally (true/false)",
       "negative": "expected broken/refused (typo, ==, non-boolean, parse error)",
       "attack": "written to escape, mutate, hang, leak or game the breadth probe"
     },
-    "shape_legend": "arrow = complete (c) => ...; fragment = predicate body only; template = source built by code (template text recorded); others as named",
+    "shape_legend": "arrow = complete (c) => ...; fragment = predicate body only; template = source built by code (template text recorded); others as named; not-an-arrow = an extracted block that is not one complete (c) => … (a name assigned, an array of policies, a wrapper function), not measured",
     "dedupe": "exact source text + author + consumer; count = number of locations",
     "dropped": "10 collected entries whose src was a policy id or a placeholder (h-deny, input, *, ...), not a source; each one's real source is already an entry",
-    "collected": "2026-10-21 by lane 11 (session a0a98fc7); the lane-11 count of 231 includes the dropped entries; sources and locations re-checked against main at 2aab7263 (after #920/#921 changed three doc sources)",
-    "tree_legend": "Lane 11's grammar measurement (docs/plan/repl/LANE_11_POLICY_TREE_DESIGN.md). The measured set is every entry with role functional and shape arrow or helpers+arrow; it is counted by DISTINCT source after collapsing whitespace, so entries sharing a source carry the same tree field. group: consumer when any occurrence is over fetch or sh, else probe (an evaluator test over hybrid facts). fit: as-written, mechanical (a rewrite a lifter does), hand (a correct rewrite no lifter finds), no. why: present on every mechanical, hand and no entry, saying what the rewrite or the miss is; absent on as-written, which needs none."
+    "collected": "2026-10-21 by lane 11 (session a0a98fc7); the lane-11 count of 231 includes the dropped entries; sources and locations re-checked against main at 2aab7263 (after #920/#921 changed three doc sources); 2026-10-23: the policies models wrote in the policy-fetch and policy-sh bench interviews appended (110 entries, 206 occurrences: runs A, B and C below), counts recomputed, sources and locations of the earlier entries not re-searched",
+    "tree_legend": "Lane 11's grammar measurement (docs/plan/repl/LANE_11_POLICY_TREE_DESIGN.md). The measured set is every entry with role functional and shape arrow or helpers+arrow; it is counted by DISTINCT source after collapsing whitespace, so entries sharing a source carry the same tree field. group: consumer when any occurrence is over fetch or sh, else probe (an evaluator test over hybrid facts). fit: as-written, mechanical (a rewrite a lifter does), hand (a correct rewrite no lifter finds), no. why: present on every mechanical, hand and no entry, saying what the rewrite or the miss is; absent on as-written, which needs none.",
+    "model_runs": {
+      "A": "#934, the first sweep, no propose_policy details (2026-10-21): fetch 52 extracted answers of 15 models (gemma4:12b extracted none; gemini-flash is its rerun on a fresh build, 12:50Z) and sh 53 (gemma4:12b gave one); rescored in #973 and #990 with nothing rerun, so no separate run",
+      "B": "#961 rerun of fetch with the FIRST details text, later withdrawn (2026-10-21, 13:41Z-13:46Z): 52 extracted answers of 14 models",
+      "C": "#961 rerun of fetch with the details as shipped (2026-10-21, 13:52Z): 49 extracted answers of 14 models",
+      "not_included": "three gemini-flash fetch attempts of the first sweep (11:46Z, 12:09Z and 12:17Z extracted nothing) and its 12:15Z attempt (4 answers, superseded by the 12:50Z rerun on a fresh build that the Result section counts); gemini-flash's two failed sh attempts; nothing else"
+    }
   }
 }

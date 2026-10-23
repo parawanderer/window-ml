@@ -283,7 +283,7 @@ The model never adds a policy; it asks for one, and the person answers a card (`
 ## The policy corpus
 
 `tests/fixtures/policy-corpus.json` holds every distinct policy source anyone has written, with who wrote it and where:
-tests, docs, built-ins, and (once they exist) the policies models propose. It is what a claim like "the tree's grammar
+tests, docs, built-ins, and the policies models proposed in the `policy-fetch` and `policy-sh` bench interviews (110 entries, `meta.model_runs` says which run each is). It is what a claim like "the tree's grammar
 covers N% of policies" is measured over ([`LANE_11_POLICY_TREE_DESIGN.md`](../plan/repl/LANE_11_POLICY_TREE_DESIGN.md)),
 and what the lifter's test runs over. `meta` says when and at which commit it was collected; `fields` lists what `c`
 holds for each consumer, with source refs.
@@ -305,7 +305,7 @@ One entry per distinct (`src`, `author`, `consumer`):
 **Keeping it current.** A PR that adds a policy source to a test, a doc or a built-in adds its entry, or a location to
 the existing one (match `src` exactly, whitespace included). A bench run that collects model proposals appends them
 with `author: "model"`, the model id and run in `notes`, and `locations` naming the result file. A new measured entry gets a `tree` field, and an edited source has its `tree` field
-checked again. A recount (every source
+checked again. A model's answer that is not one complete `(c) => …` (a name assigned, an array of policies, a wrapper function) is an entry of shape `not-an-arrow` with no `tree` field. `fit: hand` on a model's entry means a rewrite was written and checked: it lifts, and the source and the rewrite agree in the realm on the need's calls (and on the rewrite's cell grid when that is small enough to enumerate); a `no` whose rewrite was not tried carries the lifter's own reason. A recount (every source
 searched again) bumps `meta.commit` and `meta.collected` and says what was searched in `searched`. Nothing checks the
 file against the tree yet, so a missing entry is silent: it only makes a coverage figure stale. Remove an entry only
 when its source is gone from every location.
@@ -335,7 +335,7 @@ agreement test compares there (it did not before 2026-10-21).
 What it covers of MODEL-written policies is measured by two bench interviews, `policy-fetch` and `policy-sh`, scored by
 `tests/e2e/panel/policy-proposals.score.ts`: the needs, their hand-labelled calls and the figure are in
 [`policy-proposals.md`](../../tests/e2e/panel/policy-proposals.md), section "Result" (63% of `fetch` answers lift, 45%
-of `sh`). A model's answer that stays code is a lifter miss to read there before it is a rewrite to add. What the `sh`
+of `sh`). Those answers are in the corpus as `author: "model"`; `tests/policy-lift.test.mjs` reproduces their figure from the file, apart from the original 60 sources' figure. A model's answer that stays code is a lifter miss to read there before it is a rewrite to add. What the `sh`
 answers taught, for anyone writing a policy or a lifter rewrite:
 
 - Compare argv ELEMENTS (`c.argv[2] === undefined`), not `c.argv.length` against a number, which the fragment does not
