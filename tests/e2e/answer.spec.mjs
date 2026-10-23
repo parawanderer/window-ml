@@ -53,7 +53,9 @@ async function answerRun(turns, { listen = false } = {}) {
             toolResults.push((last?.messages ?? []).slice(-turn.script.length * 2).filter((m) => m.role === "tool").map((m) => String(m.content)));
         }
         await watch.close();
-        const heard = listen ? await page.evaluate(() => window.__heard.join("\n")).catch(() => "") : "";
+        // The run's own traffic rides a private port (src/page-channel.ts), so the page's window hears none of it: the
+        // positive control is the page's own post, which proves the listener is live.
+        const heard = listen ? await page.evaluate(() => { window.postMessage("listener-control", "*"); return new Promise((r) => setTimeout(() => r(window.__heard.join("\n")), 100)); }).catch(() => "") : "";
         return { results, toolResults, heard };
     } finally {
         stop = true;
@@ -162,7 +164,7 @@ test("answer text the model writes never reaches the page's window, and the pers
         { content: "Done." },
     ] }], { listen: true });
     expect(results[0].answer, "positive control: the person is handed it").toContain(`${SECRET} again`);
-    expect(heard.length, "positive control: the page heard the run's other traffic").toBeGreaterThan(0);
+    expect(heard, "positive control: the page's listener is live").toContain("listener-control");
     expect(heard).not.toContain(SECRET);
     expect(toolResults[0][3], "the exec counted the hidden text").toMatch(/\[1,.*kept by the worker/);
 });

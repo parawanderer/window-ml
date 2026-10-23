@@ -36,6 +36,7 @@ import { formatReadonlyExec, readonlyRefused } from "./approval";
 import { subcallUsage } from "../bus";
 import { defineState, readState, readableMembers } from "../state-registry";
 import { pageHostedAnswer } from "./page-run-state";
+import { type ChannelMessage, onIsolated, toIsolated } from "../page-channel";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
  *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
@@ -368,14 +369,14 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
  *  RUN_TOOL_IN_PAGE here as a PAGE_TOOL_RUN window message; we run the tool and post the serializable
  *  PAGE_TOOL_RESULT back, correlated by the content-minted callId. */
 export function installToolDelegation(): void {
-    window.addEventListener("message", async (event: MessageEvent) => {
-        if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
+    onIsolated(async (event: ChannelMessage) => {
+        if (!event.data || event.data.type !== "PAGE_TOOL_RUN") return;
         const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, answerShape, answerSelect, geometry, pageRead } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
         // The END of a turn of a run the WORKER holds (sw-run-host.ts): it ends the run's registration here, as the page
         // path's caller does. Nothing of the run comes with it (the worker keeps the run's answer), and nothing goes back.
         if (finish) {
             endRun(runId);
-            window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "" } }, "*");
+            toIsolated({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "" } });
             return;
         }
         // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts back up the
@@ -383,28 +384,28 @@ export function installToolDelegation(): void {
         // (one delegated call is in flight per run). Through a SENDER: one post per beat, never more than the panel
         // keeps, so a runaway print is not gigabytes of messages (stream-sender.ts).
         const sender = stream ? makeStreamSender((chunk, ts, skipped) => {
-            try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }, "*"); } catch { /* non-cloneable → drop */ }
+            try { toIsolated({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }); } catch { /* non-cloneable → drop */ }
         }) : null;
         const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
         const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), ...(pageRead && typeof pageRead === "object" ? { pageRead } : {}), onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
-        window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
+        toIsolated({ type: "PAGE_TOOL_RESULT", callId, envelope });
     });
     // STOP of a survey in flight (content.ts relays the worker's CANCEL_TOOL_IN_PAGE): only the named run's.
-    window.addEventListener("message", (event: MessageEvent) => {
-        if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_CANCEL") return;
+    onIsolated((event: ChannelMessage) => {
+        if (!event.data || event.data.type !== "PAGE_TOOL_CANCEL") return;
         const { runId } = event.data as { runId?: unknown };
         if (typeof runId === "string") stopSurvey(runId);
     });
     // THE STATE INSPECTOR'S READ of this page's realm (sw-run-state.ts): content.ts relays RUN_STATE_IN_PAGE as
     // PAGE_STATE_READ, and the members this bundle declares answer for the run. Only the page's own: the worker reads
     // its own registry, and a module both bundles load (util.ts) declares in each.
-    window.addEventListener("message", async (event: MessageEvent) => {
-        if (event.source !== window || !event.data || event.data.type !== "PAGE_STATE_READ") return;
+    onIsolated(async (event: ChannelMessage) => {
+        if (!event.data || event.data.type !== "PAGE_STATE_READ") return;
         const { callId, runId } = event.data as { callId?: string; runId?: string };
         if (typeof callId !== "string" || typeof runId !== "string") return;
         const entries = await readState({ runId }, "human", "page");
-        try { window.postMessage({ type: "PAGE_STATE_RESULT", callId, members: readableMembers("page"), entries }, "*"); }
-        catch { window.postMessage({ type: "PAGE_STATE_RESULT", callId, members: readableMembers("page"), entries: [] }, "*"); }
+        try { toIsolated({ type: "PAGE_STATE_RESULT", callId, members: readableMembers("page"), entries }); }
+        catch { toIsolated({ type: "PAGE_STATE_RESULT", callId, members: readableMembers("page"), entries: [] }); }
     });
 }

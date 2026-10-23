@@ -196,6 +196,12 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   same-origin and current-page checks. Otherwise a `deny` saved before an eviction would go unenforced for the first
   calls after the worker woke. The rule is in `judgeCall` so a new consumer gets it; honouring `"ask"` is still the
   consumer's.
+  The read MERGES with what was added before it answered (stored entries first, then each early one by id; a run's early
+  policy equal to a stored one in source, effect and consumer is dropped, as `addRunPolicy` dedupes), `loaded` turns true in
+  the same turn that fills memory, and every save asked for before it is DEFERRED until after it (a save writes the whole
+  state, so one before the read would replace the stored lists with a partial one); a read that fails suppresses saves for
+  the worker's life. The `POLICIES` message awaits `policiesReady`, so a Settings page's remove or edit of an id it listed
+  in an earlier worker life finds it. `tests/sw-policies-preload.test.mjs`, `tests/policies-handler-preload.test.mjs`.
 - A stored entry that is not a well-formed policy of its scope is dropped on read, not repaired (`validList`).
 - The choke point judges again. A new path that fetches for a run in the worker must go through `consented` in
   `worker-tools.ts`, or an `allow` from the gate is the only check.

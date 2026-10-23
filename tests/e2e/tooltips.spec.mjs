@@ -7,7 +7,7 @@
 // What is pinned here: the tooltip is always FULLY ON SCREEN, never CLIPPED by the scrolling panel it was
 // triggered from, and never sitting UNDER the pointer.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, onChannel, waitForMl, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -387,6 +387,7 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);   // an allowed page: a hidden one drops the events this test stands in for injected.js to send
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await inShell(page, (roots) => {
             const root = roots.sidebar;
@@ -417,10 +418,10 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         // A DETAIL view, because the longest header tooltip by far — focus mode's, a full sentence — only
         // exists there, and it is the one that was being cut off. A test that only hovered the short ones
         // passed with the bug still in.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now();
-            window.postMessage({ __mlDebug: { kind: "agent", id: "tp1", ts: now - 5000, save: false,
-                session: { hash: "tp1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null } }, "*");
+            ch.asInjected({ __mlDebug: { kind: "agent", id: "tp1", ts: now - 5000, save: false,
+                session: { hash: "tp1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null } });
         });
         await expect.poll(() => frame.locator(".row").count(), { timeout: 10000 }).toBeGreaterThan(0);
         await frame.locator(".row").first().click();
@@ -496,9 +497,9 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         }
 
         // ---- the EVENT tooltip: a divider always separates two SECTIONS ----
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now();
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             post({ kind: "agent", id: "tt1", ts: now - 9000, save: false, session: { hash: "tt1", turn: 0 },
                    task: "t", model: "qwen3.8-flash-next:vision", maxSteps: 4, config: null });
             post({ kind: "agent-step", id: "tt1", ts: now - 3000, save: false, session: { hash: "tt1", turn: 1 },

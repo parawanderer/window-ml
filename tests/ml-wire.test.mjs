@@ -148,6 +148,58 @@ test("a stage with no regex charges what it reads and makes, and a sed that woul
     assert.ok(got.answered >= 60 && got.answered < 200, `head alone answered ${got.answered} times`);
 });
 
+test("an unpiped dereference of a stored text is charged its size: a loop of them is stopped, config still answers, and the next cell starts whole", T, async () => {
+    // Before: a read with no pipe copied the stored megabyte for nothing, every call, until the cell's watchdog.
+    const url = "https://data.example/big.txt";
+    const size = 1_000_001, cells = [];
+    await wireRun(async (wire, bg) => {
+        const answers = [];
+        for (let i = 0; i < 400; i++) {
+            const a = await wireCall(bg, wire, "dereference", ["fetch_url"]);
+            answers.push(a);
+            if (a.error) break;
+        }
+        cells.push({ answers, config: await wireCall(bg, wire, "config") });
+    }, { body: "a".repeat(1_000_000) + "\n", url, store: true, calls: [
+        { name: "fetch_url", args: { url } },
+        { name: "python_exec", args: { code: "print(1)", mode: "readonly" } },
+        { name: "python_exec", args: { code: "print(2)", mode: "readonly" } },
+    ] });
+    assert.equal(cells.length, 2, "positive control: both cells ran");
+    const [first, second] = cells;
+    const last = first.answers.at(-1);
+    assert.equal(last.error?.code, "OverBudget", `stopped by the budget after ${first.answers.length} calls: ${JSON.stringify(last).slice(0, 160)}`);
+    assert.equal(first.answers[0].value?.text.length, size, "positive control: the whole stored text is read");
+    const expected = Math.floor(3_000_000 / (Math.ceil(size / 64) + 1));
+    assert.ok(Math.abs(first.answers.length - 1 - expected) <= 1, `answered ${first.answers.length - 1} times, expected about ${expected}`);
+    assert.equal(typeof first.config.value?.model, "string", "a call that does no metered work still answers");
+    assert.equal(second.answers.length, first.answers.length, "the next cell's client starts with a whole budget");
+});
+
+test("a call's arguments are charged their size before they are copied: a loop sending a megabyte is stopped, config still answers, and the next cell starts whole", T, async () => {
+    const big = "x".repeat(1_000_000), cells = [];
+    await wireRun(async (wire, bg) => {
+        const answers = [];
+        for (let i = 0; i < 400; i++) {
+            const a = await wireCall(bg, wire, "schema", [{ a: big }]);
+            answers.push(a);
+            if (a.error) break;
+        }
+        cells.push({ answers, config: await wireCall(bg, wire, "config") });
+    }, { calls: [
+        { name: "python_exec", args: { code: "print(1)", mode: "readonly" } },
+        { name: "python_exec", args: { code: "print(2)", mode: "readonly" } },
+    ] });
+    assert.equal(cells.length, 2, "positive control: both cells ran");
+    const [first, second] = cells;
+    const last = first.answers.at(-1);
+    assert.equal(last.error?.code, "OverBudget", `stopped by the budget after ${first.answers.length} calls: ${JSON.stringify(last).slice(0, 160)}`);
+    const expected = Math.floor(3_000_000 / Math.ceil(1_000_000 / 64));
+    assert.ok(Math.abs(first.answers.length - 1 - expected) <= 1, `answered ${first.answers.length - 1} times, expected about ${expected}`);
+    assert.equal(typeof first.config.value?.model, "string", "a call with no arguments still answers");
+    assert.equal(second.answers.length, first.answers.length, "the next cell's client starts with a whole budget");
+});
+
 test("grep's context assembly is linear in the lines it reads, so a -A over many matching lines answers at the cost it is charged", T, async () => {
     // Red-team on #1007: `inRange` asked every match per line (lines x matched), so 40,000 matching lines held the
     // thread for seconds while the charge, which sees chars and the regex search, moved 3,048 steps. A cell could do

@@ -25,6 +25,8 @@ import { wrapUserCode, harden, unharden, injectInputs } from "../src/python/pyth
 
 /** The defence's boot hook and its allow list. Absent on main: the calls below are no-ops and the properties stay open. */
 let lockdownReadonly = null;
+let cellGate = null;
+try { cellGate = await import("../src/python/cell-gate.ts"); } catch { /* defence not landed */ }
 let ALLOWED_GLOBALS = null;
 try { ({ lockdownReadonly, ALLOWED_GLOBALS } = await import("../src/python/lockdown.ts")); } catch { /* defence not landed */ }
 /** The defence's per-principal interpreter rule (step 1). Absent on main: every principal shares `py`. */
@@ -364,16 +366,18 @@ _m.woke.append("armed")
     assert.deepEqual(r, { woke: ["ran", "armed"] }, `control: the done-callback must run while the cell awaits, got ${JSON.stringify(r)}`);
 });
 
-test("P2-handle residual: pyodide.webloop.scheduleCallback, a captured JS function, schedules without the loop", { skip, todo: "a once-callable handed straight to pyodide.webloop.scheduleCallback makes no asyncio Handle, so the cancel's gc sweep finds nothing to cancel and it runs after the result" }, async () => {
+test("P2-handle residual: pyodide.webloop.scheduleCallback, a captured JS function, schedules without the loop", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2s", `try:
     import pyodide.webloop as _w
     from pyodide.ffi import create_once_callable as _co
     _w.scheduleCallback(_co(lambda: _m.woke.append("ran")), 10)
-except BaseException:
-    pass
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__)
 _m.woke.append("armed")
 "x"`);
-    assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
+    assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: scheduleCallback must accept the callable, got ${JSON.stringify(r)}`);
+    assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `got ${JSON.stringify(r)}`);
 });
 
 test("P2-handle: a done-callback on a task the cell made does not run once the result is returned", { skip }, async () => {
@@ -386,10 +390,12 @@ _m.woke.append("armed")
     assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
 });
 
-// A task the cell STARTED (it awaits a tick, so the coroutine is suspended inside its try) and KEPT on a module. The sweep
-// leaves it pending; its finally or except must not run after the result, in a task of its own or during a later cell
-// that only collects garbage and lets the loop turn. `_where` tells the cell's own task from any other. A later cell that
-// DRIVES the kept coroutine itself is the todo below ("cannot be resumed from a later cell through its _coro").
+// A task the cell STARTED (it awaits a tick, so the coroutine is suspended inside its try) and KEPT on a module. Its
+// finally or except must not run after the result, in a task of its own or during a later cell that only collects
+// garbage and lets the loop turn. Running DURING the cancel, in the cell's own time, is allowed (PYTHON_CANCEL_GAPS.md,
+// the ruling on "after the result"), and the spend runs it there in a task of its own: so `_where` reads TIME, a flag
+// the later cell sets first, never which task is current. A later cell that DRIVES the kept coroutine itself is the
+// test below ("cannot be resumed from a later cell through its _coro").
 for (const [what, tag, handler] of [
     ["a finally", "_rt_p2tf", `    finally:
         _m.woke.append(_where())`],
@@ -404,9 +410,9 @@ import asyncio, types, sys
 _m = types.ModuleType("${tag}")
 _m.woke = []
 sys.modules["${tag}"] = _m
-_m.cell_task = asyncio.current_task()
+_m.after = False
 def _where():
-    return "in-cell" if asyncio.current_task() is _m.cell_task else "later"
+    return "later" if _m.after else "in-cell"
 async def _c():
     _m.started = True
     try:
@@ -419,6 +425,7 @@ _m.woke.append("armed")
 "x"`, { later: 0.15 });
         const g = (await cell(`import sys, gc, asyncio
 _m = sys.modules["${tag}"]
+_m.after = True
 gc.collect()
 await asyncio.sleep(0.05)
 {"woke": list(_m.woke), "started": bool(getattr(_m, "started", False))}`)).value;
@@ -466,7 +473,6 @@ except BaseException as e:
 for (const [what, tag, body] of jsRoutes) {
     test(`P2-handle residual: ${what} schedules without the loop, and runs after the result`, {
         skip,
-        todo: "a JS callback registry the lockdown keeps (setTimeout/queueMicrotask/Promise) takes a callable and makes no asyncio Handle, so the cancel's gc sweep finds nothing and the callback runs after the result",
     }, async () => {
         const r = await scheduledThenAsk(tag, `${body}\n_m.woke.append("armed")\n"x"`);
         // Positive control first: the schedule itself succeeded (the body reached "sched-ok").
@@ -477,12 +483,13 @@ for (const [what, tag, body] of jsRoutes) {
 }
 
 // A hostile cell starts the task (it awaits a tick so the task suspends at its await point), stores the Task on
-// the recorder module, and a LATER cell drives the still-pending coroutine through `_coro`. The sweep cancels the task and the wakeup Handle, which leaves the task pending — its `finally` is
-// one `throw` away on an object the next cell can hold.
-test("P2-handle: a started task kept on the module cannot be resumed from a later cell through its _coro", {
-    skip,
-    todo: "the sweep cancels the wakeup and leaves the task pending; a later cell that holds the Task calls `task._coro.throw(CancelledError())` and the first cell's `finally` runs after its result",
-}, async () => {
+// the recorder module, and a LATER cell drives the coroutine through `_coro`. A cancelled task is still pending until
+// it runs once more, its `finally` one `throw` away on an object the next cell can hold; the cancel SPENDS it instead.
+// The first cell's `finally` may run during its own cancel ("finally-ran" in the first read); what is defended is that
+// `woke` does not GROW between that read and the later cell's throw. The control pins the GENERATOR, never the Task:
+// after the later cell's throw, a second throw raises (StopIteration, or "cannot reuse already awaited coroutine")
+// instead of running the finally. `t.done()`/`t.cancelled()` are the mechanism's business and are not asserted.
+test("P2-handle: a started task kept on the module cannot be resumed from a later cell through its _coro", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2co", `async def _c():
     _m.started = True
     try:
@@ -493,23 +500,25 @@ _m.t = asyncio.ensure_future(_c())
 await asyncio.sleep(0)
 _m.woke.append("armed")
 "x"`);
-    // Positive controls: the result saw only "armed", and the task DID start (its try is live).
-    assert.deepEqual(r, { woke: ["armed"] }, `after the result, got ${JSON.stringify(r)}`);
-    const armed = (await cell(`import sys\n_m = sys.modules["_rt_p2co"]\n{"woke": list(_m.woke), "started": bool(getattr(_m, "started", False)), "pending": (not _m.t.done())}`)).value;
+    assert.ok([JSON.stringify(["armed"]), JSON.stringify(["armed", "finally-ran"])].includes(JSON.stringify(r.woke)), `after the result, got ${JSON.stringify(r)}`);
+    const armed = (await cell(`import sys, gc, asyncio\n_m = sys.modules["_rt_p2co"]\ngc.collect()\nawait asyncio.sleep(0.05)\n{"woke": list(_m.woke), "started": bool(getattr(_m, "started", False))}`)).value;
     assert.equal(armed.started, true, `positive control: the task must have started and suspended inside its try, got ${JSON.stringify(armed)}`);
-    assert.equal(armed.pending, true, `positive control: the sweep must have left it pending rather than finished, got ${JSON.stringify(armed)}`);
-    assert.deepEqual(armed.woke, ["armed"], `a passive later cell (gc.collect + sleep) still runs none of it, got ${JSON.stringify(armed)}`);
+    assert.deepEqual(armed.woke, r.woke, `a passive later cell (gc.collect + sleep) runs none of it, got ${JSON.stringify(armed)}`);
 
     // Defended: driving the kept coroutine from the later cell must not run the first cell's finally.
     const g = (await cell(`import sys, asyncio
 _m = sys.modules["_rt_p2co"]
-try:
-    _m.t._coro.throw(asyncio.CancelledError())
-    _m.woke.append("threw")
-except BaseException as e:
-    _m.woke.append("throw:" + type(e).__name__)
-{"woke": list(_m.woke)}`)).value;
-    assert.deepEqual(g, { woke: ["armed"] }, `a later cell must not be able to run the first cell's finally through the kept _coro, got ${JSON.stringify(g)}`);
+_throws = []
+for _i in range(2):
+    try:
+        _m.t._coro.throw(asyncio.CancelledError())
+        _throws.append("returned")
+    except BaseException as e:
+        _throws.append(type(e).__name__ + ":" + str(e))
+{"woke": list(_m.woke), "throws": _throws}`)).value;
+    assert.deepEqual(g.woke, r.woke, `a later cell must not be able to run the first cell's finally through the kept _coro, got ${JSON.stringify(g)}`);
+    const second = g.throws[1];
+    assert.ok(second.startsWith("StopIteration") || second.includes("cannot reuse already awaited coroutine"), `control: the generator is spent, so a second throw cannot run the finally, got ${JSON.stringify(g)}`);
 });
 
 test("P2-escape: a result whose serialization raises a BaseException still has the cell's tasks cancelled", { skip }, async () => {
@@ -522,6 +531,270 @@ class _O:
     def __str__(self): raise _B()
 _O()`);
     assert.deepEqual(r, { woke: [] }, `a raise from the result's serialization must not skip the cancel, got ${JSON.stringify(r)}`);
+});
+
+// --- P2-spend. a task that will not take its cancel fails the cell closed --------------------------------------
+// A task that never yields is not here: the spend's `await sleep(0)` hands it the CPU and the cell hangs to the run's
+// timeout instead of refusing (the same class as a busy-loop task hanging the next pump).
+
+test("P2-spend: a task that catches every cancel through all the rounds refuses the cell's result, naming it", { skip }, async () => {
+    const r = await cell(`
+import asyncio, types, sys
+_m = types.ModuleType("_rt_ps")
+_m.stop = False
+_m.woke = []
+sys.modules["_rt_ps"] = _m
+async def _stubborn():
+    while not _m.stop:
+        try:
+            await asyncio.sleep(10)
+        except BaseException:
+            _m.woke.append("caught")
+asyncio.ensure_future(_stubborn()).set_name("stubborn")
+await asyncio.sleep(0)
+"x"`);
+    // Let it go: the next cell's spend cancels it once more, and with the flag set it returns.
+    const freed = await cell(`import sys\nsys.modules["_rt_ps"].stop = True\nlen(sys.modules["_rt_ps"].woke)`);
+    assert.match(String(r.error), /left a task running that would not stop: stubborn \(.*_stubborn\)/, `got ${JSON.stringify(r)}`);
+    assert.equal(r.value, null, `the refused cell's value must not be returned, got ${JSON.stringify(r)}`);
+    assert.equal(freed.value, 8, `positive control: the task caught each of the 8 rounds' cancels, got ${JSON.stringify(freed)}`);
+    const after = await cell(`1`);
+    assert.deepEqual([after.error, after.value], [null, 1], "the freed task was spent; the next cell is not refused");
+});
+
+// --- P2-gate. the cell gate's doors (cell-gate.ts): every way a Python callable reaches a JS registry -----------
+// The three doors are a PyProxy (`pyproxy_new`), a once-callable (`finalizationRegistry` + `callPyObject`) and a promise
+// handle (`Promise.prototype.then`/`finally`). Each route below must schedule successfully ("sched-ok", so a refused
+// schedule fails rather than passes) and run nothing after the result. `_agen_handle_result_js` is the fourth place
+// the core hands JS a callable; it is machinery (it settles a Future the core made), never a cell's callable.
+const gateRoutes = [
+    ["Promise.then with a raw Python callable (a promise handle)", "_rt_pg1", `from js import Promise
+Promise.resolve(1).then(lambda *_a: _m.woke.append("ran"))`],
+    ["a JsPromise's .then, settled later by a timer", "_rt_pg2", `from js import Promise, setTimeout
+from pyodide.ffi import create_once_callable as _co
+_p = Promise.new(lambda res, rej: setTimeout(_co(lambda: res(1)), 10))
+_p.then(lambda *_a: _m.woke.append("ran"))`],
+    // A reason that is not an Error makes Pyodide's own future helper raise (TypeError: invalid exception object), so
+    // the callback never runs and the route would pass for nothing: reject with an Error.
+    ["a JsPromise's .catch", "_rt_pg3", `from js import Promise, Error
+Promise.reject(Error.new("x")).catch(lambda *_a: _m.woke.append("ran"))`],
+    ["a JsPromise's .finally_", "_rt_pg4", `from js import Promise
+Promise.resolve(1).finally_(lambda *_a: _m.woke.append("ran"))`],
+    ["setInterval + create_proxy", "_rt_pg5", `from js import setInterval
+from pyodide.ffi import create_proxy as _cp
+_m.iv = setInterval(_cp(lambda: _m.woke.append("ran")), 5)`],
+    ["scheduleCallback + create_proxy", "_rt_pg6", `import pyodide.webloop as _w
+from pyodide.ffi import create_proxy as _cp
+_w.scheduleCallback(_cp(lambda: _m.woke.append("ran")), 10)`],
+    ["a bound method handed to setTimeout", "_rt_pg7", `from js import setTimeout
+from pyodide.ffi import create_once_callable as _co
+class _K:
+    def go(self):
+        _m.woke.append("ran")
+setTimeout(_co(_K().go), 10)`],
+    ["a Python object with then (a thenable) resolved into a JS promise", "_rt_pg8", `from js import Promise
+from pyodide.ffi import create_proxy as _cp
+class _T:
+    def then(self, res, rej=None):
+        _m.woke.append("ran")
+Promise.resolve(_cp(_T()))`],
+    // Evasion: the core's own makers, under `pyodide.ffi`'s wrappers, still make their proxy through door 1 or 2.
+    ["_pyodide_core.create_once_callable handed to setTimeout", "_rt_pg9", `import _pyodide_core as _c
+from js import setTimeout
+setTimeout(_c.create_once_callable(lambda: _m.woke.append("ran")), 10)`],
+    ["_pyodide_core.create_proxy handed to setTimeout", "_rt_pg10", `import _pyodide_core as _c
+from js import setTimeout
+setTimeout(_c.create_proxy(lambda: _m.woke.append("ran")), 10)`],
+    ["_pyodide_core.to_js of a function handed to setTimeout", "_rt_pg11", `import _pyodide_core as _c
+from js import setTimeout
+setTimeout(_c.to_js(lambda: _m.woke.append("ran")), 10)`],
+    // Evasion: js.globalThis's copies are the same JS objects as js's (a JsProxy per access, one target), so the
+    // hooked Promise.prototype and the doors are the ones they reach.
+    ["js.globalThis.setTimeout + create_proxy", "_rt_pg12", `import js
+from pyodide.ffi import create_proxy as _cp
+js.globalThis.setTimeout(_cp(lambda: _m.woke.append("ran")), 10)`],
+    ["js.globalThis.Promise's then with a raw Python callable", "_rt_pg13", `import js
+js.globalThis.Promise.resolve(1).then(lambda *_a: _m.woke.append("ran"))`],
+    ["js.globalThis.queueMicrotask + create_once_callable", "_rt_pg14", `import js
+from pyodide.ffi import create_once_callable as _co
+js.globalThis.queueMicrotask(_co(lambda: _m.woke.append("ran")))`],
+];
+for (const [what, tag, body] of gateRoutes) {
+    test(`P2-gate: ${what} schedules, and runs nothing after the result`, { skip }, async () => {
+        const r = await scheduledThenAsk(tag, `try:
+${body.replace(/^/gm, "    ")}
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__ + ":" + str(e))
+_m.woke.append("armed")
+"x"`);
+        // A revoked interval keeps firing (inert): clear it, or it holds the test process open.
+        await cell(`import sys\nfrom js import clearInterval\n_m = sys.modules["${tag}"]\nif hasattr(_m, "iv"): clearInterval(_m.iv)`);
+        assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: the schedule must succeed, got ${JSON.stringify(r)}`);
+        assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run after the result returned, got ${JSON.stringify(r)}`);
+    });
+}
+
+test("P2-gate control: a JS promise the cell AWAITS, and a timer it waits out, still run inside the cell", { skip }, async () => {
+    const r = await scheduledThenAsk("_rt_pgc", `from js import Promise, setTimeout
+from pyodide.ffi import create_once_callable as _co
+_m.woke.append(str(await Promise.resolve(7)))
+_f = asyncio.get_event_loop().create_future()
+setTimeout(_co(lambda: _f.set_result("timer")), 5)
+_m.woke.append(await _f)
+Promise.resolve(1).then(lambda *_a: _m.woke.append("then"))
+await asyncio.sleep(0.02)
+"x"`);
+    assert.deepEqual(r, { woke: ["7", "timer", "then"] }, `got ${JSON.stringify(r)}`);
+});
+
+test("P2-gate: a cell that closes its own window early still has everything from its start revoked", { skip }, async () => {
+    // The cell reaches the gate twice over: the wrapper's names in its namespace, and the JS object in their closure.
+    const r = await scheduledThenAsk("_rt_pge", `from js import setTimeout, queueMicrotask
+from pyodide.ffi import create_once_callable as _co, create_proxy as _cp
+setTimeout(_co(lambda: _m.woke.append("ran-before")), 10)
+_reached = []
+for _name in ("_ml_cell_revoke", "_ml_cell_begin"):
+    _f = globals().get(_name)
+    if _f is not None:
+        _f()
+        _reached.append(_name)
+        _g = _f.__closure__[0].cell_contents if _f.__closure__ else None
+        if _g is not None:
+            _g.revoke(); _g.begin()
+            _reached.append("closure")
+_m.woke.append("reached:" + ",".join(_reached))
+setTimeout(_cp(lambda: _m.woke.append("ran-after")), 10)
+queueMicrotask(_co(lambda: _m.woke.append("ran-micro")))
+_m.woke.append("armed")
+"x"`);
+    assert.ok(String(r.woke[0]).startsWith("reached:_ml_cell_revoke,closure,_ml_cell_begin,closure"), `positive control: the cell must reach the gate both ways, got ${JSON.stringify(r)}`);
+    assert.deepEqual(r.woke.slice(1), ["armed"], `nothing scheduled before or after an early close may run after the result, got ${JSON.stringify(r)}`);
+});
+
+test("P2-gate: the gate's JS object reached from a cell has no boundary and no constructor route", { skip }, async () => {
+    const r = (await cell(`_g = _ml_cell_revoke.__closure__[0].cell_contents
+_out = {"boundary": hasattr(_g, "boundary")}
+try:
+    _g.begin.constructor("return 1")
+    _out["ctor"] = "reached"
+except BaseException as e:
+    _out["ctor"] = type(e).__name__
+_out`)).value;
+    assert.deepEqual(r, { boundary: false, ctor: "JsException" }, `got ${JSON.stringify(r)}`);
+});
+
+test("P2-gate: a later cell that hands JavaScript a callable an earlier cell's revoked wrapper still holds is refused, in that cell", { skip }, async () => {
+    await cell(`import types, sys
+from js import setTimeout
+from pyodide.ffi import create_once_callable as _co
+_m = types.ModuleType("_rt_pgr")
+_m.woke = []
+sys.modules["_rt_pgr"] = _m
+def _f():
+    _m.woke.append("ran")
+_m.f = _f
+setTimeout(_co(_f), 150)
+"x"`);
+    const again = await cell(`import sys
+from js import setTimeout
+from pyodide.ffi import create_once_callable as _co
+_m = sys.modules["_rt_pgr"]
+setTimeout(_co(_m.f), 10)
+"scheduled"`);
+    assert.match(String(again.error), /refused: an earlier cell scheduled this same callable/, `the reschedule must fail in the cell, got ${JSON.stringify(again)}`);
+    // Once the revoked wrapper has fired (and run nothing), the callable is free again, and a cell that waits for it runs it.
+    await py.runPythonAsync("import asyncio\nawait asyncio.sleep(0.2)");
+    const free = (await cell(`import sys, asyncio
+from js import setTimeout
+from pyodide.ffi import create_once_callable as _co
+_m = sys.modules["_rt_pgr"]
+setTimeout(_co(_m.f), 5)
+await asyncio.sleep(0.03)
+list(_m.woke)`)).value;
+    assert.deepEqual(free, ["ran"], `after the revoked wrapper fired, the callable schedules and runs inside the cell, got ${JSON.stringify(free)}`);
+});
+
+test("P2-gate: a revoked callback that fires after the result is silent and counted", { skip }, async () => {
+    if (!cellGate) assert.fail("cell-gate.ts must exist for this test to mean anything");
+    cellGate.cellDropped();
+    const thrown = [];
+    const onErr = (e) => thrown.push(String(e?.message ?? e));
+    process.on("uncaughtException", onErr);
+    process.on("unhandledRejection", onErr);
+    try {
+        const r = await scheduledThenAsk("_rt_pgd", `from js import setTimeout, Promise
+from pyodide.ffi import create_once_callable as _co, create_proxy as _cp
+setTimeout(_co(lambda: _m.woke.append("ran")), 10)
+setTimeout(_cp(lambda: _m.woke.append("ran")), 10)
+Promise.resolve(1).then(lambda *_a: _m.woke.append("ran"))
+_m.woke.append("armed")
+"x"`);
+        assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
+    } finally {
+        process.off("uncaughtException", onErr);
+        process.off("unhandledRejection", onErr);
+    }
+    assert.deepEqual(thrown, [], "a revoked callback must not throw into the process (the worker's onerror kills it)");
+    assert.equal(cellGate.cellDropped(), 3, "each of the three fired, ran nothing, and was counted");
+});
+
+test("P2-gate: the hooks are fixed, so a cell that reaches Module cannot put the originals back", { skip }, async () => {
+    if (!cellGate) assert.fail("cell-gate.ts must exist for this test to mean anything");
+    const M = py._module;
+    for (const k of cellGate.GATE_INTERNALS) assert.notEqual(M[k], undefined, `this Pyodide must have ${k}`);
+    const fixed = [[M, "pyproxy_new"], [M, "callPyObject"], [M, "callPyObjectMaybePromising"], [M, "finalizationRegistry"], [M.finalizationRegistry, "register"], [Promise.prototype, "then"], [Promise.prototype, "finally"]];
+    for (const [o, k] of fixed) {
+        const d = Object.getOwnPropertyDescriptor(o, k);
+        assert.ok(d && d.writable === false && d.configurable === false, `${k} must be non-writable and non-configurable, got ${JSON.stringify(d && { w: d.writable, c: d.configurable })}`);
+    }
+});
+
+// Two routes past the gate through `pyodide_js`, which an APPROVED cell can import (the dialect refuses it unasked). Both
+// are the red team's lane (window-ml-redteam-e3, with the lockdown's own reach): the cancel is sound only once a cell
+// cannot reach `pyodide_js`.
+test("P2-gate residual: pyodide_js.runPython bound to a source string and handed to setTimeout runs Python after the result", {
+    skip,
+}, async () => {
+    const r = await scheduledThenAsk("_rt_pgs", `try:
+    import pyodide_js
+    from js import setTimeout
+    setTimeout(pyodide_js.runPython.bind(pyodide_js, "import sys; sys.modules['_rt_pgs'].woke.append('ran')"), 10)
+    _m.woke.append("sched-ok")
+except BaseException as e:
+    _m.woke.append("sched-fail:" + type(e).__name__)
+_m.woke.append("armed")
+"x"`);
+    // The lockdown's stand-in carries no `runPython`, so the scheduling itself fails; what matters is that no Python ran.
+    assert.ok(!r.woke.includes("ran") && r.woke.at(-1) === "armed", `got ${JSON.stringify(r)}`);
+});
+
+test("P2-gate residual: a later cell that reaches Module can point a revoked proxy back at its callable", {
+    skip,
+}, async () => {
+    await cell(`import types, sys
+from js import setTimeout
+from pyodide.ffi import create_proxy as _cp
+_m = types.ModuleType("_rt_pgu")
+_m.woke = []
+sys.modules["_rt_pgu"] = _m
+def _f():
+    _m.woke.append("ran")
+_m.f = _f
+_m.p = _cp(_f)
+setTimeout(_m.p, 100)
+"x"`);
+    await cell(`import sys
+_m = sys.modules["_rt_pgu"]
+try:
+    import pyodide_js
+    pyodide_js._module.PyProxy_getAttrsQuiet(_m.p).shared.ptr = id(_m.f)
+except BaseException:
+    pass
+"x"`);
+    await py.runPythonAsync("import asyncio\nawait asyncio.sleep(0.15)");
+    const r = (await cell(`import sys\nlist(sys.modules["_rt_pgu"].woke)`)).value;
+    assert.deepEqual(r, [], `got ${JSON.stringify(r)}`);
 });
 
 // --- P2-handle crash: a handle on an orphan loop must not take the node process down ---------------

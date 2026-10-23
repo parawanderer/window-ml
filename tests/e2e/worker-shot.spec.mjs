@@ -5,7 +5,7 @@
 // page is one flat green and the mask one flat grey (MASK_FILL), so any other pixel is the extension's UI.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, onChannel } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server (content scripts run on http, not on about:blank). */
 async function greenSite() {
@@ -82,8 +82,9 @@ test("the worker's shot has no sidebar pixels and most of the page, the page see
         await page.waitForTimeout(100);
         expect(await inShell(page, () => globalThis.__mutations), "the page saw the shot as a DOM change").toBe(0);
 
-        // A page posting the page handshake's "show" on every frame has nothing to undo.
-        await page.evaluate(() => { const tick = () => { window.postMessage({ __mlSidebarShot: "show" }, "*"); requestAnimationFrame(tick); }; tick(); });
+        // The page handshake's "show" on every frame, sent from injected.js's end of the channel (where a page that took
+        // the port would stand; its window reaches nothing), has nothing to undo.
+        await onChannel(page, (ch) => { const tick = () => { ch.asInjected({ __mlSidebarShot: "show" }); requestAnimationFrame(tick); }; tick(); });
         expect(await offGreen(page, (await shoot()).dataUrl), "the page's show put the sidebar into the worker's shot").toBe(0);
     } finally {
         await ext.close();

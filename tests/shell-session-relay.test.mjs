@@ -7,10 +7,17 @@
 import test from "node:test";
 import assert from "node:assert";
 
-const posted = [];
-globalThis.window = { postMessage: (m) => posted.push(m) };
+// What the relay sends injected.js: with no port handed over yet, the page channel holds it in its queue (page-channel.ts).
+// The hand-off listener is kept, so the last section can play a page that hands over a port of its own.
+let portListener = null;
+globalThis.window = { addEventListener: (type, f) => { if (type === "ml-page-port") portListener = f; } };
 
 const { onSessionDone, relaySessionToPage } = await import("../src/sidebar/shell-session-relay.ts");
+const { listenForPage } = await import("../src/page-channel.ts");
+listenForPage();
+const posted = globalThis.__mlPageChannel.queue;
+// A page the worker opened (a visible one): the relay sends nothing to any other (the last section).
+(await import("../src/page-gate.ts")).setGate(true);
 
 const reset = () => { posted.length = 0; };
 
@@ -80,4 +87,29 @@ test("a second answer for the same request is ignored", async () => {
 test("an answer for an unknown request is dropped rather than throwing", () => {
     assert.equal(onSessionDone({ reqId: "never-asked", outcome: "sent" }), true);
     assert.equal(onSessionDone(undefined), true);
+});
+
+// --- a hidden page (closed gate) and the page channel ---
+// LAST in this file: it hands the isolated side a port, after which nothing goes to `posted` (the queue) any more.
+
+test("a session command sent to a hidden page reaches no port the page holds, now or once one arrives", {}, async () => {
+    const { setGate } = await import("../src/page-gate.ts");
+    const { FakeMessageChannel, FakeMessageEvent } = (await import("./helpers.js")).default;
+    reset();
+    globalThis.__mlPageGate.state = "pending";   // a new document: the file's other tests opened the gate, which never closes again
+    setGate(false);   // the worker said this page is hidden
+    relaySessionToPage({ type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc12345", text: "SECRET-before", reqId: "h1" }, () => {});
+    // The hidden page hands over a port of its own (no injected.js here to have done it first).
+    const ch = new FakeMessageChannel(), heard = [];
+    ch.port1.onmessage = (e) => heard.push(e.data);
+    portListener(new FakeMessageEvent("ml-page-port", { ports: [ch.port2] }));
+    relaySessionToPage({ type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc12345", text: "SECRET-after", reqId: "h2" }, () => {});
+    await new Promise((r) => setTimeout(r, 10));
+    const hiddenHeard = JSON.stringify(heard);
+    // Positive control: once the gate opens (a run the person started there), the same command does reach that port.
+    setGate(true);
+    relaySessionToPage({ type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc12345", text: "OPEN-now" }, () => {});
+    await new Promise((r) => setTimeout(r, 10));
+    assert.match(JSON.stringify(heard), /OPEN-now/, "positive control: the port is the isolated side's");
+    assert.doesNotMatch(hiddenHeard, /SECRET/, "the person's text reached a hidden page");
 });

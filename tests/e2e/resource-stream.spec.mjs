@@ -10,7 +10,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { launchExtension, configureExtension, waitForMl, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, onChannel, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -25,6 +25,7 @@ async function openPanel(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
+    await waitForMl(page);   // an allowed page: a hidden one drops the events the specs send as injected.js
     await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
     await inShell(page, (roots) => {
         const root = roots.sidebar;
@@ -517,9 +518,9 @@ test("a scoped panel shows the session's models, and folds the rest away", async
         await expect.poll(() => frame.locator(".vram-row").count(), { timeout: 20000 }).toBeGreaterThan(0);
 
         // A run of our own, on qwen.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now();
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             post({ kind: "agent", id: "sess-q", ts: now - 6000, save: false, session: { hash: "sess-q", turn: 0 },
                    task: "task qwen", model: "qwen3.5:35b", maxSteps: 4, config: null });
             post({ kind: "agent-step", id: "sess-q", ts: now - 3000, save: false, session: { hash: "sess-q", turn: 1 },
@@ -582,6 +583,7 @@ test("the event lane is collapsed on a fresh panel, and its header opens it", as
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);   // an allowed page: a hidden one drops the events the specs send as injected.js
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await inShell(page, (roots) => {
             const root = roots.sidebar;
@@ -672,9 +674,9 @@ test("the lane draws a run above its steps, and the machine below both", async (
         await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 20000 }).toBeGreaterThan(0);
 
         // A run with two tool steps, starting just after the load did.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now();
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             post({ kind: "agent", id: "ord", ts: now - 60000, save: false, session: { hash: "ord", turn: 0 },
                    task: "ordering", model: "qwen3.5:35b", maxSteps: 4, config: null });
             for (const [i, at] of [[1, 50000], [2, 40000]]) {
@@ -722,9 +724,9 @@ test("a step whose call waited for a load is drawn, with the wait striped over i
         fake.setEvents([-60000, -40000, -20000, -5000].map((t) => ({ v: 1, kind: "sample", t, ps: { models: [row] }, info })));
         const { page, frame } = await openPanel(fake, ext);
         // The lane draws nothing until there is an event, so the run goes in first.
-        await page.evaluate(() => {
+        await onChannel(page, (ch) => {
             const now = Date.now();
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const post = (ev) => ch.asInjected({ __mlDebug: ev });
             post({ kind: "agent", id: "cold", ts: now - 50000, save: false, session: { hash: "cold", turn: 0 },
                    task: "cold start", model: "qwen3.5:35b", maxSteps: 4, config: null });
             // The shape a real cold call has: the wall clock (genMs) CONTAINS the load.

@@ -244,11 +244,22 @@ test("CANCEL_RUN_REQUEST relays a fire-and-forget PAGE_CANCEL_RUN so a handle ki
     // only kills a FETCH_LLM (via ABORT_TASK), not the SW-side loop — which would keep stepping and emit a
     // stale approval AFTER the "cancelled" bubble. content.js must relay it as a runtime PAGE_CANCEL_RUN.
     const world = loadPageWorld({ onRuntimeMessage: () => undefined });
-    world.context.window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: "run42" } });
+    world.asInjected({ type: "CANCEL_RUN_REQUEST", payload: { runId: "run42" } });
     await new Promise(r => setTimeout(r, 0));   // the harness posts on a microtask
     const cancel = world.runtimeCalls.find(m => m.type === "PAGE_CANCEL_RUN");
     assert.ok(cancel, "content.js relayed the page's cancel under its own type, so the origin gate can tell it from the shell's Stop");
     assert.equal(cancel.payload.runId, "run42", "carrying the run id to abort");
+});
+
+test("a request the PAGE posts on window reaches no background message: only injected.js's port is heard (SITE_PRESENCE step 2b)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: null }) });
+    const before = world.runtimeCalls.length;
+    for (const type of ["CANCEL_RUN_REQUEST", "CAPTURE_TAB_REQUEST", "INVOCATION_REQUEST", "CHAT_REQUEST"]) {
+        world.context.window.postMessage({ type, requestId: "p1", payload: { runId: "run42" } });
+    }
+    world.context.window.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(world.runtimeCalls.slice(before).map(m => m.type), [], "nothing the page posts on window is relayed");
 });
 
 test("relay: a MISSING background response rejects with an actionable error (not a silent undefined)", async () => {
@@ -345,16 +356,15 @@ test("ml.chat rejects an invalid extend value", async () => {
 
 test("debug stream is silent until the sidebar handshakes, then emits chat events with the save flag", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi there" }) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
 
     // No sidebar mounted yet → emission is gated off entirely.
     await world.ml.chat("before");
     assert.equal(events.length, 0, "silent until the sidebar handshakes");
 
     // Sidebar mounts and announces itself → injected.js starts emitting.
-    win.postMessage({ __mlSidebar: "ready" });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
 
     await world.ml.chat("hello", { save: true });
@@ -369,19 +379,18 @@ test("debug stream is silent until the sidebar handshakes, then emits chat event
 
 test("debug events emitted between sidebar 'present' and 'ready' are buffered then replayed", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
 
     // Shell mounts (config.sidebar on) → injected starts BUFFERING, but the iframe
     // app hasn't handshaked, so nothing is emitted live yet.
-    win.postMessage({ __mlSidebar: "present" });
+    world.asContent({ __mlSidebar: "present" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.chat("early", { save: true });
     assert.equal(events.length, 0, "buffered, not emitted, until the app is listening");
 
     // The iframe app finishes loading and handshakes → the buffered turn replays.
-    win.postMessage({ __mlSidebar: "ready" });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     assert.ok(events.find(e => e.kind === "chat" && e.request.messages.at(-1).content === "early"), "early chat replayed on ready (not dropped)");
     assert.ok(events.find(e => e.kind === "chat-result"), "its result replayed too");
@@ -389,60 +398,56 @@ test("debug events emitted between sidebar 'present' and 'ready' are buffered th
 
 test("injected announces 'hello' on load (so a shell that mounted first can re-handshake)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
-    const win = world.context.window;
     const signals = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebar) signals.push(e.data.__mlSidebar); });
+    world.fromInjected((e) => { if (e.data && e.data.__mlSidebar) signals.push(e.data.__mlSidebar); });
     await new Promise(r => setTimeout(r, 0));   // let the queued announce deliver
     assert.ok(signals.includes("hello"), "posts a hello so a page-load-race handshake isn't lost");
 });
 
 test("a second 'ready' does NOT re-replay the ring (idempotent re-handshake on hello)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
 
-    win.postMessage({ __mlSidebar: "present" });
+    world.asContent({ __mlSidebar: "present" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.chat("early", { save: true });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const afterFirst = events.length;
     assert.ok(afterFirst >= 2, "buffered turn replayed on the first ready");
 
     // The shell re-sends the handshake when injected posts `hello` (page-load race guard);
     // a second `ready` must not re-emit events that already went out.
-    win.postMessage({ __mlSidebar: "ready" });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     assert.equal(events.length, afterFirst, "second ready is a no-op — no duplicate events");
 });
 
 test("with no sidebar present, nothing is buffered (disabled = zero cost)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
 
     await world.ml.chat("x");                          // no shell → not buffered
-    win.postMessage({ __mlSidebar: "ready" });          // even a late handshake finds an empty ring
+    world.asContent({ __mlSidebar: "ready" });          // even a late handshake finds an empty ring
     await new Promise(r => setTimeout(r, 0));
     assert.equal(events.length, 0, "events before a sidebar existed are never retained");
 });
 
 test("switching the sidebar OFF stops emission and drops the buffered events", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
 
-    win.postMessage({ __mlSidebar: "present" });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.asContent({ __mlSidebar: "present" });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.chat("while on");
     assert.ok(events.length > 0, "emitting while the sidebar is on");
 
     // The user unchecks the sidebar → the shell unmounts and reports "gone".
-    win.postMessage({ __mlSidebar: "gone" });
+    world.asContent({ __mlSidebar: "gone" });
     await new Promise(r => setTimeout(r, 0));
     const after = events.length;
     await world.ml.chat("while off");
@@ -450,7 +455,7 @@ test("switching the sidebar OFF stops emission and drops the buffered events", a
 
     // The ring was dropped too: re-enabling replays NOTHING from the off period
     // (otherwise disabling would silently keep retaining prompts/replies).
-    win.postMessage({ __mlSidebar: "ready" });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const texts = JSON.stringify(events);
     assert.ok(!texts.includes("while off"), "nothing captured while off is retained or replayed");
@@ -709,7 +714,7 @@ test("CAPTURE_TAB_REQUEST relays to a CAPTURE_TAB background message", async () 
     });
     // Post the raw request (ml.screenshot's crop needs a real canvas — browser
     // only); this asserts the content.js HANDLE_MAP wiring forwards it.
-    world.context.window.postMessage({ type: "CAPTURE_TAB_REQUEST", requestId: "r1", payload: {} });
+    world.asInjected({ type: "CAPTURE_TAB_REQUEST", requestId: "r1", payload: {} });
     await new Promise(r => setTimeout(r));
     assert.equal(world.runtimeCalls[0].type, "CAPTURE_TAB");
 });
@@ -720,7 +725,7 @@ test("INVOCATION_REQUEST relays to a GET_INVOCATION background message", async (
     const world = loadPageWorld({
         onRuntimeMessage: () => ({ data: { shortcut: "Alt+Space", defaultShortcut: "Alt+Space", isDefault: true, contextMenu: false } })
     });
-    world.context.window.postMessage({ type: "INVOCATION_REQUEST", requestId: "r1", payload: {} });
+    world.asInjected({ type: "INVOCATION_REQUEST", requestId: "r1", payload: {} });
     await new Promise(r => setTimeout(r));
     assert.equal(world.runtimeCalls[0].type, "GET_INVOCATION");
 });
