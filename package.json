@@ -1,6 +1,9 @@
 {
   "name": "window-ml",
   "private": true,
+  "engines": {
+      "node": ">=26"
+  },
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
