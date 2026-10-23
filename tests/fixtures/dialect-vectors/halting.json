@@ -1772,5 +1772,58 @@
     "budget": 3000000,
     "reason": "$$ then a quote: two characters per match",
     "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "replaceAll with an empty string pattern and $'",
+    "js": "\"a\".repeat(5000).replaceAll(\"\", \"$'\")",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "an empty pattern matches at all n + 1 positions; counting them by indexOf never ended",
+    "from": "tests/readonly-soundness.test.mjs a replace is refused before it builds a result over MAX_STRING"
+  },
+  {
+    "name": "a $& identity over 3,000,000",
+    "js": "\"a\".repeat(3000000).replace(/a/g, \"$&\").length",
+    "env": "none",
+    "expect": {
+      "value": 3000000
+    },
+    "budget": 3000000,
+    "reason": "each match is replaced by itself: the result is the receiver, not four times it",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "a $& identity with one match over 5,000,001",
+    "js": "\"a\".repeat(5000001).replace(/a/, \"$&\").length",
+    "env": "none",
+    "expect": {
+      "value": 5000001
+    },
+    "budget": 3000000,
+    "reason": "a replace that is not global is measured too, at its one match",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "$& around 800,000 words",
+    "js": "\"word \".repeat(800000).replace(/\\w+/g, \"<$&>\").length",
+    "env": "none",
+    "expect": {
+      "value": 5600000
+    },
+    "budget": 3000000,
+    "reason": "the match the replacement consumes is subtracted",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "replaceAll with an empty string pattern under the limit",
+    "js": "\"a\".repeat(3000).replaceAll(\"\", \"$'\").length",
+    "env": "none",
+    "expect": {
+      "value": 4504500
+    },
+    "budget": 3000000,
+    "reason": "the empty pattern's n + 1 matches are counted and the count ends",
+    "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
   }
 ]

@@ -6,6 +6,7 @@ import { isTable, isStoredTable } from "../table/table-brand";   // a table faca
 import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
+import { replaceSize, replaceWorstCase } from "./replace-size";
 import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
@@ -38,11 +39,6 @@ const REGEX_STRING = new Set(["match", "matchAll", "search", "replace", "replace
 
 /** The String methods that also COMPILE a pattern handed as anything other than a RegExp. */
 const COMPILES_PATTERN = new Set(["match", "matchAll", "search"]);
-
-/** A replacement's special patterns, `$$` included so that it is skipped rather than counted: `$&`, `` $` ``, `$'`, `$n`,
- *  `$nn` and `$<name>` each insert text from the receiver at every match, so a two-character replacement builds output
- *  quadratic in its receiver (`"a".repeat(n).replace(/a/g, "$'")` is n²/2 characters). */
-const REPLACEMENT_REF = /\$(?:\$|[&`']|\d{1,2}|<[^>]*>)/g;
 
 /** Refuse a replace before it builds a result over {@link MAX_STRING}. The count stops once past it, so the message
  *  names the limit, not a size the replace would not have stopped at. */
@@ -207,24 +203,29 @@ export class Evaluator {
     /** Charge a `replace` or `replaceAll` for the text it BUILDS, before it builds it. The host sizes and allocates its
      *  result in one call, so the check after it (`sized`) came only once a string of up to V8's limit was in memory,
      *  and a result under {@link MAX_STRING} was charged as if it were the receiver: 300 replaces of 8.8 million
-     *  characters each ran without asking. The worst case is tried first; a global replace whose worst case is over the
-     *  limit is then measured match by match (a second search, charged as the first was). A replacer arrow is counted as
-     *  it returns (`replacing`). */
+     *  characters each ran without asking. The worst case is tried first and, when it is over the limit, the replace is
+     *  measured match by match (replace-size.ts: a second search, charged as the first was). A replacer arrow is
+     *  counted as it returns (`replacing`). */
     private replaceCharge(str: string, key: string, args: unknown[], search: [string, string, string] | null): void {
-        const r = args[1];
+        const [p, r] = args;
+        // `replaceAll` with a RegExp that is not global throws before it does anything: let it say so itself.
+        if (key === "replaceAll" && isRegExp(p) && !String(p.flags).includes("g")) return;
         if (typeof r === "function") {
             if (!this.ourFns.has(r)) throw new NotInDialect("a replacer that is not an arrow written in the script");
             return;
         }
         const text = this.replacementText(r);
-        const refs = [...text.matchAll(REPLACEMENT_REF)].map((m) => m[0]).filter((t) => t !== "$$");
-        const p = args[0];
         const global = key === "replaceAll" || (isRegExp(p) && String(p.flags).includes("g"));
-        const n = str.length;
-        let size = n + (global ? n + 1 : 1) * (text.length + refs.length * n);
-        if (size > MAX_STRING && global) size = this.replacedSize(str, p, text, refs, search);
+        let size = replaceWorstCase(str.length, text, global);
+        if (size > MAX_STRING) {
+            const pattern = isRegExp(p) ? p as RegExp : this.regexText(p, "pattern");
+            if (search) this.regexCharge(search); else this.scans(str);
+            const measured = replaceSize(str, pattern, text, global, MAX_STRING);
+            this.tick(Math.floor(measured.matches / HOST_COPY_ELEMENTS_PER_STEP));
+            size = measured.size;
+        }
         if (size > MAX_STRING) tooMuchReplaced();
-        this.tick(Math.floor(size / HOST_CHARS_PER_STEP));
+        this.tick(Math.floor(Math.max(0, size) / HOST_CHARS_PER_STEP));
     }
     /** The text a host call coerces a replacement to. A string, a String object or a primitive is its `String()`; an
      *  object is refused, since the host would coerce it by running its `toString`, and the text it returns (a `$'`) is
@@ -233,39 +234,13 @@ export class Evaluator {
         if (v === null || typeof v !== "object" || kindOf(v) === "string") return String(v);
         throw new NotInDialect("a replacement that is not a string or a function");
     }
-    /** An upper bound on what a GLOBAL replace builds, found match by match: the receiver, plus at each match the
-     *  replacement with every special pattern counted at what it inserts there (`$&` the match, `` $` `` what precedes
-     *  it, `$'` what follows it, a `$n` or `$<name>` the longest capture of that match). Stops once over the limit. */
-    private replacedSize(str: string, p: unknown, text: string, refs: string[], search: [string, string, string] | null): number {
-        const n = str.length;
-        let size = n, matches = 0;
-        const at = (index: number, len: number, capture: number): boolean => {
-            matches++;
-            size += text.length;
-            for (const t of refs) size += t === "$&" ? len : t === "$`" ? index : t === "$'" ? n - index - len : Math.max(capture, t.length);
-            return size > MAX_STRING;
-        };
-        if (isRegExp(p)) {
-            if (search) this.regexCharge(search);
-            for (const m of str.matchAll(new RegExp(String(p.source), String(p.flags)))) {
-                let capture = 0;
-                for (let i = 1; i < m.length; i++) capture = Math.max(capture, m[i]?.length ?? 0);
-                if (at(m.index ?? 0, m[0].length, capture)) break;
-            }
-        } else {
-            const s = this.regexText(p, "pattern");
-            this.scans(str);
-            for (let i = str.indexOf(s); i !== -1; i = str.indexOf(s, i + Math.max(1, s.length))) if (at(i, s.length, 0)) break;
-        }
-        this.tick(Math.floor(matches * (1 + refs.length) / HOST_COPY_ELEMENTS_PER_STEP));
-        return size;
-    }
-    /** What a replacer arrow returned, counted before the host adds it to the result (`replacing`). */
-    private replaced(rep: { chars: number }, ret: unknown): void {
+    /** What a replacer arrow returned for one match, counted before the host adds it to the result (`replacing`): the
+     *  result so far grows by the return and loses the match it replaces. */
+    private replaced(rep: { chars: number }, ret: unknown, match: unknown): void {
         if (ret !== null && typeof ret === "object" && kindOf(ret) !== "string")
             throw new NotInDialect("a replacer that returns an object, which the host would turn into text by running its toString");
         const len = String(ret).length;
-        rep.chars += len;
+        rep.chars += len - String(match).length;
         if (rep.chars > MAX_STRING) tooMuchReplaced();
         this.tick(Math.floor(len / HOST_CHARS_PER_STEP));
     }
@@ -829,7 +804,7 @@ export class Evaluator {
                     const ret = runSync(self.callArrow(node, scope, args));
                     if (coerced) self.expands(ret);
                     const rep = self.replacing;
-                    if (rep !== null && rep.depth === self.depth) self.replaced(rep, ret);
+                    if (rep !== null && rep.depth === self.depth) self.replaced(rep, ret, args[0]);
                     return ret;
                 };
                 this.ourFns.set(fn, { node, scope });

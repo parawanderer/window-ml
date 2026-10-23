@@ -248,6 +248,20 @@ test("the replace charge leaves ordinary rewrites alone: a date rewrite, $& arou
     }
 });
 
+test("a replacer arrow that returns its match is counted at the receiver's size, not twice it", async () => {
+    // The first version started at the receiver and added every return without taking away the match it replaced, so
+    // an identity over 5.5 million characters counted 11 million and was refused. A raised budget pays for the 5.5
+    // million calls, which the shipped one never would: the size is what this checks.
+    const r = await inWorker(`"a".repeat(5500000).replace(/a/g, (c) => c).length`, { stepBudget: 30_000_000, ms: 20_000 });
+    assert.deepEqual(r, { value: 5500000, logs: 0 });
+});
+
+test("replaceAll with a RegExp that is not global throws the host's own TypeError, not one from the size check", async () => {
+    const r = await inWorker(`"abc".replaceAll(/b/, "$'".repeat(1000000))`);
+    assert.equal(r.threw, "TypeError", JSON.stringify(r));
+    assert.match(r.message, /replaceAll called with a non-global RegExp/);
+});
+
 // --- FAILURE: a survey refused by a new check leaves nothing behind ---------------------------------------------------
 
 test("FAILURE: a survey that curates its answer and then trips an expansion, a cost charge or a page RegExp has changed nothing", async () => {

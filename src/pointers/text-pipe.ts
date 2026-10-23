@@ -12,6 +12,7 @@
 
 import { jsonShape } from "../dom/dom";
 import { riskyRegex, MAX_STRING } from "../readonly-exec/limits";
+import { replaceSize, replaceWorstCase } from "../readonly-exec/replace-size";
 import { regexSteps, UNCHARGED_SEARCH_STEPS } from "../readonly-exec/regex-cost";
 
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
@@ -337,24 +338,17 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     // A caller with no `maxChars` (a tool's `pipe`, an `@tool:` pipe) is held to MAX_STRING: with none, `s/a/$'/g` on a
     // long line built a string up to V8's limit.
     const max = limits?.maxChars ?? MAX_STRING;
-    chargeSearch("sed", re, lines, re.global ? 2 : 1, limits);
+    chargeSearch("sed", re, lines, 2, limits);
     // The one stage that can GROW its input, and by a product: `s/./<a long string>/g` puts a copy of the
-    // replacement at every character. So the size is bounded BEFORE a line is built, not after, since the
-    // allocation is the cost. A `$&`/`$1`/`$<name>`/`` $` ``/`$'` in the replacement inserts text from the line,
-    // so each one is counted as a whole line: an upper bound, never an estimate.
-    const refs = (replacement.match(/\$(?:[&`']|\d|<[^>]*>)/g) ?? []).length;
+    // replacement at every character, and a `$'` or `` $` `` inserts the rest of the line at each match. So the size is
+    // bounded BEFORE a line is built, not after, since the allocation is the cost: the worst case first, then, when
+    // that is over, the line measured match by match (replace-size.ts), linear in the line for any pattern
+    // `onPattern` let through.
     const out: string[] = [];
     let total = 0;
     for (const l of lines) {
-        const perMatch = replacement.length + refs * l.length;
-        let bound = l.length + (re.global ? (l.length + 1) * perMatch : perMatch);
-        // The worst case is loose for a `g` substitution on a long line. Before refusing on it, count the matches
-        // that will actually be replaced: linear in the line for any pattern `onPattern` let through.
-        if (total + bound > max && re.global) {
-            let n = 0;
-            for (const _ of l.matchAll(re)) n++;
-            bound = l.length + n * perMatch;
-        }
+        let bound = replaceWorstCase(l.length, replacement, re.global);
+        if (total + bound > max) bound = replaceSize(l, re, replacement, re.global, max - total).size;
         if (total + bound > max) {
             const msg = `sed: this substitution would produce over ${max.toLocaleString("en-US")} characters`;
             if (limits?.tooLarge) limits.tooLarge(msg);
