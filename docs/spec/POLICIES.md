@@ -195,6 +195,20 @@ transcript and the export and never as the person's words; the first ask afterwa
 The model may PROPOSE a run policy, which reaches the person as an approval like any other; it never adds one itself, and
 a page never can. A policy reached over the hub is set by a principal holding `approve`.
 
+## Where a policy can live
+
+Every place a policy can come from, how it is written there and how it reaches a decision (2026-10-23). The scopes
+above are three of these rows; the store's keys and code are in [`docs/dev/policies.md`](../dev/policies.md).
+
+| Where | Written as | Loaded | Status |
+| --- | --- | --- | --- |
+| Built-in default | code: `free()` in [`src/effects.ts`](../../src/effects.ts), ONE rule over a call's effects for every consumer | compiled in; always present | built |
+| global | a `StoredPolicy` (source, effect, consumer, label, origin: `person`, `card` or `proposed`) | read from `chrome.storage.local` after each worker wake; until it is, every gated call asks | built |
+| run | the same, keyed by the session's hash | as global; survives a resume, removed when the session is deleted or archived | built |
+| workspace | not specified | not specified | this spec's scope table only |
+| Over the hub | set by a principal holding `approve` | not specified | one sentence above |
+| A file (a repository the host opens, or one passed along) | not specified; the policy page's typed-node trees are the natural form, with the hash of each script a rule allows | its narrowing rules at once; the rest as the accepted snapshot, pinned by hash, loaded by a card | proposed below |
+
 ## Widening is a policy, never a button on a card
 
 **An approval card has two answers: allow this call, or deny it (with a note).** Never a menu of guessed generalisations
