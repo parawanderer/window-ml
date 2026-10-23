@@ -39,10 +39,10 @@ export const manifestsReady: Promise<void> = (() => {
     try {
         return chrome.storage.local.get([GLOBAL_MANIFESTS_KEY, WORKSPACE_MANIFESTS_KEY]).then((got) => {
             const g = got?.[GLOBAL_MANIFESTS_KEY];
-            globals.splice(0, globals.length, ...(Array.isArray(g) ? g.filter((s) => validStored(s, "global")) : []));
+            globals.splice(0, globals.length, ...(Array.isArray(g) ? g.filter((s) => validStored(s, "global", SHIPPED_MANIFESTS)) : []));
             const w = (got?.[WORKSPACE_MANIFESTS_KEY] ?? {}) as Record<string, unknown>;
             for (const [root, list] of Object.entries(w)) {
-                const kept = Array.isArray(list) ? list.filter((s): s is StoredManifest => validStored(s, "workspace") && s.root === root) : [];
+                const kept = Array.isArray(list) ? list.filter((s): s is StoredManifest => validStored(s, "workspace", SHIPPED_MANIFESTS) && s.root === root) : [];
                 if (kept.length) byRoot.set(root, kept);
             }
         }).catch(() => { /* storage unavailable: nothing stored describes anything, so those calls ask */ }).finally(() => { loaded = true; });

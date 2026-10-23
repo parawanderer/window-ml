@@ -9,8 +9,13 @@ let stored = {
     ml_manifests_global: [
         { id: "man-old-g", scope: "global", manifest: { program: "fd", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], paths: "operands", flags: {} } }, origin: "person", created: 1, pin: { path: "/opt/bin/fd", fingerprint: "1:2:3:4", inRoot: false } },
         { id: "man-broken", scope: "global", manifest: { program: "x" }, origin: "person", created: 2 },
+        // Well-formed, but git is shipped: written before B2, or by hand. Kept, it would shadow git.json for every call.
+        { id: "man-git-g", scope: "global", manifest: { program: "git", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], paths: "operands", flags: {} } }, origin: "person", created: 4, pin: { path: "/usr/bin/git", fingerprint: "5:6:7:8", inRoot: false } },
     ],
-    ml_manifests_workspace: { "/w": [{ id: "man-old-w", scope: "workspace", root: "/elsewhere", manifest: { program: "y", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], flags: {} } }, origin: "person", created: 3, pin: { path: "/w/y", fingerprint: "f", inRoot: true } }] },
+    ml_manifests_workspace: {
+        "/w": [{ id: "man-old-w", scope: "workspace", root: "/elsewhere", manifest: { program: "y", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], flags: {} } }, origin: "person", created: 3, pin: { path: "/w/y", fingerprint: "f", inRoot: true } }],
+        "/v": [{ id: "man-git-w", scope: "workspace", root: "/v", manifest: { program: "git", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], paths: "operands", flags: {} } }, origin: "person", created: 5, pin: { path: "/usr/bin/git", fingerprint: "5:6:7:8", inRoot: false } }],
+    },
 };
 let release;
 const gate = new Promise((r) => { release = r; });
@@ -158,7 +163,9 @@ test("the previous store loads its well-formed entries and drops the rest, never
     await M.manifestsReady;
     const view = await M.manifestView();
     assert.ok(!view.global.some((s) => s.id === "man-broken"), "a malformed entry is dropped");
-    assert.deepEqual(view.workspace, [], "an entry filed under another root than its own is dropped");
+    assert.ok(view.global.some((s) => s.id === "man-old-g"), "positive control: a well-formed entry is kept");
+    assert.ok(!view.global.some((s) => s.id === "man-git-g"), "B2: a stored entry for a shipped program is dropped on load");
+    assert.deepEqual(view.workspace, [], "an entry filed under another root than its own is dropped, and so is a workspace's entry for a shipped program");
     assert.ok(view.shipped.includes("git") && view.shipped.includes("rm"));
 });
 

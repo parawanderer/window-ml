@@ -89,11 +89,14 @@ export function storeRefusal(r: ManifestRequest, stored: readonly StoredManifest
     return undefined;
 }
 
-/** Whether storage held a well-formed entry of `scope`; anything else is dropped on read, never repaired. */
-export function validStored(v: unknown, scope: StoredManifest["scope"]): v is StoredManifest {
+/**
+ * Whether storage held a well-formed entry of `scope` that the store would take now; anything else is dropped on read,
+ * never repaired. A stored entry for a shipped program (B2) is dropped too: the call path takes the first match, stored first.
+ */
+export function validStored(v: unknown, scope: StoredManifest["scope"], shipped: Readonly<Record<string, ProgramManifest>>): v is StoredManifest {
     const s = v as StoredManifest | null;
     if (!s || typeof s !== "object" || typeof s.id !== "string" || typeof s.created !== "number" || s.scope !== scope) return false;
-    return storeRefusal({ scope: s.scope, root: s.root, manifest: s.manifest, origin: s.origin, pin: s.pin }, [], {}) === undefined;
+    return storeRefusal({ scope: s.scope, root: s.root, manifest: s.manifest, origin: s.origin, pin: s.pin }, [], shipped) === undefined;
 }
 
 /**
