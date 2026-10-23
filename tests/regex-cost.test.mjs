@@ -58,6 +58,17 @@ test("flags are carried into the run scan: i, u and s change what a unit's run i
     assert.ok(regexWork("\\p{L}+1", "u", A(10000)) > 1e7, "u: a property class runs");
 });
 
+test("a ] that opens a class is read as JavaScript reads it, not as PCRE does", () => {
+    // In JavaScript `[]` is the empty class and `[^]` any character; a `]` straight after either is a literal outside the
+    // class. PCRE and Python read `[]]` and `[^]]` as classes of `]` and of not-`]`. Read the PCRE way, `[^]]+b` over a run
+    // of `]` would be priced linear while V8 backtracks through the run from every start (half a minute at 300k).
+    const s = "]".repeat(300000);
+    assert.equal(new RegExp("[]]+b").exec("]]b"), null, "the engine: [] never matches, so [] ]+ b cannot");
+    assert.ok(regexSteps("[]]+b", "", s) < 5000, "[]]+b fails at its first atom everywhere: linear, and priced so");
+    assert.ok(regexSteps("[^]]+b", "", s) > STEP_BUDGET, "[^]]+b is any character then ]+ then b: quadratic, refused");
+    assert.ok(regexSteps("[^\\]]+b", "", s) < 5000, "an escaped ] stays inside the class: no run of not-] to backtrack over");
+});
+
 // --- what the bound refuses to price -------------------------------------------------------------------------------
 
 test("syntax the reader does not know, and a repeated unit the input lets branch, are unbounded", () => {

@@ -1370,6 +1370,15 @@
     "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
   },
   {
+    "name": "a class opened by ]: /[^]]+b/ over a run of ]",
+    "js": "\"]\".repeat(300000).match(/[^]]+b/)",
+    "env": "none",
+    "expect": "refused",
+    "budget": 3000000,
+    "reason": "in JavaScript [^] is any character and the ] after it a literal, so ]+ backtracks over the run; read the PCRE way, as a class of not-], it would be priced linear and run for half a minute",
+    "from": "tests/readonly-soundness.test.mjs a regex search is charged for the backtracking it can do on its input"
+  },
+  {
     "name": "alternation: /(?:a+b|a+c)/",
     "js": "\"a\".repeat(300000).match(/(?:a+b|a+c)/)",
     "env": "none",
