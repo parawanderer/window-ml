@@ -430,7 +430,7 @@ test("a host error that names the server URL or the API key reaches the script w
 // --- the module itself: races, held output and the probe (sw-shell-call.ts, imported directly) ---
 
 // The worker's chrome, as much of it as sw-shell.ts and sw-shell-call.ts use. The policy store's read is held until
-// released, so the first test sees a store that is not loaded yet.
+// released, so the first test sees a store that is not loaded yet; the manifest store's read is not held.
 let releasePolicies;
 const policiesHeld = new Promise((r) => { releasePolicies = r; });
 const sync = { ...ON, chatUrl: "http://host/api/chat/completions", apiKey: "sk-test" };
@@ -449,7 +449,7 @@ globalThis.chrome = {
         },
     },
     storage: {
-        local: { get: async (keys) => { if (Array.isArray(keys)) await policiesHeld; return {}; }, set: async () => {}, remove: async () => {} },
+        local: { get: async (keys) => { if (Array.isArray(keys) && keys.includes("ml_policies_global")) await policiesHeld; return {}; }, set: async () => {}, remove: async () => {} },
         sync: { get: async (d) => ({ ...(d ?? {}), ...sync }), set: async () => {} },
         session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
         onChanged: { addListener() {} },
