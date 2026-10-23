@@ -239,8 +239,7 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
   not touch background start.
 - Seen once each: `site-access` 16a (@security), `cross-page` composer seq collision, `output-scroll` tail-follow,
-  `chat-web` phone tooltip, `focus-restore`, `bench-editor` traceback, `chat-page` PAGE-hosted run, `resource-panel`
-  narrow window.
+  `chat-web` phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window.
 
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
@@ -291,6 +290,16 @@ Recently removed, recorded so nobody re-adds them from memory:
   keeps testing the old one.
 - ~~`resource-panel.spec.mjs` › the event lane hover~~ — **fixed.** Arrived with the lane-hover race PR
   and failed on main's own CI for a while; main is green.
+
+- ~~`chat-page` PAGE-hosted run state lost to a migration race and empty placeholders~~ — **fixed** in #1013
+  (`f9377abe`): a page-hosted run's state was dropped when a storage migration raced an empty placeholder write.
+
+- ~~`media-in-worker.spec.mjs:234` › python's image #b's crop reads grey (the mask covered #b's centre)~~ —
+  **fixed.** The HUD card's `expanded` state (an open click/type approval) rests at bottom-right; its measured
+  rect is ~(470, 322) 392×339 on the 800×600 test viewport and covered #b's centre at (500, 350). `workerShot`'s
+  mask paints the watch union, so a python shot landing while the card was up (or still animating away) greyed
+  out the crop. `#b` now sits at (400, 50), centre (500, 100), clear of every card state on that viewport. The
+  invariants hold: the crop is still 100 rows, 200 columns, blue; the cast still lands at #b's centre.
 
 A failure that is genuinely not yours goes in the PR body, named, with the evidence — never silently
 ignored, and never "fixed" by re-running until it passes.
