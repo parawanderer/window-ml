@@ -44,12 +44,15 @@ starts from main.
    every `lockdownReadonly` call reruns the boot, and `Object.isFrozen(Promise.prototype)` is false afterwards. The
    control without the accessor freezes. P1 still passes because `ses` tames the `Function` constructors before its
    permit check throws, which is why no vector noticed: nothing tests that the realm is FROZEN. The worker
-   (`python-worker.ts`) takes the same path; not yet measured in a browser. ASSIGNED the same day to the red team as this
-   document's lane, with the step 4 gap (same PR or one before it; the finder builds and reviews nothing on it, rule 10;
-   the janitor reviews): a failing-first test that `Object.prototype` and `Promise.prototype` are frozen after boot and
+   (`python-worker.ts`) takes the same path; not yet measured in a browser. ASSIGNED the same day, with the step 4 gap, to the
+   `[window-ml security] Site access` session as BUILDER (corrected within the hour: the red team is a finder-side lane
+   and builds no defence, rule 10; it delivers the failing-first tests as their own PR; the finder builds and reviews
+   nothing on it; the janitor reviews both PRs): a failing-first test that `Object.prototype` and `Promise.prototype` are frozen after boot and
    that the latch sets; keep the `n.constructor` path of #735 working, measured both ways (an `ses` option that permits
    the accessor, or the accessor installed by another route after the freeze). Step 5's gate is built not to depend on
-   the latch, so it holds either way.
+   the latch, so it holds either way. Property from the red team, ruled in: do NOT widen the `ses` permit to allow the
+   accessor, since an accessor on `Object.prototype.constructor` is a write path to `Function` for anything that reaches
+   the prototype; install it after `lockdown()`, or by a route `ses` does not treat as an intrinsic write.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
@@ -68,8 +71,10 @@ starts from main.
    `Module`). `js.setTimeout(pyodide_js._api.runPythonInternal.bind(None, src), 10)` runs `src` after the cell's result
    with no Python callable crossing, so step 5's cancel has nothing to revoke; a later cell can un-revoke a proxy
    through `PyProxy_getAttrsQuiet(p).shared.ptr`. The pre-lockdown `harden()` in `python-runtime.ts` unregisters
-   `js` and `pyodide_js` and purges `sys.modules`; the lockdown worker does not call it. ASSIGNED the same day to the
-   red team as this document's lane (the finder builds and reviews nothing on it, rule 10; the janitor reviews): make
+   `js` and `pyodide_js` and purges `sys.modules`; the lockdown worker does not call it. ASSIGNED the same day, corrected
+   within the hour, to the `[window-ml security] Site access` session as builder (the red team, a finder-side lane,
+   builds no defence and delivers the attribute-gate probe as failing-first tests; the finder builds and reviews
+   nothing on it, rule 10; the janitor reviews): make
    `pyodide_js`, `_module` and `_api` unreachable from a cell while Pyodide's own boot-time `from pyodide_js._api
    import scheduleCallback` keeps working; a gc-walk test that no live Python object holds a JsProxy of `Module` or
    the API; every other way to the API object enumerated. The finder's PR carries the two failing-first `{ todo }`
