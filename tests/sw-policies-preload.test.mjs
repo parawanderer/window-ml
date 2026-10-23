@@ -147,18 +147,32 @@ test("two adds before the read both survive, in order, with distinct ids", async
     assert.deepEqual(ids(stored.ml_policies_run.h), ["r-old", c.id, d.id]);
 });
 
-test("a read that fails: early adds are honoured in memory, nothing is written over storage, calls still judge", async () => {
+test("a read that fails: early adds are kept in memory, nothing is written over storage, and every call asks unless an add denies it", async () => {
     const { P, stored, writes, settle } = await boot(OLD(), { fail: true });
     const made = P.addRunPolicy("h", NEW);
     await settle();
     assert.equal(P.policiesLoaded(), true);
-    assert.deepEqual(ids(P.runPolicies("h")), [made.id], "the early add is honoured");
-    assert.equal(P.judgeCall("h", "fetch", facts(P, "https://a.example/new")).decision, "allow");
-    assert.equal(P.judgeCall("h", "fetch", facts(P, "https://a.example/old")).decision, undefined, "nothing saved is honoured");
+    assert.deepEqual(ids(P.runPolicies("h")), [made.id], "the early add is kept");
+    // A saved deny the read missed may cover any call, so an allow (the early add's, or the built-in's) answers nothing.
+    assert.equal(P.judgeCall("h", "fetch", facts(P, "https://a.example/new")).decision, "ask", "an early allow does not answer for the person");
+    assert.equal(P.judgeCall("h", "fetch", facts(P, "https://a.example/old")).decision, "ask", "nothing saved is known, so free tiers do not answer");
+    P.addGlobalPolicy({ consumer: "fetch", effect: "deny", source: '(c) => c.url.includes("/blocked")', label: "blocked" });
+    assert.equal(P.judgeCall("h", "fetch", facts(P, "https://a.example/blocked")).decision, "deny", "an added deny is enforced");
     P.addGlobalPolicy({ consumer: "fetch", effect: "ask", source: "(c) => false", label: "later" });
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(writes, [], "no save may replace a stored list with a partial one");
     assert.deepEqual(stored, OLD(), "storage holds exactly what it held");
+});
+
+test("a session forgotten before the read stays forgotten: the merge does not bring its saved policies back", async () => {
+    const { P, stored, settle } = await boot(OLD());
+    P.forgetRunPolicies("h");
+    P.forgetRunPolicies("other", "archived");
+    await settle();
+    assert.deepEqual(P.runPolicies("h"), [], "a deleted session's saved policies are gone");
+    assert.deepEqual(P.runPolicies("other"), [], "and an archived one's");
+    assert.deepEqual(Object.keys(stored.ml_policies_run ?? {}), [], "and gone from storage");
+    assert.equal(P.archivedPolicyLoss("other")?.labels.length, 1, "the archived session's loss names the policy the read found");
 });
 
 test("a judgement before the read asks, and a deferred save does not make the store look loaded", async () => {

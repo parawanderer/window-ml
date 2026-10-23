@@ -139,6 +139,8 @@ let loaded = false;   // state: plumbing — set once per worker by the read bel
 let readState: "pending" | "read" | "failed" = "pending";   // state: plumbing — set once per worker by the read below
 /** Saves asked for before the read finished, issued right after it (a save writes the whole in-memory state). */
 const owed = { globals: false, runs: false };   // state: plumbing — drained once by the read below
+/** Sessions forgotten before the read: replayed after it, or the merge would bring their saved policies back. */
+const forgottenEarly: [string, "deleted" | "archived"][] = [];   // state: plumbing — drained once by the read below
 
 /** Whether every saved policy is known. */
 export const policiesLoaded = (): boolean => loaded;
@@ -180,14 +182,15 @@ export const policiesReady: Promise<void> = (() => {
             mergeStored(got);
             readState = "read";
             loaded = true;   // after the merge, in the same turn: no judgement sees `loaded` with memory unfilled
+            for (const [runId, why] of forgottenEarly.splice(0)) forgetRunPolicies(runId, why);
             const { globals: g, runs: r } = owed;
             owed.globals = owed.runs = false;
             // Through the saves, not the writes: the merge can hold more sessions than the cap, which `saveRuns` trims.
             if (g) saveGlobals();
             if (r) saveRuns();
         }).catch(() => {
-            /* storage unavailable: nothing saved is honoured, so every call asks; adds made meanwhile are, and no save may
-               replace the lists we could not read with a partial one */
+            /* storage unavailable: nothing saved is known, so every call asks (`judgeCall`), save one an add made meanwhile
+               denies; and no save may replace the lists we could not read with a partial one */
             if (readState === "pending") readState = "failed";
             loaded = true;
         });
@@ -275,6 +278,7 @@ export function removePolicy(id: string): boolean {
  *  the session is archived, so an archived session that comes back has none). An ARCHIVED session's loss is recorded,
  *  with the time, so its resume says so (`archivedPolicyLoss`); a deleted session's record goes with it. */
 export function forgetRunPolicies(runId: string, why: "deleted" | "archived" = "deleted"): void {
+    if (readState === "pending") forgottenEarly.push([runId, why]);
     const list = byRun.get(runId);
     if (why === "deleted") { archivedLoss.delete(runId); lapsed.delete(runId); }
     if (!list) { if (why === "deleted") saveRuns(); return; }
@@ -354,8 +358,9 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
  * - **A store not yet loaded means ASK, free tiers included.** Until the saved policies are read after a worker wake
  *   this returns `"ask"` (no `by`), and the consumer must put the call to the person without letting any free tier of
  *   its own answer: an unloaded `deny` is an unenforced one. A matching `ask` policy returns the same `"ask"` WITH `by`,
- *   and the consumer treats it the same way, adding the policy's label to the card (`askWhyOf`). This function carries
- *   the rule so a consumer cannot forget it.
+ *   and the consumer treats it the same way, adding the policy's label to the card (`askWhyOf`). A read that FAILED
+ *   keeps this for good in that worker: a policy added since may deny, but nothing else answers without the person.
+ *   This function carries the rule so a consumer cannot forget it.
  * - **Judge again at the choke point.** A consumer whose call runs somewhere other than its gate (the worker's fetch,
  *   the host's process start) calls this again there, over the same facts, rather than trusting the gate's answer.
  * @param runId the run's session hash, or undefined for a call no run made
@@ -378,6 +383,8 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
         if (r.decision === "allow" && !allow) allow = p;
     }
     if (ask) return { decision: "ask", by: { ...ask }, broken };
+    // The read failed: a saved `deny` may be missing, so nothing short of an added one's deny answers without the person.
+    if (readState === "failed") return { decision: "ask", broken };
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
     const gone = lapsedCover(runId, consumer, facts);
