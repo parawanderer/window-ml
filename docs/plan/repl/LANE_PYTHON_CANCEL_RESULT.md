@@ -1,7 +1,7 @@
 # Result: the cancel sweep's two gaps (python-cancel)
 
 Result for [PYTHON_CANCEL_GAPS.md](PYTHON_CANCEL_GAPS.md), 2026-10-23, session `5dfb667d` (`[window-ml python-cancel]`, work
-slug `python-cancel`). Lands in #1051 (reviewed by `window-ml-flaky-ci`; merging when CI is green).
+slug `python-cancel`). Landed in #1051 (reviewed by `window-ml-flaky-ci`; merged as `5dd5a1fc`).
 
 ## What landed
 
