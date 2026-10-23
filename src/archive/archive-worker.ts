@@ -9,9 +9,13 @@
 //
 // chrome-free, like python-worker.ts: the wasm is found next to this script's own URL.
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { archiveStats, dirtyMonths, listArchived, markAllDirty, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
+import { importBytes, archiveStats, dirtyMonths, listArchived, markAllDirty, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
 import { folderState, monthFolder, moveMonthFilesAside, writableFolder, type FolderState } from "./archive-folder";
 import { adoptFolder, importMonths, surveyFolder, syncMonths, type SyncOutcome } from "./folder-sync";
+import { abandonBackup, addSession, beginBackup, finishBackup, inspectBackup, openBackupBytes, sealBackup, type BackupBuild, type BackupContents, type BackupForm } from "../backup/backup-file";
+import { idbKeyringStore, loadKeyring } from "../backup/backup-keyring";
+import { readBackupSlot, removeBackupSlot, writeBackupSlot, type BackupSlot } from "../backup/backup-opfs";
+import type { BackupError, Secret } from "../backup/backup-format";
 
 /** The operations this worker answers, and what each takes. */
 export type ArchiveOp =
@@ -36,7 +40,21 @@ export type ArchiveOp =
     /** up to `limit` PNG images still to re-encode as WebP, as data URLs, and how many wait in all */
     | { op: "pngs"; args: { limit: number } }
     /** put re-encoded images in place of their PNGs (`url: null` keeps one): the backfill's commit */
-    | { op: "replacePngs"; args: { items: { sha: string; url: string | null }[] } };
+    | { op: "replacePngs"; args: { items: { sha: string; url: string | null }[] } }
+    /** start a backup: a copy of the archive's sessions to add the live ones to (docs/dev/backup.md, "Backup and restore") */
+    | { op: "backupBegin"; args?: undefined }
+    /** add one live session to the backup being built */
+    | { op: "backupPut"; args: { input: ArchiveInput } }
+    /** finish it: settings in, sealed in the chosen form, written to the `out` file (backup-opfs.ts) */
+    | { op: "backupFinish"; args: { settings: string | null; form: BackupForm } }
+    /** drop the backup being built */
+    | { op: "backupAbort"; args?: undefined }
+    /** open the `in` file (decrypting it with the install's key or the secret) and say what it holds, changing nothing */
+    | { op: "restoreInspect"; args: { secret?: Secret } }
+    /** import the `in` file's sessions into the archive (new ones only) and mark their months for the folder */
+    | { op: "restoreSessions"; args: { secret?: Secret } }
+    /** delete a backup file left in the origin-private file system */
+    | { op: "backupFileRemove"; args: { slot: BackupSlot } };
 
 /** What the folder operations answer, for Settings. */
 export interface FolderReport {
@@ -64,6 +82,9 @@ export interface FolderReport {
  *  surface the shared SQL runs over (archive-db.ts), so the phone's archive can be the same database. */
 type Opened = { raw: Database; db: ArchiveDb; sqlite3: Sqlite3Static; exportBytes: () => Uint8Array };
 let opened: Promise<Opened> | null = null;
+
+/** The backup being built, if one is; one at a time, dropped by `backupFinish` and `backupAbort`. */
+let backupBuild: BackupBuild | null = null;   // state: plumbing
 
 /** Open (once) the archive database, creating or upgrading its schema. */
 function open(): Promise<Opened> {
@@ -95,6 +116,41 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "pngs": return { batch: pngBatch(db, req.args.limit), pending: pngPending(db) };
         case "replacePngs": return replacePngs(db, req.args.items);
         case "export": return exportBytes();
+        case "backupBegin": {
+            if (backupBuild) abandonBackup(backupBuild);
+            backupBuild = null;
+            backupBuild = beginBackup(sqlite3, exportBytes());
+            return { fromArchive: backupBuild.fromArchive };
+        }
+        case "backupPut": {
+            if (!backupBuild) throw new Error("no backup is being built");
+            await addSession(backupBuild, req.args.input);
+            return true;
+        }
+        case "backupAbort": if (backupBuild) abandonBackup(backupBuild); backupBuild = null; return true;
+        case "backupFinish": {
+            if (!backupBuild) throw new Error("no backup is being built");
+            // Asked before the build is consumed: a missing passphrase must not cost the work of reading every session.
+            const keyring = req.args.form === "encrypted" ? await loadKeyring(idbKeyringStore()) : null;
+            if (req.args.form === "encrypted" && !keyring) await sealBackup(new Uint8Array(0), "encrypted", null);
+            const build = backupBuild;
+            backupBuild = null;
+            const made = finishBackup(sqlite3, build, req.args.settings);
+            const sealed = await sealBackup(made.bytes, req.args.form, keyring);
+            await writeBackupSlot("out", sealed as Uint8Array<ArrayBuffer>);
+            return { size: sealed.byteLength, sessions: made.sessions, form: req.args.form };
+        }
+        case "restoreInspect": {
+            const plain = await backupPlain(req.args.secret);
+            return { ...inspectBackup(sqlite3, raw, plain) } satisfies BackupContents;
+        }
+        case "restoreSessions": {
+            const imported = importBytes(sqlite3, raw, await backupPlain(req.args.secret));
+            // The folder does not hold these yet (an import from a folder is the only one that already matches it).
+            if (imported) markAllDirty(db);
+            return { imported };
+        }
+        case "backupFileRemove": await removeBackupSlot(req.args.slot); return true;
         case "folder": return folderReport(db);
         case "resync": return sync(db, raw, sqlite3, "adopt");
         case "fresh": {
@@ -116,6 +172,13 @@ async function run(req: ArchiveOp): Promise<unknown> {
             return { ...(await folderReport(db)), imported: { files, sessions }, ...(skipped.length ? { skipped } : {}) };
         }
     }
+}
+
+/** The `in` file as plain SQLite bytes: opened with this install's key when it sealed the file, else with `secret`. */
+async function backupPlain(secret?: Secret): Promise<Uint8Array> {
+    const file = await readBackupSlot("in");
+    if (!file) throw new Error("no backup file was handed over");
+    return openBackupBytes(file, await loadKeyring(idbKeyringStore()), secret);
 }
 
 async function folderReport(db: ArchiveDb): Promise<FolderReport> {
@@ -147,6 +210,7 @@ self.onmessage = (e: MessageEvent<{ id: number } & ArchiveOp>) => {
     const { id, ...req } = e.data;
     chain = chain.then(() => run(req as ArchiveOp)).then(
         (result) => self.postMessage({ id, ok: true, result }),
-        (err) => self.postMessage({ id, ok: false, error: String((err as Error)?.message || err) }),
+        // `reason` is a BackupError's, so the caller can tell "ask for the passphrase" from "that is the wrong one".
+        (err) => self.postMessage({ id, ok: false, error: String((err as Error)?.message || err), ...((err as BackupError)?.reason ? { reason: (err as BackupError).reason } : {}) }),
     );
 };

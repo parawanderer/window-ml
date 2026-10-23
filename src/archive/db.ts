@@ -501,20 +501,27 @@ export function exportMonth(sqlite3: Sqlite3Static, raw: Database, month: string
     } finally { db.exec("DETACH DATABASE snap"); }
 }
 
-/** Import a month file's bytes (a folder snapshot) into the live archive; returns how many sessions were new. */
-export function importBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8Array): number {
+/**
+ * Run `fn` over a SQLite file's bytes attached read-only as an in-memory database (`schema`), then detach it. The header
+ * is checked first: SQLite accepts any bytes into `deserialize` and fails only at the first read, which then leaves an
+ * attachment it will not detach. Shared by the import and by a backup's inspection, so both refuse the same files.
+ */
+export function withAttachedBytes<T>(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8Array, fn: (db: ArchiveDb, schema: string) => T, schema = "imp"): T {
     const db = wasmDb(raw);
-    // Checked before anything is attached: SQLite accepts any bytes into `deserialize` and fails only at the first
-    // read, which then leaves an attachment it will not detach.
     if (bytes.byteLength < 100 || !SQLITE_MAGIC.every((b, i) => bytes[i] === b)) throw new Error("not an archive file");
-    db.exec("ATTACH DATABASE ':memory:' AS imp");
+    db.exec(`ATTACH DATABASE ':memory:' AS ${schema}`);
     try {
         const p = sqlite3.wasm.allocFromTypedArray(bytes);
-        const rc = sqlite3.capi.sqlite3_deserialize(raw.pointer!, "imp", p, bytes.byteLength, bytes.byteLength,
+        const rc = sqlite3.capi.sqlite3_deserialize(raw.pointer!, schema, p, bytes.byteLength, bytes.byteLength,
             sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_READONLY);
         if (rc !== 0) { sqlite3.wasm.dealloc(p); throw new Error(`not an archive file (sqlite error ${rc})`); }
-        return importFrom(db, "imp");
-    } finally { db.exec("DETACH DATABASE imp"); }
+        return fn(db, schema);
+    } finally { db.exec(`DETACH DATABASE ${schema}`); }
+}
+
+/** Import a month file's bytes (a folder snapshot) into the live archive; returns how many sessions were new. */
+export function importBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8Array): number {
+    return withAttachedBytes(sqlite3, raw, bytes, (db, schema) => importFrom(db, schema));
 }
 
 /** Every month with sessions is dirty: a folder was just picked (or re-picked), and holds none of them yet. */
