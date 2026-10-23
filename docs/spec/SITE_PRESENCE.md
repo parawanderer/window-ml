@@ -1,6 +1,6 @@
 # Spec: a site sees window.ml only when the person said it may (decided 2026-10-14)
 
-**Status: decided; step 1 of the Order built** (without the two CDP field fixes, out of scope with input simulation); **step 2a built** (hidden by default: the page scripts are registered for allowed origins only and injected on demand for a run the person starts; the visible mark and the MessagePort, 2b, still to come). Replaces slice 4 of [SITE_ACCESS.md](SITE_ACCESS.md) and comes after slice 3's PR 2
+**Status: decided; step 1 of the Order built** (without the two CDP field fixes, out of scope with input simulation); **step 2a built** (hidden by default: the page scripts are registered for allowed origins only and injected on demand for a run the person starts); **step 2b built** (the MessagePort); the visible mark still to come. Replaces slice 4 of [SITE_ACCESS.md](SITE_ACCESS.md) and comes after slice 3's PR 2
 (the agent level). It answers the measurement in [detection-surface.md](../dev/detection-surface.md): any page, approved or
 not, can tell today that the person has window.ml and learn its extension id, with no run and no approval.
 
@@ -70,6 +70,10 @@ runs it was not given, not that it sees nothing:
   script runs at `document_start` before any page script, creates the channel and hands one port to the content script;
   `PAGE_TOOL_RUN` and its siblings then never cross the page's window. The page still shares the world the main-world
   tools run in (rows 4 and 6 of the measurement), so this hides a run's traffic from spontaneous page code only.
+  As built (`src/page-channel.ts`): the hand-off is a synchronous `ml-page-port` event on `window`, and the isolated side
+  keeps the first port it is handed. On a page whose script is injected after it loaded (a run on a hidden page) the page
+  ran first and can take the port from the hand-off; there it hides nothing, which is no worse than the window was. A page
+  that wraps `MessagePort.prototype.postMessage` reads the traffic anywhere (`tests/redteam-exec-shared-world.test.mjs`).
 - **`console` is a parameter, not a swap.** The main-world exec already evaluates the model's code as
   `new Function("state", "ml", "src", "return eval(src);")` (`tools.ts`); `console` becomes a fourth parameter bound to
   the collector, so the page's own `console.log` lines no longer reach the model's result and the page's `console`

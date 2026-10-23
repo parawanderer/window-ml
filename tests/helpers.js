@@ -759,7 +759,15 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     const asContent = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
     const asInjected = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.other.postMessage(data); };
 
-    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage, asContent, asInjected };
+    // What injected.js sends to content.js and the shell: `fn` hears `{ data }` beside content.js's own listeners.
+    const fromInjected = (fn) => { context.__mlPageChannel.listeners.push(fn); };
+    // What content.js and the shell send to injected.js: `fn` hears `{ data }` just before injected.js does.
+    const fromContent = (fn) => {
+        const port = channel.iso.other, prev = port._on;
+        port._on = (e) => { fn(e); if (prev) prev(e); };
+    };
+
+    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage, asContent, asInjected, fromInjected, fromContent };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM
@@ -797,13 +805,27 @@ function loadDomWorld(html = "", { url, beforeInjected } = {}) {
         setTimeout: win.setTimeout.bind(win),
         clearTimeout: win.clearTimeout.bind(win)
     };
+    // The page channel's isolated end (page-channel.ts). jsdom's dispatchEvent refuses the fake hand-off event, so it is taken
+    // here; with no content.js in this world, `fromInjected` hears what injected.js sends and `asContent` answers it.
+    const channel = { iso: null, listeners: [] };
+    const dispatch = win.dispatchEvent.bind(win);
+    win.dispatchEvent = (event) => {
+        if (!(event instanceof FakeMessageEvent)) return dispatch(event);
+        if (event.type === "ml-page-port" && event.ports?.[0] && !channel.iso) {
+            channel.iso = event.ports[0];
+            channel.iso.onmessage = (e) => { for (const fn of [...channel.listeners]) fn(e); };
+        }
+        return true;
+    };
     vm.createContext(context);
     // The document_start patch first, as the browser runs it: it captures closed roots and answers the DOM tools' ask.
     vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
     // The page's own scripts, which run before injected.js (it loads at document_idle).
     if (beforeInjected) vm.runInContext(beforeInjected, context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
-    return { ml: win.ml, window: win, document: win.document, context };
+    const asContent = (data) => { if (!channel.iso) throw new Error("loadDomWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
+    const fromInjected = (fn) => { channel.listeners.push(fn); };
+    return { ml: win.ml, window: win, document: win.document, context, asContent, fromInjected };
 }
 
 // Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom
@@ -943,4 +965,4 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, hkCalls, setHousekeeping, setVram };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
+module.exports = { FakeMessageChannel, FakeMessageEvent, jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

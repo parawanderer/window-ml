@@ -25,7 +25,7 @@ import vm from "node:vm";
 import { JSDOM } from "jsdom";
 
 const require = createRequire(import.meta.url);
-const { jsonResponse, loadBackground } = require("./helpers");
+const { jsonResponse, loadBackground, FakeMessageChannel } = require("./helpers");
 
 const T = { timeout: 20000 };
 const DIST = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "dist");
@@ -161,7 +161,10 @@ function makeWorkerRecorder() {
 function loadRunPage({ html = "", dpr = 1, toWorker }) {
     const dom = new JSDOM(`<!doctype html><html><head></head><body>${html}</body></html>`, { url: SITE.url, runScripts: "outside-only" });
     const win = dom.window;
-    const posted = [];    // every window.postMessage, in order: what any script on the page can read
+    // Every window.postMessage, and every message on the page channel between injected.js and content.js, in order: what a
+    // script on the page can read (the channel, by wrapping MessagePort.prototype.postMessage, or by taking the port on a
+    // page injected.js was put into late).
+    const posted = [];
     const sent = [];      // every message the content script sent the worker
     const runtimeListeners = [];
     const canvas = makeCanvasRecorder({ viewportW: Math.round(win.innerWidth * dpr), viewportH: Math.round(win.innerHeight * dpr) });
@@ -202,6 +205,23 @@ function loadRunPage({ html = "", dpr = 1, toWorker }) {
             onMessage: { addListener: (fn) => runtimeListeners.push(fn) },
         },
     };
+    // The page channel (page-channel.ts) over the vm worlds' fake ports, each send recorded. jsdom's MessageEvent takes no
+    // fake port, so the hand-off is a plain event carrying `ports`.
+    let channel = null;
+    win.MessageChannel = class extends FakeMessageChannel {
+        constructor() {
+            super();
+            channel = this;
+            for (const port of [this.port1, this.port2]) { const send = port.postMessage.bind(port); port.postMessage = (data) => { posted.push(data); send(data); }; }
+        }
+    };
+    const RealMessageEvent = win.MessageEvent;
+    win.MessageEvent = function (type, init = {}) {
+        if (!init.ports?.length) return new RealMessageEvent(type, init);
+        const e = new win.Event(type);
+        Object.defineProperty(e, "ports", { value: init.ports });
+        return e;
+    };
     const ctx = dom.getInternalVMContext();
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), ctx);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), ctx);
@@ -219,7 +239,10 @@ function loadRunPage({ html = "", dpr = 1, toWorker }) {
         placed.push(el);
         return el;
     };
-    return { win, document: win.document, posted, sent, deliver, place, images: canvas.images, close: () => win.close() };
+    /** Send to injected.js as content.js or the shell would; hear what injected.js sends them. */
+    const asContent = (data) => channel.port2.postMessage(data);
+    const fromInjected = (fn) => { win.__mlPageChannel.listeners.push(fn); };
+    return { win, document: win.document, posted, sent, deliver, place, asContent, fromInjected, images: canvas.images, close: () => win.close() };
 }
 
 // --- the worker, wired to the page ---
@@ -652,7 +675,7 @@ async function pageShot(html, before) {
 }
 
 test("with the sidebar mounted, the page posts hide, waits for the shell's hidden, captures, then posts show", T, async () => {
-    const shell = (p) => { p.win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebarShot === "hide") p.win.postMessage({ __mlSidebarShot: "hidden" }, "*"); }); };
+    const shell = (p) => { p.fromInjected((e) => { if (e.data && e.data.__mlSidebarShot === "hide") p.asContent({ __mlSidebarShot: "hidden" }); }); };
     const w = await pageShot('<div id="ml-sb-root"></div>' + BTNS, shell);
     try {
         assert.deepEqual(shotOrder(w.page), ["sidebar:hide", "sidebar:hidden", "CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"]);
