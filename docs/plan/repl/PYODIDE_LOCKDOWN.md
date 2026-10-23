@@ -37,6 +37,19 @@ starts from main.
    3's corpus of real cells (`notebooks/python-dialect/`, PR #677) under lockdown against unlocked, and carry the number
    in the PR. If `.sig` is Pyodide's FFI signature cache, keep those properties through `ses`'s allowlist rather than
    skipping `lockdown()`.
+   DEFECT FOUND 2026-10-23 by the `[window-ml python-cancel]` session, reproduced by the coordinator the same hour in
+   Node with `ses` 2.3.0: on main `lockdown()` THROWS ("Accessor not expected at intrinsics.%ObjectPrototype%.constructor")
+   because `lockdown.ts` defines an accessor on `Object.prototype.constructor` just before it (the #735 fix for Pyodide's
+   `getPyProxyClass` assigning `n.constructor`); the `try/catch` around the call swallows the throw, `locked` never sets,
+   every `lockdownReadonly` call reruns the boot, and `Object.isFrozen(Promise.prototype)` is false afterwards. The
+   control without the accessor freezes. P1 still passes because `ses` tames the `Function` constructors before its
+   permit check throws, which is why no vector noticed: nothing tests that the realm is FROZEN. The worker
+   (`python-worker.ts`) takes the same path; not yet measured in a browser. ASSIGNED the same day to the red team as this
+   document's lane, with the step 4 gap (same PR or one before it; the finder builds and reviews nothing on it, rule 10;
+   the janitor reviews): a failing-first test that `Object.prototype` and `Promise.prototype` are frozen after boot and
+   that the latch sets; keep the `n.constructor` path of #735 working, measured both ways (an `ses` option that permits
+   the accessor, or the accessor installed by another route after the freeze). Step 5's gate is built not to depend on
+   the latch, so it holds either way.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the

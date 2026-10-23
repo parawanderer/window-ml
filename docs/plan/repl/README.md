@@ -305,6 +305,11 @@ listed as remaining is DONE unless named below.
      item 2's fix is sound only once this is closed. Severity MEASURED the same day: the dialect refuses every import form
      involved, so this and item 2's six routes escape an APPROVED readonly cell, not the auto-approved path; the
      attribute-gate route is the red team's to probe with the fix.
+  5. FOUND 2026-10-23 by `[window-ml python-cancel]`, reproduced by the coordinator: `lockdown()` THROWS on main (the
+     `Object.prototype.constructor` accessor from #735 is refused by `ses`'s permit check), the `try/catch` swallows it, so
+     the readonly realm is never frozen and the latch never sets; P1 still holds, nothing tests the freeze
+     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2, the DEFECT paragraph). ASSIGNED the same day to the red team
+     with item 4, the janitor reviews, the finder builds nothing on it.
 - **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
   (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
   named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped
