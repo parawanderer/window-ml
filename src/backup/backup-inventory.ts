@@ -19,7 +19,7 @@ export type BackupClass = "yes" | "never" | "if-encrypted";
 
 /** What kind of thing a key holds, for the restore preview and for the reasons below. */
 export type KeyGroup =
-    | "config" | "policies" | "sites" | "ui"
+    | "config" | "policies" | "manifests" | "sites" | "ui"
     | "run-state" | "log" | "cache" | "grant" | "pairing" | "chat" | "page-local";
 
 /** One classified key, or a family of keys sharing a prefix. */
@@ -121,6 +121,8 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_runstate_watches", "ui", "watches name paths in particular runs, which do not exist on another machine"),
     local("ml_runstate_shared", "ui", "which watches the model may read: a consent, so it is not carried silently"),
     local("ml_runstate_watch_notes", "ui", "notes on those watches"),
+    local("ml_manifests_global", "manifests", "a stored manifest's pin names a file on this machine, and an unpinned one would describe another machine's program unchecked"),
+    local("ml_manifests_workspace", "manifests", "keyed by a workspace root's realpath on this machine; the same reason as ml_manifests_global"),
     local("ml_synthetic_traffic", "run-state", "marks this browser's requests as synthetic (a bench switch); restoring it would relabel real use"),
 
     // --- never: not chrome.storage at all ---
