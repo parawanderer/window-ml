@@ -359,7 +359,10 @@ listed as remaining is DONE unless named below.
   open from it: an ask saved between `decide` and host start is not re-checked (only deny is); a URL consented BEFORE
   an ask existed is already refused while an ask or deny matches (`sw-fetch-url.ts` `withdrawn`; `docs/dev/policies.md`,
   "A remembered consent yields to an `ask` or a `deny`"). Unstarted and unrequested: the
-  symlink link as a second claim resource; `RIPGREP_CONFIG_PATH`; the lost-POLICIES-add race (awaits Shane).
+  symlink link as a second claim resource; `RIPGREP_CONFIG_PATH`; the lost-POLICIES-add race, FIXED 2026-10-23 by root-k
+  as #1052 (merged 265d055f, the janitor reviewed: a policy added before the worker's first storage read is merged, not
+  lost; after a failed read the store no longer counts as loaded, so `judgeCall` asks for every call in that worker
+  unless a policy added since denies it; a `forgetRunPolicies` before the read is replayed after it).
 
 - **Root K and the rest of the policy layer, ASSIGNED 2026-10-23** on Shane's word (his session) to a new session
   `[window-ml root-k]` (Opus): [`ROOT_K.md`](ROOT_K.md), five roots in order (process ownership on the host, root K in four
@@ -375,6 +378,10 @@ listed as remaining is DONE unless named below.
   janitor reviews it. The red team's `propose_manifest` pass is #1070 (2026-10-23, test-only, stacked on #1055's
   branch `manifests/propose`, head 5ee9eb92, `redteam-propose-manifest.test.mjs` on its branch): twelve pins, all six
   boundary properties hold against c0ca2a09, mutation-checked, no gap; it merges after #1055, the janitor reviews it.
+  #1068's entrypoint todo is a passing pin since 4d80c878 (root-k's fix 01f3952f on `manifests/store`). The janitor's
+  re-reviews cleared #1048 and #1063 on 2026-10-23. BLOCKED the same day, Shane's call: #1048's base is #1042's branch
+  (`owners/extension-cpu-owner`, green, review non-blocking) and `merge-when-green` refuses #1042 while #1048 is stacked
+  on it; root-k's session was refused permission to retarget #1048 to `main` and to merge host #28, and stopped there.
 
 ## The lanes
 
