@@ -109,7 +109,7 @@ export function RecoveryKeyBody(p: {
     if (p.stage === "show") return (
         <div class="bk">
             <div class="bk-title">Your recovery key</div>
-            <div class="set-warn">This is the only time it is shown. If you lose both the passphrase and this key, nobody can open these files, including us.</div>
+            <div class="set-warn">This is the only time it is shown. If you lose both the passphrase and this key, nobody can open these files.</div>
             {/* The print stylesheet shows this block and nothing else of the page: the key and one line saying what it is. */}
             <div class="bk-print">
                 <div class="bk-print-line">window.ml backup recovery key. Keep it apart from the backups.</div>
