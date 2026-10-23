@@ -72,6 +72,106 @@ test("a full-mode cell is a full client, and this round its members are the read
     assert.equal(got.chat.error?.code, "Absent", "no gated member is on the wire until the consent path is");
 });
 
+// --- one budget a cell: every call its code makes draws on one step budget (ML_WIRE.md) ---
+
+test("a cell's piped dereferences share one step budget: a loop of calls each under its own cap is stopped, and the next cell starts whole", T, async () => {
+    // `grep a+b` over a run of "a" backtracks quadratically: about 90k steps here, well under the 3M one call may cost
+    // alone (regex-cost.ts UNCHARGED_SEARCH_STEPS), so before the budget a loop of them was never stopped.
+    const url = "https://data.example/a.txt";
+    const cells = [];
+    await wireRun(async (wire, bg) => {
+        const answers = [];
+        for (let i = 0; i < 80; i++) {
+            const a = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep a+b" }]);
+            answers.push(a);
+            if (a.error) break;
+        }
+        cells.push({ answers, config: await wireCall(bg, wire, "config") });
+    }, { body: "a".repeat(3900) + "\n", url, calls: [
+        { name: "fetch_url", args: { url } },
+        { name: "python_exec", args: { code: "print(1)", mode: "readonly" } },
+        { name: "python_exec", args: { code: "print(2)", mode: "readonly" } },
+    ] });
+    assert.equal(cells.length, 2, "positive control: both cells ran");
+    const [first, second] = cells;
+    const last = first.answers.at(-1);
+    assert.equal(last.error?.code, "OverBudget", `the loop is stopped by the budget, not by the cap: ${JSON.stringify(last).slice(0, 200)}`);
+    assert.match(last.error.message, /over their 3,000,000 steps together/);
+    assert.ok(first.answers.length >= 10 && first.answers.length < 80, `stopped after ${first.answers.length} calls`);
+    assert.ok(first.answers.slice(0, -1).every((a) => "value" in a), "every call before it answered");
+    assert.equal(typeof first.config.value?.model, "string", "a call that does no metered work still answers");
+    assert.equal(second.answers.length, first.answers.length, "the next cell's client starts with a whole budget");
+});
+
+test("calls a cell makes at once draw on the same budget as calls in turn: Promise.all buys no extra work", T, async () => {
+    const url = "https://data.example/a.txt";
+    const cells = [];
+    const call = (bg, wire) => wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep a+b" }]);
+    await wireRun(async (wire, bg) => {
+        if (!cells.length) {
+            let n = 0;
+            for (; n < 80; n++) if ((await call(bg, wire)).error) break;
+            cells.push({ answered: n });
+        } else {
+            const all = await Promise.all(Array.from({ length: 80 }, () => call(bg, wire)));
+            cells.push({ answered: all.filter((a) => "value" in a).length, codes: [...new Set(all.filter((a) => a.error).map((a) => a.error.code))] });
+        }
+    }, { body: "a".repeat(3900) + "\n", url, calls: [
+        { name: "fetch_url", args: { url } },
+        { name: "python_exec", args: { code: "print(1)", mode: "readonly" } },
+        { name: "python_exec", args: { code: "print(2)", mode: "readonly" } },
+    ] });
+    assert.equal(cells.length, 2, "positive control: both cells ran");
+    assert.ok(cells[0].answered >= 10 && cells[0].answered < 80, `in turn: ${cells[0].answered}`);
+    assert.equal(cells[1].answered, cells[0].answered, "at once: the same number answer");
+    assert.deepEqual(cells[1].codes, ["OverBudget"], "and the rest are refused by the budget");
+});
+
+test("a stage with no regex charges what it reads and makes, and a sed that would build past MAX_STRING is refused before it builds", T, async () => {
+    // A stored megabyte: `head` reads and makes about 16k steps' worth each way, so no search is needed to spend the budget.
+    const url = "https://data.example/big.txt";
+    const got = {};
+    await wireRun(async (wire, bg) => {
+        got.sed = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: `sed s/a/${"x".repeat(20)}/g` }]);
+        let n = 0;
+        for (; n < 200; n++) {
+            const a = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "head 1" }]);
+            if (a.error) { got.last = a; break; }
+            if (n === 0) got.first = a;
+        }
+        got.answered = n;
+    }, { body: "a".repeat(1_000_000) + "\n", url, store: true });
+    assert.equal(got.sed.error?.code, "OverBudget", JSON.stringify(got.sed).slice(0, 200));
+    assert.match(got.sed.error.message, /too much for one call to build/);
+    assert.equal(got.first?.value?.text?.length, 1_000_000, "positive control: the whole stored text is read, not its preview");
+    assert.equal(got.last?.error?.code, "OverBudget");
+    assert.ok(got.answered >= 60 && got.answered < 200, `head alone answered ${got.answered} times`);
+});
+
+test("grep's context assembly is linear in the lines it reads, so a -A over many matching lines answers at the cost it is charged", T, async () => {
+    // Red-team on #1007: `inRange` asked every match per line (lines x matched), so 40,000 matching lines held the
+    // thread for seconds while the charge, which sees chars and the regex search, moved 3,048 steps. A cell could do
+    // it about a thousand times. The assembly now walks the matches with one cursor.
+    const url = "https://data.example/lines.txt";
+    const body = ("x\n").repeat(120_000);
+    const got = {};
+    await wireRun(async (wire, bg) => {
+        let t0 = performance.now();
+        got.plain = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep x" }]);
+        got.plainMs = performance.now() - t0;
+        t0 = performance.now();
+        got.context = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "grep -A 1 x" }]);
+        got.ms = performance.now() - t0;
+        got.small = await wireCall(bg, wire, "dereference", ["fetch_url", { pipe: "head 20 | grep -A 1 x" }]);
+    }, { body, url, store: true });
+    assert.ok("value" in got.plain, "positive control: the same grep without a context flag answers");
+    assert.match(got.small.value.text, /^x/m, "a context flag on a small input answers and still marks context");
+    assert.equal(got.context.value?.text.split("\n").length, 120_000, `every line is in range: ${JSON.stringify(got.context).slice(0, 200)}`);
+    // Relative to the same read without context, so a slow machine slows both. At 120,000 lines the plain grep took
+    // 14 ms and lines x matched 2,378 ms; the cursor takes about what the plain grep does.
+    assert.ok(got.ms < 5 * got.plainMs + 100, `-A took ${Math.round(got.ms)} ms against ${Math.round(got.plainMs)} ms for the plain grep`);
+});
+
 // --- the server's rules, without a worker ---
 
 test("ask: a gated call answers ask first, then its value or a Denied once the person decides", async () => {

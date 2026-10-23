@@ -6,7 +6,7 @@ in four PRs, and each section below says which parts exist yet.
 
 | Part | Status |
 | --- | --- |
-| A. The folder merges before it writes; a picked folder with old files is asked about | in progress |
+| A. The folder merges before it writes; a picked folder with old files is asked about | built |
 | 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
 | 2. Backup and restore of settings and sessions, in Settings and from the popup | planned |
 | 3. The encrypted archive folder, its upgrade from plaintext month files, tombstones across machines | planned |
@@ -95,8 +95,12 @@ same to each other.
 **The rule now:**
 
 - **A sync merges a month file into the archive before rewriting it**: sessions the file has and the archive does not
-  are imported first (`importFrom`), so a sync never drops what the folder held.
-- **The archive remembers what it removed on purpose** (`removed`: hash, month, when; main database only). A delete
+  are imported first (`importFrom`), so a sync never drops what the folder held (`syncMonths`, folder-sync.ts). Where
+  both have a session, the archive's copy wins.
+- **A file that cannot be read as an archive is never overwritten**: its month is reported as skipped and stays
+  pending. Part 3 relies on this: a machine without the key must not replace another's encrypted month.
+- **The archive remembers what it removed on purpose** (`removed`: hash, month, when; main database only, created by
+  `migrate`, so an archive from before it gains the table on open). A delete
   and an un-archive both write one; a merge and an Import skip those hashes, or every delete would come back from the
   folder's previous copy at the next sync. Archiving the session again clears its entry.
 - **Picking a folder that already holds month files asks first**: import them (the default), or start fresh, which

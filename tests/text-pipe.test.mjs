@@ -44,6 +44,22 @@ test("grep -A/-B/-C: context with `:`/`-` markers and `--` separators", () => {
     assert.equal(runPipe(t, "grep -B1 HIT"), "a\nHIT\n--\nd\nHIT");
     assert.equal(runPipe(t, "grep -n -C1 HIT"), "1-a\n2:HIT\n3-b\n--\n5-d\n6:HIT\n7-e");
 });
+test("grep -A/-B/-C: the one-cursor walk marks what asking every match per line marked, on every 0/1 pattern of up to 9 lines", () => {
+    // The reference is the definition: a line is shown when some match is within B before or A after it.
+    for (let len = 1; len <= 9; len++) for (let bits = 0; bits < 1 << len; bits++) for (const [A, B] of [[0, 1], [1, 0], [1, 1], [2, 0], [0, 3], [2, 3]]) {
+        const lines = Array.from({ length: len }, (_, k) => (bits >> k & 1 ? "H" : "."));
+        const hits = lines.flatMap((l, k) => (l === "H" ? [k] : []));
+        const want = [];
+        let last = -Infinity;
+        for (let k = 0; k < len; k++) {
+            if (!hits.some(h => k >= h - B && k <= h + A)) continue;
+            if (want.length && k - last > 1) want.push("--");
+            want.push(`${k + 1}${lines[k] === "H" ? ":" : "-"}${lines[k]}`);
+            last = k;
+        }
+        assert.equal(runPipe(lines.join("\n"), `grep -n -A ${A} -B ${B} H`), want.join("\n"), `${lines.join("")} -A ${A} -B ${B}`);
+    }
+});
 test("grep: an invalid regex is an actionable error steering to -F", () => {
     assert.throws(() => runPipe("x", "grep '('"), /invalid regex.*-F/s);
 });
@@ -333,6 +349,17 @@ test("sed: substitutes on each line, with g and i", () => {
     assert.equal(P("a\nb", "sed s/./X/"), "X\nX", "every line, not just the first");
     // Backreferences work, because the replacement is passed through as written.
     assert.equal(P("2026-09-04", "sed s/(\\d+)-(\\d+)-(\\d+)/$3\\/$2\\/$1/"), "04/09/2026");
+});
+
+test("sed: a caller that names no maxChars is still held to MAX_STRING, so $' cannot build a quadratic line", () => {
+    // A tool's `pipe` and an `@tool:` pipe call runPipe with no limits; there `s/a/$'/g` on one line of 30,000 "a"
+    // built 450 million characters.
+    assert.throws(() => runPipe("a".repeat(30000), `sed "s/a/$'/g"`), /would produce over 10,000,000 characters/);
+    assert.equal(runPipe("a".repeat(1000), `sed "s/a/$'/g"`).length, 1000 * 999 / 2, "under the limit it runs as before");
+    // Each match is counted at what it inserts, less the character it replaces: 7,998,000 characters runs, where an
+    // upper bound that added the whole line per `$'` refused it.
+    assert.equal(runPipe("a".repeat(4000), `sed "s/a/$'/g"`).length, 4000 * 3999 / 2);
+    assert.equal(runPipe("a".repeat(3000000), `sed "s/a/$&/g"`).length, 3000000, "an identity is the line's own size");
 });
 
 test("sed: another delimiter for a pattern full of slashes — QUOTED, since | separates stages", () => {

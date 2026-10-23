@@ -110,5 +110,15 @@
     "leaves_nothing": true,
     "reason": "a C method that rewrites a container's contents in one call must log the whole old contents (or copy first)",
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
+  },
+  {
+    "name": "answer add then a replace that would build too much",
+    "js": "ml.answer.add(\"found it\"); \"a\".repeat(30000).replace(/a/g, \"$'\")",
+    "env": "answer",
+    "expect": "refused",
+    "leaves_nothing": true,
+    "budget": 200000,
+    "reason": "the add before the refusal is rolled back when a replace is refused for its output",
+    "from": "tests/readonly-soundness.test.mjs a survey that curates its answer and then trips a check"
   }
 ]

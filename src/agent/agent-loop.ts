@@ -31,6 +31,7 @@ import { resolveOutputCap } from "../contract/contract-pointers";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
+import type { PipeLimits } from "../pointers/text-pipe";
 import { CITABLE_TOOLS } from "../tools/tool-params";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
@@ -303,7 +304,7 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     /** Called once at run start with a resolver for this run's `@tool:` pointers. The host binds it into the
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
-    tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => DerefRead) => void;
+    tokenSink?: (resolve: (ref: string, pipe?: string | string[], limits?: PipeLimits) => DerefRead) => void;
     /** Called once at run start with a way to SNAPSHOT this run's context, for `ml.current` in a read-only `exec`
      *  (docs/spec/CURRENT_CONTEXT.md). The same arrangement as `tokenSink`, for the same reason: the loop is the only
      *  thing holding the messages and what it recorded about each, so it hands out the reader. The host adds what
@@ -712,7 +713,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
-    opts.tokenSink?.((ref: string, pipe?: string | string[]): DerefRead => {
+    opts.tokenSink?.((ref: string, pipe?: string | string[], limits?: PipeLimits): DerefRead => {
         const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
         // A soft label match travels BESIDE the value, never inside it: the caller here is a script that will
@@ -732,7 +733,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             ...(v.image ? { image: v.image } : {}),
             ...(v.latex ? { latex: v.latex } : {}),
         };
-        return { value: derefPipe(v, TokenStore.slotOf(ref), pipe), ...(warning ? { warning } : {}), meta };
+        return { value: derefPipe(v, TokenStore.slotOf(ref), pipe, limits), ...(warning ? { warning } : {}), meta };
     });
     /** `python_exec` with a TABLE POINTER as a `tables` source (`tables: { df: "@tool:…" }`, or the single-source form).
      *  The store lives here, so the loop resolves the pointer and hands the TABLE down by value (with the pointer's

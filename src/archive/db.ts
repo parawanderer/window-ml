@@ -103,6 +103,9 @@ export function migrate(db: ArchiveDb, schema = "main"): void {
         CREATE VIRTUAL TABLE IF NOT EXISTS ${S}.event_text USING fts5(hash UNINDEXED, pos UNINDEXED, text);
         CREATE TABLE IF NOT EXISTS ${S}.dirty_months (month TEXT PRIMARY KEY) WITHOUT ROWID;
     `);
+    // What this archive removed ON PURPOSE (a delete, an un-archive), so a merge from the folder does not bring it
+    // back (docs/dev/backup.md, "merge before write"). This database's own memory, so never in a month file.
+    if (S === "main") db.exec("CREATE TABLE IF NOT EXISTS main.removed (hash TEXT PRIMARY KEY, month TEXT NOT NULL, ts INTEGER NOT NULL) WITHOUT ROWID");
     const have = Number(db.selectValue(`SELECT value FROM ${S}.meta WHERE key = 'schema'`) ?? 0);
     if (have > ARCHIVE_SCHEMA) throw new Error(`this archive was written by a newer version (schema ${have}); update the extension to read it`);
     db.exec({ sql: `INSERT OR REPLACE INTO ${S}.meta(key, value) VALUES ('schema', ?)`, bind: [String(ARCHIVE_SCHEMA)] });
@@ -248,6 +251,7 @@ export function writeSession(db: ArchiveDb, p: PreparedSession, archivedTs: numb
         const was = db.selectValue("SELECT last_ts FROM sessions WHERE hash = ?", [hash]);
         if (was != null) markDirty(db, Number(was));
         markDirty(db, s.lastTs);
+        db.exec({ sql: "DELETE FROM removed WHERE hash = ?", bind: [hash] });   // archived again: no longer removed
         db.exec({ sql: "DELETE FROM events WHERE hash = ?", bind: [hash] });
         db.exec({ sql: "DELETE FROM event_text WHERE hash = ?", bind: [hash] });
         db.exec({ sql: "DELETE FROM image_refs WHERE hash = ?", bind: [hash] });
@@ -335,13 +339,19 @@ export function readArchived(db: ArchiveDb, hash: string): { summary: SessionSum
 }
 
 /** Remove a session from the archive, and any image no other session still references. Its month's folder file is then
- *  dirty, so the next sync rewrites it without the session: a delete reaches the folder too. */
-export function removeArchived(db: ArchiveDb, hash: string): boolean {
+ *  dirty, so the next sync rewrites it without the session: a delete reaches the folder too. The hash goes into
+ *  `removed`, which every import from the folder skips. Used for a delete and an un-archive alike: either way the
+ *  archive must not take the session back from an older copy. */
+export function removeArchived(db: ArchiveDb, hash: string, now = Date.now()): boolean {
     let removed = false;
     db.transaction(() => {
         const was = db.selectValue("SELECT last_ts FROM sessions WHERE hash = ?", [hash]);
         removed = was != null;
-        if (removed) markDirty(db, Number(was));
+        if (removed) {
+            markDirty(db, Number(was));
+            // Remembered, or the next sync's merge reads it back from the month file that still holds it.
+            db.exec({ sql: "INSERT OR REPLACE INTO removed(hash, month, ts) VALUES (?, ?, ?)", bind: [hash, monthOf(Number(was)), now] });
+        }
         for (const t of ["sessions", "events", "event_text", "image_refs"]) db.exec({ sql: `DELETE FROM ${t} WHERE hash = ?`, bind: [hash] });
         db.exec("DELETE FROM images WHERE sha NOT IN (SELECT sha FROM image_refs)");
     });
@@ -453,15 +463,16 @@ export function copyMonth(db: ArchiveDb, into: string, month: string): number {
 
 /**
  * Copy what the database attached as `from` (a folder month file) holds into the live archive, skipping any session it
- * already has: a restore into a fresh profile, and harmless to run twice. Imported months are not marked dirty, since
- * the folder already matches them. Refuses a file from a newer schema.
+ * already has and any it removed on purpose (`removed`): a restore into a fresh profile, a sync's merge, and harmless
+ * to run twice. Imported months are not marked dirty, since the folder already matches them. Refuses a file from a
+ * newer schema.
  */
 export function importFrom(db: ArchiveDb, from: string): number {
     const theirs = Number(db.selectValue(`SELECT value FROM ${from}.meta WHERE key = 'schema'`) ?? 0);
     if (theirs > ARCHIVE_SCHEMA) throw new Error(`that archive file was written by a newer version (schema ${theirs})`);
     let added = 0;
     db.transaction(() => {
-        const fresh = `SELECT hash FROM ${from}.sessions WHERE hash NOT IN (SELECT hash FROM main.sessions)`;
+        const fresh = `SELECT hash FROM ${from}.sessions WHERE hash NOT IN (SELECT hash FROM main.sessions) AND hash NOT IN (SELECT hash FROM main.removed)`;
         db.exec(`CREATE TEMP TABLE import_new AS ${fresh}`);
         added = Number(db.selectValue("SELECT count(*) FROM temp.import_new"));
         db.exec(`INSERT INTO main.sessions SELECT * FROM ${from}.sessions WHERE hash IN (SELECT hash FROM temp.import_new)`);

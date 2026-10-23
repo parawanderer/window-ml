@@ -115,6 +115,7 @@ it was learned by shipping the wrong version first.
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components, tooltips, the transcript window | `docs/dev/sidebar.md` |
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
 | the session archive (SQLite over OPFS, the offscreen worker, move-instead-of-delete) | `docs/dev/archive.md` |
+| backup and restore, the archive folder's sync and its file format (compression, encryption, the passphrase) | `docs/dev/backup.md` |
 | the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
 | which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
 | what a page can observe of window.ml acting in it (globals, stacks, event trust, CDP traces, request headers) | `docs/dev/detection-surface.md` |

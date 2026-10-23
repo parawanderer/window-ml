@@ -14,6 +14,8 @@ import type { MlWireAnswer, MlWireRequest } from "../contract";
 import { ML_READONLY_METHODS, mlFacade } from "../readonly-exec/policy";
 import { workerReadonlyMl, derefWhole, type RunDeref } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
+import type { PipeLimits } from "../pointers/text-pipe";
+import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/limits";
 import { derefByRun, runControllers, sessionTokens } from "./sw-runs";
 import { shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
@@ -46,7 +48,7 @@ function membersFor(client: WireClient): Record<string, WireMember> {
     for (const name of ML_READONLY_METHODS) {
         const fn = facade[name];
         if (typeof fn !== "function") continue;
-        out[name] = { run: name === "dereference" && deref ? dereferenceOverWire(deref, client.run!) : fn as (...a: unknown[]) => unknown };
+        out[name] = { run: name === "dereference" && deref ? dereferenceOverWire(deref, client.run!, meterOf(client)) : fn as (...a: unknown[]) => unknown };
     }
     // ml.sh: an approved (full) client of a run, opened by one of its steps, and only while that run runs. Bound to the run
     // and step the HANDLE records, never to anything in the request; each call is judged or asked inside that step
@@ -83,20 +85,40 @@ async function shMember(fn: (c: ShCallContext, a: readonly unknown[]) => Promise
 }
 
 /**
+ * The pipe limits that charge a client's budget: what each stage reads and makes, at the dialect's rate, and what its
+ * searches can cost (regex-cost.ts). A search or a stage's input past what is left throws `OverBudget` before it runs;
+ * a stage's output is charged once made, and held to MAX_STRING, checked before building for the stages that grow
+ * by more than a constant factor (`sed`, pretty-printed JSON), as the dialect's pipe is. One cell's calls draw on one
+ * budget; without it each is bounded alone and a loop of them is not.
+ * @param client the client
+ * @returns the limits
+ */
+function meterOf(client: WireClient): PipeLimits {
+    const spend = (n: number): void => {
+        if ((client.budget.left -= n) < 0) throw new WireError("OverBudget", `this code's ml calls are over their ${STEP_BUDGET.toLocaleString("en-US")} steps together; read less per call, or read once and work on the value in the cell`);
+    };
+    return {
+        charge: (chars) => spend(Math.ceil(chars / PIPE_CHARS_PER_STEP)), steps: spend, maxChars: MAX_STRING,
+        tooLarge: (msg) => { throw new WireError("OverBudget", `${msg}, too much for one call to build`); },
+    };
+}
+
+/**
  * `dereference` for the wire, read from the run's resolver rather than through the page's DerefText: its `DerefRead` is
  * already plain data. Answers `{ text, meta?, warning? }`, or the pointer when that is larger than {@link WIRE_VALUE_CAP}.
  * A text whose whole body is stored is read whole (`derefWhole`), so a pipe runs at the store and only its result crosses.
  * @param deref the run's pointer resolver
  * @param run the client's run, which must hold a stored value to read it
+ * @param limits the client's budget, which the pipe charges
  * @returns the member's function
  */
-function dereferenceOverWire(deref: RunDeref, run: string): (...a: unknown[]) => unknown {
+function dereferenceOverWire(deref: RunDeref, run: string, limits: PipeLimits): (...a: unknown[]) => unknown {
     return async (ref: unknown, opts?: unknown) => {
         const o = opts && typeof opts === "object" ? opts as { pipe?: unknown } : {};
         const pipe = o.pipe ?? null;
         if (pipe !== null && typeof pipe !== "string" && !(Array.isArray(pipe) && pipe.every((x) => typeof x === "string")))
             throw new WireError("BadRequest", "dereference's pipe is a string or an array of strings");
-        const read = await derefWhole(run, deref, String(ref ?? ""), pipeStages(pipe as string | string[] | null));
+        const read = await derefWhole(run, deref, String(ref ?? ""), pipeStages(pipe as string | string[] | null), limits);
         const value = { text: read.value, ...(read.meta ? { meta: read.meta } : {}), ...(read.warning ? { warning: read.warning } : {}) };
         const size = JSON.stringify(value).length;
         if (size <= WIRE_VALUE_CAP) return value;

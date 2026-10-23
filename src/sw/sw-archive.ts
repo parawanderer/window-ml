@@ -104,12 +104,16 @@ defineJob({
     },
 });
 
-/** What Settings asks about the folder: its state, or an action taken after a click (a pick, a re-grant, an import). */
+/** What Settings asks about the folder: its state, or an action taken after a click (a pick, a re-grant, an import),
+ *  or what a just-picked folder already holds (`survey`) and starting fresh in it (`fresh`). */
 export async function folderAction(action: unknown): Promise<FolderReport> {
     switch (action) {
         case "picked": return syncFolder("resync", "picked");
         case "sync": return syncFolder("sync", "settings");
         case "import": return archiveCall<FolderReport>("import");
+        case "survey": return archiveCall<FolderReport>("survey");
+        // "Start fresh" after a pick: the folder's old month files moved aside, then written as after any pick.
+        case "fresh": return archiveCall<FolderReport>("fresh");
         default: return archiveCall<FolderReport>("folder");
     }
 }

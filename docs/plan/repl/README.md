@@ -269,12 +269,16 @@ listed as remaining is DONE unless named below.
      runs after the result has returned. Python side of window-ml, not the fork; lane 3 or 12 would have held it.
   2. `tests/redteam-python-sandbox.test.mjs:315` (P2-escape): `_ml_dumps`'s `default=` calls `str()` on the cell's object
      under `except Exception`; a `BaseException` raised there ends `wrapUserScript` before the cancel runs.
-     BOTH BUILT in #987 (open, the site-access session `2dfb7129` on Sonnet, opened 2026-10-22): the wrapper patches
-     `call_soon`/`call_later`/`call_at` on the loop's class for the cell and cancels the recorded Handles after the
-     tasks; the epilogue's result, render and table steps catch `BaseException`. Both todos are plain tests, failing
-     first on main. As of 2026-10-23 it is unreviewed and CONFLICTING with main (#998 touched `python-runtime.ts`); the
-     builder rebases; the red team reviews (named by Shane 2026-10-23; the janitor found both and may not review). It leaves three routes as new `{ todo }` tests: `pyodide.webloop.scheduleCallback`, a
-     done-callback on a task the cell made, and the original scheduler through `call_later.__closure__`.
+     BOTH FIXED by #998 (676bf355, merged 2026-10-23): the cancel sweeps `all_tasks()` and every `asyncio.Handle`
+     `gc.get_objects()` reaches, and runs before the epilogue; both todos are plain tests there. RULE 10 NOT HELD: #998 was
+     built by the janitor, which found both gaps, and merged with no review posted; the red team's review of #987 at
+     0abddc51 (2026-10-23, named by Shane) checked main's sweep after the fact and found it holds on every scheduling
+     route. #987 (the site-access session, Sonnet) is since tests only, the route matrix guarding the sweep, reviewed
+     clear; the builder merges it. The red team's review names two classes the sweep does not reach, failing-first
+     `{ todo }` tests on `redteam/python-cancel-gaps` (148875e0), UNOWNED, the red team builds and reviews neither: a
+     callable handed to a kept JS scheduler (`setTimeout`, `queueMicrotask`, `Promise.then`) makes no Handle; a started
+     task kept on a module keeps a live `_coro` a later cell can `throw` into. Also: the two existing `finally` tests
+     never start the coroutine, so they would pass with the cancel deleted; the builder of #987 reshapes them.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
@@ -285,7 +289,7 @@ listed as remaining is DONE unless named below.
      builds output quadratic in its input while only the input's length is charged. ASSIGNED 2026-10-23 on Shane's word
      (relayed by the quadratic-regex session) to that session: [`REPLACE_OUTPUT_BOUND.md`](REPLACE_OUTPUT_BOUND.md); the
      red team found it and reviews nothing, the janitor reviews. Measured since: memory, not halting (V8 refuses the
-     string at about 0.5G characters in milliseconds). Built in #1010 (open 2026-10-23, the janitor reviewing): the
+     string at about 0.5G characters in milliseconds). Built in #1010 (merged a83afab2, 2026-10-23, the janitor reviewed): the
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`.
 

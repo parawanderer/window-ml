@@ -1529,9 +1529,15 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE LIST AND THE RAIL OVER THE FIELD: a frosted layer, nearly solid at the window's edge and thinning toward the
    page, so the field runs on under them and fades out rather than stopping at a line. Only while the field is drawn;
    anywhere else they keep their solid background. The rail is already lifted (absolute, z-index 4): only the list
-   needs raising, and giving the rail `position: relative` dropped it into the grid as a column of its own. */
+   needs raising, and giving the rail `position: relative` dropped it into the grid as a column of its own.
+   The frost is a layer BEHIND their content, never on them: a `backdrop-filter` makes its element the containing
+   block of every `position: fixed` inside it, and the row menu (`.chat-row-menu`) is placed in window coordinates,
+   so on the list itself it opened offset by the list's position and slid with the list (a click on "Pin to the top"
+   met <html>). Both are stacking contexts (z-index), so the layer's -1 keeps it inside them. */
 .chat:has(.chat-start-field) .chat-list { position: relative; z-index: 1; }
-.chat:has(.chat-start-field) :is(.chat-list, .chat-rail) {
+.chat:has(.chat-start-field) :is(.chat-list, .chat-rail) { background: transparent; }
+.chat:has(.chat-start-field) :is(.chat-list, .chat-rail)::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
     background: linear-gradient(to right, var(--bg) 0%, color-mix(in srgb, var(--bg) 88%, transparent) 45%, color-mix(in srgb, var(--bg) 55%, transparent) 100%);
     -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
 }

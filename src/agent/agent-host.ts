@@ -14,6 +14,7 @@
 import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
 import type { AgentResult, ApprovalDecision } from "../contract/contract-agent";
 import type { DerefRead } from "../pointers/token-pipe";
+import type { PipeLimits } from "../pointers/text-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult, LiveOutput } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
@@ -71,7 +72,7 @@ export interface RunAgentHostDeps {
     tryReadonly?(name: string, args: Record<string, unknown>, live?: LiveOutput): Promise<ToolRunResult | null>;
     /** Receives this run's pointer resolver at start, so the host can answer a page-side `ml.dereference`
      *  (the loop, and the store, live here; the tool runs in the page). See background's derefByRun. */
-    tokenSink?(resolve: (ref: string, pipe?: string | string[]) => DerefRead): void;
+    tokenSink?(resolve: (ref: string, pipe?: string | string[], limits?: PipeLimits) => DerefRead): void;
     /** Receives the run's context snapshot function (agent-loop.ts `contextSink`), for `ml.current` in a read-only
      *  survey evaluated in the worker (sw-readonly.ts). */
     contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("../log/run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
