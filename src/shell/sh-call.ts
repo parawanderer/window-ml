@@ -11,6 +11,7 @@ import { describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
+import { applicable, storedMisses, type StoredManifest } from "./stored-manifests";
 import cat from "./manifests/cat.json";
 import find from "./manifests/find.json";
 import git from "./manifests/git.json";
@@ -36,8 +37,23 @@ export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Obje
 const SHIPPED_LIST: readonly ProgramManifest[] = Object.freeze(Object.values(SHIPPED_MANIFESTS));
 
 /** Where a call is made, for matching an interpreted script's manifest: its cwd and the workspace roots, both as the
- *  host resolved them. */
-export interface ManifestPlace { cwd: string; roots: readonly string[] }
+ *  host resolved them. `rootOf` names the one root a manifest is registered for (a workspace's stored manifest); a
+ *  manifest it says nothing of matches under any root. */
+export interface ManifestPlace { cwd: string; roots: readonly string[]; rootOf?: (m: ProgramManifest) => string | undefined }
+
+/** The manifests a call made under `roots` is described by: the stored entries that apply there (the workspace's own,
+ *  then the global ones), then the shipped manifests; and which root each workspace entry is registered for. A stored
+ *  entry never shares a key with a shipped manifest (the store refuses one), so the order only settles workspace over
+ *  global. */
+export function manifestsFor(stored: readonly StoredManifest[] | undefined, roots: readonly string[]): { list: readonly ProgramManifest[]; rootOf: (m: ProgramManifest) => string | undefined; entryOf: (m: ProgramManifest) => StoredManifest | undefined } {
+    const here = applicable(stored ?? [], roots);
+    const byManifest = new Map(here.map((s) => [s.manifest, s]));
+    return {
+        list: here.length ? [...here.map((s) => s.manifest), ...SHIPPED_LIST] : SHIPPED_LIST,
+        rootOf: (m) => byManifest.get(m)?.root,
+        entryOf: (m) => byManifest.get(m),
+    };
+}
 
 /** `a/./b/../c` → `a/c`, for an absolute path; textual only (symlinks are the host's to resolve). */
 const normalPath = (p: string): string => {
@@ -64,11 +80,17 @@ export function manifestFor(argv: readonly string[], place?: ManifestPlace, mani
     if (place && script && !script.startsWith("-")) {
         const target = normalPath(script.startsWith("/") ? script : `${place.cwd}/${script}`);
         const m = manifests.find((m) => m.program === base && m.entrypoint
-            && place.roots.some((r) => normalPath(`${r}/${m.entrypoint!.path}`) === target));
+            && rootsOf(m, place).some((r) => normalPath(`${r}/${m.entrypoint!.path}`) === target));
         if (m) return m;
     }
     return manifests.find((m) => m.program === base && !m.entrypoint);
 }
+
+/** The roots a manifest's entrypoint may sit under: its own root when it is registered for one, else every root. */
+const rootsOf = (m: ProgramManifest, place: Pick<ManifestPlace, "roots" | "rootOf">): readonly string[] => {
+    const own = place.rootOf?.(m);
+    return own === undefined ? place.roots : place.roots.filter((r) => normalPath(r) === normalPath(own));
+};
 
 /**
  * Whether the host's facts bear out an interpreted script's manifest: `argv[1]` resolved to the script under a root,
@@ -176,9 +198,10 @@ export interface ShPlan {
  * @param session the session's working directory (an absolute path inside a root); a relative `cwd` is taken from it
  * @returns the plan
  */
-export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[] }): ShPlan {
+export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[] }): ShPlan {
     const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
-    const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots } : undefined, session.manifests);
+    const st = session.stored ? manifestsFor(session.stored, session.roots ?? []) : undefined;
+    const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? session.manifests);
     const spawn: HostSpawn = { argv: req.argv, cwd, ...(Object.keys(req.env).length ? { env: { ...req.env } } : {}), mode: "host", ...(req.timeoutMs ? { timeoutMs: req.timeoutMs } : {}) };
     if (!m) return { spawn, description: null };
     const first = describeCall(req.argv, m, { envSet: Object.keys(req.env) });
@@ -270,14 +293,16 @@ const secretBeneath = (containsSecret: boolean | null | undefined): boolean => c
  *   describes nothing: its effects are `unknown`)
  * @returns the policy's `c`
  */
-export function shFacts(facts: HostFacts, version: string | null = null, place?: { roots: readonly string[]; manifests?: readonly ProgramManifest[] }): ShFacts {
-    const m = manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots } : undefined, place?.manifests);
+export function shFacts(facts: HostFacts, version: string | null = null, place?: { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[] }): ShFacts {
+    const st = place?.stored ? manifestsFor(place.stored, place.roots) : undefined;
+    const m = manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? place?.manifests);
+    const entry = m ? st?.entryOf(m) : undefined;
     const why: string[] = [];
     let effects: EffectsData = "unknown";
     let described = false;
     let runner = false;
     if (!m) why.push(`${facts.argv[0]} has no program manifest`);
-    else if (facts.program.inRoot && SHIPPED_LIST.includes(m)) {
+    else if (facts.program.inRoot && !m.entrypoint && entry?.scope !== "workspace") {
         // Keyed on the host's resolved file, never on the argv spelling: a program a workspace file named `cat` is not cat
         // (PROGRAM_MANIFEST.md, ruled 2026-10-22). A manifest the workspace registered for its own entrypoint is not shipped.
         why.push(`${facts.program.path} is inside a workspace root, so no shipped manifest describes it`);
@@ -300,7 +325,8 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         described = d.described;
         runner = d.runner;
         why.push(...d.why);
-        const misses = entrypointMisses(facts, m, place?.roots ?? []);
+        const misses = [...entrypointMisses(facts, m, place ? rootsOf(m, { roots: place.roots, ...(st ? { rootOf: st.rootOf } : {}) }) : []),
+            ...(entry ? storedMisses(facts, entry, version) : [])];
         if (misses.length) { why.push(...misses); effects = "unknown"; described = false; }
     }
     // A variable off the free list changes what a program does in ways no manifest lists (SHELL.md, "The environment is

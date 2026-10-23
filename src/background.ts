@@ -40,6 +40,9 @@ import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, reso
 import { syncPresence, isVisible, injectPageScripts } from "./sw/sw-presence";
 import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/sw-policies";
+import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
+import type { ManifestPin } from "./shell/stored-manifests";
+import type { ProgramManifest } from "./shell/program-manifest";
 
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
@@ -650,6 +653,26 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
         sendResponse({ data: policyView() });
         return;
+    }
+    // The program manifests stored beside the shipped ones (PROGRAM_MANIFEST.md, "Registering a program"): read them,
+    // register one, remove one. EXTENSION PAGES ONLY, judged by the sender the browser reports: a stored manifest can make
+    // a program's calls free under the sandbox, so a page that could store one would be describing its own way in. What
+    // the page adds is the person's word (`origin: "person"`); a model's draft arrives only through `propose_manifest`.
+    if (message.type === "MANIFESTS") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown; scope?: unknown; root?: unknown; manifest?: unknown; pin?: unknown };
+        void (async () => {
+            if (p.op === "add") {
+                const scope = p.scope === "workspace" ? "workspace" : p.scope === "global" ? "global" : undefined;
+                if (!scope) { sendResponse({ error: "scope is global or workspace" }); return; }
+                const r = await addManifest({ scope, ...(p.root !== undefined ? { root: p.root as string } : {}), manifest: p.manifest as ProgramManifest, origin: "person", ...(p.pin !== undefined ? { pin: p.pin as ManifestPin } : {}) });
+                if ("refused" in r) { sendResponse({ error: r.refused }); return; }
+            } else if (p.op === "remove") {
+                if (typeof p.id !== "string" || !(await removeManifest(p.id))) { sendResponse({ error: "no such manifest" }); return; }
+            } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
+            sendResponse({ data: await manifestView() });
+        })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
     }
     if (message.type === "SITE_ACCESS") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }

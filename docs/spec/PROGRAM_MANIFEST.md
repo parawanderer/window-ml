@@ -99,6 +99,31 @@ over the manifest's data so the profile is derived from the same source as the f
 - One page lists them, like the policy page: shipped, installed, proposed, each with its source, its pin and the
   measured evidence (calls run under it, failures under its envelope). It lives in DevTools Settings, the superset.
 
+### The store, as built (ruled 2026-10-23, root K slice b)
+
+Five rulings settle where a registered manifest lives and when it describes a call. Built in `src/sw/sw-manifests.ts`
+(the storage) and `src/shell/stored-manifests.ts` (the rules, pure); `docs/dev/shell.md` has the mechanics.
+
+- **B1, where.** `chrome.storage.local`, never `sync`: a pin names a file on THIS machine. Two keys, declared in the
+  state registry: `manifests.global`, and `manifests.workspace` keyed by the root's realpath. A workspace's entries
+  describe a call only while that root is configured, and are chosen before the global ones.
+- **B2, shipped wins.** An entry for a key a shipped manifest describes (`git`, `cat`, …) is refused when it is
+  stored, naming the shipped file. A shipped manifest is never shadowed, so the order a call reads them in never has
+  to break a tie between the two.
+- **B3, in-root programs.** A program that resolves inside a workspace root is describable only by that workspace's
+  own entry, pinned; a global entry, or another workspace's, is refused when stored and misses at call time. A
+  script's manifest (`entrypoint`) is workspace scope always: it arrived with the repository.
+- **B4, the pin.** A binary is pinned by the host's `program.fingerprint` (device, inode, size, mtime) and its
+  resolved path, plus the version it reported when its manifest reads one. This replaces "the HASH of its binary"
+  above for binaries: the host fingerprints every call already, and hashing a large binary on every call does not
+  pay. A script keeps its `entrypoint.sha256`. Any change drops the call back to `unknown`, with the reason on the card.
+- **B5, a model's draft.** An entry with `origin: "proposed"` describes a call only under the OS sandbox, where its
+  claims are enforced, until `propose_manifest`'s evidence run marks it. The person's own (`origin: "person"`)
+  describes calls on both placements.
+
+What a page may do with the store: nothing. `MANIFESTS` is answered for extension pages only, and what it adds is
+the person's whatever the payload says; a stored manifest never reaches a page.
+
 ### Interpreted script tools (`node scripts/<name>.mjs`, `python3 <script>.py`)
 
 In LLM agent workflows, almost every repository-specific CLI utility (`node scripts/index.mjs`,

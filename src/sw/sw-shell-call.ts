@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
+import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
@@ -23,6 +23,8 @@ import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
+import { manifestsReady, storedManifests } from "./sw-manifests";
+import type { ProgramManifest } from "../shell/program-manifest";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
 export interface ShCallContext {
@@ -128,7 +130,10 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             if (!cwd) return refuse("Refused", "No workspace folder is configured for ml.sh.");
             // The roots as the host resolved them (realpaths), which its path facts are compared against.
             const roots = h.configured.roots.map((r) => r.path);
-            const plan = planSpawn(req, { cwd, roots });
+            // The stored manifests, once storage has been read (a failed read leaves none, so a call one would describe asks).
+            await manifestsReady;
+            const stored = storedManifests();
+            const plan = planSpawn(req, { cwd, roots, stored });
             const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
             let facts = await spawn();
             let f: ShFacts;
@@ -138,7 +143,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             for (let attempt = 0; ; attempt++) {
                 const id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
-                try { f = shFacts(facts, await versionOf(ctx, h, facts), { roots }); }
+                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list), { roots, stored }); }
                 catch (e) { await discard(); throw e; }
                 const v = await decide(ctx, f);
                 if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
@@ -262,10 +267,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
  * @param ctx the step
  * @param h the host
  * @param facts the call's facts
+ * @param manifests the manifests the call is described by (default: the shipped ones)
  * @returns the version, null when it was not read, or null too for a manifest that reads none
  */
-async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Promise<string | null> {
-    const m = manifestFor(facts.argv);
+async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
+    const m = manifestFor(facts.argv, undefined, manifests);
     if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
     const fp = facts.program.fingerprint;
     const log = (reason: string, version?: string | null) => recordRunLog(ctx.runId, { subsystem: "shell", kind: "version-probe", reason, detail: { program: facts.program.path, ...(version !== undefined ? { version: version ?? "unread" } : {}) } });
