@@ -390,7 +390,13 @@ policy as TEXT in the model's answer, for both consumers, so it needs no tool an
 over `sh` proposals is measured the same way as over `fetch` ones (Shane, 2026-10-21). Widening `propose_policy` itself
 from `fetch` to `sh`, so that a model can put a shell policy in front of a person, is a separate and later decision, and
 its prerequisite is the shell side's own probes (programs, paths and flags the run never used) before any such card can
-lead with a measured breadth. Nothing else of the tree is built before the number exists, in `src/`: the lifter's
+lead with a measured breadth. RULED YES by Shane on 2026-10-23 (the coordinator's session), the prerequisite kept: the
+widening lands with the shell probes or after them, never before; and, the coordinator's ruling under "A policy is
+co-written with the model" below, an `sh` proposal the lifter cannot lift is REFUSED, the model told its shape did not
+lift and which shapes do, never shown as code with a measured breadth, since the person would then be approving the
+model's text; a lifted one leads with its derived breadth and runs the probes as the derivation's test. Narrow first;
+widening to unlifted `sh` code is Shane's, later, on a number. Built by the `[window-ml root-k]` session
+(`docs/plan/repl/ROOT_K.md`). Nothing else of the tree is built before the number exists, in `src/`: the lifter's
 agreement test may hold a tree evaluator and a cell generator under `tests/`, imported by nothing in `src/`, and the
 ORACLE in that test is the ORIGINAL source run through the real policy realm, never the test evaluator, so a tree the
 test accepts is one that agrees with the code a person could read (ruled 2026-10-21, lane 11's question; the evaluator

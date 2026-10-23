@@ -564,8 +564,9 @@ development machine's suites are governed by the test runner's own slot in the b
 (`scripts/test.mjs`), and the two tables may become one VIEW later, which is a panel, not a mechanism. The runtime never
 becomes a monitor for the rest of the machine, for the same reason a hub is not an execution environment.
 
-Proposed by Shane 2026-10-21, open, his to widen since the boundary above is his: the host answers "which session owns
-this CPU process" for processes it did NOT spawn. The question came up repeatedly in that day's runs, and its live
+Proposed by Shane 2026-10-21; RULED YES by him on 2026-10-23 (the coordinator's session), in the narrow shape below and no
+wider, built by the `[window-ml root-k]` session, host side first (`docs/plan/repl/ROOT_K.md`): the host answers "which
+session owns this CPU process" for processes it did NOT spawn. The question came up repeatedly in that day's runs, and its live
 instance was found the same hour: six `zsh` shells reparented to pid 1, about 70% CPU each for 27 hours, a parallel-load
 generator one agent session detached on 2026-10-20 and never killed; naming their owner took a parent chain to a
 harness socket, a shell-snapshot name and a grep of a transcript, which is `ps` by another name. The narrow shape, if it
