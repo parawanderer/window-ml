@@ -204,7 +204,11 @@ fork today. The red team writes the pass in its own file; the janitor reviews th
 
 RULED 2026-10-24 (Shane): `navigate` is a credentialed rendered fetch in interactive mode; one consumer, one consent
 scoped by origin, one free tier (`POLICIES.md`, "Navigate is a fetch: one read, two modes"). UNASSIGNED, after the
-freeze: a small build in the run host and the fetch gate with a red-team pass.
+freeze: a small build in the run host and the fetch gate with a red-team pass. ASSIGNED 2026-10-24 (Shane lifted the
+freeze for one next session, the coordinator's pick; the root-k lane is CLOSED, its left items recorded above) to
+`[window-ml security] Site access`, which owns the fetch gate and consent and neither found nor probed anything here;
+the janitor reviews the code, the red team's pass (nine properties, briefed) is a PR stacked on the lane's branch,
+merging after it. The worked example and the demo site follow it, not with it.
 Extended the same day: the worked example and acceptance test (a task on another site scoped by a proposed policy),
 needing a multi-rule `propose_policy`, an `act` consumer that folds in the self-approval origin list, and an approved
 policy counting as the person's word under `crossOrigin: false` (`POLICIES.md`, "Worked example and acceptance test").
