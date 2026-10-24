@@ -99,9 +99,10 @@ export function cdpWorld(getBg, onEvaluate) {
  * - `onNative`, `configExtra`, `localExtra`: a fake process host (tests/fake-native-host.mjs), the settings that turn
  *   ml.sh on, and saved local storage (policies).
  * - `onApproval(event)`: a step's own card; its answer (default true) is the person's.
+ * - `onPyRun(msg)`, `pyInside(msg)`: the offscreen sandbox's answer to a PY_RUN, and to one inside the dialect (tests/helpers.js).
  * @returns the exec results the model read, the run's routing records, its hash, the worker, and the fetches' ids
  */
-export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg, onStep, onNative, onApproval = () => true, configExtra = {}, localExtra = {}, ticks = 4000 } = {}) {
+export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg, onStep, onNative, onPyRun, pyInside, onApproval = () => true, configExtra = {}, localExtra = {}, ticks = 4000 } = {}) {
     const idb = new IDBFactory();
     let n = 0, bg, id;
     const worlds = new Map();
@@ -122,6 +123,8 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
         siteGate: true, indexedDB: idb, userScripts,
         config: { ...config, autoApproveReadonly: path === "readonly", cdp: path === "cdp", ...configExtra },
         ...(onNative ? { onNative } : {}),
+        ...(onPyRun ? { onPyRun } : {}),
+        ...(pyInside ? { pyInside } : {}),
         local: { ml_site_always: ["https://site.example"], ...localExtra },
         openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
         ...(path === "cdp" ? { onDebuggerCommand: cdpWorld(() => bg, onEvaluate) } : {}),

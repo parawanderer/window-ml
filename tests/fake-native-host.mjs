@@ -3,6 +3,8 @@
 // docs/PROTOCOL.md): hello and configure as the real host answers them, spawn with facts the test supplies, start with
 // a `done` the test supplies, read of held output by range. It records every call it was sent.
 
+import { createHash } from "node:crypto";
+
 /**
  * A fake host. Pass `onNative: host.onNative` to loadBackground.
  * @param opts `sandbox`: whether a sandbox is available (default true); `sandboxKind`: `"seatbelt" | "bwrap" | null`
@@ -59,7 +61,7 @@ export function fakeNativeHost(opts = {}) {
                     reply({ seq, value: { id: args.id, pid: 4242 } });
                     const spawned = calls.find((c) => c.call === "spawn" && c.id === args.id);
                     const d = opts.done?.(args.id, spawned?.args) ?? { out: "out\n", err: "", code: 0 };
-                    const ptr = (text) => { const p = `out:${held.size + 1}`; held.set(p, Buffer.from(text)); return { ptr: p, size: Buffer.byteLength(text), sha256: "x", truncated: false }; };
+                    const ptr = (text) => { const p = `out:${held.size + 1}`; held.set(p, Buffer.from(text)); return { ptr: p, size: Buffer.byteLength(text), sha256: createHash("sha256").update(text).digest("hex"), truncated: false }; };
                     const oom = d.killed === "oom";
                     return reply({ event: "done", id: args.id, code: oom ? null : d.code, signal: oom ? "SIGKILL" : null, ok: !oom && d.code === 0, timedOut: false, cancelled: false, durationMs: 3,
                         stdout: ptr(d.out), stderr: ptr(d.err), ...(d.peakFootprint !== undefined ? { killed: d.killed ?? null, peakFootprint: d.peakFootprint, memoryBound: d.memoryBound } : {}), ...(d.cpuMs !== undefined ? { cpuMs: d.cpuMs } : {}), ...(d.envelope !== undefined ? { envelope: d.envelope } : {}),
