@@ -510,7 +510,7 @@ as-you tier), so it lands with a red-team pass by a separate session (rule 10) a
   once the tab has left it.
 - **A page-built run keeps per-URL approvals for its fetches.** An approved navigate card is an as-you origin grant for
   `fetch_url` only in a run the worker built, whose `fetch_url` the worker runs (`grantRunOrigin`). A page-built run's
-  `fetch_url` is gated in the page, which does not read that grant; the navigate consent itself still covers it.
+  `fetch_url` is gated in the page, which does not read that grant; the navigate is still consented.
 - **An arrival no policy decides passes and consents nothing**, the builtin answer included: no card was owed before
   the act either.
 - **An `ask` asks about every arrival it covers, an origin already consented included.** "An origin already consented
