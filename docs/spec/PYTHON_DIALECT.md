@@ -165,6 +165,12 @@ rows, which both implementations transcribe; and (2) the corpus, `tests/fixtures
 pattern both engines accept is a corpus failure, not drift to tolerate; a `{ todo }` marks the one open gap, the
 cost model (`regexWork`) that Python does not price yet. The JS/Python parity test is this corpus read twice, not a
 third list of cases.
+RULED the same day (the canvas session's question): the SHIPPED core reads the corpus too. A test in the python genre
+runs `dist/pyodide`'s own `risky_regex`/`risky_parse` over the `py`/`both` vectors; a vector the shipped core judges
+wrongly is a `{ todo }` naming the fork commit the core lacks and the pin, and a todo that starts passing FAILS (built
+explicitly; `node:test` does not fail a passing todo). A commit list compared with the pin is a proxy and is not the
+test. So the pin's lag behind a security fix is visible in CI as a red todo whose fix is a rebuild, never as a green
+suite over a core that still has the escapes.
 
 **RULE: the patch keeps the ABI.** It touches `ceval`, the abstract object layer and the thread state, never the object
 header or the stable ABI. Then Pyodide's own numpy and pandas builds work unchanged, and on the host a patched CPython
