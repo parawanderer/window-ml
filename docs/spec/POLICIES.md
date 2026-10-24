@@ -487,6 +487,17 @@ the describe layer, the arrival check is the enforce layer, and the second never
 hops the tab never commits (a denied URL that 302s to an allowed one was still read by the browser); the fetch gate's
 redirect guard sees only the final origin, so hops are a left item for both modes.
 
+**Corrected 2026-10-24 (the builder's question, the coordinator's ruling): an arrival an `allow` policy lets through
+is not an as-you grant.** "Consents the origin like an approved navigate" above was too wide. An as-you grant needs a
+person on a card, everywhere: an approved navigate card grants the origin as-you for the run; an arrival that an
+`allow` row let through, or a navigate an `allow` row approved without a card, adds the origin to the run's consented
+origins for navigation and uncredentialed reads only, as the run's start origin is, and a credentialed `fetch_url`
+under it still asks. Otherwise a model-proposed `allow` written without `!c.credentials` would move the tab to the host
+with no card and then read it as the person. What (b) leaves: the tab the run moved to is still acted on as the person,
+so `propose_policy` names `interactive` among the facts and the card's breadth evidence counts the navigates a proposal
+lets through; a person approving an `allow` sees that it moves the tab. The run's start origin is likewise a consented
+origin and never an as-you grant (the build's "As built" note).
+
 A build: `navNeedsConsent` consults the judge first and writes an approved origin into the run's consent set the fetch
 gate reads; `fetchFacts` gains `interactive`; the `fetch` facts' schema and the policy page's rows show it; the
 same-origin as-you free tier replaces the flag; the run host's committed-navigation hook judges every arrival. It widens two grants (an origin grant across modes, the same-origin
