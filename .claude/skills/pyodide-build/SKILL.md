@@ -8,11 +8,13 @@ description: Rebuild the Pyodide core from the restricted-mode CPython fork (too
 Notes, traps and the numbers: `docs/dev/pyodide-build.md`.
 
 ```bash
-# 1. change the pin (fork commit, Pyodide tag, emscripten) in tools/pyodide-dist.json, then build. Hours on a clean tree.
+# 1. change the pin in tools/pyodide-dist.json, then build. Hours on a clean tree. A new fork commit moves cpython.commit,
+#    cpython.restrictedPySha256 and patches.count; a Pyodide upgrade moves pyodide, emscripten, abi, python, pythonArchiveSha256.
 node tools/build-pyodide-restricted.mjs [--work tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10]
 #    run it in the background (the background-work skill); it prints the tarball's sha256 and writes BUILD_REPORT.md
 
-# 2. try it locally without publishing: unpack the tarball into pyodide-core/, then build the extension
+# 2. try it locally without publishing: unpack the tarball into pyodide-core/, then build the extension.
+#    --core checks the tarball against the pin's artefact.sha256, so set artefact (sha256, tag, name, url) first.
 node scripts/fetch-pyodide-wheels.mjs --core <work>/pyodide-restricted-<pyodide>-<sha8>.tar.gz
 npm run build && node scripts/test.mjs python && npx playwright test tests/e2e/python-stream.spec.mjs
 

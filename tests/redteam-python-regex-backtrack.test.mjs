@@ -2,10 +2,10 @@
 // regex gate, reported by [window-ml canvas]. The fork's Lib/restricted.py `risky_regex` is a hand port of the JS
 // `riskyRegex` (src/readonly-exec/limits.ts) and reads pattern syntax the way JS spells it, so a spelling only Python's
 // `re` understands is misread and the cell runs unasked under autoApprovePython. The fix (parawanderer/cpython#11,
-// 1e35340b: a check on `re._parser`'s own parse tree) is merged on the fork but NOT in the shipped core, so each escape
-// below is a LAG line, in the shape tests/regex-corpus-core.test.mjs uses: while the core lags, the test reports the
-// escape as a todo and the suite stays green; when a rebuild closes it, the test FAILS with "delete its LAG line", so a
-// silently passing todo cannot hide that the defence landed. Self-SKIPS without dist/pyodide/ (like
+// 1e35340b: a check on `re._parser`'s own parse tree) is in the shipped core as of pin ca282158, so the three LAG lines
+// this file carried are deleted and the defended assertions run. A future lag re-adds a line: while the core lags, the
+// test reports the escape as a todo and the suite stays green; when a rebuild closes it, the test FAILS with "delete
+// its LAG line", so a silently passing todo cannot hide that the defence landed. Self-SKIPS without dist/pyodide/ (like
 // tests/python-dialect-vectors-wasm.test.mjs).
 //
 // The gate is only live once `restricted.load_manifests` has run (it is what lifts `re.*` behind `regex_check`), and a
@@ -29,19 +29,17 @@ const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 let py = null;
 let skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
-// --- the pin lag: the fork has the fix, the core in dist/pyodide does not ---------------------------------------------
+// --- the pin lag: a LAG line names an escape the core in dist/pyodide does not close yet -----------------------------
 //
 // Same contract as regex-corpus-core.test.mjs's LAG table (one DEFINITION and one CORPUS), on the end-to-end cell
 // rather than the verdict: that file reads restricted.risky_regex/risky_parse, this one runs the cell through
 // run_cell and asserts NotInDialect before re.search runs. A key listed here whose escape is now closed FAILS (a
 // rebuild shipped its fix: delete the line and keep the defended assertion below it). A mismatch on an escape NOT
 // listed here fails too. The key is the fork commit that fixes it.
-const TREE = "1e35340b"; // parawanderer/cpython#11: the parse-tree check (three exponential escapes, open in the shipped core)
-const LAG = {
-    "{,n}": TREE,
-    "verbose-64": TREE,
-    "conditional": TREE,
-};
+//
+// Empty as of pin ca282158 (1e35340b shipped): the three escapes are closed and their defended assertions run.
+const TREE = "1e35340b"; // parawanderer/cpython#11: the parse-tree check (three exponential escapes)
+const LAG = {};
 
 // --- the harness: one cell through restricted.run_cell, as python-dialect-vectors-wasm.test.mjs runs a vector ---
 //
@@ -157,7 +155,9 @@ test("RED TEAM: a conditional group hiding an inner quantifier is refused", (t) 
 });
 
 test("every LAG line names an escape this file's cells reach", () => {
-    assert.deepEqual(new Set(Object.keys(LAG)), new Set(["{,n}", "verbose-64", "conditional"]));
+    // Empty as of pin ca282158: the three escapes are closed. A future lag re-adds a line keyed to the fork commit
+    // that fixes it, and this test names it.
+    assert.deepEqual(new Set(Object.keys(LAG)), new Set());
     assert.ok(Object.values(LAG).every((k) => k === TREE), "every line is keyed to the fork commit that fixes it");
 });
 

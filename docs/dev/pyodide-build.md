@@ -24,8 +24,16 @@ window-ml pins and verifies, as `scripts/fetch-hub.mjs` does for the hub binary.
 ## Traps
 
 - **Host tools.** The recipe needs GNU sed and GNU patch first on PATH (Pyodide's own dependency check never fails on BSD
-  ones), `autoreconf`, and `CMAKE_POLICY_VERSION_MINIMUM=3.5` under CMake 4. `emsdk_env.sh` strips every PATH entry inside
-  the emsdk tree, and emsdk's own ccache segfaults on macOS arm64: the recipe's shim dir carries a pass-through `ccache`.
+  ones), `autoreconf`, `wget` (`cpython/Makefile` fetches the CPython source with it; the preflight checks it since
+  2026-10-24, when its absence surfaced only after emsdk had built), libtool (libffi's `autoreconf` fails on an undefined
+  `LIBTOOL` without its m4), and `CMAKE_POLICY_VERSION_MINIMUM=3.5` under CMake 4.
+  `emsdk_env.sh` strips every PATH entry inside the emsdk tree, and emsdk's own ccache segfaults on macOS arm64: the
+  recipe's shim dir carries a pass-through `ccache`.
+- **Moving the fork commit moves three pin fields**: `cpython.commit`, `cpython.restrictedPySha256` (the commit's
+  `Lib/restricted.py`) and `patches.count`, the number of commits `format-patch` exports from base to commit with
+  `Tools/restricted` excluded. The recipe refuses a count that disagrees (`ca282158`, 2026-10-24: 21 to 24).
+- **A shallow `--cpython` clone is not used**: `format-patch` needs the whole range down to the base, so the recipe
+  makes its own full clone of the fork in the work dir instead, which adds a clone to a clean build.
 - **A failed build leaves a half-made install tree** (`cpython/installs/`) that a rerun trusts; delete `cpython/installs`
   and `cpython/build/hiwire` before retrying from a failure.
 - **Pyodide's make applies the CPython patches once, when it unpacks the source**, and skips CPython while its install
