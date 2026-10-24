@@ -1008,6 +1008,9 @@ button.chat-page-go:hover { color: var(--fg); }
    saying what is actually being approved, which is the thing to read. It keeps its outline and its glyph, because
    the glyph is what says this one is different from an ordinary approval; it loses the fill and the amber border.
    The ⚠ stays `--warn`: one small mark is the right amount of alarm for "this will go on applying". */
+/* The request itself, in the approval card: room around it, so it reads as the card's sentence rather than a line
+   pressed against the grant summary above it and the card's edge. */
+.chat.calm .action-sentence { padding: 8px 10px 4px; }
 .chat.calm .appr-grant {
     background: color-mix(in srgb, var(--fg) 4%, transparent);
     border-color: var(--border);
@@ -2105,7 +2108,18 @@ button.chat-page-go:hover { color: var(--fg); }
     40% { transform: scale(1.14); }
     100% { transform: scale(1); }
 }
+/* A TOOL JOINING THE LIST arrives with its comma (`, look`), from the left and from nothing, like the call did. Moved
+   by `left` on a relative inline rather than a transform: a transform needs an inline-BLOCK, and an atomic box is
+   dropped whole by the list's ellipsis instead of being cut, so a long list would end differently once it moved. */
+.chat.calm .astreak-name.arrived { position: relative; animation: chat-name-in .26s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-name-in { from { left: -8px; opacity: 0; } to { left: 0; opacity: 1; } }
+/* A FIGURE THAT TICKS (`Ticking`, ui-kit.tsx): the digit that changed rolls up into place and fades in, and only that
+   one. The running seconds on the live line, its step count, a group's total time. */
+.chat.calm .tick-d { display: inline-block; }
+.chat.calm .tick-d.rolled { animation: chat-tick-in .22s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-tick-in { from { transform: translateY(.45em); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
+    .chat.calm .astreak-name.arrived, .chat.calm .tick-d.rolled { animation: none; }
     .chat.calm .astreak.grouped > .astreak-head,
     .chat.calm .astreak.forming > .astreak-head,
     .chat.calm .astreak.refolding, .chat.calm .astreak.refolding > .astreak-head,

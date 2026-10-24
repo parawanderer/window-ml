@@ -25,6 +25,7 @@ import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
+import { Ticking } from "../ui-kit";
 
 /** A member drawn inside a streak, where the GROUP owns the motion: a step that also slid itself in would fight
  *  the collapse that is describing the same event. Only the members the group was opened with (`groupOwns`): a call
@@ -339,6 +340,9 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // and names the tools beside it: "11 tool calls · exec, look, python_exec". Dropping the names would make the
     // one row standing for a whole run of work say less about it than any one of the rows did.
     const one = s.tools.length === 1;
+    // The names already listed when the group was drawn. One that joins after ARRIVES (`.arrived`, chat.css) with its
+    // comma, as a call does, rather than the list being redrawn a name longer in one frame.
+    const named = useRef<ReadonlySet<string>>(new Set(s.tools));
     // `expanded` is the reader's INTENT, like the chevron's turn below: it goes on at the click and comes off at the
     // click that folds, while `open` lingers until the body has finished leaving. The summary slides away and back
     // on that flag (chat.css), so it moves with the click and not after the rows.
@@ -355,11 +359,12 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                 {one
                     ? <><span class="astreak-tool">{s.tool}</span><span class={`astreak-n${bumped ? " bumped" : ""}`}>× {calls}</span></>
                     : <><span class={`astreak-n astreak-calls${bumped ? " bumped" : ""}`}>{calls} tool calls</span>
-                        <span class="astreak-tools">{s.tools.join(", ")}</span></>}
+                        <span class="astreak-tools">{s.tools.map((t, i) =>
+                            <span key={t} class={`astreak-name${named.current.has(t) ? "" : " arrived"}`}>{i ? ", " : ""}{t}</span>)}</span></>}
                 {failed ? <span class="astreak-bad">{failed} failed</span> : null}
                 {/* A GROUP THAT IS STILL GROWING SAYS SO. In "group all" the newest call joins a row that is already
                     closed, so without this the only sign of a run in progress would be the number changing. */}
-                {pending ? <span class="astreak-live">running…</span> : ms != null ? <span class="astreak-ms">{fmtDur(ms)}</span> : null}
+                {pending ? <span class="astreak-live">running…</span> : ms != null ? <span class="astreak-ms"><Ticking text={fmtDur(ms)} /></span> : null}
             </button>
             {shown
                 ? <div class={`astreak-body${closing ? " closing" : ""}`}>

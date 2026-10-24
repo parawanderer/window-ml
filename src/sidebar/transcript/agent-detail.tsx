@@ -24,7 +24,7 @@ import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
 import { fmtDur } from "../timestamps";
 import {
-    BusyBlob, Code, CopyBtn, SheetChip, Stamp, Dot,
+    BusyBlob, Code, CopyBtn, SheetChip, Stamp, Dot, Ticking,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "../ui-kit";
 import { Disclosure } from "../disclosure";
@@ -1181,7 +1181,7 @@ export function PendingNote({ s, leaving = false, rootRef }: { s: Session;
     const said = useRef<{ blocked: boolean; dup: boolean; text: ComponentChildren }>({ blocked, dup, text: null });
     if (!leaving) said.current = { blocked, dup, text: blocked
         ? "waiting for your approval…"
-        : <>{live?.label}{live?.suffix}{n > 0 ? <span class="psteps"> · {n} {n === 1 ? "step" : "steps"}</span> : null}</> };
+        : <>{live?.label}{live?.suffix ? <Ticking text={live.suffix} /> : null}{n > 0 ? <span class="psteps"><Ticking text={` · ${n}`} /> {n === 1 ? "step" : "steps"}</span> : null}</> };
     const v = said.current;
     return (
         <div ref={rootRef} class={`pending-note${v.blocked ? " blocked" : ""}${v.dup ? " dup" : ""}${leaving ? " leaving" : ""}`}>

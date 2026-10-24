@@ -173,12 +173,12 @@ async function liveRun() {
     await page.goto(server.url + `#/s/${encodeURIComponent(RUN)}`);
     await page.locator(".chat-transcript").waitFor();
     /** One call as a run sends it: a pending START, then its DONE under the same seq. */
-    const call = async (n, doneAfter = 300) => {
-        const emit = (over) => page.evaluate(([key, n, over]) => {
+    const call = async (n, doneAfter = 300, tool = n % 2 ? "exec" : "look") => {
+        const emit = (over) => page.evaluate(([key, n, tool, over]) => {
             const hash = key.split(":")[1];
             globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-step",
-                step: n, seq: n, tool: n % 2 ? "exec" : "look", approval: "readonly", arguments: { js: "1" }, reasoning: "Checking.", reasoningTokens: 9, ...over });
-        }, [RUN, n, over]);
+                step: n, seq: n, tool, approval: "readonly", arguments: { js: "1" }, reasoning: "Checking.", reasoningTokens: 9, ...over });
+        }, [RUN, n, tool, over]);
         await emit({ pending: true });
         await page.waitForTimeout(doneAfter);
         await emit({ pending: false, result: "ok", toolMs: 200 });
@@ -334,6 +334,52 @@ test("the live line unfolds between calls, folds away while a call runs, and fad
     expect(leaving.length, "held on screen while it fades").toBeGreaterThan(3);
     expect(leaving.some((n) => n.o > 0.05 && n.o < 0.95)).toBe(true);
     expect(end.at(-1), "gone once faded").toBeNull();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- what changes in a row's text: a name joining the list, a figure ticking ---
+
+test("a tool joining a closed group's list arrives with its comma; the names already there stay still", async () => {
+    const { page, errors, call, animationsFor } = await liveRun();
+    await call(1, 300, "pageInfo");
+    await page.waitForTimeout(1200);
+    await call(2, 300, "exec");
+    await page.waitForTimeout(900);
+    const names = page.locator(".astreak-tools .astreak-name");
+    await expect(names).toHaveText(["pageInfo", ", exec"]);
+    await expect(page.locator(".astreak-name.arrived")).toHaveCount(0);
+
+    const seen = await animationsFor(300, () => call(3, 200, "look"));
+    await expect(page.locator(".astreak-tools")).toHaveText("pageInfo, exec, look");
+    await expect(page.locator(".astreak-name.arrived")).toHaveText([", look"]);
+    expect(seen).toContain("chat-name-in@astreak-name");
+    // A tool already named does not arrive again when it is called again.
+    await call(4, 200, "exec");
+    await expect(page.locator(".astreak-name.arrived")).toHaveCount(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a ticking figure rolls only the digit that changed, and nothing rolls when it is first drawn", async () => {
+    const { page, errors, call } = await liveRun();
+    await call(1);
+    const steps = page.locator(".pending-note .psteps");
+    await expect(steps).toHaveText(" · 1 step");
+    await expect(steps.locator(".tick-d.rolled"), "drawn, not changed").toHaveCount(0);
+    for (let n = 2; n <= 10; n++) await call(n, 60);
+    await expect(steps).toHaveText(" · 10 steps");
+    // 9 → 10: the units rolled to 0 and the tens came in; both are new digits.
+    await expect(steps.locator(".tick-d.rolled")).toHaveText(["1", "0"]);
+    await page.waitForTimeout(400);   // that roll is over
+    const tens = await steps.locator(".tick-d").first().elementHandle();
+    await call(11, 60);
+    await expect(steps).toHaveText(" · 11 steps");
+    // 10 → 11: the tens is the SAME element, and still; only the units is new and rolling.
+    expect(await tens.evaluate((el) => el.isConnected && el.textContent === "1")).toBe(true);
+    expect(await tens.evaluate((el) => el.getAnimations().length)).toBe(0);
+    expect(await steps.locator(".tick-d").last().evaluate((el) => el.getAnimations().map((a) => a.animationName))).toEqual(["chat-tick-in"]);
+    expect(await steps.locator(".tick-d").first().evaluate((el) => getComputedStyle(el).display)).toBe("inline-block");
     expect(errors).toEqual([]);
     await page.close();
 });

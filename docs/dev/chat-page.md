@@ -99,6 +99,8 @@ the rows a click opens. Neither the tool row nor its turn plays its entrance the
 out and drifts back in under the collapse. A call that JOINS a group while it is open is new and slides in like a
 standalone call.
 
+**What changes inside a row's text moves too.** A tool joining a group's list arrives with its comma (`.astreak-name.arrived`, moved by `left` so the list's ellipsis still cuts it rather than dropping it whole), and a figure that ticks (the live line's seconds and step count, a group's total time) rolls only the digit that changed (`Ticking`, ui-kit.tsx: each digit keyed by its place and value, decided at mount so an unchanged digit never starts the roll).
+
 **The live line folds rather than cutting** (`.pending-note`, "Thinking about the result… · 67s"). It is hidden while something else shows the run is alive (`.dup`, a call pulsing above it) or an approval card is up (`.blocked`), and back between calls, several times a minute: calm folds it (opacity, height and padding over .22 s, `interpolate-size`) instead of `display: none`, unfolds it on arrival (`@starting-style`), and at the end of the run `PendingSlot` holds it for `--pending-out-ms` saying what it last said (`.leaving`). The panel declares no duration and drops it in the same render.
 
 **The send hint retires.** "Enter to send · Shift+Enter for a new line" (the composer) and "Enter to start · …" (the
