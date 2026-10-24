@@ -33,25 +33,14 @@ def wml_regex_verdict(pattern, flags):
 `);
 }, { timeout: 240_000 });
 
-// --- the shipped core lags the fork: pin 0169c4fd, before parawanderer/cpython #10 and #11 ---
+// --- the shipped core against the corpus: no lag at pin ca282158 (parawanderer/cpython #10-#12 shipped) ---
 //
-// Every todo below IS the pin lag: the fork has the fix, the core in dist/pyodide does not, so a todo is closed by
-// REBUILDING the core and moving tools/pyodide-dist.json's pin, never by a code change here. Each entry names the fork
-// commit that fixes it. An entry listed here that the core now judges right FAILS (a rebuild shipped its fix: delete the
-// line); a mismatch on an entry NOT listed here FAILS too (the shipped core drifted from the corpus for some other reason).
-const EXACT = "59d015a5"; // parawanderer/cpython#10: an exact count is not a quantifier; {0,1} is ?
-const TREE = "1e35340b"; // parawanderer/cpython#11: the parse-tree check (three exponential escapes, open in the shipped core)
-const LAG = {
-    "regex: a ? spelled {0,1} in a repeated group": EXACT,
-    "regex: a repeated group of an exact count": EXACT,
-    "regex: thousands separators": EXACT,
-    "regex: a repeated group of exact counts": EXACT,
-    "regex: an exact count spelled as a range": EXACT,
-    "regex: an exact count then a literal in a starred group": EXACT,
-    "regex: a {,n} count, which only Python spells": TREE,
-    "regex: verbose mode, whose comment hides a bracket": TREE,
-    "regex: a conditional group's branches": TREE,
-};
+// A todo in LAG IS a pin lag: the fork has the fix, the core in dist/pyodide does not, so it is closed by REBUILDING the
+// core and moving tools/pyodide-dist.json's pin, never by a code change here. Each entry names the fork commit that
+// fixes it (`"regex: <corpus name>": "<sha8>"`). An entry listed here that the core now judges right FAILS (a rebuild
+// shipped its fix: delete the line); a mismatch on an entry NOT listed here FAILS too (the shipped core drifted from the
+// corpus for some other reason).
+const LAG = {};
 
 for (const v of regexCorpus("halting", "py")) {
     test(`the shipped core judges ${v.name.replace(/^regex: /, "")}`, (t) => {

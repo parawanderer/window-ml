@@ -51,8 +51,10 @@ const gnu = bin => {
     }
     return null;
 };
-const need = { "python3.14": "python@3.14", node: "node", cmake: "cmake", autoreconf: "autoconf automake", "pkg-config": "pkgconf", git: "git", make: "make" };
+const need = { "python3.14": "python@3.14", node: "node", cmake: "cmake", autoreconf: "autoconf automake", "pkg-config": "pkgconf", git: "git", make: "make", wget: "wget" }; // cpython/Makefile downloads the source with wget
 const missing = Object.entries(need).filter(([b]) => !which(b)).map(([b, f]) => `${b} (brew install ${f})`);
+// libffi's autoreconf needs libtool's m4 (LT_INIT); Homebrew installs libtoolize as glibtoolize
+if (!which("libtoolize") && !which("glibtoolize")) missing.push("libtoolize (brew install libtool)");
 const sed = gnu("sed"), patch = gnu("patch");
 if (!sed) missing.push("GNU sed (brew install gnu-sed)");
 if (!patch) missing.push("GNU patch (brew install gpatch)");
