@@ -157,8 +157,8 @@ surfaces it.
 one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
-and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048 are merged): #1055, #1051, #1045,
-#1041, then (d), then #1068, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068 are merged): #1051, #1045,
+then (d) #1063, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -385,8 +385,18 @@ listed as remaining is DONE unless named below.
   owner table and CPU time read; the worker never registers), host #28 MERGED ae7284e6, #1048 retargeted to `main`.
   Root-k merged `main` into `manifests/store`; main's backup inventory then failed on the store's two keys, classified
   `never` backed up in a48e9743; the janitor cleared that commit (review 5631381308) and **#1048 MERGED 703e8724**
-  the same evening. GitHub retargeted #1068 and #1055 to `main`; #1068 is the red team's to merge next, then #1055,
-  #1070, #1063 in dependency order.
+  the same evening. GitHub retargeted #1068 and #1055 to `main`. The next morning (2026-10-24): #1068 MERGED
+  ce2a96bb (the red team's `MANIFESTS` pass, its entrypoint pin passing), #1055 MERGED 76ef2f7d, #1041 MERGED
+  326ff8cf (the corpus append). **Root 2 DONE 2026-10-24**: [`ROOT_K_RESULT_2.md`](ROOT_K_RESULT_2.md) landed with
+  #1055 (the coordinator checked its claims against the merged code: the tool is offered on `shellTurnedOn` at run
+  start, a draft stores `origin: "proposed"`, the evidence run requires the host to hold a `write: none` envelope;
+  host `c107434` is host #28's head before its squash). Measured there on the real host: a true read-only draft gets
+  `evidence {calls: 1}`; a lying one (`touch` drafted as a reader) fails its re-run on exit 1 and stays sandbox-only.
+  Named as left: a lying manifest whose program exits 0 having written nothing would pass (the check is exit code,
+  envelope and protected names, never a diff of the root); the evidence run is unmeasured on Linux (Landlock); one
+  accepted change beyond the ruling, the tool is offered by the settings, not the measured host status. Next: (d) the
+  registration page (#1063, on `main`), then #1070 (the red team's `propose_manifest` pass, on `main`), each after the
+  janitor; (c2) library manifests only if time allows.
   **Root 1 DONE 2026-10-23**: [`ROOT_K_RESULT_1.md`](ROOT_K_RESULT_1.md) merged 9fe4e6a2 (#1075, the coordinator
   reviewed, every claim checked against the merged code). Left by it, each named there: the host's CPU timebase is a
   per-arch constant (an x86_64 host under Rosetta undercounts about 42x), a follow-up root-k's session was refused
