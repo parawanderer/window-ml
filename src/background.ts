@@ -51,7 +51,8 @@ import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { pageInject } from "./sw/sw-page-turn";
-import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart, cancelStarts, cancelAllStarts } from "./sw/sw-start-approval";
+import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart, cancelStarts, cancelAllStarts, waitingStarts } from "./sw/sw-start-approval";
+import "./sw/sw-badge";   // the toolbar badge: what is waiting for the person, per tab
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
@@ -730,6 +731,18 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             sendResponse({ data: { lists, ...(notice ? { upgradeNotice: true, upgradeDropped: notice.dropped } : {}), ...(origin ? { origin, decision, levels, ...(implied ? { implied: true } : {}) } : {}) } });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
+    }
+    // The popup's "Waiting for you": the start asks on a tab, and Show, which opens that ask's card on the page. Extension
+    // pages only, like SITE_ACCESS: a page learns nothing of another site's asks, and cannot raise a card by naming one.
+    if (message.type === "START_ASKS") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { tabId?: unknown; show?: unknown };
+        if (typeof p.tabId !== "number") { sendResponse({ error: "START_ASKS needs a tabId." }); return; }
+        const asks = waitingStarts(p.tabId);
+        const ask = typeof p.show === "string" ? asks.find((a) => a.requestId === p.show) : undefined;
+        if (ask) void chrome.tabs.sendMessage(p.tabId, { type: "ML_SHOW_START_ASK", runId: ask.runId }, { frameId: 0 }).catch(() => { /* the page is gone */ });
+        sendResponse({ data: { asks: asks.map((a) => ({ requestId: a.requestId, origin: a.origin, since: a.since })), ...(typeof p.show === "string" ? { shown: !!ask } : {}) } });
+        return;
     }
     if (message.type === "USER_START_RUN") {
         const tabId = sender.tab?.id;

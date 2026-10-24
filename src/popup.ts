@@ -407,15 +407,22 @@ const SITE_STATE: Record<SiteDecision, string> = {
     denied: "is denied: its calls are refused.",
     unknown: "is not allowed to use window.ml. Its calls are refused.",
 };
-/** The agents line under the site's state, by its agent level (DevTools Settings sets it; the buttons come with the
- *  start card). */
+/** The agents line under the site's state, by its agent level. */
 const AGENTS_LINE: Record<SiteLevels["agents"], string> = {
     off: "Agents: it may not start agents.",
     ask: "Agents: it may start agents, and each start asks you.",
     always: "Agents: it starts agents without asking.",
     denied: "Agents: denied. It cannot ask again.",
 };
+/** The agents buttons, by agent level: each sets the level it names (SITE_ACCESS_SLICE3.md 1.3). */
+const AGENT_BUTTONS: Record<SiteLevels["agents"], { label: string; level: SiteLevels["agents"] }[]> = {
+    off: [{ label: "Let it start agents", level: "ask" }],
+    ask: [{ label: "Always allow agents", level: "always" }, { label: "No agents", level: "off" }],
+    always: [{ label: "Ask each time", level: "ask" }, { label: "No agents", level: "off" }],
+    denied: [{ label: "Stop denying", level: "off" }],
+};
 let siteOrigin: string | null = null;
+let siteTabId: number | null = null;   // state: ui (the tab the popup opened over, for its waiting start asks)
 let siteNow: SiteDecision | null = null;   // what the lists said last, which decides what "Revoke" undoes
 let siteLevelsNow: SiteLevels | null = null;   // state: ui (what the worker said last about this tab's site)
 function siteAccess(payload: { origin?: string; edit?: SiteEdit }): Promise<SiteDecision | null> {
@@ -443,6 +450,16 @@ function renderSite(decision: SiteDecision | null) {
     agents.textContent = !siteLevelsNow ? "" : self
         ? "Agents: it approves its own actions (DevTools Settings → Permissions)."
         : AGENTS_LINE[siteLevelsNow.agents];
+    // Its buttons, by level; none while the site approves its own actions (that is set in DevTools Settings only).
+    const buttons = $("siteAgentButtons");
+    const level = siteLevelsNow?.agents;
+    buttons.hidden = agents.hidden || self || !level;
+    buttons.replaceChildren(...(buttons.hidden || !level ? [] : AGENT_BUTTONS[level].map(({ label, level: to }) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.addEventListener("click", () => editSite((origin) => ({ op: "agents", origin, level: to })));
+        return b;
+    })));
     $("siteAllowSession").hidden = decision === "session";
     $("siteAllowAlways").hidden = decision === "always";
     $("siteDeny").hidden = decision === "denied";
@@ -454,8 +471,50 @@ async function loadSite() {
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         siteOrigin = originOf(tab?.url);
-    } catch { siteOrigin = null; }
+        siteTabId = tab?.id ?? null;
+    } catch { siteOrigin = null; siteTabId = null; }
     renderSite(siteOrigin ? await siteAccess({ origin: siteOrigin }) : null);
+    await loadWaiting();
+}
+
+// --- waiting for you: what asks the person on this tab (SITE_ACCESS_SLICE3.md 1.3) ---------------------------------
+/** A start ask on this tab, as the worker lists it. */
+interface WaitingAsk { requestId: string; origin: string; since: number }
+/** Ask the worker for this tab's start asks, or (with `show`) to open that ask's card on the page. */
+function startAsks(payload: { tabId: number; show?: string }): Promise<{ asks: WaitingAsk[]; shown?: boolean }> {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "START_ASKS", payload }, (res: { data?: { asks?: WaitingAsk[]; shown?: boolean } } | undefined) => {
+            void chrome.runtime.lastError;
+            resolve({ asks: res?.data?.asks ?? [], ...(res?.data?.shown != null ? { shown: res.data.shown } : {}) });
+        });
+    });
+}
+/** Draw the block: one line per ask, with Show; hidden when nothing waits. */
+function renderWaiting(asks: WaitingAsk[]): void {
+    $("waiting").hidden = asks.length === 0;
+    $("waitingList").replaceChildren(...asks.map((a) => {
+        const row = document.createElement("div");
+        row.className = "wait-row";
+        const line = document.createElement("div");
+        line.className = "hint";
+        const origin = document.createElement("code");
+        origin.textContent = a.origin;   // the origin the browser reported, never a title the page set
+        line.append("An agent start from ", origin, " is waiting on this tab.");
+        const show = document.createElement("button");
+        show.textContent = "Show";
+        show.title = "Open the card on the page";
+        show.addEventListener("click", async () => {
+            if (siteTabId == null) return;
+            const r = await startAsks({ tabId: siteTabId, show: a.requestId });
+            if (r.shown) window.close();   // the card is on the page now: get out of its way
+            else renderWaiting(r.asks);    // answered or expired meanwhile
+        });
+        row.append(line, show);
+        return row;
+    }));
+}
+async function loadWaiting(): Promise<void> {
+    renderWaiting(siteTabId == null ? [] : (await startAsks({ tabId: siteTabId })).asks);
 }
 async function editSite(edit: (origin: string) => SiteEdit) {
     if (!siteOrigin) return;

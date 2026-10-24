@@ -1233,6 +1233,7 @@ function fromApp(d: any): void {
             for (const ev of bgRing) toApp(ev);
             bgRing.length = 0;
             if (composerPendingOpen) { composerPendingOpen = false; toApp({ __mlSidebarComposer: "open" }); if (composerPendingCtx) { toApp({ __mlComposerElement: composerPendingCtx }); composerPendingCtx = null; } try { frame.focus(); } catch { /* ignore */ } }
+            if (showRunPending) { toApp({ __mlShowRun: { hash: showRunPending } }); showRunPending = ""; try { frame.focus(); } catch { /* ignore */ } }
             if (addToRunPending !== undefined) { toApp({ __mlAddToCurrentRun: { ctx: addToRunPending } }); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
@@ -1480,6 +1481,21 @@ function workerFirst(payload: Record<string, unknown>, toPage: () => void): void
 
 let composerPendingCtx: ElementContext | null = null;   // a right-click's resolved context, if any
 let addToRunPending: ElementContext | null | undefined = undefined;   // "Add to current run" ctx awaiting the app's ready
+let showRunPending = "";   // state: ui (the run whose start card the popup's Show asked for, awaiting the app's ready)
+
+/**
+ * The popup's Show (SITE_ACCESS_SLICE3.md 1.3): bring up the card of the run whose start ask waits on this tab. The
+ * worker sends it only for an ask it holds on this tab; on a surface with no card in the page (the DevTools panel alone)
+ * there is nothing to open, and in the overlay the panel slides open.
+ * @param runId the run the ask belongs to
+ */
+function showStartAsk(runId: string): void {
+    if (mode === "overlay") { if (panel && !panel.classList.contains("open")) toggleOpen(); return; }
+    if (!hudActive()) return;
+    if (!cardHost) mountCard();
+    if (cardReady && frame) { toApp({ __mlShowRun: { hash: runId } }); try { frame.focus(); } catch { /* ignore */ } }
+    else showRunPending = runId;   // flushed on the app's ready
+}
 function openComposer(ctx: ElementContext | null = null): void {
     if (!hudActive()) return;
     // A Commander run always has python_exec, so start Pyodide while the person is still typing (see the
@@ -1627,6 +1643,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // The Spotlight shortcut (background `commands` → this tab). Open the HUD composer; no-op unless the
     // HUD is the active surface (off / devtools-coexist).
     else if (msg?.type === "ML_OPEN_COMPOSER") openComposer();
+    // The popup's Show, through the worker (START_ASKS): open the card a waiting start ask is on.
+    else if (msg?.type === "ML_SHOW_START_ASK" && typeof msg.runId === "string") showStartAsk(msg.runId);
     // Right-click "Ask window.ml about this": resolve the last right-clicked element's semantic container
     // + clean context RIGHT HERE (the content script sees the page DOM) and open the Commander with it.
     else if (msg?.type === "ML_ASK_ABOUT_THIS") {
