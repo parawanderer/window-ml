@@ -469,9 +469,27 @@ the body). Aligned:
   read. Leaving a page the run acts in is the interactive mode's own cost, not a wider grant: an approved as-you
   fetch of a URL does not by itself consent a navigate to it unless the person approved the ORIGIN.
 
+**A policy over a URL pattern covers both modes.** A policy is a function over the facts, so "the agent may not fetch
+`https://example.com/admin/*`" is `(c) => c.kind === "fetch" && c.url.startsWith("https://example.com/admin/")` with
+`deny`, and under this ruling it denies the navigate as well as the fetch. The policy page offers that row from a card
+as it offers a host row today.
+
+**A navigation the model did not name is judged on arrival (ruled 2026-10-24, Shane).** A `click` can navigate the tab,
+a page can redirect itself, a timer can send it on: the destination is the page's choice, not the model's, so no card
+before the act can see it in general. The rule is enforced where every cause meets: on every navigation the run's tab
+COMMITS while the run is live, the run host judges the committed URL as the `fetch` consumer with `interactive: true`,
+before re-adoption. A `deny` BLOCKS the run on that page: no survey, no step, no tool runs there, the model is told
+the page is denied by a policy (the policy named), and the person sees a card that offers to go back or end the run. An
+`ask` pauses the run with the card. An `allow`, or an origin already consented, continues, and that arrival consents the
+origin like an approved navigate. Where the destination IS known before the act, an anchor's `href` on the element the
+click resolves to, the click is refused up front with the same reason, which saves the click and the page load; this is
+the describe layer, the arrival check is the enforce layer, and the second never relies on the first. Open: redirect
+hops the tab never commits (a denied URL that 302s to an allowed one was still read by the browser); the fetch gate's
+redirect guard sees only the final origin, so hops are a left item for both modes.
+
 A build: `navNeedsConsent` consults the judge first and writes an approved origin into the run's consent set the fetch
 gate reads; `fetchFacts` gains `interactive`; the `fetch` facts' schema and the policy page's rows show it; the
-same-origin as-you free tier replaces the flag. It widens two grants (an origin grant across modes, the same-origin
+same-origin as-you free tier replaces the flag; the run host's committed-navigation hook judges every arrival. It widens two grants (an origin grant across modes, the same-origin
 as-you tier), so it lands with a red-team pass by a separate session (rule 10) and after the freeze.
 
 ## Open questions
