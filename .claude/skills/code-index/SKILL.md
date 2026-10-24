@@ -111,7 +111,7 @@ can stay a rule. Keep it that way: a new file opens with a comment saying what t
 - **A file HEADER is never a declaration's docstring**, even with no blank line between them. Letting the
   first symbol inherit it made it look documented while saying nothing about itself.
 - **CSS is one row per class**, from its documented declaration — not one per `:hover`/media override.
-- It **replaced `scripts/components.mjs`**, which covered only the sidebar's components and CSS. Anything
+- It **replaced `components.mjs`**, which covered only the sidebar's components and CSS. Anything
   still calling that name is stale.
 
 ## Keeping this current

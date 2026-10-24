@@ -116,7 +116,7 @@ subscription with `since`. Runtimes known before the drop stay listed, offline, 
 
 ## Pairing (`pairing.ts`)
 
-Option C of window-ml-hub `docs/design/pairing.md`. The NEW principal chooses the code, so a hub cannot hand one code
+Option C of window-ml-hub `pairing.md`. The NEW principal chooses the code, so a hub cannot hand one code
 to two devices; the person carries it to a device that may pair (the root, or `may_pair`), which fetches the offer,
 shows the fingerprint, and on confirmation leaves a certificate sealed to the offered agreement key.
 
@@ -155,7 +155,7 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
 
 - **What it publishes**: a snapshot of the index at every connection, then every index change and every session's
   events as they happen, fed by `SessionServer.watch` whether or not a page is open. The hub never says who is
-  subscribed, so publishing is unconditional (window-ml-hub `docs/PROTOCOL.md`); a stream costs nothing until it is.
+  subscribed, so publishing is unconditional (window-ml-hub `PROTOCOL.md`); a stream costs nothing until it is.
 - **Ids are rewritten at the boundary** (`rehome`). Locally every row says `runtime: "local"`; a device knows this
   browser as its principal. Outgoing index updates, stream messages and results carry the principal; an incoming
   command addressed to the principal runs as `"local"`. The extension's own pages, bookmarks and stored keys keep the
@@ -182,7 +182,7 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
 - **Until the screens exist**, `dev-hub-pair.html` offers this browser and `scripts/hub-root.mjs` is the root device
   that confirms it (skill: `hub-pairing`).
 
-**Revocation** (`hub/revocation.ts`, `hub-devices.ts`), window-ml-hub `docs/design/revocation.md`:
+**Revocation** (`hub/revocation.ts`, `hub-devices.ts`), window-ml-hub `revocation.md`:
 
 - **The allowlist is the authoritative revocation.** `DeviceRegistry` records every principal whose chain verified in
   presence (not this runtime itself), persisted in the keyring's `devices` record. A revoked principal, or a chain
@@ -366,7 +366,7 @@ storage on Android, "this device only, after first unlock"). A keystore holds by
   the only implementation with `createAccount`; `extension-pairing.ts` refuses it outright and reports `canCreate:
   false`, because **no runtime ever holds the root** (window-ml-hub end-to-end-crypto decision 4). The root is also
   deliberately COLD: it is not the revocation signer, which is why a runtime holds a never-delegable `may_revoke` and
-  a revocation is signed with the root nowhere near (window-ml-hub `docs/design/revocation.md`). What still needs it
+  a revocation is signed with the root nowhere near (window-ml-hub `revocation.md`). What still needs it
   is pairing a device, granting `may_revoke`, and renewing the certificate of whichever device holds that.
   **`scripts/hub-root.mjs` is NOT how this works** — it is a test tool from before the pairing screens existed, it
   keeps every key as extractable JWK in one file (so the file IS the account), and its own header says an account made

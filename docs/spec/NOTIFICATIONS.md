@@ -175,7 +175,7 @@ told") and `DeviceInfo.lastSeenMs` ("a runtime renews everything on its allowlis
 
 `defaultGrant` (`src/hub/pair-flow.ts`) gives EVERY runtime `mayRevoke: true`, and `device.renew` refuses a
 `may_revoke` certificate outright, so on today's defaults no browser can renew itself at all. That is not a design
-choice to work around here, it is the code disagreeing with window-ml-hub `docs/design/revocation.md`, which says
+choice to work around here, it is the code disagreeing with window-ml-hub `revocation.md`, which says
 `may_revoke` is "held by exactly one principal at a time" and that "a second runtime that may revoke is the root's
 decision to re-place, not a default".
 
