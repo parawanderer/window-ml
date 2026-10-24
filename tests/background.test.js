@@ -505,7 +505,22 @@ test("GET_CONFIG exposes the utility-model fields", async () => {
     assert.equal(resp.data.utilityModel, "small:0.8b");
     assert.equal(resp.data.utilityNumCtx, 2048);
     assert.equal(resp.data.utilityForceCpu, true);
-    assert.equal(resp.data.autoApproveSameOriginAuth, false, "the same-origin-auth opt-in is exposed (default off)");
+});
+
+test("UPGRADE: a saved config that still carries the retired autoApproveSameOriginAuth exposes nothing of it, and either value leaves a cross-origin as-you fetch gated", async () => {
+    // docs/spec/POLICIES.md, "One free tier": the flag is gone, a same-origin as-you fetch is free whatever it said.
+    for (const saved of [true, false]) {
+        const urls = [];
+        const bg = loadBackground({ config: baseConfig({ autoApproveSameOriginAuth: saved }), onFetch: (call) => { urls.push(call.url); return fetchResponse("<p>x</p>", { contentType: "text/html", url: call.url }); } });
+        const resp = await bg.send({ type: "GET_CONFIG", payload: {} });
+        assert.ok(!("autoApproveSameOriginAuth" in resp.data), `saved ${saved}: the retired flag is not in the public config`);
+        const sender = { tab: { id: 9, url: "https://site.example/inbox" }, url: "https://site.example/inbox" };
+        const same = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/other", credentials: true } }, sender);
+        assert.ok(!same.error, `saved ${saved}: same-origin as-you is free (${same.error})`);
+        const cross = await bg.send({ type: "FETCH_URL", payload: { url: "https://other.example/x", credentials: true } }, sender);
+        assert.match(cross.error, /wasn't approved/, `saved ${saved}: cross-origin as-you still needs a grant`);
+        assert.deepEqual(urls, ["https://site.example/other"]);
+    }
 });
 
 test("FETCH_URL: the Advanced same-origin-auth opt-in frees a SAME-ORIGIN credentialed fetch — cross-origin still always asks", async () => {
@@ -744,7 +759,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: false,
         // The server-tool curation: the page needs it before it builds a run's toolset.
         serverToolsOff: [], commanderServerTools: [],
-        autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
+        autoApproveSelfSource: true,
         // A run the page assembles decides from it whether its prompt offers `ml.current`. On when never stored.
         selfIntrospection: true,
         // On since 2026-10-09: a core component. Never stored here, so this is the default.
@@ -2934,11 +2949,11 @@ test("a worker-run fetch_url on a local page: another file is refused naming the
     assert.deepEqual(toPage, [], "the calls ran in the worker");
 });
 
-test("SECURITY (FETCH_URL): an as-you GET of the sender's OWN page needs no grant; its render and the rest of the origin still do", async () => {
-    // The page can already `fetch(location.href, { credentials: "include" })` itself, so an as-you GET of that
-    // exact URL grants it nothing. Judged against the sender's REAL frame URL — the loop's auto-approve only
-    // skipped the prompt. A render is NOT included (a second tab re-running the page's scripts; the page side
-    // answers its own session render from the live DOM), and neither is any OTHER page on the same origin.
+test("SECURITY (FETCH_URL): an as-you GET of the sender's OWN origin needs no grant, its render included; another origin still does", async () => {
+    // The page can already `fetch(location.href, { credentials: "include" })` itself, and any URL on its origin, so an
+    // as-you read there grants it nothing: the one free tier (docs/spec/POLICIES.md, "Navigate is a fetch"), which
+    // replaced the `autoApproveSameOriginAuth` flag. Judged against the sender's REAL frame URL — the loop's
+    // auto-approve only skipped the prompt. Another origin, a subdomain included, still needs a grant.
     const urls = [];
     const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { urls.push(call.url); return fetchResponse("<p>me</p>", { contentType: "text/html", url: call.url }); } });
     const sender = { tab: { id: 9, url: "https://site.example/inbox?id=3" }, url: "https://site.example/inbox?id=3#top" };
@@ -2946,10 +2961,14 @@ test("SECURITY (FETCH_URL): an as-you GET of the sender's OWN page needs no gran
     assert.ok(!mine.error, `own page fetched as-you with no grant (${mine.error})`);
     assert.deepEqual(urls, ["https://site.example/inbox?id=3"]);
     const sibling = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=4", credentials: true } }, sender);
-    assert.match(sibling.error, /wasn't approved/, "another page on the same origin still needs a grant");
+    assert.ok(!sibling.error, `another page on the same origin is free too (${sibling.error})`);
     const render = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=3", credentials: true, rendered: true } }, sender);
-    assert.match(render.error, /wasn't approved/, "a session RENDER of it still needs a grant here");
-    assert.equal(urls.length, 1, "neither refused call reached the network");
+    assert.doesNotMatch(String(render.error ?? ""), /wasn't approved/, "a session RENDER of the origin is not gated");
+    const sub = await bg.send({ type: "FETCH_URL", payload: { url: "https://mail.site.example/x", credentials: true } }, sender);
+    assert.match(sub.error, /wasn't approved/, "a subdomain is another origin: it needs a grant");
+    const cross = await bg.send({ type: "FETCH_URL", payload: { url: "https://other.example/x", credentials: true } }, sender);
+    assert.match(cross.error, /wasn't approved/, "another site needs a grant");
+    assert.ok(!urls.some((u) => /mail\.site|other\.example/.test(u)), "neither refused call reached the network");
 });
 
 test("SECURITY (FETCH_URL): self-source is enforced BACKGROUND-side — own-repo SOURCE is free from an untrusted page; an issue / non-self / rendered / flag-off still gate", async () => {
@@ -2977,7 +2996,7 @@ test("SECURITY (FETCH_URL): self-source is enforced BACKGROUND-side — own-repo
     assert.match((await bgOff.send({ type: "FETCH_URL", payload: { url: REPO } }, untrusted)).error, /hasn't been approved/i, "flag OFF → even the source read gates");
 });
 
-test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE (incl. rendered) — cross-origin / credentialed stay gated", async () => {
+test("FETCH_URL: an untrusted page's SAME-ORIGIN fetch is FREE (rendered or as-you) — cross-origin stays gated", async () => {
     // A same-origin read grants nothing the page couldn't do itself (`fetch()`/navigate its own origin), so it
     // needs no grant — a plain GET AND a rendered load (which renders in the page's own session, like a
     // same-origin navigate). Cross-origin and `credentials` (as-you) stay gated. sender.url = the requesting FRAME.
@@ -3001,7 +3020,9 @@ test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE (i
     assert.ok(rendered.error && /incognito/i.test(rendered.error), "same-origin RENDERED renders in incognito (session-less), not the session");
 
     const cred = await send({ url: "https://site.example/api", credentials: true });
-    assert.ok(cred.error && /wasn't approved/i.test(cred.error), "same-origin CREDENTIALED stays locked (as-you)");
+    assert.ok(!(cred.error && /wasn't approved/i.test(cred.error)), "same-origin CREDENTIALED is the one free tier (POLICIES.md)");
+    const crossCred = await send({ url: "https://other.example/api", credentials: true });
+    assert.ok(crossCred.error && /wasn't approved/i.test(crossCred.error), "cross-origin CREDENTIALED stays locked (as-you)");
 });
 
 test("SECURITY (FETCH_URL): the SAME addresses become reachable once approved via the fetch_url tool (consent is the sole boundary)", async () => {

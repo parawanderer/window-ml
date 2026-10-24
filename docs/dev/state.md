@@ -65,7 +65,9 @@ page-hosted one. Several stores exist once per host.
 
 | Grant | Where | Lifetime |
 | --- | --- | --- |
-| Cross-origin navigations approved, which also make fetches to those origins free | `consentedOrigins` (`sw-run-host.ts` closure) | ONE TURN; reset on resume |
+| Cross-origin navigations approved, which also make fetches to those origins free | `consentedOrigins` (`sw-run-host.ts` closure) | ONE TURN; a turn starts from the start origin and the run's origin grants |
+| Origins the person approved a navigate or an arrival to: as-you for `fetch_url` there, and navigable, in every later turn | `RunCtx.origins` (`grantRunOrigin`, `worker-tools.ts`) | the session (dropped with its local tools); worker memory |
+| A run held on the page its tab arrived on (a policy denies it, or asks and nobody answered) | `holds` (`nav-arrival.ts`) | the session, until the tab is judged again or the person answers; worker memory, judged again on resurrection |
 | Sheets approved for `python_exec` | `approvedSheets` (`sw-run-host.ts` closure); page: `approvedSheets` (`ml-agent-run.ts`, page-wide) | one turn; page-hosted: the page |
 | Sub-operations of an approved call: sheets, Python code, server-tool calls, fetches inside an approved `exec` | `pendingGrants` (`sw-consent.ts`), per tab and per CALL; checks read their union (`tabGrants`) | ONE DELEGATED CALL. `delegateTool`'s `finally` drops only its own call's grants (`dropCallGrants`), so two runs on one tab keep theirs |
 | Repeat `ml.fetch` of an approved URL | `fetchConsent` | the tab, until it closes (memory) |

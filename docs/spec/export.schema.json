@@ -2279,12 +2279,13 @@
       "description": "A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL, the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch.",
       "properties": {
         "kind": {
-          "description": "`policy`: a policy allowed the call (sw-policies.ts), and `detail` is its label.",
+          "description": "`policy`: a policy allowed the call (sw-policies.ts), and `detail` is its label. `origin`: the person approved a navigate to this origin earlier in the run, which consents a fetch of any URL under it, and `detail` is the origin.",
           "type": "string",
           "enum": [
             "fetch-url",
             "sheet",
-            "policy"
+            "policy",
+            "origin"
           ]
         },
         "detail": {

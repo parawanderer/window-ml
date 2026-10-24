@@ -118,6 +118,25 @@ test("breadthNote leads with what the policy does, says when it reaches past the
     assert.match(note, /Measured, not proven/);
 });
 
+test("a proposal that also covers navigating says so on the card, by effect; one written only for reads does not", () => {
+    const calls = [{ url: OTHER, rendered: false, credentials: false, outcome: "ran" }];
+    const measure = (when, effect = "allow") => { const p = PP.checkProposal({ ...NARROW, when, effect }).proposal; const b = PP.measureBreadth(p, calls); return { b, note: PP.breadthNote(p, b) }; };
+    // NARROW excludes credentials, and a navigate is a fetch as the person: it never navigates.
+    const reads = measure(NARROW.when);
+    assert.equal(reads.b.navigates, false);
+    assert.doesNotMatch(reads.note, /go(es|ing)? to those pages/);
+    const host = '(c) => c.host === "other.example"';
+    assert.equal(measure(host).b.navigates, true);
+    assert.match(measure(host).note, /also lets the run go to those pages without asking and act on them/);
+    assert.match(measure(host, "ask").note, /also asks before the run goes to those pages/);
+    assert.match(measure(host, "deny").note, /also stops the run going to those pages/);
+    // Written on `interactive` alone: it matches no recorded fetch, and the probe still finds it reaching every site.
+    const nav = measure("(c) => c.interactive === true");
+    assert.equal(nav.b.matched.length, 0);
+    assert.equal(nav.b.navigates, true);
+    assert.equal(nav.b.strays.length, nav.b.tried, "every unrelated site is matched as a navigation");
+});
+
 // --- what the model reads ---
 
 test("propose_policy's model-facing text is unpadded and short", async () => {

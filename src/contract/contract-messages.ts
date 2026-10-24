@@ -146,9 +146,6 @@ export interface StartRunPayload {
     origin?: PromptOrigin;
     /** trusted config flag → the background may auto-approve readonly python */
     autoApprovePython: boolean;
-    /** config flag → auto-approve a same-origin as-you (credentialed) fetch (the security gate is enforced
-     *  background-side from getConfig too, so a forged value only affects the prompt, never the actual fetch) */
-    autoApproveSameOriginAuth?: boolean;
     /** config flag → auto-approve an uncredentialed read of the agent's OWN repo source (self-source.ts) */
     autoApproveSelfSource?: boolean;
     /** `selfIntrospection`: give this run's read-only surveys `ml.current`. Absent is on. */
@@ -365,6 +362,9 @@ export interface PageToolEnvelope {
     reused?: ReusedGrant[];
     /** a precheck that found the action doomed (no target) → skip the gate, use `result` */
     precheckFailed?: boolean;
+    /** a passed `click` precheck's link: the absolute `href` of the resolved element's nearest link, which the worker
+     *  judges before the click (nav-arrival.ts). The page's word: the arrival is judged again whatever it says. */
+    href?: string;
     /** RESERVED-surface click: the page-side tool couldn't synth-click a cross-origin iframe / sealed shadow
      *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. `hint` is
      *  an optional stuck-loop re-snap nudge the background appends to the click result. */

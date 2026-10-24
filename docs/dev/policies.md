@@ -80,9 +80,27 @@ dropped.
 
 A caller that wants only the PERSON's answer ignores `by === "builtin"`; both callers of the fetch consumer do.
 
-`fetchFacts(url, { credentials, rendered })` builds the facts a `fetch` policy sees: `kind: "fetch"`, `url`, `host`
-(lowercased hostname), `method: "GET"`, `credentials`, `rendered`, and `effects`. Add a consumer by widening
-`PolicyConsumer` and `validList`, and give it a facts builder.
+`fetchFacts(url, { credentials, rendered, interactive })` builds the facts a `fetch` policy sees: `kind: "fetch"`,
+`url`, `host` (lowercased hostname), `method: "GET"`, `credentials`, `rendered`, `interactive`, and `effects`. Add a
+consumer by widening `PolicyConsumer` and `validList`, and give it a facts builder.
+
+`navigateFacts(url)` is the same read in its interactive mode (`credentials`, `rendered` and `interactive` all true):
+`POLICIES.md`, "Navigate is a fetch". Three callers judge it, each the `fetch` consumer:
+
+- `navigate` itself (`autoApprove`, `agent-host.ts`, through the run host's `navPolicy`): `deny` refuses it, `ask` or a
+  store not read yet carries it to a card, `allow` skips the cross-origin card. An `allow` with no card adds the origin
+  to the turn's `consentedOrigins` only, never to the run's as-you grants (`grantRunOrigin`, `worker-tools.ts`): only a
+  person on a card grants an origin as-you (the 2026-10-24 correction).
+- Every page the run's tab COMMITS while the run is live (`nav-arrival.ts`, from `webNavigation.onCommitted`), whoever
+  caused it. `arrivalVerdict` turns the judgement into a hold, a consent, or a pass; a builtin answer and no answer both
+  pass and consent nothing. An `ask` asks about every arrival it covers, an origin already consented included.
+- A `click` whose element sits in a link (`clickHref`, `builtin-tools.ts`, returned by the click's precheck): a `deny`
+  refuses the click before it is made. The page answers the precheck, so this layer saves a page load and nothing more;
+  the arrival check does not rely on it.
+
+`propose_policy` names `interactive` among the facts, and `measureBreadth` (`policy-proposal.ts`) judges each URL it
+measures as a navigation too: the card says when a proposal would also let the run go to those pages, ask first, or
+stop it.
 
 ## A null fact is unknown
 

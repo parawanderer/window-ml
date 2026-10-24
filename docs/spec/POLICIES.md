@@ -503,6 +503,26 @@ gate reads; `fetchFacts` gains `interactive`; the `fetch` facts' schema and the 
 same-origin as-you free tier replaces the flag; the run host's committed-navigation hook judges every arrival. It widens two grants (an origin grant across modes, the same-origin
 as-you tier), so it lands with a red-team pass by a separate session (rule 10) and after the freeze.
 
+**As built (2026-10-24), where the build narrows the ruling:**
+
+- **The start origin is consented, never an as-you grant.** It is in the run's consented origins (navigation and
+  uncredentialed reads), as before. An as-you `fetch_url` of it is free while the tab is on it (the free tier) and asks
+  once the tab has left it.
+- **A page-built run keeps per-URL approvals for its fetches.** An approved navigate card is an as-you origin grant for
+  `fetch_url` only in a run the worker built, whose `fetch_url` the worker runs (`grantRunOrigin`). A page-built run's
+  `fetch_url` is gated in the page, which does not read that grant; the navigate is still consented.
+- **An arrival no policy decides passes and consents nothing**, the builtin answer included: no card was owed before
+  the act either.
+- **An `ask` asks about every arrival it covers, an origin already consented included.** "An origin already consented
+  continues" holds where no policy asks: the policy asks about the page, not the origin.
+- **The run's own navigate is judged once, before it is made.** Its arrival at the URL it named (the fragment aside) is
+  not judged again, so an `ask` it passed on a card does not ask twice; every other commit is, a page that sends the
+  tab on from there included.
+- **A hold outlives the turn.** A run whose turn ends held is not re-adopted on that page, and its next turn judges the
+  page the tab holds then before anything runs (the person may have gone back by hand). Holds are worker memory: a run
+  resurrected after an eviction is judged again on the page it wakes on.
+- **Not built:** the policy page's rows do not show `interactive` yet (it needs a design and its strings: #1122).
+
 ## Worked example and acceptance test: a task on another site, scoped by a proposed policy
 
 **Shane, 2026-10-24.** The simplest whole use of the mechanism, and the test of it: the person opens the model on any

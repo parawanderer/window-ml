@@ -64,6 +64,10 @@ interface RunCtx {
     consented: Set<string>;
     /** As-you (credentialed) fetches the person approved, each spent by the one call it was approved for. */
     credOnce: Set<string>;
+    /** Origins the person approved a navigate to: an as-you grant for every URL under each, in every mode, for the rest
+     *  of the run (docs/spec/POLICIES.md, "One consent, scoped by the origin"). Never the start origin, never one a policy
+     *  let the run reach: an as-you grant needs a person on a card. */
+    origins: Set<string>;
     /** What the python_exec call now running was approved for: external sheet ids, and the code of a cell outside the dialect. Set around the
      *  one call (`grantRunPython`), never on the tab. `inside`: the call is the host's try of the cell INSIDE the dialect,
      *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). */
@@ -107,7 +111,7 @@ export function ensureRunState(runId: string, tabId: number, tabUrl: () => strin
 
 /** Fresh worker-tool state for a run. */
 const newRunCtx = (runId: string, tabId: number, tabUrl: () => string, python: boolean): RunCtx =>
-    ({ runId, tabId, tabUrl, python, cache: new Map(), spent: { prompt: 0, completion: 0, calls: 0 }, consented: new Set(), credOnce: new Set() });
+    ({ runId, tabId, tabUrl, python, cache: new Map(), spent: { prompt: 0, completion: 0, calls: 0 }, consented: new Set(), credOnce: new Set(), origins: new Set() });
 
 /** A successful default-mode fetch this run already made, for a read-only survey's `ml.fetch` (never egresses). */
 export function workerFetchCached(runId: string, url: string): FetchResult | undefined {
@@ -128,6 +132,39 @@ export function grantRunFetch(runId: string, url: string, credentials: boolean):
     if (!ctx) return false;
     (credentials ? ctx.credOnce : ctx.consented).add(url);
     return true;
+}
+
+/**
+ * Record the person's approval of a navigate to `origin`: an as-you grant for any URL under it, read by this run's
+ * worker-side fetch (`runMl`). The RUN's, never the tab's, as {@link grantRunFetch}'s are.
+ * @param runId the run
+ * @param origin the origin the person approved (`URL.origin`)
+ * @returns false when this worker holds no state for the run, and nothing was granted
+ */
+export function grantRunOrigin(runId: string, origin: string): boolean {
+    const ctx = runs.get(runId);
+    if (!ctx || !origin || origin === "null") return false;
+    ctx.origins.add(origin);
+    return true;
+}
+
+/** The origins the person approved this run a navigate to ({@link grantRunOrigin}), kept across its turns. */
+export const runOrigins = (runId: string): string[] => [...(runs.get(runId)?.origins ?? [])];
+
+/** Whether `url` is under an origin the person approved this run a navigate to ({@link grantRunOrigin}). */
+export function runOriginGranted(runId: string, url: string): boolean {
+    const ctx = runs.get(runId);
+    return !!ctx && originGranted(ctx, url);
+}
+
+/** Whether `url`'s origin is one of the run's origin grants. Exact origin: a subdomain is another origin. */
+const originGranted = (ctx: RunCtx, url: string): boolean => { try { return ctx.origins.has(new URL(url).origin); } catch { return false; } };
+
+/** Whether an origin grant covers this fetch: `url` is under one, and no policy asks about or refuses the fetch. */
+function originCovers(ctx: RunCtx, url: string, mode: { credentials: boolean; rendered: boolean }): boolean {
+    if (!originGranted(ctx, url)) return false;
+    const d = judgeCall(ctx.runId, "fetch", fetchFacts(url, mode)).decision;
+    return d !== "ask" && d !== "deny";
 }
 
 /** Grant the python_exec call about to run in the worker what its approval covers, and the step it runs in (its `ml`
@@ -249,8 +286,10 @@ function runMl(ctx: RunCtx): MlApi {
                 tabId: ctx.tabId, frameUrl: tabUrl, tabUrl, untrusted: trust === "untrusted", disclose: false,
                 // The run's own approvals, which no page can reach (grantRunFetch), and its policies (sw-policies.ts), judged
                 // here again at the choke point rather than trusted from the gate's earlier answer.
-                consented: (u) => ctx.consented.has(u) || policyAllows(ctx.runId, u),
-                takeCred: (u) => ctx.credOnce.delete(u),
+                // An origin the person approved a navigate to covers every URL under it, as you or not, and is not spent;
+                // an `ask` or a `deny` over the fetch withdraws it, as it withdraws a tab's remembered consent.
+                consented: (u) => ctx.consented.has(u) || originCovers(ctx, u, { credentials, rendered }) || policyAllows(ctx.runId, u),
+                takeCred: (u) => ctx.credOnce.delete(u) || originCovers(ctx, u, { credentials, rendered }),
             });
             if (r.error || !r.data) throw new Error(r.error || `the fetch of "${url}" returned nothing`);
             const data = r.data;

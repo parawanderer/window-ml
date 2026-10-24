@@ -82,7 +82,7 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
         // the render dispatch (a same-origin render uses the SESSION tab, not incognito — no leak, you're
         // already signed in there).
         const sameOriginAsSender = (() => { try { return !!caller.frameUrl && new URL(url, caller.frameUrl).origin === new URL(caller.frameUrl).origin; } catch { return false; } })();
-        const cfg = await getConfig(); // the same-origin as-you opt-in + the cdp render setting
+        const cfg = await getConfig(); // the self-source setting + the cdp render setting
 
 
 
@@ -90,18 +90,18 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
 
         // CREDENTIALED (fetch-as-the-user — a raw GET with cookies, OR a rendered load in a NORMAL tab that
         // carries the session) → a "read any URL as you" primitive, so an untrusted page needs a ONE-TIME
-        // per-URL grant (minted by an approved fetch_url, consumed here). EXCEPTION: a SAME-ORIGIN as-you fetch
-        // is allowed WITHOUT a grant when the user opted into `autoApproveSameOriginAuth` (Advanced). Cross-
-        // origin always needs the grant; execOpen/consent never authorize the credentialed path.
+        // per-URL grant (minted by an approved fetch_url, consumed here), or an origin grant (a navigate the person
+        // approved, `takeCred`). EXCEPTION: a SAME-ORIGIN as-you fetch is free, as navigating there is: the page the
+        // run is on, read in another mode (docs/spec/POLICIES.md, "One free tier"). Cross-origin always needs a grant;
+        // execOpen/consent never authorize the credentialed path.
         if (credentials) {
-            const sameOriginAuthOk = !!cfg.autoApproveSameOriginAuth && sameOriginAsSender;
             // THE SENDER'S OWN PAGE, as a raw GET: the page can already `fetch(location.href, {credentials:
             // "include"})` itself, so it gains nothing here. Judged against the sender's REAL frame URL — the
             // loop's auto-approve only skipped a prompt. A RENDER of it is not included: that would open a
             // second tab of the page (re-running its scripts), which the page side never asks for — it
             // answers a session render of itself from its live DOM.
             const ownPage = !rendered && !!caller.frameUrl && isCurrentPage(url, caller.frameUrl);
-            if (untrusted && !sameOriginAuthOk && !ownPage && !(caller.takeCred ? caller.takeCred(url) : takeCredFetch(tabId, url))) {
+            if (untrusted && !sameOriginAsSender && !ownPage && !(caller.takeCred ? caller.takeCred(url) : takeCredFetch(tabId, url))) {
                 return { error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` };
             }
         } else {

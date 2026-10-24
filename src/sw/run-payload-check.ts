@@ -89,7 +89,10 @@ const rebuild = shape({
 const START_FIELDS: Record<string, Check> = {
     runId: (v, at) => runIdError(v, at), task: str, systemPrompt: str, tools: listOf(RUN_PAYLOAD_LIMITS.tools, tool),
     model: optional(strOrNull), think: optional(boolOrNull), display: optional(obj), origin: optional(obj), builtBy: optional(oneOf(["worker"])),
-    stream: optional(bool), autoApprovePython: optional(bool), autoApproveReadonly: optional(bool), autoApproveSameOriginAuth: optional(bool),
+    stream: optional(bool), autoApprovePython: optional(bool), autoApproveReadonly: optional(bool),
+    // Retired (a same-origin as-you fetch is free, docs/spec/POLICIES.md "One free tier"): still accepted, and dropped, so a
+    // run persisted before the upgrade resumes.
+    autoApproveSameOriginAuth: optional(bool),
     autoApproveSelfSource: optional(bool), selfIntrospection: optional(bool), toolTokens: optional(bool), unattended: optional(bool), silent: optional(bool),
     resumeMessages: optional(listOf(RUN_PAYLOAD_LIMITS.resumeMessages, message)), images: optional(listOf(RUN_PAYLOAD_LIMITS.images, str)),
     stepBase: optional(count), seqBase: optional(count), labelMatch: optional(oneOf(LEXICAL_METRICS)), surface: optional(oneOf(["overlay", "devtools", "off"])),

@@ -161,7 +161,7 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
     // cap / seq from it, so there's a single code path — a handle just persists it across turns.
     const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0, stepBase: 0 };
     const asm = await assembleRun(this as unknown as AssemblyMl, task, { tools, extraTools, serverTools, commanderTools, system, systemAppend, model, vision, unattended, navigate, crossOrigin, toolTokens, answer, images });
-    const { toolset, byName, toolDefs, turnImages, agentCfg, runModel, driverSees, autoRO, autoPy, autoSOA, autoSelfSrc, labelMatch, pierceClosed, cdpOn } = asm;
+    const { toolset, byName, toolDefs, turnImages, agentCfg, runModel, driverSees, autoRO, autoPy, autoSelfSrc, labelMatch, pierceClosed, cdpOn } = asm;
     const runVisionModel = asm.runVisionModel, runGroundingModel = asm.runGroundingModel, runGroundingRange = asm.runGroundingRange;
     let pendingImages = asm.pendingImages;
     task = asm.task;
@@ -457,9 +457,8 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
             // navigate: SAME-ORIGIN auto-approves (no escalation); a CROSS-ORIGIN nav falls through to
             // the gate (a page can't silently send the agent to another site). location is authoritative.
             if (name === "navigate") return sameOriginNav(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;
-            // fetch_url: an UNCREDENTIALED same-origin read is free (the page could fetch its own origin
-            // itself). A CREDENTIALED (as-you) same-origin fetch is free ONLY with the Advanced opt-in;
-            // otherwise it — and any cross-origin fetch — falls through to the gate.
+            // fetch_url: a same-origin read is free in every mode, as-you included, as navigating there is (the page
+            // could fetch its own origin itself, with its own cookies). A cross-origin fetch falls through to the gate.
             if (name === "fetch_url") {
                 const u = String((args as { url?: unknown }).url ?? "");
                 // THE PAGE YOU ARE ON, in ANY mode — as-you included. The page already holds it, can fetch
@@ -468,8 +467,8 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
                 // REST of the origin. (Also why a file:// page works at all: its origin is "null".)
                 if (isCurrentPage(u, location.href)) return "same-origin";
                 const so = sameOriginFetch(u);
-                if ((args as { credentials?: unknown }).credentials) return (agentCfg?.autoApproveSameOriginAuth && so) ? "same-origin" : null;
                 if (so) return "same-origin";
+                if ((args as { credentials?: unknown }).credentials) return null;
                 // Uncredentialed read of the agent's OWN repo source (committed files / structural API, NOT
                 // a prose endpoint) → free (self-source.ts). Plain GET only — a `rendered` tab-load still asks.
                 if (autoSelfSrc && !(args as { rendered?: unknown }).rendered && isSelfSourceUrl(u, BUILD_INFO.repoUrl)) return "self-source";

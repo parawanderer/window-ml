@@ -22,7 +22,7 @@ import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } 
 import { expandPointers } from "../pointers/pointer-macro";
 import { columnsViaBackground } from "../tools/deref-read";
 import { preResolvedDeref, type PreRead } from "../pointers/named-reads";
-import { captureVerify, captureVerifyElement, verifyInWorker } from "../tools/builtin-tools";
+import { captureVerify, captureVerifyElement, clickHref, verifyInWorker } from "../tools/builtin-tools";
 import { pageVisionHost, pageGeometry, answerGeometry, type PageGeometry, type GeometryRequest } from "../dom/page-geometry";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
@@ -249,7 +249,9 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     if (opts.precheck) {
         let pre: string | null = null;
         try { pre = typeof tool.precheck === "function" ? tool.precheck(args) : null; } catch { pre = null; }
-        return { result: pre || "", precheckFailed: !!pre };
+        // A click that follows a link says where to, for the worker to judge before the click (nav-arrival.ts).
+        const href = !pre && name === "click" ? clickHref(args as { selector: string; index?: number }) : undefined;
+        return { result: pre || "", precheckFailed: !!pre, ...(href ? { href } : {}) };
     }
     // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
     // BOTH decides auto-approve AND produces the result → the background skips the gate. Out-of-dialect

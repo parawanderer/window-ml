@@ -1117,6 +1117,22 @@ const elementCenter = (el: Element): { x: number; y: number } | null => {
     return (r.width || r.height) ? { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
 };
 
+/**
+ * The URL a click on the element `selector` resolves to would follow: the `href` of that element's nearest link, made
+ * absolute. The describe layer of the arrival rule (docs/spec/POLICIES.md): the worker judges it before the click, and
+ * the arrival is judged again whatever this said. The page's word; undefined for a point token or no link.
+ * @param args the click's selector and index
+ * @returns the absolute URL, or undefined
+ */
+export function clickHref({ selector, index = 0 }: { selector: string; index?: number }): string | undefined {
+    const s = (selector || "").trim();
+    if (!s || BOX_RE.test(s) || POINT_RE.test(s)) return undefined;
+    let el: Element | undefined;
+    try { el = queryAll(selector)[index]; } catch { return undefined; }
+    const link = el?.closest("a[href], area[href]") as HTMLAnchorElement | HTMLAreaElement | null | undefined;
+    return link?.href || undefined;
+}
+
 export const buildClickTool = (ml: MlApi): MlTool => {
     // Side-effect-free resolution → an ERROR STRING if the click is doomed (an @box region, a stale
     // @pt, an invalid selector, or no match), else null. The loop uses it to SKIP the approval prompt

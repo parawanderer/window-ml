@@ -191,7 +191,6 @@ const SELF_SRC = "https://raw.githubusercontent.com/parawanderer/window-ml/main/
 const FLAGS = [
     { flag: "autoApprovePython", call: { name: "python_exec", args: { code: "print(1)" } }, off: { autoApprovePython: false } },
     { flag: "autoApproveReadonly", call: { name: "exec", args: { js: "1 + 1" } }, off: { autoApproveReadonly: false } },
-    { flag: "autoApproveSameOriginAuth", call: { name: "fetch_url", args: { url: "https://site.example/account", credentials: true } }, off: { autoApproveSameOriginAuth: false } },
     { flag: "autoApproveSelfSource", call: { name: "fetch_url", args: { url: SELF_SRC } }, off: { autoApproveSelfSource: false } },
 ];
 const flagRun = (payloadValue, cfgValue, f) => pageRun({ tools: [...TOOLS, PY, EXEC], [f.flag]: payloadValue }, [f.call], { cfg: { ...f.off, [f.flag]: cfgValue } });
@@ -205,6 +204,18 @@ for (const f of FLAGS) {
         assert.equal(ranUngated(await flagRun(true, false, f)), false, `the page's ${f.flag}: true skipped a gate the person's config keeps`);
     });
 }
+
+test("the retired autoApproveSameOriginAuth: a same-origin as-you fetch_url is free whatever the page or a saved config says; a cross-origin one is gated", T, async () => {
+    // docs/spec/POLICIES.md, "One free tier": the flag became the rule, so no value of it on either side moves a gate.
+    const SAME = { name: "fetch_url", args: { url: "https://site.example/account", credentials: true } };
+    const CROSS = { name: "fetch_url", args: { url: "https://other.example/account", credentials: true } };
+    for (const page of [true, false, undefined]) for (const cfg of [true, false, undefined]) {
+        const payload = { tools: [...TOOLS], ...(page === undefined ? {} : { autoApproveSameOriginAuth: page }) };
+        const opts = { cfg: cfg === undefined ? {} : { autoApproveSameOriginAuth: cfg } };
+        assert.equal(ranUngated(await pageRun(payload, [SAME], opts)), true, `page ${page}, config ${cfg}: the same origin as you is free`);
+        assert.equal(ranUngated(await pageRun(payload, [CROSS], opts)), false, `page ${page}, config ${cfg}: another origin as you is gated`);
+    }
+});
 
 test("selfIntrospection: a page's true does not give its surveys ml.current when the worker's config turns it off", T, async () => {
     const survey = { name: "exec", args: { js: "ml.current.task" } };

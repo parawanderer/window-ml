@@ -191,6 +191,13 @@ export interface AskWhy {
     policy?: string;
 }
 
+/** The ask a run raises when its tab arrives on a page an `ask` policy asks about (src/sw/nav-arrival.ts): Approve lets
+ *  the run act on the page, Deny takes the tab back. */
+export const ARRIVAL_ASK = "arrival";
+/** The ask a run raises when its tab arrives on a page a `deny` policy denies: its two answers are Go back (allowed) and
+ *  End run (denied). */
+export const ARRIVAL_DENIED = "arrival-denied";
+
 /** One nested ask as a step event carries it (docs/spec/ML_WIRE.md, "Per-call asking"). Plain data: every surface draws
  *  it, both exports record it, and its `facts` are the policy's `c` for the call. */
 export interface StepAsk {

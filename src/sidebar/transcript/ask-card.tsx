@@ -7,7 +7,7 @@
 
 import type { AgentStep } from "../store";
 import { rev } from "../store";
-import type { StepAsk } from "../../contract";
+import { ARRIVAL_ASK, ARRIVAL_DENIED, type StepAsk } from "../../contract";
 import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
@@ -68,26 +68,25 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
             {asks.map((a) => {
                 const key = hash && seq != null ? askKey(hash, seq, a.id) : "";
                 const waiting = a.state === "pending" && !(key && decidedSteps.has(key));
+                const arrival = a.kind === ARRIVAL_ASK ? "ask" as const : a.kind === ARRIVAL_DENIED ? "deny" as const : undefined;
                 if (!waiting) return <AskDone key={a.id} a={a} />;
                 return (
                     <div key={a.id} class="astep-approve ask">
-                        <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : <>While it runs, this step asks for <b>{String(a.kind)}</b>:</>}</span>
-                        {a.why ? <div class="appr-note" {...cursorTipOn(a.why.detail)}><IconWarn /><span>{a.why.line}</span></div> : null}
-                        {a.why ? <div class="appr-note" {...cursorTipOn(a.why.detail)}><IconWarn /><span>{a.why.line}</span></div> : null}
-                        <dl class="ask-facts">
-                            {askLines(a).map((l, i) => (
-                                <div key={i} class={l.warn ? "warn" : undefined}>
-                                    <dt>{l.warn ? <IconWarn /> : null}{l.label}</dt><dd>{l.value}</dd>
-                                </div>
-                            ))}
-                        </dl>
+                        {arrival
+                            // An arrival's card is its line: the page, and the policy that holds the run there.
+                            ? <span class="appr-ask">{a.why?.line ?? String(a.facts?.url ?? "")}</span>
+                            : <>
+                                <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : <>While it runs, this step asks for <b>{String(a.kind)}</b>:</>}</span>
+                                {a.why ? <div class="appr-note" {...cursorTipOn(a.why.detail)}><IconWarn /><span>{a.why.line}</span></div> : null}
+                                <FactList lines={askLines(a)} />
+                            </>}
                         {!live
                             ? <span class="appr-dead">This run ended before anyone answered, so there is nothing left to approve.</span>
                             // An ask without a well-formed id has nothing to answer: its answer would name no ask,
                             // which the worker reads as the step's own gate.
                             : a.external || !hash || seq == null || typeof a.id !== "string" || !ASK_ID.test(a.id)
                                 ? <span class="appr-dead">Waiting for the run's external approver.</span>
-                                : <ApprovalRow grants={false} decide={(ok, _persist, feedback) => {
+                                : <ApprovalRow grants={false} arrival={arrival} decide={(ok, _persist, feedback) => {
                                     decidedSteps.add(key);
                                     rev.value++;
                                     sendApproval(hash, seq, ok, false, feedback, a.id);
@@ -123,6 +122,11 @@ export function UnaskedList({ st }: { st: AgentStep }) {
 
 /** One answered ask, as a line under its step. */
 function AskDone({ a }: { a: StepAsk }) {
+    if (a.kind === ARRIVAL_ASK || a.kind === ARRIVAL_DENIED) {
+        const outcome = a.kind === ARRIVAL_DENIED && a.state === "allowed" ? "went back" : a.kind === ARRIVAL_DENIED && a.state === "denied" ? "ended the run"
+            : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);
+        return <div class={`astep-ask-done ${a.state === "allowed" ? "ok" : "no"}`}>{a.why?.line ?? String(a.facts?.url ?? "")}: {outcome}</div>;
+    }
     const argv = Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : a.kind;
     const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
     const outcome = a.state === "pending" ? "answered, waiting for the run" : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);

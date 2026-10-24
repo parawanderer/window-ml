@@ -186,12 +186,6 @@ export interface MlConfig {
      *  `page` as shipped. Policy still isolates what it must, whatever this says (exec-routing.ts). Not in the public
      *  config: a page is not told it. */
     execDefaultWorld: "" | ExecWorld;
-    /** Advanced, default OFF. When ON, a SAME-ORIGIN fetch that uses the user's cookies/session — a
-     *  `credentials:true` GET, or a `rendered:true` load in a normal (non-incognito) tab — auto-approves
-     *  (no prompt), like a same-origin navigate. OFF → those always ask, so the user stays in charge of when
-     *  their session is spent. NEVER affects CROSS-origin (always asks) or the uncredentialed same-origin free
-     *  path (already free). */
-    autoApproveSameOriginAuth: boolean;
     /** Default ON. When ON, an UNCREDENTIALED `fetch_url`/`ml.fetch` GET of the agent's OWN repo SOURCE —
      *  committed files (raw.githubusercontent) or structural/code API endpoints (api.github /repos), locked to
      *  `BUILD_INFO.repoUrl` — auto-approves (no prompt), so the agent can read its own code. Never applies to
@@ -325,7 +319,6 @@ export const DEFAULT_CONFIG: MlConfig = {
     serverToolsOff: [],
     commanderServerTools: [],
     autoApprovePython: false,
-    autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
     agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab
     selfIntrospection: true,            // default on: the agent reads its own run as `ml.current`, and is told so
@@ -377,7 +370,7 @@ export const fmtCtx = (n: number): string => {
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -402,7 +395,7 @@ export function publicConfig(config: MlConfig, pageApprovalAllowed: boolean): Ml
         utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
         autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
         serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
-        autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
+        autoApproveSelfSource: config.autoApproveSelfSource,
         selfIntrospection: config.selfIntrospection !== false,
         pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
         groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,

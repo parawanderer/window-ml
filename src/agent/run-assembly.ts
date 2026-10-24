@@ -64,7 +64,6 @@ export interface AssembledRun {
     runGroundingRange: number;
     autoRO: boolean;
     autoPy: boolean;
-    autoSOA: boolean;
     autoSelfSrc: boolean;
     /** `selfIntrospection` is on: a hosted run's surveys get `ml.current` (and its prompt says so). */
     selfIntro: boolean;
@@ -133,7 +132,6 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     const runModel = model || agentCfg?.model || (await ml.config().catch(() => null))?.model || null;
     const autoRO = !!(agentCfg && (agentCfg as { autoApproveReadonly?: boolean }).autoApproveReadonly);
     const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
-    const autoSOA = !!(agentCfg && (agentCfg as { autoApproveSameOriginAuth?: boolean }).autoApproveSameOriginAuth);
     const autoSelfSrc = !!(agentCfg && (agentCfg as { autoApproveSelfSource?: boolean }).autoApproveSelfSource);
     // Absent (an older stored config) is ON, as the default says.
     const selfIntro = (agentCfg as { selfIntrospection?: boolean } | null)?.selfIntrospection !== false;
@@ -299,7 +297,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
 
     return {
         toolset, byName, toolDefs, systemPrompt, task, pendingImages, turnImages, agentCfg, runModel, driverSees,
-        runVisionModel, runGroundingModel, runGroundingRange, autoRO, autoPy, autoSOA, autoSelfSrc, selfIntro, labelMatch, pierceClosed, cdpOn,
+        runVisionModel, runGroundingModel, runGroundingRange, autoRO, autoPy, autoSelfSrc, selfIntro, labelMatch, pierceClosed, cdpOn,
     };
 }
 
@@ -535,7 +533,7 @@ export function startPayload(asm: AssembledRun, h: RunHosting): StartRunPayload 
     return {
         runId: h.runId, task: asm.task, systemPrompt: h.systemPrompt, tools: toolDescriptors(asm.toolset),
         model: asm.runModel, think: h.think, maxSteps: h.maxSteps,
-        autoApprovePython: asm.autoPy, autoApproveReadonly: asm.autoRO, autoApproveSameOriginAuth: asm.autoSOA, autoApproveSelfSource: asm.autoSelfSrc, selfIntrospection: asm.selfIntro,
+        autoApprovePython: asm.autoPy, autoApproveReadonly: asm.autoRO, autoApproveSelfSource: asm.autoSelfSrc, selfIntrospection: asm.selfIntro,
         labelMatch: asm.labelMatch, surface: h.surface,
         stream: h.stream || undefined, toolTokens: h.toolTokens || undefined, origin: h.origin || undefined,
         // native-vision composer attachments for this turn's user message (an OCR fallback is already in `task`)

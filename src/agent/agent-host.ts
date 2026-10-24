@@ -33,7 +33,6 @@ export interface RunAgentConfig {
     think?: boolean | null;
     maxSteps?: number;
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
-    autoApproveSameOriginAuth?: boolean;   // Advanced opt-in: auto-approve a same-origin as-you (credentialed) fetch
     autoApproveSelfSource?: boolean;       // default on: auto-approve an uncredentialed read of the agent's OWN repo source
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
     toolTokens?: boolean;          // surface `@tool:<id>` on rich tool results (see ml.agent's `toolTokens`)
@@ -97,6 +96,13 @@ export interface RunAgentHostDeps {
     // GATE (a page can't silently send the agent to another site); false → same-site (or an already-consented
     // origin) → auto-approve. Trusted (background-decided from the tab's real origin), not page-forgeable.
     navNeedsConsent?(url: string): boolean;
+    /** What the person's policies say about a navigate to `url`, judged as the `fetch` consumer in its interactive mode
+     *  (sw-policies.ts `navigateFacts`), or undefined when none decides. A `deny` refuses it without a card, an `ask`
+     *  always shows the card, an `allow` skips the card a cross-origin navigate would show. */
+    navPolicy?(url: string): { decision: "allow" | "deny" | "ask"; label: string } | "unknown" | undefined;
+    /** The model's text when the run is held on a page a `deny` policy denies (sw/nav-arrival.ts): every call is refused
+     *  with it, without a card; undefined when the run may act on its page. */
+    arrivalRefused?(): string | undefined;
     // ml.fetch consent: true → this exact URL hasn't been approved on this tab yet → GATE; false → already
     // approved this session → auto-approve (no re-prompt). Trusted (background-side, per-URL), not forgeable.
     fetchNeedsConsent?(url: string): boolean;
@@ -110,6 +116,12 @@ export interface RunAgentHostDeps {
     // holds it and can fetch its own URL with its own cookies). Prompt-only: FETCH_URL re-judges against the
     // sender's real frame URL.
     fetchIsCurrentPage?(url: string): boolean;
+    // true → `url` is on the ORIGIN of the page the run's tab is on now → an as-you fetch of it is free, as navigating
+    // there is (docs/spec/POLICIES.md, "One free tier"). Prompt-only: FETCH_URL re-judges against the sender's frame URL.
+    fetchOnPageOrigin?(url: string): boolean;
+    // true → the person approved a navigate to `url`'s origin this run, an as-you grant for that origin in every mode.
+    // Prompt-only: the worker's fetch choke point reads the same grant (worker-tools.ts `grantRunOrigin`).
+    fetchOriginGranted?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
     // Debug fan-out for a model call being UNDERWAY (agent-turn).
@@ -121,6 +133,9 @@ export interface RunAgentHostDeps {
     drainInbox?: AgentLoopDeps["drainInbox"];
     signal?: AbortSignal | null;
 }
+
+/** The origin of `url` for a "reused a grant" note, or the URL itself when it has none. */
+const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return url; } };
 
 /** Run one agent task in the background, delegating tool execution to the page. This is the design-A
  *  counterpart of the page-side ml.agent loop; both share runAgentLoop's gate-before-execute invariant. */
@@ -179,6 +194,8 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
         // (friction, never less safety — see auto-approve.ts).
         autoApprove: (name, args) => {
+            const held = deps.arrivalRefused?.();
+            if (held) return { approval: "denied", refused: held };
             if (name === "python_exec") {
                 const isApproved = deps.isSheetApproved || (() => false);
                 const prov = autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, isApproved);
@@ -188,8 +205,19 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 const reusedSheets = externalSheetIds(args).filter(id => isApproved(id));
                 return reusedSheets.length ? { approval: prov, reused: reusedSheets.map(id => ({ kind: "sheet" as const, detail: id })) } : prov;
             }
-            // navigate: a cross-origin nav that needs consent GATES; same-site (or already-consented) auto-approves.
-            if (name === "navigate") return deps.navNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "same-origin";
+            // navigate: the interactive mode of a fetch as you (docs/spec/POLICIES.md, "Navigate is a fetch"). A POLICY first,
+            // as for fetch_url: a `deny` wins over the free same-origin navigate, an `ask` shows the card. Then a cross-origin
+            // nav that needs consent GATES, unless an `allow` covers it; same-site (or already-consented) auto-approves.
+            if (name === "navigate") {
+                const url = String((args as { url?: unknown }).url ?? "");
+                const pol = deps.navPolicy?.(url);
+                if (pol === "unknown") return null;
+                if (pol?.decision === "deny") return { approval: "denied", refused: `Refused by the policy "${pol.label}", without asking. Do not navigate there; the person set this rule.` };
+                if (pol?.decision === "ask") return null;
+                if (!deps.navNeedsConsent?.(url)) return "same-origin";
+                if (pol?.decision === "allow") return { approval: "consented", reused: [{ kind: "policy", detail: pol.label }] };
+                return null;
+            }
             // fetch_url: a CREDENTIALED (fetch-as-the-user — raw cookies, or a rendered load in the user's
             // session) call ALWAYS gates — never auto-approved, never remembered. An UNCREDENTIALED url (a raw
             // GET, or an INCOGNITO rendered load — no session, lower risk) already approved this session
@@ -208,9 +236,10 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 if (deps.fetchIsCurrentPage?.(url)) return "same-origin";   // the page you are on: any mode, no prompt
                 const sameOrigin = !!deps.fetchSameOrigin?.(url);
                 if ((args as { credentials?: unknown }).credentials) {
-                    // CREDENTIALED (as-you): cross-origin always asks. Same-origin asks too UNLESS the user opted
-                    // into the Advanced "auto-approve same-origin as-you fetches" setting.
-                    return (cfg.autoApproveSameOriginAuth && sameOrigin) ? "same-origin" : null;
+                    // CREDENTIALED (as-you): free on the origin of the page the run is on, as navigating there is, and on an
+                    // origin the person approved a navigate to this run (an origin grant). Anything else asks.
+                    if (deps.fetchOnPageOrigin?.(url)) return "same-origin";
+                    return deps.fetchOriginGranted?.(url) ? { approval: "consented", reused: [{ kind: "origin", detail: originOf(url) }] } : null;
                 }
                 // Uncredentialed same-origin → free (a plain GET, or an incognito render). Cross-origin gates.
                 if (sameOrigin) return "same-origin";
@@ -219,6 +248,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 if (cfg.autoApproveSelfSource && !(args as { rendered?: unknown }).rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl)) return "self-source";
                 // An `allow` policy covers an uncredentialed fetch (the credentialed branch above always asks).
                 if (pol?.decision === "allow") return { approval: "consented", reused: [{ kind: "policy", detail: pol.label }] };
+                if (deps.fetchOriginGranted?.(url)) return { approval: "consented", reused: [{ kind: "origin", detail: originOf(url) }] };
                 return deps.fetchNeedsConsent?.(url) ? null : "consented";
             }
             return null;

@@ -36,7 +36,7 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
                 when: {
                     type: "string",
                     description: "A read-only JS function over the call returning a boolean, e.g. (c) => c.host === \"docs.python.org\" && !c.credentials. " +
-                        "Fields: url, host, method, credentials, rendered. Use === only.",
+                        "Fields: url, host, method, credentials, rendered, interactive (true for navigate). Use === only.",
                 },
                 label: { type: "string", description: "One short sentence the person reads, e.g. \"Read docs.python.org\"." },
             },

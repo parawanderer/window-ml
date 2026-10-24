@@ -66,7 +66,7 @@ on `builtBy` for tool routing, grants, vision, the answer and what it stores, so
 `pageOrigin` and `pageUrl` are replaced by the sender's (the origin the origin gate read, and the top frame's URL): the
 origin seeds the run's consented origins and the URL is "the page you are on", so a page naming another site would get
 navigations and reads there without a gate. `maxSteps` goes through `stepBudget`, as on RESUME_RUN (a whole number up to 200, otherwise the loop's default), so a page cannot ask for an unbounded run, and a dropped `origin` means a page cannot stamp its prompt as typed on an extension surface such as the HUD. A page's payload may ask for more gating, never less: the auto-approve
-flags (`autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`, `autoApproveSelfSource`) and
+flags (`autoApprovePython`, `autoApproveReadonly`, `autoApproveSelfSource`) and
 `selfIntrospection` hold only when the worker's config allows them too, and a builtin tool that asks for approval
 (`GATED_TOOL_NAMES`, the tool registry's `gated`) or a server tool (`remote`) always does, whatever `requiresApproval` the page sent. A run id
 another tab holds, running or settled, is refused. `approvalRouting` stays the page's: it changes only where its own
@@ -601,12 +601,18 @@ could fetch a URL remembered for a run.
 
 These are ORIGIN-wide instead, and auto-approved with no prompt:
 
-- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin and every origin a
-  `navigate` was approved to (`consentedOrigins`, `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). A `rendered` read is
-  included, an incognito tab that runs the target's scripts.
-- `navigate` within the site or to a consented origin, in the person's own tab, with their cookies.
-- `ml.fetch` of the sender page's own origin (`sameOriginAsSender`, `fetchUrlFor`), uncredentialed, and credentialed too
-  with `autoApproveSameOriginAuth`; an approved exec may compute that URL at run time.
+- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin, every origin a
+  `navigate` was approved to, and every origin an `allow` policy let a navigate or an arrival reach (`consentedOrigins`,
+  `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). A `rendered` read is included, an incognito tab that runs the
+  target's scripts.
+- `fetch_url` as the person (credentialed), of the page the tab is on now (`fetchOnPageOrigin`), and, for a run the
+  worker built, of any URL on an origin the PERSON approved a navigate or an arrival to (`grantRunOrigin`). Never the
+  start origin once the tab has left it, never an origin only a policy let the run reach.
+- `navigate` within the site or to a consented origin, in the person's own tab, with their cookies. A policy is judged
+  first (`docs/dev/policies.md`), and every page the tab arrives on is judged again (`nav-arrival.ts`).
+- `ml.fetch` of the sender page's own origin (`sameOriginAsSender`, `fetchUrlFor`), uncredentialed or credentialed;
+  an approved exec may compute that URL at run time. `autoApproveSameOriginAuth` is retired: a config that still
+  carries it changes nothing.
 - The agent's own repository with `autoApproveSelfSource`.
 
 **What a URL or origin approval does not control is what the request carries.** Data the run has read (another site's
@@ -626,7 +632,8 @@ alone. The proposal is `redirect: "error"` on the origin-wide auto-approved path
 the URL; a `rendered` read follows redirects as a navigation and needs its own answer.
 
 **What a request carries besides its URL.** `GET`, no body; `Accept`, `Accept-Language` and `User-Agent`; cookies only
-in the as-you mode, which a person approves per URL each time (or same-origin with `autoApproveSameOriginAuth`). The
+in the as-you mode, which a person approves per URL each time, or per origin by approving a navigate there, and which is
+free on the page the tab is on. The
 request is the worker's, so a `Referer`, if Chrome sends one, names the extension and never the page (not measured).
 
 ## The `ml` wire (ML_CALL)
