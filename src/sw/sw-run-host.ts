@@ -761,6 +761,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             return raw === undefined ? undefined : seqBase + raw;
         };
         let denyCarded = false;   // the deny hold's card is up
+        // The page the run's own navigate is going to, once it passed its gate (the policy, a card, the consent): its arrival
+        // is that navigate's, already judged with the same facts, so it is not judged (or asked about) again. Any other
+        // commit, a redirect included, clears it and is judged.
+        let namedNav: string | undefined;
+        /** A URL without its fragment, for telling the named page from another: a fragment is not another read. */
+        const unfragmented = (url: string): string | undefined => { try { const u = new URL(url); u.hash = ""; return u.href; } catch { return undefined; } };
         // The ask hold's card, answered once for every call waiting on it: whether the run may act on the page, and what
         // the model reads of the answer.
         let askAnswer: Promise<{ allowed: boolean; text: string }> | undefined;
@@ -845,6 +851,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             return arrived?.text ? { ...env, result: `${arrived.text}\n\n${env.result ?? ""}` } : env;
         };
         const judgeHere = (url: string): void => {
+            const named = namedNav !== undefined && unfragmented(url) === namedNav;
+            namedNav = undefined;
+            if (named) { clearArrival(runId); return; }
             const j = judgeCall(runId, "fetch", navigateFacts(url));
             for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "arrival" } });
             const v = arrivalVerdict(url, j);
@@ -1188,6 +1197,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // navigation is in flight (the call then goes to whichever document re-adopts); never a wait of
                         // its own, since the barrier's timeout releases a waiter without ending the navigation.
                         const sentTo = navBarrier.isNavigating(tabId) ? undefined : await documentOn(tabId);
+                        if (name === "navigate") { const to = navDest(String((args as { url?: unknown }).url ?? "")); namedNav = to ? unfragmented(to.href) : undefined; }
                         /** The destination's pageInfo, unless it came from the document this call left. */
                         const takeInfo = (): string | undefined => {
                             const r = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);

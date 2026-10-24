@@ -37,9 +37,11 @@ const onB = (adopts) => adopts.filter((a) => a.includes("b.example"));
  * there and the person sends a follow-up, which the model answers with the calls after it. A real `click` the page runs moves
  * the tab to `clickTo[selector]`, when there is one. `precheck(payload)` plays the page's precheck; `card(tool)` answers a
  * call's card, `ask(kind)` a nested ask (true approves; a string denies with that note; undefined leaves it unanswered).
- * `between(go)` runs before the follow-up is sent; `go(url)` moves the tab as the person would.
+ * `between(go)` runs before the follow-up is sent; `go(url)` moves the tab as the person would. `onCall(n, bg)` runs before
+ * the model's n-th call (from 0) is answered; `addPolicy(bg, row)` adds a policy as the policy page does. A page in
+ * `redirects` sends the tab on to its value once it has loaded, as a script on it would.
  */
-async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between } = {}) {
+async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between, onCall, redirects = {} } = {}) {
     const tab = { id: 7, windowId: 3, active: true, url: START, title: "Site" };
     let turns = 0, docN = 1, bg, hash;
     const seen = [], cards = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
@@ -54,15 +56,17 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
         // The destination re-registers each run it was handed, then says so (content.ts), which releases the barrier.
         for (const a of ready?.adopt ?? []) {
             adopts.push(`ready ${url}`);
-            await bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${url}` } }, sender());
+            // Not awaited: the worker answers nothing to it, as content.ts expects nothing.
+            void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${url}` } }, sender());
         }
     };
     bg = loadBackground({
         config, openTabs: [tab], siteGate: true, local: { ml_policies_global: policies, ml_site_always: ["https://site.example", "https://b.example"] },
-        onFetch: (call) => {
+        onFetch: async (call) => {
             if (call.url.startsWith("https://b.example/")) { fetched.push(call.url); return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => "<h1>B</h1>", arrayBuffer: async () => new TextEncoder().encode("<h1>B</h1>").buffer, body: null }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             seen.push(call.body.messages);
+            await onCall?.(turns, bg);
             const next = calls[turns++];
             if (next === null) setTimeout(async () => { await between?.(async (url) => { commit(url); await ready(url); }); void bg.context.__mlUserRunActionForTest(hash, "send", { text: "go on", surface: "hud" }); }, 20);
             return next
@@ -95,7 +99,13 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
             if (p.renderOnly || p.readonlyTry || p.geometry) return { result: "" };
             toPage.push({ name: p.name, url: tab.url });
             // A click on a link commits before its answer reaches the worker; the destination reports ready after.
-            if (p.name === "navigate") { commit(p.args.url); setTimeout(() => void ready(p.args.url), 5); return { result: `Navigating to ${p.args.url}` }; }
+            if (p.name === "wait") await sleep(Number(p.args.ms) || 0);
+            if (p.name === "navigate") {
+                const to = p.args.url;
+                commit(to);
+                setTimeout(async () => { await ready(to); if (redirects[to]) { await sleep(5); commit(redirects[to]); await ready(redirects[to]); } }, 5);
+                return { result: `Navigating to ${to}` };
+            }
             if (p.name === "click" && clickTo[p.args.selector]) { const to = clickTo[p.args.selector]; commit(to); setTimeout(() => void ready(to), 5); return { result: `Clicked ${p.args.selector}.` }; }
             return { result: `ran ${p.name}` };
         },
@@ -107,6 +117,9 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
     const log = async () => (await bg.context.__mlRunLog.all()).filter((r) => r.subsystem === "policy").map((r) => plain(r));
     return { bg, tab, turns: () => turns, cards, asks, toPage, adopts, readies, fetched, results, log };
 }
+
+/** Add a global policy the way the policy page does: POLICIES from an extension page. */
+const addPolicy = (bg, { effect, source, label }) => bg.send({ type: "POLICIES", payload: { op: "add", effect, source, label } }, { url: "chrome-extension://test/sidebar.html" });
 
 // --- a deny: the run is held on the page, and the person is offered to go back or end the run ---
 
@@ -204,6 +217,56 @@ test("an origin the person approved a navigate to is theirs for the rest of the 
     ], {});
     assert.equal(r.turns(), 5, "the follow-up turn ran");
     assert.deepEqual(r.cards, ["navigate"], "only the first navigate to b.example asked");
+});
+
+// --- navigate itself, judged as the fetch consumer before it is made ---
+
+test("a navigate a policy denies is refused before it is made, the policy named, with no card", T, async () => {
+    const r = await hostRun([{ name: "navigate", args: { url: ADMIN } }], { policies: [DENY_ADMIN] });
+    assert.match(r.results[0], /No admin pages/);
+    assert.deepEqual(r.cards, []);
+    assert.equal(r.tab.url, START, "the tab never moved");
+});
+
+test("a navigate a policy asks about goes to a card; approved, its arrival is not asked about again", T, async () => {
+    const r = await hostRun([{ name: "navigate", args: { url: OTHER } }, { name: "scroll", args: {} }], { policies: [ASK_B] });
+    assert.deepEqual(r.cards, ["navigate"]);
+    assert.deepEqual(r.asks, [], "the person already answered for this page");
+    assert.deepEqual(r.toPage.map((x) => x.name), ["navigate", "scroll"]);
+});
+
+test("RED TEAM: the named page's pass is for that page only: a page that sends the tab on from there is judged and held", T, async () => {
+    const r = await hostRun([{ name: "navigate", args: { url: OTHER } }, { name: "wait", args: { ms: 30 } }, { name: "scroll", args: {} }], { policies: [ASK_B, DENY_ADMIN], redirects: { [OTHER]: ADMIN }, ask: () => undefined });
+    assert.deepEqual(r.cards, ["navigate"]);
+    assert.equal(r.tab.url, ADMIN);
+    assert.match(r.results.at(-1), /"No admin pages" denies: no tool runs on this page/);
+    assert.ok(!r.toPage.some((x) => x.name === "scroll"), "nothing ran on the page it was sent on to");
+});
+
+test("a navigate an allow row covers needs no card, and grants nothing as the person: once the tab leaves, an as-you fetch back there asks", T, async () => {
+    const r = await hostRun([
+        { name: "navigate", args: { url: OTHER } },
+        { name: "navigate", args: { url: START } },
+        { name: "fetch_url", args: { url: "https://b.example/data", credentials: true } },
+    ], { policies: [ALLOW_B_NAV], card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(r.cards, ["fetch_url"]);
+    assert.deepEqual(r.fetched, []);
+});
+
+test("an origin grant is withdrawn by a policy added later that asks about the fetch, and by one that denies it", T, async () => {
+    const ASK_FETCH = policy("p-ask-f", "ask", '(c) => c.host === "b.example" && !c.interactive', "Ask before reading b.example");
+    const DENY_FETCH = policy("p-deny-f", "deny", '(c) => c.host === "b.example" && !c.interactive', "Never read b.example");
+    // The control first: with nothing added, the approved navigate's grant reads b.example as the person, no card.
+    for (const [added, cards, fetched] of [[undefined, ["navigate"], ["https://b.example/data"]], [ASK_FETCH, ["navigate", "fetch_url"], []], [DENY_FETCH, ["navigate"], []]]) {
+        const r = await hostRun([
+            { name: "navigate", args: { url: OTHER } },
+            { name: "navigate", args: { url: START } },
+            { name: "fetch_url", args: { url: "https://b.example/data", credentials: true } },
+        ], { card: (tool) => tool !== "fetch_url", onCall: (n, bg) => (n === 2 && added ? addPolicy(bg, added) : undefined) });
+        const what = added?.label ?? "no policy added";
+        assert.deepEqual(r.cards, cards, what);
+        assert.deepEqual(r.fetched, fetched, what);
+    }
 });
 
 // --- an allow, and no policy at all ---

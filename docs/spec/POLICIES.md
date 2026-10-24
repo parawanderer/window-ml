@@ -515,6 +515,9 @@ as-you tier), so it lands with a red-team pass by a separate session (rule 10) a
   the act either.
 - **An `ask` asks about every arrival it covers, an origin already consented included.** "An origin already consented
   continues" holds where no policy asks: the policy asks about the page, not the origin.
+- **The run's own navigate is judged once, before it is made.** Its arrival at the URL it named (the fragment aside) is
+  not judged again, so an `ask` it passed on a card does not ask twice; every other commit is, a page that sends the
+  tab on from there included.
 - **A hold outlives the turn.** A run whose turn ends held is not re-adopted on that page, and its next turn judges the
   page the tab holds then before anything runs (the person may have gone back by hand). Holds are worker memory: a run
   resurrected after an eviction is judged again on the page it wakes on.

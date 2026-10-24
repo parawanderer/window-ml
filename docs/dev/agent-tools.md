@@ -344,7 +344,8 @@ Approving an origin consents to it for the rest of the run (repeat navs skip), a
 an as-you grant for `fetch_url` there too (`grantRunOrigin`). A policy is judged first: `navigate` is the `fetch`
 consumer's interactive mode (`docs/dev/policies.md`).
 **Arrivals (`nav-arrival.ts`).** A page the tab commits while the run is live is judged before the run re-adopts
-there, whatever moved the tab (a click, a redirect, a timer). A `deny` HOLDS the run: CONTENT_READY does not hand
+there, whatever moved the tab (a click, a redirect, a timer), except the run's own `navigate` arriving at the URL it
+named (`namedNav`), which was judged before it was made. A `deny` HOLDS the run: CONTENT_READY does not hand
 the page the run, every call is answered with the hold's text (`withArrival`, `sendTool`), and a nested ask of kind
 `arrival-denied` offers Go back (`chrome.tabs.goBack`) or End run. An `ask` raises an `arrival` ask; Approve
 consents the origin (as-you, as an approved navigate card does), clears the hold and re-adopts the run
