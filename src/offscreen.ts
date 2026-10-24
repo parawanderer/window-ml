@@ -103,6 +103,9 @@ defineState({
     describe: "The run's kept Python namespace: the live names and their types, shared across the run's cells until the run ends or its worker dies.",
     read: ({ runId }) => runId ? runNsVars.get(runId) : undefined,
 });
+// The principals whose worker was handed a tier 3 library (an inside run's `libraries`, or a library op): the ones a
+// removal restarts, since nothing unloads a module (READONLY_LIBRARY_MANIFEST.md, ruling D). Cleared with the worker.
+const libraryPrincipals = new Set<string>();   // state: plumbing — which live workers may hold a library module
 let nextId = 1;
 type WireStamp = { client: string; run: string | null };
 const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp }>();   // state: plumbing
@@ -139,11 +142,12 @@ function killWorker(principal: string, reason: string): void {
     // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
     // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
     const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
-    const named = reason === "timeout" || reason === "start-timeout";
+    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed";
     const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
         workers.delete(principal);
+        libraryPrincipals.delete(principal);
         respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
         for (const runId of killedRuns) {
             runPrincipals.get(runId)?.delete(principal);
@@ -255,7 +259,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -281,8 +285,13 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         if (wire?.run) (runPrincipals.get(wire.run) ?? runPrincipals.set(wire.run, new Set()).get(wire.run)!).add(principal);
         // THE `ml` WIRE: the handle stays HERE. The worker is told only that this run has a wire and which
         // run's namespace it is — never `client` (LANE_1_PR2_DESIGN.md, "Who stamps the handle").
+        if ((inside && Array.isArray(libraries?.libraries) && libraries.libraries.length) || libraries?.library) libraryPrincipals.add(principal);
         if (wire) wireByClient.set(wire.client, { post: (m) => { try { w.postMessage(m); } catch { /* worker gone */ } }, runMsgId: id });
-        w.postMessage({ id, code, image, hardened, tables, stream, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}) }, transfer);
+        w.postMessage({ id, code, image, hardened, tables, stream, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}),
+            // The person's approved tier 3 libraries ride an inside run; a library op (its card's shape, its load after
+            // approval) is its own message. Only the service worker sends either (PY_RUN is not in HANDLE_MAP).
+            ...(inside && Array.isArray(libraries?.libraries) ? { libraries: libraries.libraries } : {}),
+            ...(libraries?.library ? { library: libraries.library } : {}) }, transfer);
     });
 }
 
@@ -399,7 +408,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
-            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp, msg.inside === true)
+            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library })
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
@@ -443,6 +452,18 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (!asks.length) { sendResponse({ ok: true }); return undefined; }
     void Promise.all(asks).then(() => sendResponse({ ok: true }));
     return true;
+});
+
+// A tier 3 library was removed (READONLY_LIBRARY_MANIFEST.md, ruling D): restart every worker that was handed one, since
+// a loaded module stays importable until its realm dies. Each such run's next cell opens with the loss line. Only the
+// worker sends it.
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (msg?.type !== "PY_DROP_LIBRARIES") return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;
+    const principals = [...libraryPrincipals];
+    for (const principal of principals) killWorker(principal, "library-removed");
+    sendResponse({ ok: true, restarted: principals.length });
+    return undefined;
 });
 
 // HTML→Markdown for a fetch the WORKER made (sw-offscreen.ts `htmlToMarkdownOffscreen`): the converter needs a DOM. Only

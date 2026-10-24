@@ -144,13 +144,18 @@ const GENRES = {
             "session-store.test.mjs", "session-title.test.mjs", "shell-session-relay.test.mjs",
             "background-sessions.test.js", "sw-chat.test.mjs", "reducer-runtime-key.test.mjs"],
     },
+    // The model's proposal tools: a policy or a manifest or library it drafts, the card the person sees, what is stored.
+    propose: {
+        about: "propose_policy and propose_manifest (a program manifest or a tier 3 library): the drafts, their cards, what is stored on approval",
+        files: ["propose-library.test.mjs", "propose-manifest.test.mjs", "propose-policy-redteam.test.mjs", "propose-policy.test.mjs"],
+    },
     bench: {
         about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer, server, page, sweep log, scoreboard, memory readings, the box's event stream and the held runs' screens",
         files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
             "bench-specs.test.mjs", "bench-viewer.test.mjs", "bench-files.test.mjs", "bench-page.test.mjs",
             "bench-scores.test.mjs", "bench-sweeps.test.mjs", "bench-memory.test.mjs", "bench-box.test.mjs", "bench-lanes.test.mjs", "bench-sync.test.mjs", "bench-stream.test.mjs", "bench-regress.test.mjs", "bench-spend.test.mjs", "bench-cost.test.mjs", "bench-live-spend.test.mjs", "bench-memory-budget.test.mjs", "bench-memory-card.test.mjs", "bench-status.test.mjs", "bench-memory-limit.test.mjs", "bench-spend-predict.test.mjs", "bench-cli-help.test.mjs", "bench-electricity.test.mjs"],
     },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
 const claimed = new Set(Object.values(GENRES).flatMap((g) => g.files));

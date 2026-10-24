@@ -179,6 +179,31 @@ test("a cell with no wire (a page-started cell) never gets the reset line", asyn
     assert.equal(second.answer.stdout, "two");
 });
 
+// --- removing a tier 3 library restarts exactly the workers that were handed one ---
+
+const LIBS = [{ name: "stats_lib", source: "def total(xs):\n    return sum(xs)\n", sha256: "a".repeat(64), names: ["total"] }];
+
+test("PY_DROP_LIBRARIES kills every worker handed a library (an inside run's libraries, a library op) and no other; their runs are told why", async () => {
+    const held = await runCell({ principal: "run:lib-a", inside: true, libraries: LIBS, wire: { client: "mlw-d1", run: "lib-a" } }, bench(["x"]));
+    assert.deepEqual(held.post.libraries, LIBS, "positive control: the inside run carried the library to its worker");
+    const op = await runCell({ principal: "library", library: { op: "load", lib: LIBS[0] } }, { library: { why: "" } });
+    const none = await runCell({ principal: "run:lib-b", inside: true, libraries: [], wire: { client: "mlw-d2", run: "lib-b" } }, bench(["y"]));
+    const outside = await runCell({ principal: "run:lib-c", libraries: LIBS, wire: { client: "mlw-d3", run: "lib-c" } }, bench(["z"]));
+    assert.ok(!("libraries" in outside.post), "a run outside the dialect is never handed a library");
+    assert.deepEqual(await send({ type: "PY_DROP_LIBRARIES" }), { ok: true, restarted: 2 });
+    assert.deepEqual([held.w.terminated, op.w.terminated, none.w.terminated, outside.w.terminated], [true, true, false, false]);
+    const next = await runCell({ principal: "run:lib-a", inside: true, libraries: [], wire: { client: "mlw-d4", run: "lib-a" } }, { stdout: "next" });
+    assert.equal(next.spawned, 1, "the run's next cell starts in a fresh worker");
+    assert.match(next.answer.stdout, /^namespace reset at .*: library-removed\nnext$/);
+    assert.deepEqual(await send({ type: "PY_DROP_LIBRARIES" }), { ok: true, restarted: 0 }, "a restarted worker holds no library until it is handed one again");
+});
+
+test("PY_DROP_LIBRARIES from a tab is not handled", async () => {
+    const held = await runCell({ principal: "run:lib-t", inside: true, libraries: LIBS, wire: { client: "mlw-d5", run: "lib-t" } }, {});
+    assert.equal(await send({ type: "PY_DROP_LIBRARIES" }, { id: "test", tab: { id: 3 } }), undefined);
+    assert.equal(held.w.terminated, false);
+});
+
 // --- the wire's stamp stays in the document ---
 
 test("a cell's ml call is sent on with the document's own client and run; an ask holds until the later ML_ANSWER", async () => {

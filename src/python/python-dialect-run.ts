@@ -199,7 +199,194 @@ def _ml_dialect_setup(_files):
         with open(os.path.join(_dir, _name), "w") as _f:
             _f.write(_text)
     _restricted.reset()
-    restricted.load_manifests(_dir)
+    # What the gate admitted, kept for a library's shape rule: it judges imports by exactly these tables.
+    import sys, types
+    sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = restricted.load_manifests(_dir)["modules"]
     return ""
 _ml_dialect_setup(${JSON.stringify(files)})
+`;
+
+/** Why a library may not take `_name` as its import name, or None: one plain identifier, never one that already imports
+ *  (a module loaded or findable, the standard library's, or one reserved). */
+const LIBRARY_NAME = /* python */ `
+def _ml_library_name_refusal(_name, _reserved):
+    import importlib.util, keyword, sys
+    if not _name.isidentifier() or keyword.iskeyword(_name) or _name.startswith("_"):
+        return "its name is not a plain module name (one identifier, not starting with _)"
+    if (_name in sys.modules or _name in sys.stdlib_module_names or _name in _reserved
+            or importlib.util.find_spec(_name) is not None):
+        return "that name already imports something else"
+    return None
+`;
+
+/** A pure-Python library the person approved for the dialect (READONLY_LIBRARY_MANIFEST.md, tier 3): its source, pinned
+ *  to that source's sha256, and the names a cell may read off it. */
+export interface DialectLibrary {
+    /** The import name: one identifier, never one that already imports. */
+    name: string;
+    source: string;
+    /** sha256 of `source` as UTF-8, hex. */
+    sha256: string;
+    names: string[];
+}
+
+/**
+ * Load approved tier 3 libraries into the dialect, after `dialectSetup`. Each body is checked against the whitelist and
+ * RUN inside the dialect (`mark`, `_restricted.run`), never imported by Python's own machinery, so a body that imports,
+ * loops or opens anything is refused like a cell. What it leaves must carry no state from one run to the next: an object
+ * made in the load run stays owned by every later run (measured on the pinned core, 2026-10-24), so a module-level list
+ * or a mutable default would be written by later cells and remember. So every global must be a constant, a `def` of the
+ * body with constant defaults, or exactly a module or name the gate admits an import of; `libraryShape` promised that. Only then is it registered (`sys.modules`,
+ * `allow_module` with its listed names). A pin already loaded is skipped. The script's value is JSON, `[{name, why}]`,
+ * `why` "" when loaded.
+ * @param libs the libraries, each pinned
+ * @param nodes the whitelist's AST node names
+ * @param reserved import names a library may never take, though nothing has imported them yet: the dialect's modules and
+ *   every package in the Pyodide lock, so a later `import scipy` on the full path is never handed a library instead
+ */
+export const libraryLoad = (libs: DialectLibrary[], nodes: string[], reserved: string[]): string => /* python */ `${LIBRARY_NAME}
+def _ml_library_load(_libs, _nodes, _reserved):
+    import hashlib, json, sys, types, _restricted, restricted
+    _state = sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={}))
+    _loaded = _state.pins
+    _admitted = getattr(_state, "admitted", {})
+    def _imports():
+        # What an admitted import may bind, read after the body ran its imports: the modules the gate admits, and
+        # exactly the names it admits of each.
+        _ids = {id(sys.modules[_m]) for _m in _admitted if _m in sys.modules}
+        return _ids | {id(getattr(sys.modules[_m], _n)) for _m, _ns in _admitted.items() if _m in sys.modules
+                       for _n in _ns if hasattr(sys.modules[_m], _n)}
+    _const = (type(None), bool, int, float, complex, str, bytes)
+    def _frozen(_x):
+        if type(_x) in _const:
+            return True
+        if type(_x) in (tuple, frozenset):
+            return all(_frozen(_y) for _y in _x)
+        return False
+    def _left(_k, _v, _imported):
+        # Why the global _k cannot stay in the module, or None.
+        if _frozen(_v) or id(_v) in _imported:
+            return None
+        if type(_v) is types.FunctionType and _v.__code__.co_flags & restricted.CO_RESTRICTED and _v.__closure__ is None:
+            for _d in list(_v.__defaults__ or ()) + list((_v.__kwdefaults__ or {}).values()):
+                if not _frozen(_d):
+                    return "'" + _k + "' has a default that is not a constant, which would keep state from one run to the next"
+            return None
+        return "'" + _k + "' holds a " + type(_v).__name__ + ", which would keep state from one run to the next"
+    def _one(_lib):
+        _name, _src = _lib["name"], _lib["source"]
+        if _loaded.get(_name) == _lib["sha256"]:
+            return ""
+        if _name in _loaded:
+            return "a library of that name is already loaded at another pin; it changes when the sandbox restarts"
+        _why = _ml_library_name_refusal(_name, _reserved)
+        if _why:
+            return _why
+        if hashlib.sha256(_src.encode("utf-8")).hexdigest() != _lib["sha256"]:
+            return "its source does not match its sha256 pin"
+        try:
+            restricted.check(_src, _nodes)
+            _code = restricted.mark(compile(_src, "<library " + _name + ">", "exec"))
+            _ns = {"__name__": _name}
+            _restricted.run(_code, _ns, restricted.DEFAULT_BUDGET)
+        except _restricted.NotInDialect as _e:
+            return str(_e)
+        except SyntaxError as _e:
+            return "not in dialect: " + str(_e)
+        except Exception as _e:
+            return "its body raised " + type(_e).__name__ + ": " + str(_e)
+        _imported = _imports()
+        for _k, _v in _ns.items():
+            if _k not in ("__name__", "__builtins__"):
+                _why = _left(_k, _v, _imported)
+                if _why:
+                    return _why
+        for _n in _lib["names"]:
+            if not _n.isidentifier() or _n.startswith("__"):
+                return "'" + _n + "' is not a name a cell may read"
+            if _n not in _ns:
+                return "it defines no '" + _n + "'"
+            if not (_frozen(_ns[_n]) or type(_ns[_n]) is types.FunctionType):
+                return "'" + _n + "' is not a function or a constant"
+        _mod = types.ModuleType(_name)
+        _mod.__dict__.update({_k: _v for _k, _v in _ns.items() if _k != "__builtins__"})
+        sys.modules[_name] = _mod
+        _restricted.allow_module(_name, list(_lib["names"]))
+        _loaded[_name] = _lib["sha256"]
+        return ""
+    return json.dumps([{"name": _l["name"], "why": _one(_l)} for _l in _libs])
+_ml_library_load(${JSON.stringify(libs)}, frozenset(${JSON.stringify(nodes)}), frozenset(${JSON.stringify(reserved)}))
+`;
+
+/**
+ * The card's verdict on a library's source, DERIVED, nothing run (the coordinator's ruling B, 2026-10-24): the whitelist
+ * check, then the MODULE SHAPE. The body may hold a docstring, imports of the dialect's own modules, `def`s (no decorator)
+ * whose every default is an immutable literal, and assignments of an immutable literal (a scalar, str, bytes, or a tuple
+ * of such) to one name. Anything else at the top level (a call, a list or dict, a loop, a comprehension, a class) is
+ * refused by line: it would run code at load or leave state a later run could write. `libraryLoad`'s check after the
+ * load enforces the same, so the two must agree. The script's value is JSON, `{why, defs: [{name, signature}],
+ * constants}`, `why` "" when it is admitted.
+ * @param name the import name asked for
+ * @param source the module's source
+ * @param nodes the whitelist's AST node names
+ * @param reserved import names no library may take (as `libraryLoad`'s)
+ */
+export const libraryShape = (name: string, source: string, nodes: string[], reserved: string[]): string => /* python */ `${LIBRARY_NAME}
+def _ml_library_shape(_name, _src, _nodes, _reserved):
+    import ast, json, sys, _restricted, restricted
+    # The gate's own import tables, as dialectSetup's load_manifests registered them: module -> the names it admits.
+    _modules = getattr(sys.modules.get("_ml_libraries"), "admitted", None)
+    if _modules is None:
+        return json.dumps({"why": "the dialect is not loaded in this sandbox", "defs": [], "constants": []})
+    def _out(_why, _defs=(), _consts=()):
+        return json.dumps({"why": _why, "defs": list(_defs), "constants": list(_consts)})
+    _why = _ml_library_name_refusal(_name, _reserved)
+    if _why:
+        return _out(_why)
+    try:
+        restricted.check(_src, _nodes)
+        _tree = ast.parse(_src)
+    except _restricted.NotInDialect as _e:
+        return _out(str(_e))
+    except SyntaxError as _e:
+        return _out("not in dialect: " + str(_e))
+    def _literal(_v):
+        if isinstance(_v, ast.Constant):
+            return True
+        if isinstance(_v, ast.UnaryOp) and isinstance(_v.op, (ast.USub, ast.UAdd)) and isinstance(_v.operand, ast.Constant) \
+                and type(_v.operand.value) in (int, float, complex):
+            return True
+        return isinstance(_v, ast.Tuple) and all(_literal(_x) for _x in _v.elts)
+    _defs, _consts = [], []
+    for _i, _st in enumerate(_tree.body):
+        _at = "line " + str(_st.lineno) + ": "
+        if _i == 0 and isinstance(_st, ast.Expr) and isinstance(_st.value, ast.Constant) and isinstance(_st.value.value, str):
+            continue
+        if isinstance(_st, ast.Import):
+            for _al in _st.names:
+                if _al.name not in _modules:
+                    return _out(_at + "an import of " + _al.name + ", which the dialect does not admit")
+        elif isinstance(_st, ast.ImportFrom):
+            if _st.level or _st.module not in _modules:
+                return _out(_at + "an import from " + ("." * _st.level) + str(_st.module or "") + ", which the dialect does not admit")
+            for _al in _st.names:
+                if _al.name not in _modules[_st.module]:
+                    return _out(_at + "an import of " + _st.module + "." + _al.name + ", which the dialect does not admit")
+        elif isinstance(_st, ast.FunctionDef):
+            if _st.decorator_list:
+                return _out("line " + str(_st.decorator_list[0].lineno) + ": a decorated def, which would run the decorator at load")
+            for _d in _st.args.defaults + [_d for _d in _st.args.kw_defaults if _d is not None]:
+                if not _literal(_d):
+                    return _out(_at + "a default of " + _st.name + " that is not an immutable literal, which would keep state from one run to the next")
+            _defs.append({"name": _st.name, "signature": ast.unparse(_st.args)})
+        elif isinstance(_st, ast.Assign):
+            # Not an annotated one: under 3.14 a module-level annotation leaves a set (__conditional_annotations__).
+            _targets = _st.targets
+            if len(_targets) != 1 or not isinstance(_targets[0], ast.Name) or not _literal(_st.value):
+                return _out(_at + "an assignment that is not one name bound to an immutable literal (a scalar, str, bytes, or a tuple of such)")
+            _consts.append(_targets[0].id)
+        else:
+            return _out(_at + "a " + type(_st).__name__ + " at the top level, which would run code at load")
+    return _out("", _defs, _consts)
+_ml_library_shape(${JSON.stringify(name)}, ${JSON.stringify(source)}, frozenset(${JSON.stringify(nodes)}), frozenset(${JSON.stringify(reserved)}))
 `;

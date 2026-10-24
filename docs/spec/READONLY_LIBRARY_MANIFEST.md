@@ -358,6 +358,27 @@ the finder is the root-k session; the spec is updated with the build's PR). Four
 The red-team pass (rule 10: a separate session, failing-first tests in its own file) covers the new message types
 and the shape rule; the code review goes to a free session that neither built nor found it.
 
+**As built** (root K's (c2), `propose_manifest` with `library`; how it works: `docs/dev/python-sandbox.md` and
+`docs/dev/shell.md`). Where the build differs from the rulings or fills a gap they left:
+
+- The size cap is 64 KiB (`LIBRARY_MAX_BYTES`), the head `ml.sh` returns whole. The read must hash to the sha256 the
+  host resolved before the read, or the card says the file changed while it was read.
+- A name that already imports is asked of the sandbox before the card, as a shape op over an empty source, so nothing
+  of the library reaches it. "Already importable" is `sys.modules`, `sys.stdlib_module_names`, the whitelist's modules,
+  the bundled packages' imports, and anything `importlib.util.find_spec` finds.
+- The shape rule takes the admitted modules and names from the gate's own tables (`load_manifests`), so `from m import
+  n` is admitted only for a name the gate admits on `m`. It refuses an annotated assignment (`X: int = 3`): on 3.14 it
+  compiles to a `__conditional_annotations__` set the load refuses. Measured by listing every admitted form and
+  loading each; the three disagreements this found were fixed before the build.
+- The post-load check is stricter than the ruling's list: a global may be frozen data, a `CO_RESTRICTED` function with
+  no closure and frozen defaults, or by identity an admitted module or an admitted name of one. A builtin function is
+  admitted only as an admitted name (`from math import fsum`).
+- The card shows the source as a Python code block; the Settings page "Python libraries" shows it behind a disclosure.
+  The page does not yet say that the file on disk now differs.
+- Removing an entry restarts only the Python workers that were handed a library (an inside run's, the proposal's own),
+  not every worker; each run that kept names in one is told on its next cell.
+- The owned-through-reset finding is window-ml #1102 (the fork's issues are off).
+
 ## Open questions
 
 - **Size measures.** Which ones does an interpreter trust? `xs.length` on a host array is cheap and honest. On an

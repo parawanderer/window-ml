@@ -14,3 +14,6 @@ export const DIALECT_FILES: Record<string, string> = Object.fromEntries(Object.e
 
 /** The AST node names a cell inside the dialect may use (whitelist.json "nodes", the one ratchet). */
 export const DIALECT_NODES: string[] = (whitelist as { nodes: string[] }).nodes;
+
+/** The modules a cell inside the dialect may import (whitelist.json "modules"): no library may take one of these names. */
+export const DIALECT_MODULES: string[] = (whitelist as { modules: string[] }).modules;

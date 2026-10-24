@@ -19,13 +19,13 @@ const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test",
 
 /**
  * A worker-built run whose driver calls python_exec once with `code`, then answers. `pyInside(msg)` answers the inside
- * runs (absent: the stock core). Every gate is approved. Returns the sandbox's runs, the step events and the model's view.
+ * runs (absent: the stock core); `local` presets chrome.storage.local. Every gate is approved. Returns the sandbox's runs, the step events and the model's view.
  */
-async function run(code, { pyInside, cfg = {} } = {}) {
+async function run(code, { pyInside, cfg = {}, local = {} } = {}) {
     let turns = 0, last = null;
     const full = [];
     const bg = loadBackground({
-        config: { ...config, ...cfg }, siteGate: true, openTabs: [SITE], pyInside,
+        config: { ...config, ...cfg }, local, siteGate: true, openTabs: [SITE], pyInside,
         onFetch: (c) => {
             if (!c.url.includes("/chat/completions")) return jsonResponse({});
             last = c.body.messages;
@@ -96,4 +96,23 @@ test("Python auto-approval off: nothing is tried inside, and the cell asks sayin
     assert.equal(r.inside.length, 0);
     assert.equal(r.asked.length, 1);
     assert.match(r.asked[0].askWhy?.line ?? "", /auto-approval of Python is off/);
+});
+
+// --- the stored tier 3 libraries reach every inside run ---
+
+const LIB_SOURCE = "def total(xs):\n    return sum(xs)\n";
+const LIB = { id: "lib-1", module: "stats_lib", path: "/w/proj/lib/stats.py", root: "/w/proj", sha256: "a".repeat(64), source: LIB_SOURCE, names: [{ name: "total", kind: "def", signature: "xs" }], origin: "proposed", created: 1 };
+
+test("an inside run carries every stored library as the sandbox loads it; an entry that no longer validates is dropped, never loaded", T, async () => {
+    const stale = { ...LIB, id: "lib-2", module: "_private", sha256: "not-a-sha" };
+    const r = await run("import stats_lib\nreturn stats_lib.total([1, 2])", { local: { ml_libraries_global: [LIB, stale] }, pyInside: () => ({ ok: true, value: "3", stdout: "" }) });
+    const tries = r.inside.filter((m) => m.code !== "pass");
+    assert.ok(tries.length >= 1);
+    for (const m of tries) assert.deepEqual(m.libraries, [{ name: "stats_lib", source: LIB_SOURCE, sha256: LIB.sha256, names: ["total"] }]);
+    assert.equal(r.full.length, 0, "nothing ran on the full path");
+});
+
+test("with no library stored, an inside run carries an empty list", T, async () => {
+    const r = await run("return 1 + 1", { pyInside: () => ({ ok: true, value: "2", stdout: "" }) });
+    for (const m of r.inside.filter((x) => x.code !== "pass")) assert.deepEqual(m.libraries ?? [], []);
 });

@@ -123,6 +123,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_runstate_watch_notes", "ui", "notes on those watches"),
     local("ml_manifests_global", "manifests", "a stored manifest's pin names a file on this machine, and an unpinned one would describe another machine's program unchecked"),
     local("ml_manifests_workspace", "manifests", "keyed by a workspace root's realpath on this machine; the same reason as ml_manifests_global"),
+    local("ml_libraries_global", "manifests", "a tier 3 Python library is the person's approval of a file read on this machine; restored elsewhere it would admit an import nobody approved there"),
     local("ml_synthetic_traffic", "run-state", "marks this browser's requests as synthetic (a bench switch); restoring it would relabel real use"),
 
     // --- never: not chrome.storage at all ---

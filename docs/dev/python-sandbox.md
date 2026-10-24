@@ -267,6 +267,25 @@ worker drives with `autoApprovePython` on:
    `askWhy = pythonOutsideWhy(where)` keyed by the cell's exact source. An edited cell has no entry and is outside.
    Approved, the cell runs on the full path, and only that run's result is the cell's.
 
+**A stored tier 3 library rides every inside run** (READONLY_LIBRARY_MANIFEST.md, "The runtime import loop"; how one is
+proposed and stored: shell.md). `sw-python.ts` attaches `dialectLibraries()` to an inside PY_RUN as `libraries`, and the
+worker loads each before the cell (`libraryLoad`, `python-dialect-run.ts`): the source must hash to its pin, passes
+`restricted.check`, is compiled `CO_RESTRICTED` (`mark`) and runs under `_restricted.run` with the default step budget. Every
+global it leaves must be frozen (a scalar, str, bytes, or a tuple or frozenset of such), a `CO_RESTRICTED` function with
+no closure and frozen defaults, or exactly (by identity) an admitted module or an admitted name of one; the listed names
+must exist. Only then is it put in `sys.modules` and admitted with `_restricted.allow_module(name, names)`, once per pin
+(`_ml_libraries.pins`); a second pin of one name is refused until the worker restarts. So a library adds an import,
+never a permission: its functions run under the gate as a cell's do. A library op (`library: { op, lib }`, principal
+`library`) is the proposal's: `shape` is `libraryShape`, the card's verdict with nothing run (the docstring, `import` and
+`from … import` of what the gate's own tables admit, defs with no decorator and literal defaults, and one name bound to
+a literal; an annotated assignment is refused, since 3.14 compiles it to `__conditional_annotations__`), and `load` is
+`libraryLoad` itself, on the `library` worker, which the proposal stores only when it agrees. One an inside run's load
+refuses is not importable, so a cell that imports it is outside and asks. `tests/python-dialect-library.test.mjs`
+enumerates the forms the shape rule admits and loads each. The offscreen document keeps which workers were handed a
+library (`libraryPrincipals`); `PY_DROP_LIBRARIES`, sent when one is removed, kills those, and their runs' next cell opens
+with `namespace reset at …: library-removed`. Known gap: an object made in one `_restricted.run` stays owned in every
+later one, even after `reset()` (#1102).
+
 `pythonCellInDialect` stays false for every cell: every path that has not run the cell treats it as outside. That
 covers the page's own loop, a page-started cell, a grant's prefix and the run's call grant.
 A grant keeps the old prefixes (`full:` outside, `readonly:` inside), so a stored `full:` grant still covers its code

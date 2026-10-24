@@ -42,6 +42,7 @@ import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteL
 import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
+import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
 import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
@@ -58,7 +59,7 @@ import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
-import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLibraries } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
@@ -679,6 +680,23 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 if (typeof p.id !== "string" || !(await removeManifest(p.id))) { sendResponse({ error: "no such manifest" }); return; }
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: { ...(await manifestView()), ...(forced ? { forced } : {}) } });
+        })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // The tier 3 libraries stored for the read-only Python dialect (READONLY_LIBRARY_MANIFEST.md, "The runtime import
+    // loop"): read them, remove one. EXTENSION PAGES ONLY. There is no add here: a library is stored only from a card the
+    // person approved. A remove restarts every Python worker that was handed a library (ruling D): nothing unloads a module.
+    if (message.type === "LIBRARIES") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown };
+        void (async () => {
+            let restarted: number | undefined;
+            if (p.op === "remove") {
+                if (typeof p.id !== "string" || !(await removeLibrary(p.id))) { sendResponse({ error: "no such library" }); return; }
+                restarted = await dropPythonLibraries();
+            } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
+            await librariesReady;
+            sendResponse({ data: { libraries: storedLibraries(), ...(restarted !== undefined ? { restarted } : {}) } });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }

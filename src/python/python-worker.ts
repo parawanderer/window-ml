@@ -15,9 +15,9 @@
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { DIALECT_FILES, DIALECT_NODES } from "./dialect-data";
+import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
-import { dialectSetup } from "./python-dialect-run";
+import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 import { cellBoundary, cellDropped } from "./cell-gate";
 
@@ -33,7 +33,7 @@ let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, r
 /** How many cells this worker has started: the `afterCell` a dropped callback is reported against (cell-gate.ts). */
 let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
@@ -200,7 +200,34 @@ function dialectReason(py: any): Promise<string> {
         .then((r: unknown) => String(r ?? ""), (e: any) => `the dialect's manifests could not be loaded (${String((e && e.message) || e).split("\n").filter(Boolean).pop()})`);
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false): Promise<RunResult> {
+/**
+ * Import names no library may take though nothing imported them yet: the dialect's modules and every package in the
+ * Pyodide lock, so a later full-path `import scipy` is never handed a library instead.
+ * @param py the interpreter
+ */
+function libraryReserved(py: any): string[] {
+    const packages = Object.values((py?.lockfile?.packages ?? {}) as Record<string, { imports?: string[] }>);
+    return [...DIALECT_MODULES, ...packages.flatMap((p) => p.imports ?? [])];
+}
+
+/**
+ * A library op on the dialect (READONLY_LIBRARY_MANIFEST.md, tier 3): `shape`, the card's verdict with nothing run;
+ * `load`, the load after approval, whose check is the enforce layer.
+ * @param op which
+ * @param lib the library
+ * @returns the verdict (`{why, defs, constants}`) or the load's `{why}`, or the reason the dialect is not loaded
+ */
+async function library(op: "shape" | "load", lib: DialectLibrary): Promise<{ why: string; defs?: unknown; constants?: unknown }> {
+    const py = await getPyodide();
+    const unready = await dialectReason(py);
+    if (unready) return { why: unready };
+    const text = op === "shape" ? libraryShape(lib.name, lib.source, DIALECT_NODES, libraryReserved(py))
+        : libraryLoad([lib], DIALECT_NODES, libraryReserved(py));
+    const out = JSON.parse(String(await py.runPythonAsync(text)));
+    return op === "shape" ? out : out[0];
+}
+
+async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false, libraries: DialectLibrary[] = []): Promise<RunResult> {
     const wasLive = pyodideLive;
     const w0 = Date.now();
     const py = await getPyodide();
@@ -209,6 +236,9 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // membership runs nothing unasked; the cell is reported outside and goes to the person.
     const unready = inside ? await dialectReason(py) : "";
     if (unready) return { ok: false, stdout: "", notInDialect: unready };
+    // The person's approved libraries, each loaded once per pin: one this load refuses is simply not importable, so a
+    // cell that imports it is outside the dialect and asks.
+    if (inside && libraries.length) await py.runPythonAsync(libraryLoad(libraries, DIALECT_NODES, libraryReserved(py)));
     const prewarm = prewarmUnused ? (wasLive ? "warm" : "starting") : undefined;
     prewarmUnused = false;
     // `started` / `t0` fire when the USER'S CELL is about to run — after the namespace, the injected inputs,
@@ -436,6 +466,15 @@ function onMessage(e: MessageEvent): void {
         );
         return;
     }
+    // A library's shape or load: through the chain, since it reads and changes the one interpreter.
+    if (msg.library) {
+        const { op, lib } = msg.library;
+        runChain = runChain.then(() => library(op, lib)).then(
+            (result) => post({ id: msg.id, ok: true, stdout: "", library: result }),
+            (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+        );
+        return;
+    }
     // Throw away the bench's kept state, both modes. Through the chain like everything else that touches the
     // interpreter, so it cannot land in the middle of a run that is using it.
     if (msg.benchReset) {
@@ -450,7 +489,7 @@ function onMessage(e: MessageEvent): void {
     const onStdout = msg.stream ? (chunk: string) => post({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
     const onStarted = () => post({ id: msg.id, started: true });
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : []))
         .then(
             (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
