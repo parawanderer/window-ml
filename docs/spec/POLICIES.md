@@ -15,7 +15,7 @@ The remembered half has been built four times, each with its own storage, its ow
 | Approved URLs from an `exec` card ("Approve + remember these URLs") | `src/sw/grant-extract.ts`, `grants.fetch` in `src/sw/sw-consent.ts` | the literal `ml.fetch` URLs a person saw, for the tab |
 | One-time call grants, credentialed fetches | `grants.call`, `grants.credentialedFetch` in `src/sw/sw-consent.ts` | one approved call or URL, consumed on use |
 | Host permissions granted from a card | `grantHostPattern` in `src/sidebar/ui-kit.tsx` | a Chrome host pattern a fetch or a navigate needed |
-| Pages where a run's approvals are skipped, and the Sheets grant | `pageApprovalDomains` in `src/contract/contract-config.ts`, `SheetsGrant` in `src/sidebar/settings/settings.tsx` | a domain list; a spreadsheet source |
+| Pages where a run's approvals are skipped, and the Sheets grant | `pageApprovalDomains` in `src/contract/contract-config.ts`, `SheetsGrant` in `src/sidebar/settings/settings.tsx` | a domain list; a spreadsheet source  (ruled 2026-10-24: the builtin `act` policy, below) |
 | A secret's scope (not built) | [`SECRET_HANDLES.md`](SECRET_HANDLES.md) | which origins, methods and paths a credential may be used against: a policy attached to the secret when it is stored |
 
 Four hand-rolled copies of one thing is the sign that the general thing is missing. A policy is that thing, and each of
@@ -491,6 +491,44 @@ A build: `navNeedsConsent` consults the judge first and writes an approved origi
 gate reads; `fetchFacts` gains `interactive`; the `fetch` facts' schema and the policy page's rows show it; the
 same-origin as-you free tier replaces the flag; the run host's committed-navigation hook judges every arrival. It widens two grants (an origin grant across modes, the same-origin
 as-you tier), so it lands with a red-team pass by a separate session (rule 10) and after the freeze.
+
+## Worked example and acceptance test: a task on another site, scoped by a proposed policy
+
+**Shane, 2026-10-24.** The simplest whole use of the mechanism, and the test of it: the person opens the model on any
+page and says "you are working on `https://example.com` and have to do [task]; you may go anywhere on
+`https://example.com`, click buttons on `https://example.com/user/*`, and never go to `https://example.com/admin/*`".
+The model proposes that as a policy, the person reads the card and approves it once, and the model does the task with
+no further card inside the rule and a refusal at its edge. Three rulings make it possible on top of "Navigate is a
+fetch":
+
+- **A proposal may carry several rules.** `propose_policy` takes a LIST of `{effect, when, label}`; one card shows each
+  rule as its own row with its own breadth note, one answer adds them all (each its own stored policy, origin `proposed`,
+  sharing a proposal id so the page can show them together). The example is three rows: `allow` `fetch` on
+  `c.url.startsWith("https://example.com/")`, `allow` `act` on `c.action === "click" &&
+  c.url.startsWith("https://example.com/user/")`, `deny` `fetch` on `c.url.startsWith("https://example.com/admin/")`.
+  Precedence does the rest: the deny beats the allow on `/admin/`, and under "Navigate is a fetch" it denies the
+  navigation, the fetch and the arrival alike.
+- **Acting on a page is a consumer.** `act` is a third consumer beside `fetch` and `sh`: facts are the page's resolved
+  `url` and `host`, the `action` (`click`, `type`), and what the element IS as the worker resolved it (tag, `href` when
+  it has one, its accessible name), never the model's description of it. The self-approval list of origins (the fourth
+  row of the table at the top, `pageApprovalDomains` and its slice 3 successor) becomes the BUILTIN `act` policy, which
+  folds that mechanism in as this spec set out to. An `ask` on `act` asks as today; a `deny` refuses the click with
+  the policy named; an `allow` skips the card. A click on an element whose `href` the `fetch` rows deny is refused up
+  front, the describe layer of the arrival rule above.
+- **A policy the person approved is the person's word for leaving the origin.** `crossOrigin: false` means "no
+  cross-origin without the person's word", and a card or an approved `allow` naming the origin is that word; it no
+  longer refuses outright. Starting on one page and working on another site is then exactly the example: nothing
+  crosses until the card is answered.
+
+**The acceptance test** (e2e, `fake-llm`, two local origins A and B so the cross-origin path is real): the run starts
+on A; the scripted model calls `propose_policy` with the three rows; the test reads the card (three rows, each with a
+breadth note over the probes, zero recorded calls said as such) and approves; `navigate(B)` runs with no card; a click
+on `B/user/x` runs with no card; a click on an anchor to `B/admin/` is refused before the click with the deny named; a
+button whose script sets `location` to `B/admin/` is clicked (its href is not known) and the run is BLOCKED on arrival
+with the card; `fetch_url(B/admin/…)` is denied; `type` on `B/other` asks, since no row allows it. Red-team properties
+beside it, in the finder's own file: a page-built run cannot propose; a proposal over a sibling host shows in breadth;
+the deny wins whatever order the rows are sent in; a redirect from `B/ok` to `B/admin/` is blocked on arrival. Nothing
+here is built; it lands after the freeze, with the navigate build it depends on.
 
 ## Open questions
 
