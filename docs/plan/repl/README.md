@@ -246,6 +246,14 @@ day which to take next; RULED in `READONLY_LIBRARY_MANIFEST.md`: the disk check 
 described, store untouched), workspace scope is parked until a build needs its ruling. Whether root-k spends this
 week's budget on the button is Shane's: the freeze exception covered the evidence-run gap and (c2) only.
 
+#1118 MERGED 8832036d (2026-10-24, e3, `@security`): the rule-10 pass on the tier 3 import loop, two test files of
+e3's own, result MISS. Eight properties pinned (nothing runs before approval; a load whose globals disagree is not
+stored; the name precheck neither executes nor shadows; an out-of-root or secret path is refused before the card; the
+64 KiB + 1 source; the stored bytes are the snapshot; removal restarts the holders; the #1102 leak is unreachable from
+an admitted module). Probed and not gotten: `libraryShape` does not walk a def's body, so a listed function can hand a
+cell `math.sqrt` or an inert `open`; every call path is refused under the gate. The janitor reviewed it (no finding).
+With it root K's stacked pass is done; left from #1110 are only #1102, the disk-check button and the Landlock run.
+
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
 listed as remaining is DONE unless named below.
