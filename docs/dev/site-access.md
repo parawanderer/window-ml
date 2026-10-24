@@ -3,7 +3,8 @@
 The design and its reasons are `docs/spec/SITE_ACCESS.md`; what a page may see of window.ml at all is `docs/spec/SITE_PRESENCE.md`. This is how the built parts work and where to change them.
 Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md):
 its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below, and its PR 2
-(the agent level enforced, and the start card) in "Starting agents"; `requestAccess` and the badge are not built yet.
+(the agent level enforced, and the start card) in "Starting agents", and its PR 3 (the toolbar badge and the popup's agent
+controls) in "The badge and the popup"; `requestAccess` is not built yet.
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 
@@ -197,8 +198,8 @@ an `origin` its `decision` (`use`), its `levels`, and `implied` when only the se
 DevTools Settings → Permissions, "Sites that may use window.ml" (`SiteApprovals`: one row per allowed origin with its
 scope, its agent level and a revoke) and "Sites that approve their own actions" (`SelfApprovalList`), and the toolbar
 popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set), which shows
-the agent level on a line of its own. Its Revoke, like every Settings row's, also removes a self-approval. The popup
-does not add to the self-approval list (slice 3, Q14).
+the agent level on a line of its own, with the buttons that change it. Its Revoke, like every Settings row's, also
+removes a self-approval. The popup does not add to the self-approval list (slice 3, Q14).
 
 ### The upgrade (`migrateSiteAccess`)
 
@@ -738,6 +739,21 @@ page through the content-script relay, so a hostile page can call the handler di
 names `credentials:"omit"`, because a worker fetch's default sends the cookies of every host the extension reaches,
 and it reads only a public host's raster image (`sw-image-fetch.ts`).
 
+## The badge and the popup
+
+[../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md) 1.2, 1.3 and PR 3. The toolbar badge counts what is
+waiting for the person on each tab (`src/sw/sw-badge.ts`). It holds nothing of its own: it is redrawn from the start asks
+(`waitingStarts`, `onStartsChanged` in sw-start-approval.ts) whenever one is raised or settled, by a decision, a timeout,
+a cancel or its tab closing. At worker start it clears every open tab, since an evicted worker's asks are gone with it.
+Only start asks count until PR 4's request store exists; a refused start (`notStarted`) is not counted.
+
+The popup's "This site" block offers the agent level's buttons (`AGENT_BUTTONS`, popup.ts), each a `SITE_ACCESS` edit
+`{ op: "agents", origin, level }`; none while the site approves its own actions, which is set in DevTools Settings only.
+Its "Waiting for you" block lists this tab's start asks from `START_ASKS`, an extension-only message
+(`isExtensionSender`) that answers a tab's asks and, given `show`, sends `ML_SHOW_START_ASK` to that tab's top frame only
+when the ask is on that tab. The shell unfolds the run's card (`__mlShowRun`) without focusing it: a start card never
+takes focus, so the page's own Enter cannot land on Allow.
+
 ## Tests
 
 - `tests/site-access.test.mjs`: the pure rules, `levelsFor` and `applyEdit` over every (use x agents x selfApprove)
@@ -752,7 +768,10 @@ and it reads only a public host's raster image (`sw-image-fetch.ts`).
   pass (widening by budget, crossOrigin and tool text, pictures on a turn, context lines, Q17 across an eviction and
   its race). `tests/agent-start.test.mjs`: the pure rules, with
   `siteInstructions` against every composition of the stock prompt. `tests/sidebar-start-card.test.js`: the card in
-  jsdom. `tests/e2e/site-access.spec.mjs`, attack 19: the card in a real browser.
+  jsdom. `tests/e2e/site-access.spec.mjs`, attack 19: the card in a real browser, and the badge and Show there.
+- `tests/badge.test.mjs`: the badge per tab against the bundle, cleared by each way an ask settles; `START_ASKS` refused
+  to a page, and Show only for an ask on the tab named. `tests/popup-whitelist.test.js`: the agents buttons per level
+  and the edit each sends; the waiting block and Show.
 - `tests/run-start.test.mjs`, section "what a page may add to a run the worker built": the worker's half, against the
   bundle.
 - `tests/run-start.test.mjs`, section "where a read-only survey of a worker-built run is evaluated": the routing and

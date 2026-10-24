@@ -14,10 +14,11 @@ const DIST = path.join(__dirname, "../dist");
 
 /**
  * The popup in jsdom, its active tab at `tabUrl`.
- * @param {{ tabUrl?: string, site?: object }} opts the current tab's URL, and the worker's SITE_ACCESS answer for its origin
- * @returns the window, the document, the sync store, what the popup sent, and a flush
+ * @param {{ tabUrl?: string, site?: object, startAsks?: (payload: object) => object }} opts the current tab's URL, the
+ *   worker's SITE_ACCESS answer for its origin, and its START_ASKS answer (`data`) for a payload (default: nothing waits)
+ * @returns the window, the document, the sync store, what the popup sent, whether it closed, and a flush
  */
-async function loadPopup({ tabUrl = "https://site.example/page", site = { decision: "unknown" } } = {}) {
+async function loadPopup({ tabUrl = "https://site.example/page", site = { decision: "unknown" }, startAsks = () => ({ asks: [] }) } = {}) {
     const html = fs.readFileSync(path.join(DIST, "popup.html"), "utf8").replace(/<script[^>]*src=[^>]*><\/script>/g, "");
     const dom = new JSDOM(html, { runScripts: "outside-only", url: "chrome-extension://test/popup.html" });
     const win = dom.window;
@@ -30,7 +31,9 @@ async function loadPopup({ tabUrl = "https://site.example/page", site = { decisi
             getContexts: async () => [],
             sendMessage: (msg, cb) => {
                 sent.push(msg);
-                const reply = msg?.type === "SITE_ACCESS" ? { data: { lists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] }, origin: msg.payload?.origin, ...site } } : { error: "not in this test" };
+                const reply = msg?.type === "SITE_ACCESS" ? { data: { lists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] }, origin: msg.payload?.origin, ...site } }
+                    : msg?.type === "START_ASKS" ? { data: startAsks(msg.payload) }
+                    : { error: "not in this test" };
                 if (typeof cb === "function") { setTimeout(() => cb(reply), 0); return undefined; }
                 return Promise.resolve(reply);
             },
@@ -45,10 +48,12 @@ async function loadPopup({ tabUrl = "https://site.example/page", site = { decisi
         windows: { update: async () => ({}) },
         extension: { isAllowedIncognitoAccess: (cb) => cb(false) },
     };
+    const closed = { value: false };
+    win.close = () => { closed.value = true; };
     win.eval(fs.readFileSync(path.join(DIST, "popup.js"), "utf8"));
     const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 10)); };
     await flush();
-    return { win, doc: win.document, syncStore, sent, flush };
+    return { win, doc: win.document, syncStore, sent, closed, flush };
 }
 
 // --- the self-approval list is edited in DevTools Settings only ---
@@ -94,4 +99,74 @@ test("popup: no user-facing line in This site uses an em-dash", async () => {
         const p = await loadPopup({ site: { decision, levels, ...(implied ? { implied } : {}) } });
         assert.doesNotMatch(p.doc.getElementById("siteAccess").textContent, /—/);
     }
+});
+
+// --- "This site": the agents buttons (slice 3 PR 3) ---
+
+/** The buttons each agent level offers, and the level each one sets (SITE_ACCESS_SLICE3.md 1.3). */
+const AGENT_BUTTONS = {
+    off: [["Let it start agents", "ask"]],
+    ask: [["Always allow agents", "always"], ["No agents", "off"]],
+    always: [["Ask each time", "ask"], ["No agents", "off"]],
+    denied: [["Stop denying", "off"]],
+};
+const buttonsOf = (p) => [...p.doc.querySelectorAll("#siteAgentButtons button")].map((b) => b.textContent);
+
+test("popup: each agent level offers its buttons, and each sends the agents edit for this origin with the level it names", async () => {
+    for (const [decision, levels, implied, , agents] of CASES) {
+        const label = `${decision}/${levels.agents}/${levels.selfApprove}`;
+        const p = await loadPopup({ site: { decision, levels, ...(implied ? { implied } : {}) } });
+        const row = p.doc.getElementById("siteAgentButtons");
+        // Hidden with the agents line (the site may not use window.ml), and while the site approves its own actions.
+        if (agents === null || levels.selfApprove) {
+            assert.equal(row.hidden, true, `${label}: hidden`);
+            assert.deepEqual(buttonsOf(p), [], `${label}: no buttons`);
+            continue;
+        }
+        assert.equal(row.hidden, false, label);
+        assert.deepEqual(buttonsOf(p), AGENT_BUTTONS[levels.agents].map(([t]) => t), label);
+        for (const [text, level] of AGENT_BUTTONS[levels.agents]) {
+            const q = await loadPopup({ site: { decision, levels } });
+            [...q.doc.querySelectorAll("#siteAgentButtons button")].find((b) => b.textContent === text).click();
+            await q.flush();
+            const edits = q.sent.filter((m) => m.type === "SITE_ACCESS" && m.payload?.edit).map((m) => m.payload.edit);
+            assert.deepEqual(edits, [{ op: "agents", origin: "https://site.example", level }], `${label}: ${text}`);
+        }
+    }
+});
+
+// --- "Waiting for you": this tab's start asks ---
+
+test("popup: nothing waiting hides the block; each start ask on this tab is a row naming the origin, asked for this tab", async () => {
+    const empty = await loadPopup({ site: { decision: "always", levels: { use: "always", agents: "ask", selfApprove: false } } });
+    assert.equal(empty.doc.getElementById("waiting").hidden, true);
+    assert.deepEqual(empty.sent.filter((m) => m.type === "START_ASKS").map((m) => m.payload), [{ tabId: 1 }]);
+
+    const asks = [{ requestId: "q1", origin: "https://site.example", since: 1 }, { requestId: "q2", origin: "https://other.example", since: 2 }];
+    const p = await loadPopup({ startAsks: () => ({ asks }) });
+    assert.equal(p.doc.getElementById("waiting").hidden, false);
+    const rows = [...p.doc.querySelectorAll("#waitingList .wait-row")];
+    assert.deepEqual(rows.map((r) => r.querySelector(".hint").textContent), [
+        "An agent start from https://site.example is waiting on this tab.",
+        "An agent start from https://other.example is waiting on this tab.",
+    ]);
+    assert.deepEqual(rows.map((r) => r.querySelector("code").textContent), ["https://site.example", "https://other.example"]);
+    for (const r of rows) assert.equal(r.querySelector("button").textContent, "Show");
+    assert.doesNotMatch(p.doc.getElementById("waiting").textContent, /—/);
+});
+
+test("popup: Show asks the worker to show that ask on this tab; the popup closes when it did, and redraws when the ask is gone", async () => {
+    const ask = { requestId: "q1", origin: "https://site.example", since: 1 };
+    const shown = await loadPopup({ startAsks: (pl) => (pl.show ? { asks: [ask], shown: true } : { asks: [ask] }) });
+    shown.doc.querySelector("#waitingList button").click();
+    await shown.flush();
+    assert.deepEqual(shown.sent.filter((m) => m.type === "START_ASKS").map((m) => m.payload), [{ tabId: 1 }, { tabId: 1, show: "q1" }]);
+    assert.equal(shown.closed.value, true);
+
+    // Answered or expired between the popup opening and the click: nothing shows, the block empties, the popup stays.
+    const gone = await loadPopup({ startAsks: (pl) => (pl.show ? { asks: [], shown: false } : { asks: [ask] }) });
+    gone.doc.querySelector("#waitingList button").click();
+    await gone.flush();
+    assert.equal(gone.closed.value, false);
+    assert.equal(gone.doc.getElementById("waiting").hidden, true);
 });

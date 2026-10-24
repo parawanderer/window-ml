@@ -516,7 +516,7 @@ function onMessage(d: any): void {
         cardSelectedHash.value = h;
         cardDetail.value = true;
         setCardCollapsed(h, false);
-        toHost({ __mlSidebarCardFocus: true });
+        // No focus: a start card never takes it (the page's Enter must not land on Allow), and Show needs none.
     }
     else if (d.__mlSteerRun && typeof d.__mlSteerRun.hash === "string") {
         // Orb right-click → "Steer this run…": open the inline steer box on this run's card. Uncollapse it

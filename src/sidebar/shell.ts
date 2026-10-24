@@ -1233,7 +1233,7 @@ function fromApp(d: any): void {
             for (const ev of bgRing) toApp(ev);
             bgRing.length = 0;
             if (composerPendingOpen) { composerPendingOpen = false; toApp({ __mlSidebarComposer: "open" }); if (composerPendingCtx) { toApp({ __mlComposerElement: composerPendingCtx }); composerPendingCtx = null; } try { frame.focus(); } catch { /* ignore */ } }
-            if (showRunPending) { toApp({ __mlShowRun: { hash: showRunPending } }); showRunPending = ""; try { frame.focus(); } catch { /* ignore */ } }
+            if (showRunPending) { toApp({ __mlShowRun: { hash: showRunPending } }); showRunPending = ""; }
             if (addToRunPending !== undefined) { toApp({ __mlAddToCurrentRun: { ctx: addToRunPending } }); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
@@ -1493,7 +1493,8 @@ function showStartAsk(runId: string): void {
     if (mode === "overlay") { if (panel && !panel.classList.contains("open")) toggleOpen(); return; }
     if (!hudActive()) return;
     if (!cardHost) mountCard();
-    if (cardReady && frame) { toApp({ __mlShowRun: { hash: runId } }); try { frame.focus(); } catch { /* ignore */ } }
+    // No focus: a start card never takes it, so the page's own Enter cannot land on Allow (attack 19).
+    if (cardReady && frame) toApp({ __mlShowRun: { hash: runId } });
     else showRunPending = runId;   // flushed on the app's ready
 }
 function openComposer(ctx: ElementContext | null = null): void {
