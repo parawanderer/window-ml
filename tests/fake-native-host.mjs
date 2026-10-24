@@ -10,7 +10,9 @@
  *   macOS); absent = pre-K3 (the key is not sent); `facts(args)`: the spawn answer for a call (default: the argv
  *   resolved under /usr/bin, everything in the root); `done(id, spawnArgs)`: the done event (default exit 0 with
  *   "out\n"); `refuse`: { call: code } answers that call with an error; `startError(id, n)`: an error code for the
- *   n-th `start` (0-based), as `PinChanged` when a hashed script changed since its spawn
+ *   n-th `start` (0-based), as `PinChanged` when a hashed script changed since its spawn; `fs`: the files in the roots, by
+ *   absolute path to its sha256, which a path fact's `exists` and `sha256` read (absent: every path exists); a test's
+ *   `done` changes it to make a call write
  */
 export function fakeNativeHost(opts = {}) {
     const calls = [];
@@ -41,7 +43,11 @@ export function fakeNativeHost(opts = {}) {
                         argv: args.argv, program: { path: args.argv[0].startsWith("/") ? args.argv[0] : `/usr/bin/${args.argv[0]}`, inRoot: false, fingerprint: "1:2:3:4" },
                         cwd: { path: args.cwd, inRoot: true }, env: { set: Object.keys(args.env ?? {}), secrets: [], free: true },
                         repo: null, repoConfigRunsCode: null,
-                        paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true, ...(p.walk ? { containsSecret: false } : {}), ...(p.hash ? { sha256: opts.sha256?.(n) ?? "0".repeat(64) } : {}) })),
+                        paths: (args.pathArgs ?? []).map((p) => {
+                            const given = p.split ? args.argv[p.arg].slice(args.argv[p.arg].indexOf(p.split) + 1) : args.argv[p.arg], path = `${args.cwd}/${given}`;
+                            const exists = opts.fs ? path in opts.fs : true;
+                            return { arg: p.arg, given, path, inRoot: true, secret: false, exists, ...(p.walk ? { containsSecret: false } : {}), ...(p.hash ? { sha256: opts.fs ? opts.fs[path] ?? null : opts.sha256?.(n) ?? "0".repeat(64) } : {}) };
+                        }),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
                     };
                     msg.id = id;

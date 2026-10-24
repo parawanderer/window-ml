@@ -111,6 +111,31 @@ test("an evidence call whose envelope or protected names do not hold fails, each
     }
 });
 
+test("a draft that calls a writer a reader fails its evidence run when the recorded call changed an operand, though the sandboxed re-run exits 0 having written nothing", T, async () => {
+    // The gap ROOT_K_RESULT_2.md left: under `write: none` a program that swallows its refused write and exits 0 passed.
+    // The recorded call ran with writes allowed; what it did to its operands is the evidence the re-run cannot give.
+    for (const [before, after, change] of [[undefined, "1".repeat(64), "created"], ["1".repeat(64), "2".repeat(64), "modified"], ["1".repeat(64), undefined, "removed"]]) {
+        const fs = before ? { "/w/proj/out.txt": before } : {};
+        let n = 0;
+        const done = () => {
+            if (!n++) { if (after) fs["/w/proj/out.txt"] = after; else delete fs["/w/proj/out.txt"]; }
+            return { out: "", err: "", code: 0, envelope: ENVELOPE, protectedChanged: [] };
+        };
+        const r = await proposalRun([runs(["mytool", "out.txt"]), propose()], { hostOpts: { fs, done } });
+        assert.match(r.results[1], new RegExp(`Its evidence run failed on \\["mytool","out\\.txt"\\]: its recorded call ${change} /w/proj/out\\.txt, which the manifest says it does not write\\. It describes calls only under the sandbox\\.`), change);
+        const [s] = r.stored();
+        assert.equal(s.evidence, undefined, change);
+        assert.equal(starts(r.host.names()), 1, `${change}: nothing is re-run once the record shows a write`);
+    }
+});
+
+test("a recorded call that left its operands as they were still passes", T, async () => {
+    const fs = { "/w/proj/a.txt": "1".repeat(64) };
+    const r = await proposalRun([runs(["mytool", "a.txt"]), propose()], { hostOpts: { fs, done: () => ({ out: "", err: "", code: 0, envelope: ENVELOPE, protectedChanged: [] }) } });
+    assert.match(r.results[1], /Its evidence run re-ran 1 call under the sandbox, all as the manifest says/);
+    assert.equal(r.stored()[0].evidence.calls, 1);
+});
+
 test("with no call of the program in the run, the card says so and the entry is stored with no evidence, never a synthetic call", T, async () => {
     const r = await proposalRun([propose()]);
     assert.match(r.cards[0].renderIn.note, /DERIVED, nothing run: this run has made no call of it that ran, so there is nothing to re-run as evidence\./);
