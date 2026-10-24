@@ -1,0 +1,17 @@
+{
+  "model": "moonshot.kimi-k3",
+  "shape": "dom",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Yearly Rainfall Summary\",\n  \"body\": \"<div class=\\\"card\\\">\\n  <figure>\\n    <ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed>\\n    <figcaption>Monthly rainfall (mm) over one year. Bars show each month's precipitation; the three wettest months are listed below.</figcaption>\\n  </figure>\\n  <section class=\\\"stats\\\">\\n    <h2>Three wettest months</h2>\\n    <ol id=\\\"wettest\\\"></ol>\\n    <p id=\\\"total\\\" class=\\\"total\\\"></p>\\n  </section>\\n</div>\",\n  \"css\": \".card { font-family: system-ui, -apple-system, sans-serif; max-width: 580px; margin: 0 auto; padding: 18px; background: #ffffff; border: 1px solid #e3e6ea; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }\\nfigure { margin: 0; }\\nml-embed { display: block; }\\nml-embed img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto; }\\nfigcaption { font-size: 0.85rem; color: #5f6b7a; text-align: center; margin-top: 10px; line-height: 1.4; }\\n.stats { margin-top: 16px; border-top: 1px solid #edf0f3; padding-top: 12px; }\\n.stats h2 { font-size: 1rem; margin: 0 0 8px; color: #1a5276; }\\n#wettest { margin: 0; padding-left: 22px; }\\n#wettest li { padding: 3px 0; color: #2c3e50; }\\n.total { margin: 12px 0 0; font-weight: 600; color: #1a5276; background: #eaf3fa; border-radius: 8px; padding: 8px 12px; }\\n.error { color: #b03a2e; font-size: 0.9rem; }\",\n  \"scripts\": [\n    \"const fmt = n => {\\n  const r = Math.round(n * 10) / 10;\\n  return Number.isInteger(r) ? String(r) : r.toFixed(1);\\n};\\nconst list = root.querySelector('#wettest');\\nconst totalEl = root.querySelector('#total');\\ntry {\\n  const csv = ml.dereference('@tool:7be01d4:out');\\n  const rows = csv.trim().split(/\\\\r?\\\\n/).slice(1).map(line => {\\n    const parts = line.split(',');\\n    return { month: (parts[0] ?? '').trim(), mm: Number(parts[1]) };\\n  }).filter(r => r.month.length > 0 && Number.isFinite(r.mm));\\n  const top3 = rows.slice().sort((a, b) => b.mm - a.mm).slice(0, 3);\\n  const total = rows.reduce((s, r) => s + r.mm, 0);\\n  list.replaceChildren();\\n  top3.forEach(r => {\\n    const li = root.create('li');\\n    li.textContent = r.month + ' — ' + fmt(r.mm) + ' mm';\\n    list.append(li);\\n  });\\n  totalEl.textContent = 'Yearly total: ' + fmt(total) + ' mm across ' + rows.length + ' months.';\\n} catch (e) {\\n  totalEl.textContent = 'Could not compute statistics from the CSV data.';\\n  totalEl.classList.add('error');\\n}\"\n  ]\n}\n```",
+  "usage": {
+    "prompt_tokens": 761,
+    "completion_tokens": 1810,
+    "total_tokens": 2571,
+    "completion_tokens_details": {
+      "reasoning_tokens": 940
+    },
+    "prompt_tokens_details": {
+      "cache_write_tokens": 512
+    }
+  }
+}

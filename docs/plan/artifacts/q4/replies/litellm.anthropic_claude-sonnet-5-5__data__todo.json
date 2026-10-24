@@ -1,0 +1,28 @@
+{
+  "model": "litellm.anthropic/claude-sonnet-5-5",
+  "shape": "data",
+  "task": "todo",
+  "text": "```json\n{\n  \"title\": \"Weekend Trip To-Do\",\n  \"body\": \"<div class=\\\"wrap\\\"><h2>Weekend trip planning</h2><div class=\\\"add\\\"><input id=\\\"draft\\\" type=\\\"text\\\" placeholder=\\\"Add a task…\\\" value=\\\"\\\"></input><button id=\\\"add\\\">Add</button></div><ul id=\\\"list\\\"></ul><p id=\\\"count\\\"></p></div>\",\n  \"css\": \".wrap{font-family:sans-serif;max-width:420px;margin:0 auto;padding:12px}h2{margin:0 0 12px;font-size:1.2em}.add{display:flex;gap:8px;margin-bottom:12px}.add input{flex:1;padding:8px;border:1px solid #bbb;border-radius:6px}.add button{padding:8px 14px;border:0;border-radius:6px;background:#2b6cb0;color:#fff;cursor:pointer}ul{list-style:none;margin:0;padding:0}li{display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid #eee}li span{flex:1}li.done span{text-decoration:line-through;color:#888}.tick{width:24px;height:24px;border:2px solid #2b6cb0;border-radius:6px;background:#fff;color:#2b6cb0;cursor:pointer;line-height:1;padding:0}li.done .tick{background:#2b6cb0;color:#fff}.del{border:0;background:transparent;color:#c53030;cursor:pointer;font-size:1em}#count{color:#555;font-size:.9em;margin-top:12px}\",\n  \"scripts\": [\n    \"if (!state.items) { state.items = [{id:1,text:'Pick a destination and book accommodation',done:false},{id:2,text:'Plan transport and check the weather forecast',done:false},{id:3,text:'Make a packing list',done:false}]; state.nextId = 4; state.draft = ''; }\\nconst render = () => {\\n  const list = root.byId.list;\\n  list.children = state.items.map(it => ({\\n    tag: 'li', attrs: { class: it.done ? 'done' : '' }, text: '',\\n    children: [\\n      { tag: 'button', attrs: { class: 'tick' }, text: it.done ? '✓' : '', children: [], on: { click: () => { it.done = !it.done; render(); } } },\\n      { tag: 'span', attrs: {}, text: it.text, children: [] },\\n      { tag: 'button', attrs: { class: 'del' }, text: '✕', children: [], on: { click: () => { state.items = state.items.filter(x => x.id !== it.id); render(); } } }\\n    ]\\n  }));\\n  const left = state.items.filter(x => !x.done).length;\\n  root.byId.count.text = state.items.length === 0 ? 'Nothing here yet — add a task!' : (left === 0 ? 'All done! 🎉' : `${left} left of ${state.items.length}`);\\n};\\nroot.byId.draft.attrs.value = state.draft;\\nroot.byId.draft.on = { input: (e) => { state.draft = e.value; } };\\nroot.byId.add.on = { click: () => {\\n  const t = (state.draft ?? '').trim();\\n  if (t) { state.items.push({ id: state.nextId, text: t, done: false }); state.nextId = state.nextId + 1; }\\n  state.draft = '';\\n  root.byId.draft.attrs.value = '';\\n  render();\\n} };\\nrender();\"\n  ]\n}\n```",
+  "usage": {
+    "completion_tokens": 2194,
+    "prompt_tokens": 998,
+    "total_tokens": 3192,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "text_tokens": 2194
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "text_tokens": 4,
+      "cache_creation_tokens": 994,
+      "cache_creation_token_details": {
+        "ephemeral_5m_input_tokens": 994,
+        "ephemeral_1h_input_tokens": 0
+      }
+    },
+    "cache_creation_input_tokens": 994,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "global",
+    "service_tier": "standard"
+  }
+}

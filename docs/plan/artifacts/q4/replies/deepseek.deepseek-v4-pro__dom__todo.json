@@ -1,0 +1,19 @@
+{
+  "model": "deepseek.deepseek-v4-pro",
+  "shape": "dom",
+  "task": "todo",
+  "text": "```json\n{\n  \"title\": \"Weekend Trip Planner\",\n  \"body\": \"<div class='wrap'>\\n  <h2>Weekend trip planner</h2>\\n  <div class='add-row'>\\n    <input id='new-todo' type='text' placeholder='Add a thing to do...' />\\n    <button id='add-btn'>Add</button>\\n  </div>\\n  <ul id='todo-list'></ul>\\n  <p id='counter'></p>\\n</div>\",\n  \"css\": \".wrap { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 420px; margin: 0 auto; padding: 18px; color: #1f2933; }\\nh2 { font-size: 20px; margin: 0 0 12px; }\\n.add-row { display: flex; gap: 8px; margin-bottom: 12px; }\\n#new-todo { flex: 1; padding: 8px 10px; font-size: 14px; border: 1px solid #cbd2d9; border-radius: 8px; }\\n#add-btn { padding: 8px 14px; font-size: 14px; border: none; border-radius: 8px; background: #2563eb; color: white; cursor: pointer; }\\n#add-btn:hover { background: #1d4ed8; }\\n#todo-list { list-style: none; margin: 0 0 10px; padding: 0; }\\n.todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 6px; border-bottom: 1px solid #e4e7eb; }\\n.todo-item input[type='checkbox'] { width: 16px; height: 16px; cursor: pointer; }\\n.todo-item span { flex: 1; font-size: 15px; }\\n.todo-item.done span { text-decoration: line-through; color: #7b8794; }\\n.delete-btn { padding: 4px 8px; font-size: 12px; border: none; border-radius: 6px; background: #fee2e2; color: #b91c1c; cursor: pointer; }\\n.delete-btn:hover { background: #fecaca; }\\n#counter { font-size: 13px; color: #52606d; margin: 0; }\",\n  \"scripts\": [\n    \"const render = () => {\\n  const list = root.querySelector('#todo-list');\\n  list.replaceChildren();\\n  state.todos.forEach((todo, i) => {\\n    const li = root.create('li');\\n    li.classList.add('todo-item');\\n    if (todo.done) {\\n      li.classList.add('done');\\n    }\\n    const checkbox = root.create('input');\\n    checkbox.setAttribute('type', 'checkbox');\\n    checkbox.checked = todo.done;\\n    checkbox.addEventListener('change', () => {\\n      todo.done = checkbox.checked;\\n      render();\\n    });\\n    const span = root.create('span');\\n    span.textContent = todo.text;\\n    const del = root.create('button');\\n    del.textContent = 'Delete';\\n    del.classList.add('delete-btn');\\n    del.addEventListener('click', () => {\\n      state.todos.splice(i, 1);\\n      render();\\n    });\\n    li.append(checkbox);\\n    li.append(span);\\n    li.append(del);\\n    list.append(li);\\n  });\\n  const left = state.todos.filter((t) => !t.done).length;\\n  root.querySelector('#counter').textContent = left + (left === 1 ? ' item left' : ' items left');\\n};\\nif (!state.todos) {\\n  state.todos = [\\n    { text: 'Book train tickets', done: false },\\n    { text: 'Reserve a hotel room', done: false },\\n    { text: 'Make a list of restaurants to try', done: true }\\n  ];\\n}\\nrender();\\nconst addBtn = root.querySelector('#add-btn');\\nconst input = root.querySelector('#new-todo');\\nconst addTodo = () => {\\n  const text = input.value.trim();\\n  if (text) {\\n    state.todos.push({ text: text, done: false });\\n    input.value = '';\\n    render();\\n  }\\n};\\naddBtn.addEventListener('click', addTodo);\"\n  ]\n}\n```",
+  "usage": {
+    "prompt_tokens": 749,
+    "completion_tokens": 9887,
+    "total_tokens": 10636,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 8830
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 749
+  }
+}

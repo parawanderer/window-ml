@@ -1,0 +1,19 @@
+{
+  "model": "deepseek.deepseek-v4-pro",
+  "shape": "data",
+  "task": "current",
+  "text": "```json\n{\n  \"title\": \"Conversation Stats\",\n  \"body\": \"<div id='panel'><h2>Conversation Stats</h2><div class='section'><h3>Messages by role</h3><div id='role-counts'></div></div><div class='section'><h3>Recent tool calls</h3><ul id='recent-tools'></ul></div><div id='longest'></div></div>\",\n  \"css\": \"#panel{font-family:system-ui,sans-serif;max-width:360px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}h2{margin:0 0 12px;font-size:18px}h3{margin:12px 0 8px;font-size:14px;color:#334155}.row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9}.role{text-transform:capitalize;color:#475569}.count{font-weight:600}.empty{color:#64748b;padding:4px 0}#recent-tools{margin:0;padding-left:18px}#recent-tools li{margin:2px 0}#longest{margin-top:12px;font-weight:500;color:#0f172a}\",\n  \"scripts\": [\n    \"const messages = ml.current?.messages ?? []; const countsEl = root.byId['role-counts']; if (countsEl) { countsEl.children.splice(0, countsEl.children.length); const counts = {}; for (const m of messages) { const role = m.role ?? 'unknown'; counts[role] = (counts[role] ?? 0) + 1; } const entries = Object.entries(counts); for (const entry of entries) { const role = entry[0]; const count = entry[1]; countsEl.children.push({tag:'div', attrs:{class:'row'}, children:[{tag:'span', attrs:{class:'role'}, text: role}, {tag:'span', attrs:{class:'count'}, text: '' + count}]}); } if (entries.length === 0) { countsEl.children.push({tag:'div', attrs:{class:'empty'}, text:'No messages yet.'}); } } const toolNames = []; for (const m of messages) { if (m.tool_calls) { for (const tc of m.tool_calls) { const name = tc && tc['function'] && tc['function'].name; if (name) { toolNames.push(name); } } } } const recent = toolNames.slice(-5).reverse(); const listEl = root.byId['recent-tools']; if (listEl) { listEl.children.splice(0, listEl.children.length); if (recent.length === 0) { listEl.children.push({tag:'li', text:'No tool calls yet.'}); } else { for (const name of recent) { listEl.children.push({tag:'li', text: name}); } } } let longest = 0; for (const m of messages) { const len = m.content?.length ?? 0; longest = Math.max(longest, len); } const longestEl = root.byId['longest']; if (longestEl) { longestEl.text = 'Longest message: ' + longest + ' characters'; }\"\n  ]\n}",
+  "usage": {
+    "prompt_tokens": 783,
+    "completion_tokens": 12359,
+    "total_tokens": 13142,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 11574
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 783
+  }
+}

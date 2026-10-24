@@ -1,0 +1,28 @@
+{
+  "model": "litellm.anthropic/claude-sonnet-5-5",
+  "shape": "dom",
+  "task": "todo",
+  "text": "```json\n{\n  \"title\": \"Weekend Trip To-Do\",\n  \"body\": \"<div class=\\\"wrap\\\"><h2>Weekend trip planning</h2><div class=\\\"add\\\"><input id=\\\"new\\\" type=\\\"text\\\" placeholder=\\\"Add a task…\\\"><button id=\\\"add\\\">Add</button></div><ul id=\\\"list\\\"></ul><p id=\\\"count\\\" class=\\\"count\\\"></p></div>\",\n  \"css\": \".wrap{font-family:system-ui,sans-serif;max-width:420px;margin:0 auto;padding:16px}h2{margin:0 0 12px;font-size:20px}.add{display:flex;gap:8px;margin-bottom:12px}.add input{flex:1;padding:8px 10px;border:1px solid #bbb;border-radius:6px;font-size:14px}.add button{padding:8px 14px;border:0;border-radius:6px;background:#2f6fed;color:#fff;font-size:14px;cursor:pointer}ul{list-style:none;margin:0;padding:0}li{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #e1e1e1;border-radius:6px;margin-bottom:6px;background:#fafafa}li span{flex:1;font-size:14px}li.done span{text-decoration:line-through;color:#888}li button{border:0;background:transparent;color:#c0392b;font-size:16px;cursor:pointer}.count{margin-top:12px;font-size:13px;color:#555}.empty{color:#888;font-size:14px;padding:8px 0}\",\n  \"scripts\": [\n    \"if (!state.items) { state.items = [ {id: 1, text: 'Pick destination and dates', done: false}, {id: 2, text: 'Book accommodation', done: false}, {id: 3, text: 'Make a packing list', done: false} ]; state.nextId = 4; }\\nconst list = root.querySelector('#list');\\nconst count = root.querySelector('#count');\\nconst input = root.querySelector('#new');\\nconst addBtn = root.querySelector('#add');\\nconst render = () => {\\n  list.replaceChildren();\\n  if (state.items.length === 0) {\\n    const p = root.create('li');\\n    p.classList.add('empty');\\n    p.textContent = 'Nothing to do. Add a task above.';\\n    list.append(p);\\n  }\\n  for (const item of state.items) {\\n    const li = root.create('li');\\n    if (item.done) { li.classList.add('done'); }\\n    const cb = root.create('input');\\n    cb.setAttribute('type', 'checkbox');\\n    cb.checked = item.done;\\n    cb.addEventListener('change', () => { item.done = !item.done; render(); });\\n    const span = root.create('span');\\n    span.textContent = item.text;\\n    const del = root.create('button');\\n    del.textContent = '✕';\\n    del.setAttribute('title', 'Delete');\\n    del.addEventListener('click', () => { state.items = state.items.filter(i => i.id !== item.id); render(); });\\n    li.append(cb);\\n    li.append(span);\\n    li.append(del);\\n    list.append(li);\\n  }\\n  const left = state.items.filter(i => !i.done).length;\\n  count.textContent = `${left} of ${state.items.length} left`;\\n};\\nif (!addBtn.getAttribute('data-bound')) {\\n  addBtn.setAttribute('data-bound', '1');\\n  addBtn.addEventListener('click', () => {\\n    const text = (input.value || '').trim();\\n    if (text) {\\n      state.items.push({ id: state.nextId, text: text, done: false });\\n      state.nextId = state.nextId + 1;\\n      input.value = '';\\n      render();\\n    }\\n  });\\n}\\nrender();\"\n  ]\n}\n```",
+  "usage": {
+    "completion_tokens": 2002,
+    "prompt_tokens": 972,
+    "total_tokens": 2974,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "text_tokens": 2002
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "text_tokens": 4,
+      "cache_creation_tokens": 968,
+      "cache_creation_token_details": {
+        "ephemeral_5m_input_tokens": 968,
+        "ephemeral_1h_input_tokens": 0
+      }
+    },
+    "cache_creation_input_tokens": 968,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "global",
+    "service_tier": "standard"
+  }
+}
