@@ -158,6 +158,13 @@ one item in hand and goes idle: root-k finishes (d), the Settings registration p
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
 and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068, #1051, #1045, #1063 are merged): #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+On 2026-10-24 the janitor's fix for #1051's P2-gate flake (#1081, test only) went to the python-cancel lane, the
+test's owner, to review and merge (the janitor built it, root-k found it); it found the fix clean, Shane posted the
+review. #1081's CI then showed a new flake on main, verified against the push runs: the `test (node 26)` job fails
+three #1068 tests in `tests/redteam.test.js` (the page cannot list, add or remove a manifest; a stored manifest never
+reaches a page; a page cannot mint `origin` proposed or person) with a TypeError reading `global` on the extension
+page's positive-control add (a35d7363 and 443c9336 failed, cde627ce passed). It is the janitor's, as a flake fix
+only; the red team (e3, the tests' author) reviews it.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
