@@ -157,6 +157,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     // answers it; absent, it is answered as the stock Pyodide core answers (no membership predicate), so the cell asks.
     const pyInsideRuns = [];
     const pyDeletes = [];       // PY_DELETE_RUN messages (a settled run's kept Python namespace is dropped)
+    const pyDrops = [];         // PY_DROP_LIBRARIES messages (a removed tier 3 library restarts the workers holding one)
     const htmlToMd = [];        // HTML the worker asked the offscreen document to convert to Markdown
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
@@ -350,6 +351,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     if (msg?.type === "PY_RUN" && msg.inside) { pyInsideRuns.push(msg); return pyInside ? pyInside(msg) : { ok: false, stdout: "", notInDialect: "this Pyodide build has no membership predicate (the stock core, not the restricted-mode fork)" }; }
                     if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
                     if (msg?.type === "PY_DELETE_RUN") { pyDeletes.push(msg); return { ok: true }; }
+                    if (msg?.type === "PY_DROP_LIBRARIES") { pyDrops.push(msg); return { ok: true, restarted: 1 }; }
                     if (msg?.type === "PY_PREWARM") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, prewarm: "started" }; }
                     // The session archive's worker, behind the offscreen document: `onArchiveOp(msg)` answers for it.
                     if (msg?.type === "ARCHIVE_OP" && onArchiveOp) return onArchiveOp(msg);
@@ -485,6 +487,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         pyRuns,
         pyInsideRuns,
         pyDeletes,
+        pyDrops,
         htmlToMd,
         debuggerCalls,
         debuggerEventListeners,
