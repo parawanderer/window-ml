@@ -317,9 +317,12 @@ html, body, #root { height: 100%; }
    page needs: a measure, a bubble for your own turn, and chrome that appears when a pointer asks for it.
    Every rule here is presentational. Nothing is removed from the document, every disclosure still opens, and the
    toggle brings all of it back, which is the standing rule about a run's raw view being quiet but never gone. */
-.chat.calm { --fs: 15px; --read: 42rem; }
+/* TWO MEASURES: `--read` is the composer's box (and everything that stands where it stands), `--read-log` the
+   transcript's column, a little wider, as Gemini's is: 708px of conversation over a 672px box. The box reads as
+   resting inside the column rather than as a second column the same width. */
+.chat.calm { --fs: 15px; --read: 42rem; --read-log: 44.25rem; }
 .chat.calm .chat-transcript { padding: 18px 18px 2px; --pt: 18px; --pb: 2px; line-height: 1.7; }
-.chat.calm:not(.narrow) .chat-transcript > div { max-width: var(--read); }
+.chat.calm:not(.narrow) .chat-transcript > div { max-width: var(--read-log); }
 .chat.calm .md p { margin: 0 0 1.05em; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
 .chat.calm .md li { margin: .2em 0; }
@@ -1599,6 +1602,14 @@ button.chat-page-go:hover { color: var(--fg); }
 /* Said in the start pill's row while its runtime reconnects (the worker restarting): the form stays, sending waits. */
 .chat-start-wait { color: var(--fg-faint); font-size: .85em; white-space: nowrap; }
 .chat-start-hint { margin-top: 10px; padding: 0 20px; color: var(--fg-faint); font-size: .84em; }
+/* RETIRED, once this device has shown it knows the keys (`knowsKeys`, view-mode.tsx): the line sinks a little as it
+   fades. It KEEPS its height: the column is centred, so a line folding away under the box would carry the box down
+   half a line while you type in it. The next load does not draw it at all. */
+.chat-start-hint.retired {
+    opacity: 0; transform: translateY(4px); visibility: hidden;
+    transition: opacity .4s cubic-bezier(.4, 0, .2, 1), transform .4s cubic-bezier(.4, 0, .2, 1), visibility 0s .4s;
+}
+@media (prefers-reduced-motion: reduce) { .chat-start-hint.retired { transition: none; } }
 .chat.narrow .chat-start-hint { display: none; }
 
 /* The top of a transcript that does not reach its start (`EarlierEdge`): a quiet line that loads earlier events as it

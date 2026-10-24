@@ -23,6 +23,7 @@ import { TabPicker } from "./tab-picker";
 import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { IconWarn } from "../sidebar/icons";
+import { lastTargets, rememberTarget, type RememberedTarget } from "./view-mode";
 
 /** What a new session can be. */
 export type StartKind = "chat" | "agent";
@@ -76,7 +77,27 @@ export interface TargetPick {
  * The WHERE half of both forms. A runtime with no tabs at all (a box) is never asked the question, and its form
  * offers no tab to run on: the tabs are the runtime's, so they are asked for per runtime and re-asked when it changes.
  */
-export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras): TargetPick {
+/**
+ * What a remembered pick means among the tabs open NOW: the same tab if its id is still open on the same site, else a tab
+ * at exactly the address it showed (a browser restart gives every tab a new id), else nothing, and the caller makes its
+ * usual first guess. The site is checked with the id because after a restart an old id can name some other tab, and
+ * starting an agent on a page nobody picked is the mistake this must not make. A new tab is always there to go back to.
+ * @param r the pick remembered for this runtime, if any
+ * @param tabs the runtime's open tabs, as `tabs.list` just answered
+ * @returns the tab to choose, `"blank"` for a new tab, or null for no remembered choice that still holds
+ */
+export function rememberedTab(r: RememberedTarget | undefined, tabs: readonly TabInfo[]): number | "blank" | null {
+    if (!r) return null;
+    if ("blank" in r) return "blank";
+    const origin = (u: string): string | null => { try { return new URL(u).origin; } catch { return null; } };
+    const same = tabs.find((t) => t.tabId === r.tabId);
+    if (same && origin(same.url) !== null && origin(same.url) === origin(r.url)) return same.tabId;
+    return tabs.find((t) => t.url === r.url)?.tabId ?? null;
+}
+
+/** `remember`: offer the last tab picked on this runtime again (`lastTargets`) and remember each new pick. The start
+ *  page's; a resume is a question about one run, which the last start page's answer says nothing about. */
+export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras, remember = false): TargetPick {
     const [where, setWhere] = useState<"tab" | "blank">("tab");
     const [tabId, setTabId] = useState<number | null>(null);
     const [url, setUrl] = useState("");
@@ -99,11 +120,14 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             setGroups(r.ok ? r.data.groups ?? [] : []);
             setWithheld(r.ok ? r.data.withheld ?? 0 : 0);
             setTabs(list);
-            // The first list picks the tab showing in the first window. A refresh NEVER moves a choice: a chosen tab
-            // that has closed stays chosen and says so (`closed`), because silently switching to whichever tab is in
-            // front would start an agent on a page nobody picked.
-            setTabId((id) => (id != null && (!fresh || list.some((t) => t.tabId === id)) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
-            if (fresh && !list.length) setWhere("blank");
+            // The first list picks the last tab picked here if it is still open, else the tab showing in the first
+            // window. A refresh NEVER moves a choice: a chosen tab that has closed stays chosen and says so (`closed`),
+            // because silently switching to whichever tab is in front would start an agent on a page nobody picked.
+            const back = fresh && remember ? rememberedTab(lastTargets.peek()[rt.id], list) : null;
+            setTabId((id) => (typeof back === "number" ? back
+                : id != null && (!fresh || list.some((t) => t.tabId === id)) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
+            if (fresh && (back === "blank" || !list.length)) setWhere("blank");
+            else if (typeof back === "number") setWhere("tab");
         });
     };
     // A TAB BELONGS TO ONE MACHINE, so nothing about the target survives a change of device. Keeping the id meant the
@@ -127,6 +151,17 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         if (idChanged) { lastRt.current = rt?.id; setWhere("blank"); setTabId(null); }
         load(first || idChanged);
         return () => { seq.current++; };
+    }, [rt, wantsTabs]);
+
+    // TABS OPEN WHILE THIS PAGE SITS, and opening one means leaving it: another tab, another window. So the list is
+    // asked again when the page is shown again or its window takes focus back, as well as when the picker opens, and
+    // the pill and the list are current by the time anyone looks. A refresh, so a choice made stays made.
+    useEffect(() => {
+        if (!wantsTabs) return;
+        const again = (): void => { if (document.visibilityState === "visible") load(false); };
+        window.addEventListener("focus", again);
+        document.addEventListener("visibilitychange", again);
+        return () => { window.removeEventListener("focus", again); document.removeEventListener("visibilitychange", again); };
     }, [rt, wantsTabs]);
 
     const closed = where === "tab" && tabId != null && !!tabs && !tabs.some((t) => t.tabId === tabId);
@@ -170,7 +205,10 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
                     withheld={withheld}
                     sitesGrant={rt ? extras?.fix?.(rt.id, "site-access") : null}
                     groupsHint="Group names and colours need a browser permission, given on the computer these tabs are on."
-                    onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
+                    onChange={(v) => {
+                        if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); }
+                        if (remember && rt) rememberTarget(rt.id, v === "blank" ? { blank: true } : { tabId: v, url: tabs?.find((t) => t.tabId === v)?.url ?? "" });
+                    }} />
             </>
         ) : null,
         // A LINE OF ITS OWN, not another item in the pills' row. It is the only control there that grows, so it took

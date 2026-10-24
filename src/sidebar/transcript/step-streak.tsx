@@ -27,8 +27,20 @@ import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
 
 /** A member drawn inside a streak, where the GROUP owns the motion: a step that also slid itself in would fight
- *  the collapse that is describing the same event. */
+ *  the collapse that is describing the same event. Only the members the group was opened with (`groupOwns`): a call
+ *  that JOINS an open group arrives like any other. */
 export const InStreak = createContext(false);
+
+/**
+ * Which members' motion the GROUP speaks for, and so which stay still as they are drawn inside it.
+ *
+ * The ones it was OPENED with: the rows a refold collapses, and the rows a reader's click opens (the body's own opening
+ * is the motion then). A call that lands while the group is open is new to the reader, and arrives as a call does
+ * anywhere else, sliding in from the left; it was a row appearing in one frame at the foot of the group.
+ * @param known the members' steps when the body was last closed (or the group mounted)
+ * @param step a member's step
+ */
+export const groupOwns = (known: ReadonlySet<number>, step: number): boolean => known.has(step);
 
 /** The fewest turns worth folding. Two is a pair; three is where a reader starts skipping. */
 export const STREAK_MIN = 3;
@@ -293,6 +305,10 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     const holds = holdsSeq(s, want);
     if (holds && !stuck) setStuck(true);
     const shown = open || stuck;
+    // The members the group speaks for (`groupOwns`): every one present while it is shut, and none that joins after
+    // it opens. Kept in a ref and read during render, like `stuck`: it is about how each row came to be drawn.
+    const known = useRef<Set<number>>(new Set(s.turns.map(t => t.step)));
+    if (!shown) known.current = new Set(s.turns.map(t => t.step));
     // Opening is immediate; closing waits for the animation, which is why both pieces of state are cleared in the
     // callback rather than on the click. `stuck` goes with them: a streak held open by a jump closes like any other
     // once you ask it to, or the one opened FOR you is the one that will not shut.
@@ -342,7 +358,7 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                         waiting to happen on a phone, which is why the stylesheet takes this one's clicks away on a
                         coarse pointer. */}
                     <FoldRail onFold={toggle} tip="Collapse this group" />
-                    <InStreak.Provider value={true}>{s.turns.map(render)}</InStreak.Provider>
+                    {s.turns.map(t => <InStreak.Provider key={`m${t.step}`} value={groupOwns(known.current, t.step)}>{render(t)}</InStreak.Provider>)}
                   </div>
                 : null}
         </div>

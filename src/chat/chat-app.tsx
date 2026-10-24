@@ -31,7 +31,7 @@ import { setAppBadge } from "./app-badge";
 import { useNotifications } from "./notify";
 import { useFadeEdges } from "./fade-edges";
 import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
-import { ViewToggle, calm, codeSize, panelSize, listOpen, logOpen, markRead, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
+import { ViewToggle, calm, codeSize, panelSize, keyUse, knowsKeys, listOpen, logOpen, markRead, noteKeyUse, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
 import { UNTIL_READ } from "./read-marks";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
@@ -483,7 +483,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     : <button class="chat-resume" onClick={() => setResuming(true)}>
                         <span class="chat-resume-what">The tab this run worked in has closed.</span><span class="chat-resume-go">Resume on a page</span>
                     </button>
-            ) : s && canDrive ? <Composer s={s} multiline
+            ) : s && canDrive ? <Composer s={s} multiline keys={{ learned: knowsKeys(keyUse.value), used: noteKeyUse }}
                 tools={modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} quiet /> : undefined} />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}

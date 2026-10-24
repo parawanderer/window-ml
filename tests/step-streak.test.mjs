@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
+import { groupOwns, foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
@@ -284,4 +284,13 @@ test("a boundary past the end, or before the start, changes nothing", () => {
     const three = [turn(1, "exec"), turn(2, "exec"), turn(3, "exec")];
     assert.deepEqual(kinds(foldStreaks(three, { breaks: [9] })), ["exec×3"]);
     assert.deepEqual(kinds(foldStreaks(three, { breaks: [0] })), ["exec×3"]);
+});
+
+// --- which members' motion the group speaks for ---
+
+test("a group speaks for the members it was opened with; a call that joins an open group arrives on its own", () => {
+    // Snapshotted while the group is shut (and at mount, which covers a refold: it mounts OPEN with every row in it).
+    const known = new Set([1, 2, 3]);
+    assert.equal(groupOwns(known, 2), true, "a row the refold collapses, or the click opens, does not slide in again");
+    assert.equal(groupOwns(known, 4), false, "a call landing while the group is open slides in like any call");
 });
