@@ -192,7 +192,7 @@ the PR that each edit keeps its property (a narrowed one is reverted and e3's ow
 after the janitor's review of the rest; e3 then pins the residuals in its own file, stacked and merged after.
 #1089 MERGED 70fdd57d, both gates recorded on the PR (e3: each property kept; the janitor: no finding); green on the
 third run, the two before it the P2-gate flake in `tests/redteam-python-sandbox.test.mjs` that #1081 narrowed and the
-janitor's #1098 (test only, open) accumulates with a deadline. e3's residual pins are #1094, retargeted to main, e3's
+janitor's #1098 (test only, MERGED 4dc0c5ff 2026-10-24) accumulates with a deadline. e3's residual pins are #1094, retargeted to main, e3's
 to merge. Root-k moves to (c2) library manifests, the last item of its exception.
 
 (c2) RULED 2026-10-24 on root-k's measurement of the pinned core (the four rulings and the fork finding are in
@@ -223,8 +223,9 @@ Filed as #1102 on window-ml (issues are disabled on the cpython fork; moving it 
 (linear); `(\d{3})+b` on 100k digits charges 273M units, over the 3M budget, so the loosened bound is PRICED; the
 charges are pinned as numbers.
 #1103 MERGED 8f1137b5: the #1093 widening is now covered by its pass, after the fact; the miss stays recorded.
-The red team's #1109 (open, `@python,@security`) turns the three KNOWN OPEN Python-regex backtracking escapes of the
-shipped core into failing-first todos with the harness that sees them; the fix is on the fork, not the shipped pin.
+The red team's #1109 (MERGED 9cd722ef 2026-10-24, `@python,@security`) turns the three KNOWN OPEN Python-regex
+backtracking escapes of the shipped core into failing-first todos with the harness that sees them; the fix is on the
+fork (#11), shipped by the core rebuild (#1119), with which e3 turns the todos into plain tests.
 Root-k's (c2) build is #1110 (open, `manifests/library-tier3`, `@exec,@security,@docs,@ui`): tier 3 libraries to the
 four rulings, with an "As built" list in the spec naming where it narrows them (64 KiB cap; the already-importable
 precheck is a shape op over an empty source; annotated assignments refused for 3.14's `__conditional_annotations__`;
