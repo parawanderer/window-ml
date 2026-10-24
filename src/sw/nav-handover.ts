@@ -18,7 +18,6 @@
 import { activeRuns, bgRuns, hydrationDone, isWorkerRun, makeWorkerRun } from "./sw-runs";
 import { pageApproved } from "./sw-isolated-exec";
 import { recordRunLog } from "./sw-run-log";
-import { SITE_ACCESS_KEYS } from "../site-access";
 
 /** The hand-over decision in flight for each tab, from its last main-frame commit. */
 const pending = new Map<number, Promise<string[]>>();   // state: plumbing
@@ -118,13 +117,6 @@ export async function handOverOnRevoke(): Promise<string[]> {
         return url === null ? [] : decideTab(tabId, url || undefined, "site-revoked").catch(() => [] as string[]);
     }));
     return handed.flat();
-}
-
-/** Whether a `chrome.storage.onChanged` event changes what a site may do: the lists, its agent level or the
- *  self-approval list, all kept in the local and session areas (slice 3). The old sync whitelist is no longer read. */
-export function changesSiteAccess(changes: Record<string, unknown>, area: string): boolean {
-    if (area !== "local" && area !== "session") return false;
-    return Object.values(SITE_ACCESS_KEYS).some((k) => k in changes);
 }
 
 /** The origin of a URL for the log, or "none". */

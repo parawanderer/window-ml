@@ -187,7 +187,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
     const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
     const tabReplacedListeners = new Set();   // chrome.tabs.onReplaced listeners; fired by bg.replaceTab(oldId, newId)
-    const badges = new Map();   // tabId → { text, title }: what chrome.action shows on each tab (the toolbar badge)
+    const badges = new Map();   // tabId (or "default") → { text, title }: what chrome.action was told for each tab (the toolbar badge)
+    badges.shown = (tabId) => {
+        const own = badges.get(tabId) ?? {}, dflt = badges.get("default") ?? {};
+        return { text: own.text ?? dflt.text ?? "", title: own.title ?? dflt.title ?? "window.ml" };
+    };
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
@@ -270,8 +274,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         chrome: {
             // The toolbar button: per-tab badge text and tooltip, recorded in `badges`; the colours in `badges.colours`.
             action: {
-                setBadgeText: async ({ tabId, text }) => { badges.set(tabId, { ...badges.get(tabId), text }); },
-                setTitle: async ({ tabId, title }) => { badges.set(tabId, { ...badges.get(tabId), title }); },
+                // No tabId sets the default; a tab's `null` resets it to the default, as in Chrome. `badges.shown(tab)`
+                // is what that tab shows.
+                setBadgeText: async ({ tabId, text }) => { badges.set(tabId ?? "default", { ...badges.get(tabId ?? "default"), text }); },
+                setTitle: async ({ tabId, title }) => { badges.set(tabId ?? "default", { ...badges.get(tabId ?? "default"), title }); },
                 setBadgeBackgroundColor: async ({ color }) => { badges.colours = { ...badges.colours, bg: color }; },
                 setBadgeTextColor: async ({ color }) => { badges.colours = { ...badges.colours, fg: color }; },
             },

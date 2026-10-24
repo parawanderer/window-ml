@@ -37,6 +37,7 @@ import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
 import { agent } from "./ml/ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 import { mlSchema } from "./ml/ml-schema";
+import { requestAccess } from "./ml/ml-access";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-result";
 import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
 
@@ -393,6 +394,7 @@ import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
         },
         config: config,
         setModel: setModel,
+        requestAccess,
         ps: ps,
         /**
          * DEBUG DUMP — everything the resource panel derives its timeline from, in one object. For reporting a

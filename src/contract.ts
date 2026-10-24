@@ -35,6 +35,7 @@ import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contrac
 
 // Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
 import type { Embedding } from "./ml/embedding";
+import type { AccessAnswer } from "./contract/contract-config";
 import type { JsonPathNode } from "./json-path";
 
 /* ------------------------------- config ------------------------------- */
@@ -309,6 +310,11 @@ export interface MlApi {
     _fetchCached(url: string, mode?: { credentials?: boolean; rendered?: boolean; format?: string }): FetchResult | undefined;
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
+    /** Ask the person for more than this site has: `agents: true` to start agents, `level: "self-approve"` to approve its
+     *  own actions. Needs a click or key press on the page just before. Never opens a window: the request waits in the
+     *  toolbar button, and each site asks once (a later call answers the current state). Resolves, never throws.
+     * @param opts `reason` is shown to the person as the site's own words (plain text, cut at 200 characters) */
+    requestAccess(opts?: { agents?: boolean; level?: "self-approve"; reason?: string }): Promise<AccessAnswer>;
     ps(): Promise<LoadedModel[]>;
     /** DEBUG DUMP of everything the resource panel derives its timeline from — the `__mlDebug` stream, the
      *  server's event frames, the current ps/info. Underscored: a debugging aid, not API, and its shape may

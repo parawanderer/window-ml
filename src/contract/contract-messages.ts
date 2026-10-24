@@ -41,6 +41,7 @@ export type PageRequestType =
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
     | "INJECT_MESSAGE_REQUEST"   // a.say() mid-run: steer a RUNNING background loop (its inbox drains at the next step)
+    | "REQUEST_ACCESS_REQUEST"   // ml.requestAccess(): ask the person for the agent level or self-approval
     | "CANCEL_RUN_REQUEST"   // a handle cancel()ing its OWN background run: relay CANCEL_RUN so the SW aborts the loop (special-cased, not HANDLE_MAP)
     | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
@@ -72,6 +73,7 @@ export type BackgroundMessageType =
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
     | "RESUME_RUN"    // design A: continue a stored background run (its history lives in the SW) with a follow-up task
     | "INJECT_MESSAGE"   // a.say() mid-run: push a user message into a RUNNING background run's inbox (steer it live)
+    | "REQUEST_ACCESS"   // ml.requestAccess(): the content script adds whether it saw a gesture (site-requests.ts)
     | "CONTENT_READY"   // cross-page: a fresh document loaded — the SW replies with any rebuild-config for runs this tab hosts
     | "RUN_READOPTED"   // cross-page: the fresh document re-registered a run's toolset → release the navigation barrier
     | "SET_APPROVAL" // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
