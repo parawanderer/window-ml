@@ -209,6 +209,10 @@ Extended the same day: the worked example and acceptance test (a task on another
 needing a multi-rule `propose_policy`, an `act` consumer that folds in the self-approval origin list, and an approved
 policy counting as the person's word under `crossOrigin: false` (`POLICIES.md`, "Worked example and acceptance test").
 UNASSIGNED, after the freeze, after the navigate build.
+Extended again the same day (Shane): a fourth rule, one button on one page (`/user/approvals`: only "Approve This
+Draft"), ruled as a deny on `act` written on what is allowed, matched on the accessible name the worker resolved at the
+click; plus a demo site with a redirect-into-`/admin/` button and a server-side log, so the acceptance test asserts
+what happened (`POLICIES.md`, same section, "Extended the same day"). Same place in the order.
 Filed as #1102 on window-ml (issues are disabled on the cpython fork; moving it there is Shane's). The red team's
 #1094 (operand-check residual pins, base `main`) MERGED a988fb6f after a flake rerun. The #1093 red-team pass is #1103
 (open, `@exec,@security`), with the cost measurement in it: `(\d{3})+` on 100k non-matching chars charges 2,735 units

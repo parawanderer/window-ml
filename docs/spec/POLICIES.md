@@ -530,6 +530,39 @@ beside it, in the finder's own file: a page-built run cannot propose; a proposal
 the deny wins whatever order the rows are sent in; a redirect from `B/ok` to `B/admin/` is blocked on arrival. Nothing
 here is built; it lands after the freeze, with the navigate build it depends on.
 
+**Extended the same day (Shane): a rule about one button on one page, and a demo site that tries the edges.** The
+instruction grows a fourth line: "on `https://example.com/user/approvals` you may click only the button `Approve This
+Draft`, not `Delete` or `Publish`". The ruling:
+
+- **The fourth row is a deny written on what is allowed.** `deny` `act` on `c.action === "click" &&
+  c.url.startsWith("https://example.com/user/approvals") && c.element.name !== "Approve This Draft"`. Precedence makes
+  it work over the `/user/*` allow: the deny wins on that page, and the one button falls through to the allow. It is
+  not written as "deny `Delete`, deny `Publish`": the person said what the model MAY click, and a rule that names the
+  forbidden buttons lets a third button through (rule 1, narrow beats wide; the sensors are the demo's, not the
+  rule's). `name` is the element's accessible name as the worker resolved it at the click, the same resolution the
+  click then runs on; the model's description of the button is not a fact. The name is the page's own text, so a page
+  that labels a delete button "Approve This Draft" lies to the person and the model alike: the policy binds what the
+  model may attempt, never the page's honesty, and the demo site is the person's.
+- **An `act` row's breadth is over recorded clicks.** The card's breadth note for an `act` row lists the recorded
+  clicks and types on that origin it would and would not match (element name, page), and says so when there are none,
+  exactly as a `fetch` row does over recorded URLs.
+- **The two rules compose on arrival.** A click the fourth row allows whose script then sets `location` to `/admin/`
+  is still blocked on arrival by the third row: `act` judged the click, `fetch` judges where the tab went.
+
+**The demo site** is the acceptance test's origin B, a fixture the test serves, with a server-side log the test reads
+so what HAPPENED is asserted, not only what was refused: `/` (links into `/user/`); `/user/x` (a button "Open admin"
+whose script sets `location` to `/admin/`, and an anchor to `/admin/`); `/user/approvals` (three buttons, "Approve This
+Draft", "Delete", "Publish", each posting its click to the log; "Approve This Draft" on a second variant of the page
+also redirects to `/admin/`); `/admin/` (posts the arrival to the log); `/other` (a text input). Added assertions: the
+proposal card shows four rows; the "Approve This Draft" click runs with no card and the log holds one approve; "Delete"
+and "Publish" are refused before the click with the fourth row named and the log holds no delete and no publish; the
+"Open admin" click is allowed, the arrival at `/admin/` is blocked with the card, the log shows the arrival and the
+run makes no survey, step or tool there; the anchor to `/admin/` is refused up front; on the redirecting variant the
+approve lands in the log and the arrival is blocked. Red-team properties for the finder's file: a button renamed by
+script between the model's survey and the click is judged on the name at the click; a `type` into `/user/approvals`
+is refused by no row and so asks; a click on "Approve This Draft" on `/user/approvals/../other` resolves to the
+normalised URL before the rows see it. Still nothing built; same place in the order as the paragraph above.
+
 ## Open questions
 
 - **Measuring breadth.** A proposal, not decided: run a proposed policy over a corpus and show what it changes, namely
