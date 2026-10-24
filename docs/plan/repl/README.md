@@ -169,7 +169,15 @@ and #1068's positive controls add under `baseConfig()` with no host. The two lan
 without a shared CI run (a35d7363 and 443c9336 failed, both of #1081's runs failed; cde627ce's unit job "passed" as
 the prose-only leg, running nothing). Ruled 2026-10-24: e3 writes the fix, test only (the three controls get a faked host, as #1070's pins
 already do; assertions unchanged), the janitor reviews, e3 merges; root-k, whose #1063 caused it, touches neither.
-#1081 and #1070 wait on it; python-cancel then updates #1081 and merges it.
+FIXED the same morning: #1084 merged b73dc013 after the janitor's review (the three controls faked a host; one new
+pin: an extension page's add with ml.sh off answers `{error}` and stores nothing); main's unit job passes on it. #1070
+rebased onto it (12 pins green) and is with the janitor; e3 merges it. python-cancel then updates #1081 and merges it.
+
+**Freeze exception, 2026-10-24 (Shane).** The root-k lane alone resumes, to spend the week's remaining budget on the
+most useful open item: first the evidence-run gap (a lying manifest that claims an output and exits 0 having written
+nothing passes the evidence run), measured failing-first, fixed in its own PR, the janitor reviews, root-k merges; then
+(c2) library manifests only if time allows. The other left items stay parked. Rule 10 holds: the red team pins any new
+surface in its own PR stacked on root-k's, merged after. Every other lane stays frozen.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
