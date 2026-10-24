@@ -157,8 +157,7 @@ surfaces it.
 one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
-and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068 are merged): #1051, #1045,
-then #1070 (#1063 merged); the coordinator reviews result files and specs only. The lanes resume when the week resets.
+and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068, #1051, #1045, #1063 are merged): #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -315,7 +314,8 @@ listed as remaining is DONE unless named below.
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
      (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost; taken by root-k's subagent as #1045, a NEGATIVE result
-     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)).
+     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)),
+     MERGED 443c9336 on 2026-10-24 after the janitor's review.
   4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
      ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day (builder corrected within
