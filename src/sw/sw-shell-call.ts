@@ -87,6 +87,11 @@ export function takeShSpans(runId: string, seq: number): ShCallSpan[] | undefine
 interface HeldOut { runId: string; ptr: string; size: number; client: HostClient }
 
 const held = new Map<string, HeldOut>();   // state: declared below as "shell.outputs"
+/** The calls each run made that RAN (a policy, the built-in default or the person let them start), as the host resolved
+ *  them: what `propose_manifest`'s card reads a draft over and its evidence run re-runs. A refused call is never here. */
+const ranByRun = new Map<string, HostFacts[]>();   // state: declared below as "shell.ran"
+/** At most this many calls a run, the latest kept, and this many runs, the oldest dropped. */
+export const RAN_PER_RUN = 64, RAN_RUNS_MAX = 32;
 const versions = new Map<string, string | null>();   // state: declared below as "shell.versions"
 const watched = new WeakSet<HostClient>();   // state: plumbing — the clients whose closing already forgets what they held
 
@@ -98,6 +103,32 @@ defineState({
         return mine.length ? mine : undefined;
     },
 });
+defineState({
+    id: "shell.ran", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
+    describe: "The ml.sh calls this run made that ran, as the host resolved them (argv, cwd, program and its fingerprint): what a propose_manifest card reads a draft over, and what its evidence run re-runs under the sandbox.",
+    read: ({ runId }) => {
+        const mine = runId ? ranByRun.get(runId) : undefined;
+        return mine?.length ? mine.map((f) => ({ argv: [...f.argv], cwd: f.cwd.path, program: f.program.path, placement: f.placement })) : undefined;
+    },
+});
+
+/**
+ * The calls a run made that ran, oldest first, as copies.
+ * @param runId the run
+ * @returns the host's facts of each
+ */
+export function ranCalls(runId: string): HostFacts[] {
+    return (ranByRun.get(runId) ?? []).map((f) => structuredClone(f));
+}
+
+/** Note a call that ran, keeping the latest {@link RAN_PER_RUN} of the run and the latest {@link RAN_RUNS_MAX} runs. */
+function noteRan(runId: string, facts: HostFacts): void {
+    const list = ranByRun.get(runId) ?? [];
+    ranByRun.delete(runId);
+    ranByRun.set(runId, [...list, structuredClone(facts)].slice(-RAN_PER_RUN));
+    while (ranByRun.size > RAN_RUNS_MAX) ranByRun.delete(ranByRun.keys().next().value!);
+}
+
 defineState({
     id: "shell.versions", scope: "browser", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
     describe: "The version each program reported to the version probe, by the program file's fingerprint (device, inode, size, modification time): a program that changes on disk is probed again.",
@@ -178,6 +209,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                             detail: { seq: ctx.seq, path: was?.path ?? "", approved: was?.sha256 ?? "unreadable", now: now?.sha256 ?? "unreadable" } });
                         return refuse("Denied", `ml.sh: ${was?.path ?? "the script"} changed between approval and start (sha256 ${was?.sha256 ?? "unreadable"} approved, now ${now?.sha256 ?? "unreadable"}): not run`);
                     }
+                    noteRan(ctx.runId, facts);
                     if (ctx.signal.aborted) onAbort();
                     done = await h.client.waitDone(id);
                 } finally { ctx.signal.removeEventListener("abort", onAbort); }
@@ -212,7 +244,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
 }
 
 /** The owner the host records for a call (its `status`, its orphan list): the run and the step's seq, never the script's word. */
-const ownerOf = (ctx: ShCallContext): { run: string; seq: number } => ({ run: ctx.runId, seq: ctx.seq });
+const ownerOf = (ctx: Pick<ShCallContext, "runId" | "seq">): { run: string; seq: number } => ({ run: ctx.runId, seq: ctx.seq });
 
 /** The facts as a policy's `c`: ShFacts is plain data with `effects`. */
 const asPolicyFacts = (f: ShFacts): Record<string, unknown> & { effects: EffectsData } => f as unknown as Record<string, unknown> & { effects: EffectsData };
@@ -270,7 +302,7 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
  * @param manifests the manifests the call is described by (default: the shipped ones)
  * @returns the version, null when it was not read, or null too for a manifest that reads none
  */
-async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
+export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
     const m = manifestFor(facts.argv, undefined, manifests);
     if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
     const fp = facts.program.fingerprint;

@@ -93,6 +93,8 @@ defineBuiltinTool({ name: "chat_metadata", factories: ["src/ml/ml-tool-factories
 defineBuiltinTool({ name: "python_exec", factories: ["src/python/python-tool.ts"], gated: true, citable: true, realm: "worker", cardLine: "Run Python" });
 // propose_policy asks the person for a run policy: always a card, and the worker adds the policy only from its answer.
 defineBuiltinTool({ name: "propose_policy", factories: ["src/tools/propose-policy-tool.ts"], gated: true, citable: false, realm: "worker", cardLine: null });
+// propose_manifest asks the person to store a program manifest: always a card, and the worker stores it only from its answer.
+defineBuiltinTool({ name: "propose_manifest", factories: ["src/tools/propose-manifest-tool.ts"], gated: true, citable: false, realm: "worker", cardLine: null });
 defineBuiltinTool({ name: "agent_api_docs", factories: ["src/tools/api-docs-tool.ts"], gated: false, citable: true, realm: "worker", cardLine: null });
 
 // --- what the rest of the code reads ---
