@@ -242,8 +242,8 @@ test("for…of iterates + reads + logs (block and single-statement bodies)", asy
 test("for…of supports early return and iterating Object.entries (the for…in replacement) by index", async () => {
     assert.equal((await run(`for (const x of ['a', 'b', 'c']) { if (x === 'b') return x + '!' }`)).value, "b!");
     assert.deepEqual((await run(`for (const e of Object.entries({ a: 1, b: 2 })) console.log(e[0] + '=' + e[1])`)).logs, ["a=1", "b=2"]);
-    // A destructuring loop var falls back — the dialect has no destructuring anywhere; index the pair instead.
-    await assert.rejects(run(`for (const [k, v] of Object.entries({ a: 1 })) console.log(k)`), outOfDialect);
+    // A destructuring loop var binds like a `const` pattern (2026-10-24; tests/readonly-idioms.test.mjs).
+    assert.deepEqual((await run(`for (const [k, v] of Object.entries({ a: 1 })) console.log(k + '=' + v)`)).logs, ["a=1"]);
 });
 test("for…of accumulates into a container you built, and into a binding you declared", async () => {
     // Both are the same argument: a container the script created and a binding the evaluator created are each

@@ -18,6 +18,7 @@ export function validateVector(v, where) {
     const bad = (why) => { throw new Error(`dialect vector ${where}: ${why}`); };
     if (!v || typeof v !== "object" || Array.isArray(v)) bad("not an object");
     for (const k of ["name", "env", "reason"]) if (typeof v[k] !== "string" || !v[k]) bad(`"${k}" must be a non-empty string`);
+    if (v.regex !== undefined) return validateRegex(v, bad);
     if (v.js === undefined && v.py === undefined) bad("needs at least one of js, py");
     for (const k of ["js", "py"]) if (v[k] !== undefined && typeof v[k] !== "string") bad(`"${k}" must be a string`);
     if (!ENVS.includes(v.env)) bad(`unknown env "${v.env}" (known: ${ENVS.join(", ")})`);
@@ -34,6 +35,48 @@ export function validateVector(v, where) {
     if (v.from !== undefined && typeof v.from !== "string") bad(`"from" must be a string`);
     const known = new Set(["name", "js", "py", "env", "expect", "budget", "pre", "leaves_nothing", "reason", "from"]);
     for (const k of Object.keys(v)) if (!known.has(k)) bad(`unknown field "${k}"`);
+}
+
+/** The dialects a regex entry is written in, the verdicts it may expect, and the flag letters it may carry. */
+export const REGEX_DIALECTS = ["js", "py", "both"];
+export const REGEX_VERDICTS = ["refused", "priced", "ok"];
+
+/**
+ * A REGEX corpus entry: a pattern each dialect's check judges, instead of a program it runs (docs/spec/PYTHON_DIALECT.md,
+ * "one DEFINITION and one CORPUS"). `verdict`: `refused` on its shape before any input, `priced` over the budget on its
+ * `input`, `ok` neither. `flags` are letters: `i m s` in both dialects, `g y u` JS only, `x` (verbose) Python only.
+ */
+function validateRegex(v, bad) {
+    const r = v.regex;
+    if (!r || typeof r !== "object" || Array.isArray(r)) bad(`"regex" must be an object`);
+    if (typeof r.pattern !== "string" || !r.pattern) bad(`"regex.pattern" must be a non-empty string`);
+    if (typeof r.flags !== "string" || !/^[gimsuyx]*$/.test(r.flags)) bad(`"regex.flags" must be letters from gimsuyx`);
+    if (/x/.test(r.flags) && r.dialect !== "py") bad(`the x flag is Python's: "regex.dialect" must be "py"`);
+    if (/[guy]/.test(r.flags) && r.dialect === "py") bad(`g, u and y are JS flags`);
+    if (!REGEX_DIALECTS.includes(r.dialect)) bad(`"regex.dialect" must be one of ${REGEX_DIALECTS.join(", ")}`);
+    if (!REGEX_VERDICTS.includes(r.verdict)) bad(`"regex.verdict" must be one of ${REGEX_VERDICTS.join(", ")}`);
+    const inp = r.input;
+    const okInput = inp === undefined || typeof inp === "string"
+        || (inp && typeof inp === "object" && typeof inp.repeat === "string" && Number.isInteger(inp.n) && inp.n >= 0
+            && (inp.tail === undefined || typeof inp.tail === "string") && Object.keys(inp).every((k) => ["repeat", "n", "tail"].includes(k)));
+    if (!okInput) bad(`"regex.input" is a string or { repeat, n, tail? }`);
+    if (r.verdict === "priced" && inp === undefined) bad(`a "priced" verdict is on an input: "regex.input" is required`);
+    for (const k of Object.keys(r)) if (!["pattern", "flags", "dialect", "verdict", "input"].includes(k)) bad(`unknown field "regex.${k}"`);
+    for (const k of ["js", "py", "expect", "pre", "leaves_nothing"]) if (v[k] !== undefined) bad(`a regex entry has no "${k}": the check judges the pattern, it runs no program`);
+    if (v.env !== "none") bad(`a regex entry's env is "none"`);
+    if (v.budget !== undefined && !(Number.isInteger(v.budget) && v.budget > 0)) bad(`"budget" must be a positive integer`);
+    for (const k of Object.keys(v)) if (!["name", "env", "regex", "budget", "reason", "from"].includes(k)) bad(`unknown field "${k}"`);
+}
+
+/** A regex entry's input as the text it stands for. */
+export function regexInput(r) {
+    const inp = r.input;
+    return inp === undefined ? "" : typeof inp === "string" ? inp : inp.repeat.repeat(inp.n) + (inp.tail ?? "");
+}
+
+/** Every regex corpus entry of a genre that `dialect` ("js" or "py") is written in. */
+export function regexCorpus(genre, dialect) {
+    return loadVectors(genre).filter((v) => v.regex && (v.regex.dialect === dialect || v.regex.dialect === "both"));
 }
 
 /** Every vector of one genre, validated, with names unique within the file. Throws on a malformed one. */

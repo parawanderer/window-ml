@@ -73,7 +73,7 @@ const GENRES = {
     readonly: {
         about: "the read-only exec dialect (src/readonly-exec.ts) and the free members a survey calls",
         files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs",
-            "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs", "readonly-soundness.test.mjs"],
+            "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs", "readonly-idioms.test.mjs", "readonly-soundness.test.mjs"],
     },
     // The run's curated answer: the set and its tool's core, the pointers it designates and their dedup against the
     // prose, and the worker-held set's page-side view (`AnswerLog`) with the replay of what a page-side script reports.
@@ -149,7 +149,7 @@ const GENRES = {
             "bench-specs.test.mjs", "bench-viewer.test.mjs", "bench-files.test.mjs", "bench-page.test.mjs",
             "bench-scores.test.mjs", "bench-sweeps.test.mjs", "bench-memory.test.mjs", "bench-box.test.mjs", "bench-lanes.test.mjs", "bench-sync.test.mjs", "bench-stream.test.mjs", "bench-regress.test.mjs", "bench-spend.test.mjs", "bench-cost.test.mjs", "bench-live-spend.test.mjs", "bench-memory-budget.test.mjs", "bench-memory-card.test.mjs", "bench-status.test.mjs", "bench-memory-limit.test.mjs", "bench-spend-predict.test.mjs", "bench-cli-help.test.mjs", "bench-electricity.test.mjs"],
     },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
 const claimed = new Set(Object.values(GENRES).flatMap((g) => g.files));

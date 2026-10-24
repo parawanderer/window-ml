@@ -151,20 +151,13 @@
     "scripts": 1,
     "lines": 15,
     "parse": [],
-    "run": [
-      "method .isNaN() on this"
-    ],
+    "run": [],
     "handlers": 0,
     "fired": 0,
     "state": "{}",
-    "runRaw": [
-      {
-        "where": "script 0",
-        "msg": "method 'isNaN' not allowed on this value"
-      }
-    ],
-    "right": false,
-    "text": "   Monthly rainfall over one year (mm).  Three wettest months   ",
+    "runRaw": [],
+    "right": true,
+    "text": "   Monthly rainfall over one year (mm).  Three wettest months  Nov: 95.0 mm Oct: 88.0 mm Dec: 84.0 mm Yearly total: 839.0 mm (12 months) ",
     "sanitizer": {
       "script": false,
       "onAttr": false,
@@ -199,9 +192,7 @@
     "json": true,
     "scripts": 1,
     "lines": 53,
-    "parse": [
-      "expected loop variable name"
-    ],
+    "parse": [],
     "run": [],
     "domCalls": [],
     "sanitizer": {
@@ -250,20 +241,13 @@
     "scripts": 1,
     "lines": 82,
     "parse": [],
-    "run": [
-      "a regex that could backtrack without end (a repeated group that contains a quantifier)"
-    ],
+    "run": [],
     "handlers": 0,
     "fired": 0,
     "state": "{}",
-    "runRaw": [
-      {
-        "where": "script 0",
-        "msg": "a regex that could backtrack without end (a repeated group that contains a quantifier)"
-      }
-    ],
-    "right": false,
-    "text": "    Conversation Stats Live Real-time message and tool telemetry  Messages by Role   Longest Message  0  characters None  Recent Tool Calls ",
+    "runRaw": [],
+    "right": true,
+    "text": "    Conversation Stats Live Real-time message and tool telemetry  Messages by Role  system 1 user 1 assistant 3 tool 2  Longest Message  45  characters from assistant  Recent Tool Calls  #1 artifact #2 python_exec #3 fetch_url",
     "sanitizer": {
       "script": false,
       "onAttr": false,
@@ -585,9 +569,7 @@
     "json": true,
     "scripts": 4,
     "lines": 4,
-    "parse": [
-      "object key"
-    ],
+    "parse": [],
     "run": [],
     "domCalls": [],
     "sanitizer": {

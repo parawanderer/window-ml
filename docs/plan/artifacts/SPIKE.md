@@ -139,6 +139,13 @@ re-check of the whole contract), scoped to the artifact realm where a reason exi
 | numeric keys in an object literal | 1 | |
 | `riskyRegex` passing a group with only fixed counts | 1 | a refinement of the check, not a loosening of the rule |
 
+**Done 2026-10-24, in every realm:** the last four rows. `Math.random` waits for the artifact realm (it breaks the
+dialect's contract property 5, no randomness, which every other realm keeps). Re-graded with `grade.mts` on the same
+replies: the hosted models' `data` artifacts went from 9 of 12 right to 11 of 12 (Sonnet's figure, Gemini's current
+viewer), the one left DeepSeek's `Math.random`; the `dom` shape parses 15 of 15, from 13 (Sonnet's `for…of`, qwen's
+keys). The Python dialect's regex check was ported the same day, and building its parity found three exponential
+escapes there, closed in the fork (`docs/spec/PYTHON_DIALECT.md`).
+
 ## The estimate, revised
 
 The spike answered the questions that could have changed the design, and one did: the evaluator moves into a worker
@@ -148,7 +155,7 @@ in the frame. The plan for phase 1 (ARTIFACTS.md, "Order"), by part:
 | --- | --- |
 | The frame: CSPs (the test exists), the blob worker, a renderer from a sanitized view tree, events forwarded to the worker | 6 to 9 |
 | The artifact realm: `state` and `root` adopted, `refuel`, a rollback per event, handler ids across the boundary, `ml.current` and pointers | 4 to 6 |
-| The five dialect additions above, with their adversarial tests | 4 to 6 |
+| The five dialect additions above, with their adversarial tests (four done 2026-10-24; `Math.random` with the realm) | 4 to 6 |
 | The `artifact` tool, the store, versions, state kept across code rewrites | 6 to 9 |
 | `![…](@artifact:<id>)` with `{side}`/`{collapsed}`, live embeds, a snapshot per answer | 5 to 8 |
 | `ml.artifact(<ref>)` from `exec`, a test render on write | 3 to 5 |

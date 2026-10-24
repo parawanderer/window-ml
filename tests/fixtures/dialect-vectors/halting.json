@@ -387,6 +387,54 @@
     "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
   },
   {
+    "name": "an exact count of a group with a quantifier: (a+){20}",
+    "js": "/^(a+){20}$/.test('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!')",
+    "env": "none",
+    "expect": "refused",
+    "reason": "an exact count multiplies the group's choices by itself: C(38, 20) ways to split the run, refused like (a+)+",
+    "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
+  },
+  {
+    "name": "an exact count of a group with an alternation: (a|ab){30}",
+    "js": "/^(a|ab){30}$/.test('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!')",
+    "env": "none",
+    "expect": "refused",
+    "reason": "each of the thirty repetitions chooses between two branches",
+    "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
+  },
+  {
+    "name": "an exact count inside an alternation under a repeat: (a{2}|a)+",
+    "js": "/^(a{2}|a)+$/.test('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!')",
+    "env": "none",
+    "expect": "refused",
+    "reason": "the alternation still opens a choice in every repetition; the exact count inside it does not excuse it",
+    "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
+  },
+  {
+    "name": "a quantified group under an exact count under a repeat: ((a+){2})+",
+    "js": "/^((a+){2})+$/.test('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!')",
+    "env": "none",
+    "expect": "refused",
+    "reason": "one host call, exponential in the input and with no match timeout, so it is refused on the pattern before it runs",
+    "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
+  },
+  {
+    "name": "an exact count beside a quantifier in a repeated group: (\\d{3}\\d*)+",
+    "js": "/^(\\d{3}\\d*)+$/.test('11111111111111111111111111111111111111!')",
+    "env": "none",
+    "expect": "refused",
+    "reason": "the \\d* beside the exact count can take any share of each repetition",
+    "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
+  },
+  {
+    "name": "a {0,1} count, which is a ?: (a{0,1})+",
+    "js": "/^(a{0,1})+$/.test('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!')",
+    "env": "none",
+    "expect": "refused",
+    "reason": "{0,1} is ? spelled as a range, so it is a choice like ?; it passed before exact counts were told apart",
+    "from": "tests/readonly-exec.test.mjs a regex that could backtrack without end"
+  },
+  {
     "name": "global digit match",
     "js": "'a1b22c333'.match(/\\d+/g)",
     "env": "none",
@@ -438,6 +486,36 @@
       "value": true
     },
     "reason": "an ordinary pattern is untouched by the backtracking check",
+    "from": "tests/readonly-exec.test.mjs ordinary regexes still run"
+  },
+  {
+    "name": "thousands separators: a repeated group of an exact count",
+    "js": "'1234567'.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',')",
+    "env": "none",
+    "expect": {
+      "value": "1,234,567"
+    },
+    "reason": "an exact count repeats a fixed-width piece and opens no choice, so (\\d{3})+ cannot backtrack exponentially",
+    "from": "tests/readonly-exec.test.mjs ordinary regexes still run"
+  },
+  {
+    "name": "a repeated group of exact counts: ((ab){2})+",
+    "js": "/^((ab){2})+$/.test('abababab')",
+    "env": "none",
+    "expect": {
+      "value": true
+    },
+    "reason": "every repetition is exactly four characters",
+    "from": "tests/readonly-exec.test.mjs ordinary regexes still run"
+  },
+  {
+    "name": "an exact count spelled as a range: (a{2,2})+",
+    "js": "/^(a{2,2})+$/.test('aaaa')",
+    "env": "none",
+    "expect": {
+      "value": true
+    },
+    "reason": "{2,2} is {2}",
     "from": "tests/readonly-exec.test.mjs ordinary regexes still run"
   },
   {
@@ -1825,5 +1903,461 @@
     "budget": 3000000,
     "reason": "the empty pattern's n + 1 matches are counted and the count ends",
     "from": "tests/readonly-soundness.test.mjs the replace charge leaves ordinary rewrites alone"
+  },
+  {
+    "name": "regex: a nested quantifier",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a+)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "exponential in the input inside one engine call, refused on its shape before it runs",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an alternation under a quantifier",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a|a)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "exponential in the input inside one engine call, refused on its shape before it runs",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: the word-and-space shape",
+    "env": "none",
+    "regex": {
+      "pattern": "^(\\w+\\s?)*$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "exponential in the input inside one engine call, refused on its shape before it runs",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a non-capturing group under a counted repeat",
+    "env": "none",
+    "regex": {
+      "pattern": "^(?:a+){2,}$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "exponential in the input inside one engine call, refused on its shape before it runs",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a ? spelled {0,1} in a repeated group",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{0,1})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "{0,1} is ? spelled as a range: a choice in every repetition",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count of a group with a quantifier",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a+){20}$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "an exact count multiplies the group's choices: C(n, 20) ways to split a run",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count of a group with an alternation",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a|ab){30}$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "thirty repetitions, each choosing between two branches",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count inside an alternation under a repeat",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{2}|a)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "the alternation is still a choice in every repetition",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a quantified group under an exact count under a repeat",
+    "env": "none",
+    "regex": {
+      "pattern": "^((a+){2})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "exponential in the input inside one engine call, refused on its shape before it runs",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count beside a quantifier",
+    "env": "none",
+    "regex": {
+      "pattern": "^(\\d{3}\\d*)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "the \\d* beside the exact count takes any share of each repetition",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a lazy quantifier in a repeated group",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a+?)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "laziness changes the order of the choices, not their number",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a repeated group of an exact count",
+    "env": "none",
+    "regex": {
+      "pattern": "^\\d{1,3}(\\d{3})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "1234567"
+    },
+    "reason": "an exact count repeats a fixed-width piece and opens no choice",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: thousands separators",
+    "env": "none",
+    "regex": {
+      "pattern": "\\B(?=(\\d{3})+(?!\\d))",
+      "flags": "g",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "1234567"
+    },
+    "reason": "an exact count repeats a fixed-width piece and opens no choice",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a repeated group of exact counts",
+    "env": "none",
+    "regex": {
+      "pattern": "^((ab){2})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "abababab"
+    },
+    "reason": "an exact count repeats a fixed-width piece and opens no choice",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count spelled as a range",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{2,2})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "aaaa"
+    },
+    "reason": "{2,2} is {2}",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a count of one",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a+){1}$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "aaaa"
+    },
+    "reason": "{1} repeats nothing",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: digits",
+    "env": "none",
+    "regex": {
+      "pattern": "\\d+",
+      "flags": "g",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "a1b22c333"
+    },
+    "reason": "one quantifier on text whose runs are short",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a capture",
+    "env": "none",
+    "regex": {
+      "pattern": "^(?:https?)://([^/]+)",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "https://example.com/x"
+    },
+    "reason": "anchored, one quantifier over a class",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a backreference",
+    "env": "none",
+    "regex": {
+      "pattern": "(\\w)\\1",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "hello"
+    },
+    "reason": "a backreference compares at most the widest capture",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: one quantifier then a failing atom",
+    "env": "none",
+    "regex": {
+      "pattern": "a+b",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "priced",
+      "input": {
+        "repeat": "a",
+        "n": 300000,
+        "tail": ""
+      }
+    },
+    "reason": "quadratic in the run of a on an unanchored search",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a large bounded count",
+    "env": "none",
+    "regex": {
+      "pattern": "a{1,60000}b",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "priced",
+      "input": {
+        "repeat": "a",
+        "n": 300000,
+        "tail": ""
+      }
+    },
+    "reason": "a bounded count with a large maximum is as quadratic as an unbounded one up to it",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a chain of optionals",
+    "env": "none",
+    "regex": {
+      "pattern": "a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "priced",
+      "input": {
+        "repeat": "a",
+        "n": 29,
+        "tail": ""
+      }
+    },
+    "reason": "each a? doubles the paths: exponential in the PATTERN, which no shape check sees",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: two quantifiers over one run",
+    "env": "none",
+    "regex": {
+      "pattern": "a*a*b",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "priced",
+      "input": {
+        "repeat": "a",
+        "n": 20000,
+        "tail": ""
+      }
+    },
+    "reason": "cubic in the run",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a lookahead at every start",
+    "env": "none",
+    "regex": {
+      "pattern": "(?=a+b)",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "priced",
+      "input": {
+        "repeat": "a",
+        "n": 300000,
+        "tail": ""
+      }
+    },
+    "reason": "a lookahead runs its quantifier at every start",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a {,n} count, which only Python spells",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{,5})+$",
+      "flags": "",
+      "dialect": "py",
+      "verdict": "refused"
+    },
+    "reason": "Python reads {,5} as 0 to 5 times, so this is (a?)+; JS reads it as literal text",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: verbose mode, whose comment hides a bracket",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a+ # )\n)+$",
+      "flags": "x",
+      "dialect": "py",
+      "verdict": "refused"
+    },
+    "reason": "with the verbose flag the comment's ) is text, so this is (a+)+; without it, it is a closed group then +",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a conditional group's branches",
+    "env": "none",
+    "regex": {
+      "pattern": "^(x)?(?(1)b|(a+))+$",
+      "flags": "",
+      "dialect": "py",
+      "verdict": "refused"
+    },
+    "reason": "a conditional is a choice between two branches, here under a repeat",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an open brace that is not a count",
+    "env": "none",
+    "regex": {
+      "pattern": "(a{)+",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "a{a{"
+    },
+    "reason": "a { that does not close a count is a literal",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an escaped brace",
+    "env": "none",
+    "regex": {
+      "pattern": "(a\\{3})+",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "a{3}"
+    },
+    "reason": "an escaped { is a literal, so the group holds no count",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count then a literal in a starred group",
+    "env": "none",
+    "regex": {
+      "pattern": "(?:x{4}y)*",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "ok",
+      "input": "xxxxyxxxxy"
+    },
+    "reason": "every repetition is exactly five characters",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a varying count of two or more",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{2,})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "{2,} varies: a choice in every repetition",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a range count",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{2,3})+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "{2,3} varies: a choice in every repetition",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a lazy exact count",
+    "env": "none",
+    "regex": {
+      "pattern": "^(a{3}?)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "conservative: a lazy marker is read as a choice, although an exact count has none",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: an exact count of a non-capturing group with a quantifier",
+    "env": "none",
+    "regex": {
+      "pattern": "^(?:a+){2}$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "an exact count multiplies the group's choices",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
+  },
+  {
+    "name": "regex: a repeated group around a repeated exact count",
+    "env": "none",
+    "regex": {
+      "pattern": "^((a{2})+)+$",
+      "flags": "",
+      "dialect": "both",
+      "verdict": "refused"
+    },
+    "reason": "the inner (a{2})+ varies, under a repeat",
+    "from": "docs/spec/PYTHON_DIALECT.md, one DEFINITION and one CORPUS"
   }
 ]

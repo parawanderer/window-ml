@@ -110,16 +110,23 @@ export const MAX_EXPANDED_CHARS = 100_000_000;
 /** A regex that can backtrack exponentially: a REPEATED group that itself contains a quantifier or an alternation
  *  (`(a+)+`, `(\w+\s?)*`, `(a|a)+`). V8 has no match timeout, so one `.test()` of such a pattern on a 40-character
  *  string runs for hours in a single host call, where no budget can reach it. Conservative by design: a refused
- *  pattern goes to the human, and `(?:x|y)+` is refused along with the dangerous ones. Returns why, or null. */
+ *  pattern goes to the human, and `(?:x|y)+` is refused along with the dangerous ones. An EXACT count (`\d{3}`) is not
+ *  a quantifier inside a group: it repeats a fixed-width piece a fixed number of times and opens no choice, so
+ *  `(\d{3})+` passes, while an exact count of a group that has a choice in it (`(a+){20}`, `(a|ab){30}`) is refused,
+ *  since its choices multiply by the count. Returns why, or null. */
 export function riskyRegex(source: string): string | null {
     // One frame per open group: whether a quantifier or `|` appears anywhere inside it.
     const stack: { quant: boolean; alt: boolean }[] = [];
-    const isRepeat = (s: string, i: number): boolean => {
+    // What repeats the atom ending before `i`: "var" for a count that can vary (`*`, `+`, `{2,}`, `{0,1}`), "exact"
+    // for `{n}` or `{n,n}` with n > 1, null for none (or `{0}`, `{1}`, which repeat nothing).
+    const repeatAt = (s: string, i: number): "var" | "exact" | null => {
         const c = s[i];
-        if (c === "*" || c === "+") return true;
-        if (c !== "{") return false;
+        if (c === "*" || c === "+") return "var";
+        if (c !== "{") return null;
         const m = /^\{(\d+)(,(\d*))?\}/.exec(s.slice(i));
-        return !!m && (m[2] !== undefined ? (m[3] === "" || Number(m[3]) > 1) : Number(m[1]) > 1);
+        if (!m) return null;
+        if (m[2] !== undefined && (m[3] === "" || Number(m[3]) !== Number(m[1]))) return "var";
+        return Number(m[1]) > 1 ? "exact" : null;
     };
     const mark = (k: "quant" | "alt") => { for (const f of stack) f[k] = true; };
     for (let i = 0; i < source.length; i++) {
@@ -142,12 +149,13 @@ export function riskyRegex(source: string): string | null {
         if (c === "|") { mark("alt"); continue; }
         if (c === ")") {
             const g = stack.pop();
-            if (g && isRepeat(source, i + 1) && (g.quant || g.alt))
+            const r = repeatAt(source, i + 1);
+            if (g && r && (g.quant || g.alt))
                 return g.quant ? "a repeated group that contains a quantifier" : "a repeated group that contains an alternation";
-            if (g && isRepeat(source, i + 1)) mark("quant");
+            if (g && r === "var") mark("quant");
             continue;
         }
-        if (isRepeat(source, i) || c === "?") mark("quant");
+        if (repeatAt(source, i) === "var" || c === "?") mark("quant");
     }
     return null;
 }

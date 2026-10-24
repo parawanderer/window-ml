@@ -55,7 +55,7 @@ export const isDomCollection = (x: any): boolean =>
 type MethodKind =
     | "array" | "string" | "number" | "date" | "regexp" | "set" | "map" | "promise"
     | "element" | "document" | "collection" | "style" | "console" | "table"
-    | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor" | "DateCtor";
+    | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor" | "DateCtor" | "NumberCtor";
 
 const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // Harmless on anything. `then` is here because the dialect APPLIES a callback to a non-thenable (the shape
@@ -117,6 +117,9 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // The clock and two pure parsers. `Date` itself is not a CALLABLE_ROOT, so `Date()` stays refused; `new Date(…)`
     // is a SAFE_CONSTRUCTOR as before.
     DateCtor: ["now", "parse", "UTC"],
+    // The number tests and parsers. `Number.isNaN` and `Number.isFinite` do not coerce, unlike the free `isNaN` and
+    // `isFinite` the dialect already calls; `Number.parseFloat`/`parseInt` ARE the free ones.
+    NumberCtor: ["isNaN", "isFinite", "isInteger", "isSafeInteger", "parseFloat", "parseInt"],
 };
 
 const KIND_SETS = new Map<string, Set<string>>(Object.entries(BY_KIND).map(([k, v]) => [k, new Set(v)]));
@@ -150,6 +153,7 @@ export function kindOf(obj: unknown): MethodKind | null {
         if (obj === (Array as unknown)) return "ArrayCtor";
         if (obj === (Promise as unknown)) return "PromiseCtor";
         if (obj === (Date as unknown)) return "DateCtor";
+        if (obj === (Number as unknown)) return "NumberCtor";
         return null;
     }
     if (obj === (JSON as unknown)) return "JSON";

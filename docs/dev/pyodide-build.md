@@ -47,3 +47,6 @@ window-ml pins and verifies, as `scripts/fetch-hub.mjs` does for the hub binary.
   Under CI they FAIL instead of skipping once an artefact sha256 is pinned. All 87 pass on the wasm32 build: with
   `--without-pymalloc` the memory cap wraps the MEM and OBJ allocator domains (fork #2), and a repeat's size is judged
   before CPython's overflow guards, so "a" * 10**11 ends in `NotInDialect`, not `OverflowError`.
+- **The regex corpus** (the `regex` entries of `tests/fixtures/dialect-vectors/halting.json`) is checked against the
+  fork's own `restricted.py` by its `Lib/test/test_restricted.py`, not against the shipped core: a core older than the fork
+  (today 0169c4fd, before #10 and #11) carries the older regex check until it is rebuilt.
