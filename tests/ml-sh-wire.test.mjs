@@ -97,7 +97,10 @@ test("a request that names a step or another run gets nothing more: the handle's
     assert.equal(stepped.value?.approvedBy, "person", "positive control: the call itself went through");
     assert.equal(ask.asked.length, 1);
     assert.equal(ask.asked[0].tool, "python_exec", "the ask is still on the handle's step");
-    assert.equal(host.calls.filter((c) => c.call === "spawn").length, 1, "the other run's request reached no host");
+    assert.equal(host.calls.filter((c) => c.call === "spawn" && c.args.owner).length, 1, "the other run's request reached no host");
+    // The rest are the reads of that call's operands around it (no owner, the same argv), which start nothing.
+    const spawns = host.calls.filter((c) => c.call === "spawn");
+    assert.ok(spawns.every((c) => JSON.stringify(c.args.argv) === JSON.stringify(spawns[0].args.argv)), "every spawn is the one call's");
 });
 
 test("after the cell ends its handle has no sh: a late call is refused and reaches no host", T, async () => {

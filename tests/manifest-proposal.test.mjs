@@ -1,6 +1,6 @@
 // manifest-proposal.test.mjs — a manifest the MODEL drafts (`propose_manifest`, src/shell/manifest-proposal.ts): the
 // arguments checked, the draft pinned to what the host resolved (B3, B4), this run's calls it would describe, and the
-// card's DERIVED block (PROGRAM_MANIFEST.md, "The store, as built", the ruling of 2026-10-23).
+// card's DERIVED block (PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23, the ruling of 2026-10-23).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -139,4 +139,21 @@ test("the card's note says it is derived, what was pinned, and what approval doe
 test("a script's card names its hash and its workspace", () => {
     const r = P.draftRequest({ manifest: GEN, scope: "workspace" }, genFacts("/w/proj"), "/w/proj", ROOTS).request;
     assert.match(P.draftNote(r, undefined, [], true), /a manifest for node scripts\/gen.mjs, stored for the workspace \/w\/proj, pinned to the script's sha256 cccccccccccc/);
+});
+
+// --- what a recorded call did to its operands (the evidence run's check on a swallowed write) ---
+
+test("every argument that could name a file is read, a --flag=value by its value, and no bare flag", () => {
+    assert.deepEqual(P.operandArgs(["gen", "-v", "out.json", "--to=dir/x", "--", "-", "--x=", ""]),
+        [{ arg: 2, hash: true }, { arg: 3, split: "=", hash: true }]);
+    assert.deepEqual(P.operandArgs(["gen"]), []);
+});
+
+test("operands compare created, removed and modified; a secret only by existence; unchanged is []", () => {
+    const f = (path, exists, sha256, secret = false) => ({ arg: 1, given: path, path, inRoot: true, secret, exists, ...(sha256 !== undefined ? { sha256 } : {}) });
+    const before = [f("/r/new", false, null), f("/r/gone", true, "a"), f("/r/edit", true, "a"), f("/r/same", true, "a"), f("/r/.env", true, "a", true), f("/r/dir", true, null)];
+    const after = [f("/r/new", true, "b"), f("/r/gone", false, null), f("/r/edit", true, "b"), f("/r/same", true, "a"), f("/r/.env", true, "b", true), f("/r/dir", true, null)];
+    assert.deepEqual(P.operandChanges(before, after), [
+        { path: "/r/new", change: "created" }, { path: "/r/gone", change: "removed" }, { path: "/r/edit", change: "modified" }]);
+    assert.deepEqual(P.operandChanges(before, before), []);
 });

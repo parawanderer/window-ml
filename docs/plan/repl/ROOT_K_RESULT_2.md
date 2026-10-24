@@ -2,7 +2,7 @@
 
 Written 2026-10-23 by `[window-ml root-k]` (session `fabd107f`), for the coordinator and whoever builds slice d. The
 brief is [`ROOT_K.md`](ROOT_K.md); the rulings are in
-[`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md), "The store, as built".
+[`PROGRAM_MANIFEST.md`](../../spec/PROGRAM_MANIFEST.md), "Registering a program", the store's ruling of 2026-10-23.
 
 ## What was built
 
@@ -47,3 +47,10 @@ pin. Not measured against the real host; the add's resolve is the same code path
 
 - (c2) library manifests: only if time allows.
 - The evidence run has not been measured on Linux (Landlock).
+- The lying-manifest gap above is narrowed, not closed, by the operand check (`manifests/evidence-writes`): a recorded
+  undescribed call's arguments are read as paths before and after it, and a draft calling it a reader fails if it
+  created, modified or removed one. A write inside a named directory, or to a file no argument names, still passes.
+  The closure is window-ml-host's, for Shane to post on the host repo: `done` carrying the sandbox's refusals,
+  `"denied": { "write": <count>, "exec": <count>, "net": <count>, "paths": [<at most 16 refused write paths>],
+  "truncated": <bool> }` (absent: the host cannot tell; Seatbelt's deny log, Landlock's audit records on 6.15+), so the
+  evidence run fails on `denied.write > 0` whatever the exit code.

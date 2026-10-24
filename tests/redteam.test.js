@@ -200,7 +200,7 @@ test("GAIN blocked — a page cannot approve ITSELF: SITE_ACCESS answers extensi
     assert.deepEqual(ok.data.lists.session, ["https://ok.example"]);
 });
 
-// --- the MANIFESTS store is the extension's alone (docs/spec/PROGRAM_MANIFEST.md, "The store, as built") ---
+// --- the MANIFESTS store is the extension's alone (docs/spec/PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23) ---
 // A stored manifest makes a program's calls free under the sandbox (B5), so a page that could store one would be
 // describing its own way in, and one that could read the store learns the pin of a program the person registered.
 // `MANIFESTS` answers extension pages only (background.ts, `isExtensionSender`). The red-team pass for the type.

@@ -25,6 +25,7 @@ import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
 import type { ProgramManifest } from "../shell/program-manifest";
+import { operandArgs, operandChanges, type RanCall } from "../shell/manifest-proposal";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
 export interface ShCallContext {
@@ -89,7 +90,7 @@ interface HeldOut { runId: string; ptr: string; size: number; client: HostClient
 const held = new Map<string, HeldOut>();   // state: declared below as "shell.outputs"
 /** The calls each run made that RAN (a policy, the built-in default or the person let them start), as the host resolved
  *  them: what `propose_manifest`'s card reads a draft over and its evidence run re-runs. A refused call is never here. */
-const ranByRun = new Map<string, HostFacts[]>();   // state: declared below as "shell.ran"
+const ranByRun = new Map<string, RanCall[]>();   // state: declared below as "shell.ran"
 /** At most this many calls a run, the latest kept, and this many runs, the oldest dropped. */
 export const RAN_PER_RUN = 64, RAN_RUNS_MAX = 32;
 const versions = new Map<string, string | null>();   // state: declared below as "shell.versions"
@@ -105,7 +106,7 @@ defineState({
 });
 defineState({
     id: "shell.ran", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
-    describe: "The ml.sh calls this run made that ran, as the host resolved them (argv, cwd, program and its fingerprint): what a propose_manifest card reads a draft over, and what its evidence run re-runs under the sandbox.",
+    describe: "The ml.sh calls this run made that ran, as the host resolved them (argv, cwd, program and its fingerprint), and what an undescribed one created, modified or removed among its arguments: what a propose_manifest card reads a draft over, and what its evidence run re-runs under the sandbox and checks.",
     read: ({ runId }) => {
         const mine = runId ? ranByRun.get(runId) : undefined;
         return mine?.length ? mine.map((f) => ({ argv: [...f.argv], cwd: f.cwd.path, program: f.program.path, placement: f.placement })) : undefined;
@@ -117,8 +118,30 @@ defineState({
  * @param runId the run
  * @returns the host's facts of each
  */
-export function ranCalls(runId: string): HostFacts[] {
+export function ranCalls(runId: string): RanCall[] {
     return (ranByRun.get(runId) ?? []).map((f) => structuredClone(f));
+}
+
+/**
+ * An undescribed call's operands as the host reads them now (`operandArgs`), resolved and discarded: nothing starts.
+ * Undefined when the host would not resolve them, so the call is no evidence.
+ * @param h the host
+ * @param facts the call's facts
+ */
+async function readOperands(h: ShellHost, facts: HostFacts): Promise<HostFacts["paths"] | undefined> {
+    const pathArgs = operandArgs(facts.argv);
+    if (!pathArgs.length) return [];
+    try {
+        const r = await h.client.spawn({ argv: facts.argv, cwd: facts.cwd.path, env: {}, mode: "host", pathArgs });
+        void h.client.discard(r.id).catch(() => { /* expired or gone */ });
+        return r.paths;
+    } catch { return undefined; }
+}
+
+/** Note what a call that ran did to its operands, on its entry in {@link ranByRun}. */
+function noteOperands(runId: string, id: string, before: HostFacts["paths"], after: HostFacts["paths"] | undefined): void {
+    const e = ranByRun.get(runId)?.find((c) => c.id === id);
+    if (e && after) e.operandsChanged = operandChanges(before, after);
 }
 
 /** Note a call that ran, keeping the latest {@link RAN_PER_RUN} of the run and the latest {@link RAN_RUNS_MAX} runs. */
@@ -193,6 +216,9 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                 // word is never an input: `envelopeFor` reads only the facts the person or the policy approved.
                 // Absent = today's floor, never a silent widening.
                 asked = f.placement === "host-sandbox" && hostTakesEnvelope(h.hello) ? envelopeFor(f) : undefined;
+                // An undescribed call's operands, read around it: what a draft that later calls it a reader is checked
+                // against, since its evidence run under `write: none` cannot see a write the program swallows.
+                const before = f.described ? undefined : await readOperands(h, facts);
                 try {
                     try { await h.client.start(id, asked); }
                     catch (e) {
@@ -212,6 +238,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                     noteRan(ctx.runId, facts);
                     if (ctx.signal.aborted) onAbort();
                     done = await h.client.waitDone(id);
+                    if (before) noteOperands(ctx.runId, id, before, await readOperands(h, facts));
                 } finally { ctx.signal.removeEventListener("abort", onAbort); }
                 break;
             }
