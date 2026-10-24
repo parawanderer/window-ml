@@ -94,7 +94,16 @@ The remaining limit is memory, not time: `applied` holds every event fetched, wh
 
 **History never animates.** `justArrived` (just-arrived.ts) is a clock test, so a session whose last step is under 4 s old animated that step (and folded its streak) on a reload. Everything mounted in the first paint is now history whatever its stamp: `SessionPane` provides `HistoryPaint` (history-paint.ts) for the commit that first draws the transcript, and `AgentTurn`, `ToolStep` and `StepStreak` read it at mount. The flag flips in a LAYOUT effect of that same commit, not a frame later: a live step that lands while the history is still being drawn must not be read as history (it would never get `.fresh` / `chat-tool-in`). The DevTools panel never provides it, so it is unchanged. The reproduction is `tests/e2e/chat-scroll.spec.mjs`, which fails on the build before the change.
 
-**What a live tool call looks like arriving.** Calm gives each of the three moments its own motion (chat.css): a standalone call slides in from the left and fades (`chat-tool-in`, staggered when a turn batched several — `slot` on `ToolStep`); a group that never had rows to collapse — a "group all" pair, or two calls inside `FOLD_SEEN_MS` — arrives as one row with its head forming and washing (`chat-streak-form` / `chat-streak-wash`, `groupedInView`); a fold the reader watched still collapses from the rows it replaced, and washes the head so the row left behind is marked as what they became. A later call joining an already-closed group pops the tally (`bumped` in `step-streak.tsx`), because that is the one of these with no other motion. Members of an open group do not self-animate (`InStreak`). All of it is `.chat.calm`-scoped: the panel and the HUD stay still.
+**What a live tool call looks like arriving.** Calm gives each of the three moments its own motion (chat.css): a standalone call slides in from the left and fades (`chat-tool-in`, staggered when a turn batched several — `slot` on `ToolStep`); a group that never had rows to collapse — a "group all" pair, or two calls inside `FOLD_SEEN_MS` — arrives as one row with its head forming and washing (`chat-streak-form` / `chat-streak-wash`, `groupedInView`); a fold the reader watched still collapses from the rows it replaced, and washes the head so the row left behind is marked as what they became. A later call joining an already-closed group pops the tally (`bumped` in `step-streak.tsx`), because that is the one of these with no other motion. Members do not self-animate when the group speaks for them (`InStreak`, `groupOwns`): the rows a refold collapses and
+the rows a click opens. Neither the tool row nor its turn plays its entrance there, or the row you were reading blinks
+out and drifts back in under the collapse. A call that JOINS a group while it is open is new and slides in like a
+standalone call.
+
+**The send hint retires.** "Enter to send · Shift+Enter for a new line" (the composer) and "Enter to start · …" (the
+start page) are drawn until this device has shown it knows the keys: three sends by Enter with one Shift+Enter, or ten
+sends by Enter alone (`knowsKeys`, counted in `view.keys`). A send by the button counts for nothing. Learned mid-page, the
+composer's hint stays folded instead of coming back as the box empties, and the start page's fades where it stands (it
+keeps its line, since the column is centred and the box would move); the next load does not draw either. All of it is `.chat.calm`-scoped: the panel and the HUD stay still.
 
 **Measuring a long session.** `?long=<n>` on the web build adds a chat of n turns and an agent run of n steps (`long-session.ts`: code, math, tables in some chat turns; dataframes, plots and thoughts in the run's steps). `node tests/e2e/chat-scroll-bench.mjs` (env: `N`, `KIND=chat|agent`, `WIDTH`, `RUNS`, `CV=1`, `E2E_DIST_WEB`) prints the median of RUNS in real Chromium; the header of the file says what each number times. 1000 turns, desktop, median of 3, fake host with no latency:
 
@@ -447,8 +456,14 @@ the Commander's (A→Z, a `cloud` tag from `where`) without its ★, which write
 meaning for another machine. The tab list is asked again each time the picker opens, and again when the same runtime
 re-announces itself (`useTargetPick` watches the runtime OBJECT, not its id: a worker restart keeps `local` and only
 the announce is new, so a tab opened while the port was down reaches the list without anyone reopening the picker).
-Both are refreshes, keeping the old list on screen until the new one lands: tabs open and close while the page sits,
-and an icon still on its way the first time is there the second. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
+It is also asked when the page is shown again or its window takes focus back (`visibilitychange`, `focus`): opening a
+tab means leaving this page, so coming back is when the list has to be current, with nothing opened.
+All of these are refreshes, keeping the old list on screen until the new one lands: tabs open and close while the page sits,
+and an icon still on its way the first time is there the second. A refresh never moves the choice. The FIRST list of a
+runtime offers the last tab picked on it from this device again (`view.target`, `lastTargets` in view-mode.tsx), or a
+new tab if that was the pick, while `rememberedTab` (new-session.tsx) still finds it: the same id on the same site, or a
+tab at the exact address (a browser restart renumbers tabs, and an old id on another site is some other tab). Only a pick
+from the list is remembered, never the first guess, and only on the start page: a resume is a question about one run. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
 the list's foot offers "Show them" on this browser's own runtime (`ChatExtras.tabGroupsGrant`), which calls
 `chrome.permissions.request` synchronously inside that click, the only place Chrome shows the prompt. It cannot be
 asked on load. A remote runtime's list says it is granted in that browser's Settings instead. A named group is one box
@@ -785,7 +800,8 @@ header's most prominent corner. None of that is wrong in a 360px drawer beside t
 someone debugging a run came for. It is wrong in a tab someone is thinking in.
 
 Calm sets `data-focus`, the same root attribute the panel's own focus mode uses (`src/sidebar/prefs.ts`), and then
-`chat.css` adds what only a whole page needs: a reading measure (`--read`), a bubble for your own turn and no
+`chat.css` adds what only a whole page needs: a reading measure (`--read-log`, 708px, for the transcript, a little
+wider than `--read`, 672px, which the composer and everything standing where it stands keep), a bubble for your own turn and no
 container at all around the reply, and provenance that appears under a pointer instead of sitting above every
 paragraph. The brain glyph is the panel's, deliberately: same idea, different default.
 

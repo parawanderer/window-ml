@@ -22,7 +22,7 @@ import { placePins } from "./pin-order";
 import { markSeen, readMarksFrom, type ReadMarks } from "./read-marks";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme", TARGET_KEY = "view.target", KEYS_KEY = "view.keys";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -176,6 +176,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const tg = prefs.get<Record<string, boolean>>(TAB_GROUPS_KEY);
     groupFolds.value = tg && typeof tg === "object" && !Array.isArray(tg)
         ? Object.fromEntries(Object.entries(tg).filter(([, v]) => typeof v === "boolean")) : {};
+    lastTargets.value = targetsFrom(prefs.get<unknown>(TARGET_KEY));
+    keyUse.value = keyUseFrom(prefs.get<unknown>(KEYS_KEY));
     const d = prefs.get<string[]>(DISMISSED_KEY);
     dismissed.value = new Set(Array.isArray(d) ? d.filter((x) => typeof x === "string") : []);
     applyCalm();
@@ -210,6 +212,60 @@ export function setGroupFold(key: string, folded: boolean): void {
     for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete next[k];
     groupFolds.value = next;
     store?.set(TAB_GROUPS_KEY, next);
+}
+
+/** Where a run was last sent on a runtime, as picked in the start page's "Where it runs": an open tab, by its id and
+ *  the address it showed then, or a new tab. */
+export type RememberedTarget = { tabId: number; url: string } | { blank: true };
+
+/** The last target PICKED on each runtime (by runtime id), so a reloaded start page offers it again while that tab is
+ *  still open. Only a pick someone made is kept: the start page's own first guess (the tab in front) never is. */
+export const lastTargets = signal<Record<string, RememberedTarget>>({});
+
+/** Remember the target just picked on `runtime`. */
+export function rememberTarget(runtime: string, t: RememberedTarget): void {
+    lastTargets.value = { ...lastTargets.value, [runtime]: t };
+    store?.set(TARGET_KEY, lastTargets.value);
+}
+
+/** The stored map, keeping only entries of a shape this code wrote. */
+export function targetsFrom(v: unknown): Record<string, RememberedTarget> {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: Record<string, RememberedTarget> = {};
+    for (const [rt, t] of Object.entries(v as Record<string, unknown>)) {
+        const o = t as { tabId?: unknown; url?: unknown; blank?: unknown } | null;
+        if (o && o.blank === true) out[rt] = { blank: true };
+        else if (o && typeof o.tabId === "number" && typeof o.url === "string") out[rt] = { tabId: o.tabId, url: o.url };
+    }
+    return out;
+}
+
+/** How often this device has used the composer's keys: Enter to send, and Shift+Enter for a new line. */
+export interface KeyUse { sends: number; newlines: number }
+
+/** This device's key use so far, counted until it {@link knowsKeys}; then the "Enter to send" hint is not drawn. */
+export const keyUse = signal<KeyUse>({ sends: 0, newlines: 0 });
+
+/** Sends by Enter, with at least one Shift+Enter, that say someone has the keys; or sends alone, for someone who
+ *  never writes a second line and so never needs the other half. */
+export const KEYS_SENDS = 3, KEYS_SENDS_ALONE = 10;
+
+/** Has this device shown it knows how the box sends? Then the hint saying so has done its job. */
+export const knowsKeys = (u: KeyUse): boolean => (u.sends >= KEYS_SENDS && u.newlines >= 1) || u.sends >= KEYS_SENDS_ALONE;
+
+/** Count one use of a key the hint describes. Counting stops once the hint is retired. */
+export function noteKeyUse(key: "send" | "newline"): void {
+    const u = keyUse.value;
+    if (knowsKeys(u)) return;
+    keyUse.value = key === "send" ? { ...u, sends: u.sends + 1 } : { ...u, newlines: u.newlines + 1 };
+    store?.set(KEYS_KEY, keyUse.value);
+}
+
+/** The stored count, zero for anything else. */
+function keyUseFrom(v: unknown): KeyUse {
+    const o = v as Partial<KeyUse> | null;
+    const n = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) && x > 0 ? Math.floor(x) : 0);
+    return { sends: n(o?.sends), newlines: n(o?.newlines) };
 }
 
 /** Suggestions put away on this device, as `runtime:code` (attention.ts). Only a suggestion can be; a problem stays. */

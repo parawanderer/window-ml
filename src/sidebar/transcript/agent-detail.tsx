@@ -654,8 +654,12 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
     // Only a turn that landed WHILE YOU WERE WATCHING (`justArrived`), and captured once on mount: without that
     // test, opening any transcript plays the same animation over fifty items at once, about turns the reader
     // never saw happen.
+    // NOT INSIDE A GROUP that is folding it (`InStreak`), as for its tool rows: the turn was on screen before the
+    // group formed, and drifting it in again from nothing while the group collapses over it was a row you were
+    // reading blinking out and coming back.
     const history = useHistoryPaint();
-    const [fresh] = useState(() => !history && justArrived(turn.tools[turn.tools.length - 1]?.ts));
+    const inStreak = useContext(InStreak);
+    const [fresh] = useState(() => !inStreak && !history && justArrived(turn.tools[turn.tools.length - 1]?.ts));
     return (
         <div class={`aturn${fresh ? " fresh" : ""}`}>
             <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>

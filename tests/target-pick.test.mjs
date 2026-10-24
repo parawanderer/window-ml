@@ -14,7 +14,8 @@ for (const k of ["window", "document", "Node", "HTMLElement", "MutationObserver"
 const require_ = createRequire(import.meta.url);
 const { h, render } = require_("preact");
 const { act } = require_("preact/test-utils");
-const { useTargetPick } = await import("../src/chat/new-session.tsx");
+const { useTargetPick, rememberedTab } = await import("../src/chat/new-session.tsx");
+const { lastTargets, targetsFrom } = await import("../src/chat/view-mode.tsx");
 
 /* ------------------------------ the ask policy ------------------------------ */
 
@@ -39,8 +40,8 @@ function fakeStore(answers) {
     };
 }
 
-function Probe({ store, rt, pick }) {
-    Object.assign(pick, useTargetPick(store, rt, true));
+function Probe({ store, rt, pick, remember = false }) {
+    Object.assign(pick, useTargetPick(store, rt, true, undefined, remember));
     return pick.fields;
 }
 
@@ -53,8 +54,8 @@ function mount() {
  * Draw the WHERE form against `rt` on `root`. `pick` is filled with the hook's return; the tab titles its native select
  * holds are reported, or null where the form is on "A new tab" and there is no tab select.
  */
-async function draw(store, rt, pick, root) {
-    await act(async () => { render(h(Probe, { store, rt, pick }), root); });
+async function draw(store, rt, pick, root, remember = false) {
+    await act(async () => { render(h(Probe, { store, rt, pick, remember }), root); });
     await act(async () => { await store.settled(); });
     const sel = root.querySelector('[data-field="tab"] select');
     return sel ? [...sel.querySelectorAll("option")].map((o) => o.textContent) : null;
@@ -129,4 +130,90 @@ test("a different machine is a full ask and drops the tab that belonged to the o
     assert.equal(pick.blank, false);
     assert.equal(pick.target().kind, "tab", "the box's tab is what an open-tab choice now offers");
     assert.equal(s.asks.length, 2, "coming back to tabs does not re-ask: the list was already loaded");
+});
+
+// --- the list is current when you come back to the page: a tab is opened by leaving it ---
+
+test("the page shown again, or its window focused again, re-asks; the choice made stays made", async () => {
+    const root = mount();
+    const pick = {};
+    const s = fakeStore([
+        { ok: true, data: { tabs: [tab(1, "one")] } },
+        { ok: true, data: { tabs: [tab(1, "one"), tab(2, "opened while away")] } },
+        { ok: true, data: { tabs: [tab(1, "one"), tab(2, "opened while away"), tab(3, "and another")] } },
+    ]);
+    const rt = runtime("local");
+    assert.deepEqual(await draw(s, rt, pick, root), ["one"]);
+    await act(async () => { window.dispatchEvent(new window.Event("focus")); await s.settled(); });
+    assert.deepEqual([...root.querySelectorAll('[data-field="tab"] option')].map((o) => o.textContent), ["one", "opened while away"]);
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); await s.settled(); });
+    assert.equal(root.querySelectorAll('[data-field="tab"] option').length, 3);
+    assert.equal(s.asks.length, 3);
+    assert.deepEqual(pick.target(), { kind: "tab", tabId: 1 }, "a refresh never moves the choice to the new tab");
+    // Gone from the screen: nothing asks while nobody can see the answer.
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    try {
+        await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); await s.settled(); });
+        assert.equal(s.asks.length, 3, "a page being hidden is not a reason to ask");
+    } finally { delete document.visibilityState; }
+    // Unmounted: the listeners went with it.
+    await act(async () => { render(null, root); });
+    window.dispatchEvent(new window.Event("focus"));
+    assert.equal(s.asks.length, 3);
+});
+
+// --- the last tab picked is offered again, while it is still open ---
+
+test("what a remembered pick means among the tabs open now", () => {
+    const tabs = [tab(1, "one"), { ...tab(7, "pr list"), url: "https://github.com/o/r/pulls" }];
+    assert.equal(rememberedTab(undefined, tabs), null, "nothing remembered: the usual first guess");
+    assert.equal(rememberedTab({ blank: true }, tabs), "blank", "a new tab is always there to go back to");
+    assert.equal(rememberedTab({ tabId: 7, url: "https://github.com/o/r/pulls" }, tabs), 7);
+    // The same tab, navigated within its site since: still the tab that was picked.
+    assert.equal(rememberedTab({ tabId: 7, url: "https://github.com/o/r/pull/12" }, tabs), 7);
+    // The same id on ANOTHER site is a browser restart reusing a number, not the tab that was picked.
+    assert.equal(rememberedTab({ tabId: 1, url: "https://github.com/o/r/pulls" }, tabs), 7, "found by its address instead");
+    assert.equal(rememberedTab({ tabId: 1, url: "https://mail.example/" }, tabs), null, "and nowhere else");
+    // Closed: nothing to go back to.
+    assert.equal(rememberedTab({ tabId: 99, url: "https://gone.example/" }, tabs), null);
+    // An address that does not parse never matches a tab by its id.
+    assert.equal(rememberedTab({ tabId: 7, url: "" }, tabs), null);
+});
+
+test("the start page offers the remembered tab when it opens, and a resume does not", async () => {
+    lastTargets.value = { local: { tabId: 2, url: "http://127.0.0.1/2" } };
+    try {
+        const answer = () => ({ ok: true, data: { tabs: [tab(1, "front"), tab(2, "picked last time")] } });
+        const pick = {};
+        await draw(fakeStore([answer()]), runtime("local"), pick, mount(), true);
+        assert.deepEqual(pick.target(), { kind: "tab", tabId: 2 }, "the start page goes back to the tab picked last time");
+
+        const resume = {};
+        await draw(fakeStore([answer()]), runtime("local"), resume, mount(), false);
+        assert.deepEqual(resume.target(), { kind: "tab", tabId: 1 }, "a resume starts from the tab in front, as it did");
+
+        // Remembered per runtime: another machine's pick says nothing here.
+        const other = {};
+        await draw(fakeStore([answer()]), runtime("desk"), other, mount(), true);
+        assert.deepEqual(other.target(), { kind: "tab", tabId: 1 });
+
+        // A remembered NEW tab comes back as one, even with tabs open.
+        lastTargets.value = { local: { blank: true } };
+        const blank = {};
+        await draw(fakeStore([answer()]), runtime("local"), blank, mount(), true);
+        assert.equal(blank.blank, true);
+
+        // Closed since: the usual first guess, and no tab that closed is offered.
+        lastTargets.value = { local: { tabId: 5, url: "http://127.0.0.1/5" } };
+        const closed = {};
+        await draw(fakeStore([answer()]), runtime("local"), closed, mount(), true);
+        assert.deepEqual(closed.target(), { kind: "tab", tabId: 1 });
+    } finally { lastTargets.value = {}; }
+});
+
+test("a stored map of the wrong shape reads as nothing remembered, entry by entry", () => {
+    assert.deepEqual(targetsFrom(null), {});
+    assert.deepEqual(targetsFrom([{ tabId: 1, url: "x" }]), {});
+    assert.deepEqual(targetsFrom({ a: { tabId: 1, url: "https://a/" }, b: { blank: true }, c: { tabId: "1", url: "x" }, d: { blank: "yes" }, e: null }),
+        { a: { tabId: 1, url: "https://a/" }, b: { blank: true } });
 });

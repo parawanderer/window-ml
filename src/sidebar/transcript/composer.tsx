@@ -128,7 +128,9 @@ function useNarrowScreen(): boolean {
 /** THE COMPOSER — where you send the next message into a session: the text box, pasted images, an
  *  element you picked off the page, the model/vision toggles and the run controls. Sending INTO a run is
  *  the one thing that needs a reverse channel, so the DevTools panel routes it through the background. */
-export function Composer({ s, multiline, tools }: { s: Session; multiline?: boolean; tools?: ComponentChildren }) {
+export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?: boolean; tools?: ComponentChildren;
+    /** the page's rule for the send hint: has this device shown it knows the keys, and a way to count each use */
+    keys?: { learned: boolean; used: (key: "send" | "newline") => void } }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.
     // THE DRAFT (drafts.ts): what was typed is saved as it is typed and read back when the box is drawn again, and a
@@ -181,7 +183,15 @@ export function Composer({ s, multiline, tools }: { s: Session; multiline?: bool
     useEffect(() => { if (multiline) grow(area.current); }, [text, multiline, stacked]);
     // Enter SENDS only — it must NEVER cancel a run (pressing Enter with an empty box while a run is in
     // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
+    const onKey = (e: KeyboardEvent) => {
+        if (e.key !== "Enter") return;
+        if (e.shiftKey) { if (multiline) keys?.used("newline"); return; }
+        if (!empty) { e.preventDefault(); if (multiline) keys?.used("send"); send(); }
+    };
+    // Drawn only while the device has not shown it knows the keys; one that learns them here keeps it folded away
+    // (`gone`) rather than having it come back each time the box empties.
+    const [hintDrawn] = useState(() => !keys?.learned);
+    const hintGone = !!text || !!keys?.learned;
     // On a NARROW screen the long placeholders wrapped onto a second line of an empty one-line box; the short ones say the
     // same thing a phone can fit.
     const narrow = useNarrowScreen();
@@ -216,7 +226,7 @@ export function Composer({ s, multiline, tools }: { s: Session; multiline?: bool
                     and it stops saying so the moment you start typing — by then you have either pressed Enter or
                     you have not. It FADES rather than leaving: the line it stands on holds the box above it up, and
                     removing it dropped the whole composer a line on the first keystroke. */}
-                {multiline ? <span class={`chint${text ? " gone" : ""}`} aria-hidden={text ? true : undefined}>Enter to send · Shift+Enter for a new line</span> : null}
+                {multiline && hintDrawn ? <span class={`chint${hintGone ? " gone" : ""}`} aria-hidden={hintGone ? true : undefined}>Enter to send · Shift+Enter for a new line</span> : null}
                 <RunStatsBar s={s} />
                 <span class="sp" />
                 <UsageBar s={s} />

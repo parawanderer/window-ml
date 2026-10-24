@@ -25,6 +25,7 @@ import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 import { onOpenGround, startField } from "./start-field";
+import { keyUse, knowsKeys, noteKeyUse } from "./view-mode";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
 const modelCache = new Map<string, ModelChoice[]>();
@@ -88,7 +89,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     const [text, setText] = useState(() => loadDraft("start"));
     const [busy, setBusy] = useState(false);
     const [askingPage, setAskingPage] = useState(false);
-    const pick = useTargetPick(store, rt, kind === "agent", extras);
+    const pick = useTargetPick(store, rt, kind === "agent", extras, true);
     // The chosen runtime's models, asked once per runtime (the first answer costs it a capability probe per model,
     // cached after). "" is the runtime's own default, which sends no `model` at all, so its choice stands.
     // The last list each runtime gave is drawn at once and refreshed behind it, so only the first open of the page
@@ -116,6 +117,10 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         return () => { live = false; };
     }, [rt?.id, canList]);
     const box = useRef<HTMLTextAreaElement>(null);
+    // The key hint is drawn only to a device that has not yet shown it knows the keys (`knowsKeys`), and one that
+    // learns them while it is up watches it go (`.retired`) rather than having it cut away.
+    const learned = knowsKeys(keyUse.value);
+    const [hintDrawn] = useState(() => !learned);
     useEffect(() => { box.current?.focus(); }, [kind]);
     useEffect(() => { if (initialKind) setKind(initialKind); }, [initialKind]);
     useEffect(() => { if (initialRuntime) setRuntimeId(initialRuntime); }, [initialRuntime]);
@@ -232,7 +237,13 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}
                         placeholder={kind === "agent" ? "What should the agent do?" : "Start a chat"}
                         onInput={(e: any) => { setText(e.target.value); saveDraft("start", e.target.value); }}
-                        onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void start(); } }} />
+                        onKeyDown={(e: KeyboardEvent) => {
+                            if (e.key !== "Enter") return;
+                            if (e.shiftKey) { noteKeyUse("newline"); return; }
+                            e.preventDefault();
+                            if (ready) noteKeyUse("send");
+                            void start();
+                        }} />
                     {narrow ? <div class="chat-start-foot">{sendButton}</div> : <>{row}{pick.urlField}</>}
                 </div>
                 {askingPage && blocked.kind !== "ok" ? (
@@ -240,7 +251,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                         onUrl={(u) => pick.useUrl(u)} onTabs={() => { pick.useTabs(); setAskingPage(false); }}
                         {...(canGrant && grantOrigin ? { grant: (o: string) => (grantOrigin(rt.id, o) ?? (async () => false))() } : {})} />
                 ) : null}
-                <div class="chat-start-hint">Enter to start · Shift+Enter for a new line · saved to the list as it starts</div>
+                {hintDrawn ? <div class={`chat-start-hint${learned ? " retired" : ""}`} aria-hidden={learned ? true : undefined}>Enter to start · Shift+Enter for a new line</div> : null}
             </div>
         </div>
         </>

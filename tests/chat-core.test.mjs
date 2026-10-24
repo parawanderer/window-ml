@@ -10,6 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
+import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget } from "../src/chat/view-mode.tsx";
 import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readMarks, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
 import { READ_MARKS_MAX, UNTIL_READ, markSeen, readMarksFrom, seenEnding } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
@@ -591,6 +592,49 @@ test("view prefs: group-all is ON unless this device turned it off, and it write
     setGroupAll(true);
     assert.equal(groupAllTools.value, true);
     assert.equal(prefs.all.get(GROUP_ALL_KEY), true, "written back, so the next load opens the same way");
+});
+
+// --- the send hint retires once this device has shown it knows the keys ---
+
+test("knowing the keys: a few sends by Enter with one Shift+Enter, or many sends alone", () => {
+    assert.equal(knowsKeys({ sends: 0, newlines: 0 }), false);
+    assert.equal(knowsKeys({ sends: KEYS_SENDS - 1, newlines: 5 }), false, "a line break alone is not knowing how it sends");
+    assert.equal(knowsKeys({ sends: KEYS_SENDS, newlines: 0 }), false, "a few sends without the other half is not yet");
+    assert.equal(knowsKeys({ sends: KEYS_SENDS, newlines: 1 }), true);
+    assert.equal(knowsKeys({ sends: KEYS_SENDS_ALONE - 1, newlines: 0 }), false);
+    assert.equal(knowsKeys({ sends: KEYS_SENDS_ALONE, newlines: 0 }), true, "someone who never writes a second line never needs that half");
+});
+
+test("view prefs: key use is counted per device, written back, and stops counting once learned", () => {
+    // THE UPGRADE: a device from before this was counted has nothing stored, and so is shown the hint as it was.
+    installViewPrefs(fakePrefs());
+    assert.deepEqual(keyUse.value, { sends: 0, newlines: 0 });
+    assert.equal(knowsKeys(keyUse.value), false);
+
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    noteKeyUse("newline");
+    for (let i = 0; i < KEYS_SENDS; i++) noteKeyUse("send");
+    assert.equal(knowsKeys(keyUse.value), true);
+    assert.deepEqual(prefs.all.get(KEYS_KEY), { sends: KEYS_SENDS, newlines: 1 }, "written back, so a reload does not draw it again");
+    noteKeyUse("send");
+    assert.deepEqual(keyUse.value, { sends: KEYS_SENDS, newlines: 1 }, "nothing left to count once learned");
+
+    installViewPrefs(fakePrefs({ [KEYS_KEY]: { sends: KEYS_SENDS, newlines: 1 } }));
+    assert.equal(knowsKeys(keyUse.value), true, "a reload keeps it learned");
+    // A stored value of the wrong shape counts as nothing, and so shows the hint: the safe way to be wrong.
+    installViewPrefs(fakePrefs({ [KEYS_KEY]: { sends: "9", newlines: -1 } }));
+    assert.deepEqual(keyUse.value, { sends: 0, newlines: 0 });
+});
+
+test("view prefs: the last target picked is kept per runtime and written back", () => {
+    const prefs = fakePrefs({ [TARGET_KEY]: { desk: { tabId: 4, url: "https://a.example/" } } });
+    installViewPrefs(prefs);
+    assert.deepEqual(lastTargets.value, { desk: { tabId: 4, url: "https://a.example/" } });
+    rememberTarget("box", { blank: true });
+    assert.deepEqual(prefs.all.get(TARGET_KEY), { desk: { tabId: 4, url: "https://a.example/" }, box: { blank: true } });
+    installViewPrefs(fakePrefs());
+    assert.deepEqual(lastTargets.value, {}, "a device with nothing stored remembers nothing");
 });
 
 test("view prefs: calm is the default, a stored answer wins, and both toggles write back", () => {
