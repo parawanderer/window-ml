@@ -323,6 +323,41 @@ Whether a generated manifest requires trust or is self-verifying depends on whic
    for the current and subsequent runs. If the underlying file changes on disk, the `sha256` pin mismatches and calls
    into it drop back to `unknown` (asking the person) until re-pinned.
 
+**RULED 2026-10-24 for the first build of Tier 3 entries** (root K's (c2), measured on the pinned fork core 0169c4fd;
+the finder is the root-k session; the spec is updated with the build's PR). Four rulings and one finding:
+
+- **Source origin.** The model names a file inside a workspace root. The worker reads it as a RECORDED `ml.sh` call of
+  `cat` on that one operand, spawn then discard, under `cat`'s own manifest, so a secret path is refused by the rule
+  that already refuses it and the read is size-capped (the cap is the build's to set and the card states it). The
+  card shows the path, the sha256 and byte size of what was read, the module name, each admitted name with its
+  signature, and the source itself behind a disclosure. A file outside every root, a dotted module name, and a name
+  already importable (stdlib, a whitelist module, anything in `sys.modules`) refuse before the card.
+- **Nothing executes before the person's word, here too.** The admission result on the card is DERIVED: the
+  dialect's node check over the module's AST, plus a MODULE-SHAPE rule that needs no run: the body is a docstring,
+  `import`s of modules the gate already admits, `def`s whose every default is a literal of an immutable kind (a
+  scalar, `str`, `bytes`, a tuple or frozenset of such), and assignments whose right side is such a literal. Any
+  other top-level statement (a call, a list or dict literal, a class, a loop, a comprehension) refuses the module
+  and the card names the line. The load, `restricted.check` + `mark(compile)` + `_restricted.run` under the budget,
+  runs AFTER approval, and the post-load check of every global (a `CO_RESTRICTED` function with no closure, an
+  immutable, an admitted module, a builtin function) is the ENFORCE layer behind it: a global the shape rule
+  admitted and the post-load check refuses is not stored, the card reports it, and the disagreement is a finding
+  for the shape rule's owner the same day. A refused module leaves nothing in `sys.modules` and no `allow_module`.
+- **The stored entry IS the pinned source.** A snapshot of the approved bytes, with the path and sha256 beside it: a
+  cell imports exactly what the person approved, and a change on disk reaches the runtime only through a new
+  proposal. The disk-hash mismatch above is withdrawn for Tier 3 entries (it needs the host on every worker start,
+  and a snapshot is safe under Tier 3's zero trust); the registration page may show that the disk now differs.
+- **Global scope only this round.** The python worker is shared across runs, and the fork has no unload (below), so
+  a workspace-scoped entry would need a worker restart per run. Workspace scope is a left item. Removing a Tier 3
+  entry on the registration page restarts the worker, and the page says so.
+- **Finding (the fork's, not fixed here).** An object created by a load run stays OWNED for the rest of the worker's
+  life, through `_restricted.reset()`: a module-global list or a mutable default is mutated by later cells and
+  carries state across runs (measured: `keep(1)` → `[1]`, `keep(2)` → `[1, 2]`, after a reset `keep(3)` →
+  `[1, 2, 3]`). The shape rule above makes such a global unexpressible in an admitted module; the general fact goes
+  to the fork as an issue the finder files, named in the root K result's left items for Shane's rebuild.
+
+The red-team pass (rule 10: a separate session, failing-first tests in its own file) covers the new message types
+and the shape rule; the code review goes to a free session that neither built nor found it.
+
 ## Open questions
 
 - **Size measures.** Which ones does an interpreter trust? `xs.length` on a host array is cheap and honest. On an
