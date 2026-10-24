@@ -384,6 +384,17 @@ listed as remaining is DONE unless named below.
   lost; after a failed read the store no longer counts as loaded, so `judgeCall` asks for every call in that worker
   unless a policy added since denies it; a `forgetRunPolicies` before the read is replayed after it).
 
+- **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
+  (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
+  `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
+  `re`'s parse tree (`risky_parse`, either check refuses); closes the `{,n}`, verbose-via-flags-int and conditional-group
+  escapes, three exponential cells that ran unasked in the shipped core. Neither is in the shipped core: the pin stays
+  0169c4fd until Shane assigns the rebuild. The three escapes went to the red team as a brief; the unpriced quadratic
+  (`regex-cost.ts` has no Python port) is named to the python-cancel lane in #11's body. RULED the same day on Shane's
+  question whether one implementation can serve both sides: no; one definition and one corpus, two parsers
+  ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "one DEFINITION and one CORPUS"); the parity test he asked for
+  is `halting.json` read by both suites.
+
 - **Root K and the rest of the policy layer, ASSIGNED 2026-10-23** on Shane's word (his session) to a new session
   `[window-ml root-k]` (Opus): [`ROOT_K.md`](ROOT_K.md), five roots in order (process ownership on the host, root K in four
   PRs, the shell probes then `propose_policy` to `sh`, file-kept policies, co-writing's two items), and the small
