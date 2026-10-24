@@ -201,6 +201,11 @@ discard; nothing executes before the word, the card's admission is a static MODU
 post-load global check run after approval as enforcement; the stored entry is the snapshot of the approved bytes; global
 scope only, removal restarts the worker. Root-k files the "load-run objects stay owned through reset" finding on the
 fork today. The red team writes the pass in its own file; the janitor reviews the code.
+Filed as #1102 on window-ml (issues are disabled on the cpython fork; moving it there is Shane's). The red team's
+#1094 (operand-check residual pins, base `main`) MERGED a988fb6f after a flake rerun. The #1093 red-team pass is #1103
+(open, `@exec,@security`), with the cost measurement in it: `(\d{3})+` on 100k non-matching chars charges 2,735 units
+(linear); `(\d{3})+b` on 100k digits charges 273M units, over the 3M budget, so the loosened bound is PRICED; the
+charges are pinned as numbers.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
