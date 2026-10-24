@@ -231,7 +231,10 @@ a PR stacked on the branch, merging after it. Both assigned 2026-10-24.
 #1110 MERGED 7891e866 (2026-10-24): the janitor reviewed it (no finding); one test-only fix after the review
 (the Settings page's test waits on conditions, not a sleep). Root K (c2) is BUILT; root-k's clone is removed. Open
 from it: the red team's stacked pass (e3, its own test file, merging after), #1102 (owned-through-reset, awaiting
-Shane's fork-or-not call), the "disk differs" page state, and the Linux Landlock evidence run.
+Shane's fork-or-not call), the "disk differs" page state, and the Linux Landlock evidence run. Root-k asked the same
+day which to take next; RULED in `READONLY_LIBRARY_MANIFEST.md`: the disk check is a button (a recorded read, result
+described, store untouched), workspace scope is parked until a build needs its ruling. Whether root-k spends this
+week's budget on the button is Shane's: the freeze exception covered the evidence-run gap and (c2) only.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status

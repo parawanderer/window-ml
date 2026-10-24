@@ -379,6 +379,23 @@ and the shape rule; the code review goes to a free session that neither built no
   not every worker; each run that kept names in one is told on its next cell.
 - The owned-through-reset finding is window-ml #1102 (the fork's issues are off).
 
+**RULED 2026-10-24 for the two left items** (root-k asked which to take after #1110; the coordinator's answer, before
+any build):
+
+- **"The file on disk differs" is a button, not a side effect of opening the page.** Opening Settings reads nothing:
+  a read that happens because a page was looked at is a read nobody asked for (the describe layer must not cost a
+  call on the host). The entry carries a "Check the file" control; pressing it is a recorded `ml.sh cat` of the
+  stored path, the same read the proposal made, under the same cap, hashed and compared to the stored sha256. The
+  result is DESCRIBED on the entry ("differs since <date>", "unchanged", "missing", "unreadable") and nothing else
+  happens: the stored snapshot stays what a cell imports, nothing is removed, nothing is re-proposed. Re-pinning is a
+  new `propose_manifest` the model or the person starts, with its own card. Small; no red-team pass beyond pinning
+  that the check cannot change the store.
+- **Workspace scope is PARKED until it has a ruling,** and the ruling waits for a build that needs it. The open
+  question is how a workspace entry combines with a global one on the same module name; the shape of the answer is
+  the policy store's (narrow wins: a workspace entry SHADOWS a global of the same name inside that workspace and never
+  widens it, the delivered set is per run, and the worker handed a workspace set is restarted when it changes), but
+  nothing is written as a rule until there is a workspace-scoped manifest to write it for.
+
 ## Open questions
 
 - **Size measures.** Which ones does an interpreter trust? `xs.length` on a host array is cheap and honest. On an
