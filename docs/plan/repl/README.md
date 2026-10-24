@@ -158,7 +158,7 @@ one item in hand and goes idle: root-k finishes (d), the Settings registration p
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
 and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068 are merged): #1051, #1045,
-then (d) #1063, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+then #1070 (#1063 merged); the coordinator reviews result files and specs only. The lanes resume when the week resets.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -394,9 +394,13 @@ listed as remaining is DONE unless named below.
   `evidence {calls: 1}`; a lying one (`touch` drafted as a reader) fails its re-run on exit 1 and stays sandbox-only.
   Named as left: a lying manifest whose program exits 0 having written nothing would pass (the check is exit code,
   envelope and protected names, never a diff of the root); the evidence run is unmeasured on Linux (Landlock); one
-  accepted change beyond the ruling, the tool is offered by the settings, not the measured host status. Next: (d) the
-  registration page (#1063, on `main`), then #1070 (the red team's `propose_manifest` pass, on `main`), each after the
-  janitor; (c2) library manifests only if time allows.
+  accepted change beyond the ruling, the tool is offered by the settings, not the measured host status. **(d) DONE
+  2026-10-24**: #1063 MERGED a35d7363, the Settings page "Program manifests (ml.sh)" (every stored entry with whose it
+  is, where it describes calls, its evidence or the run's failure, its pin; add and remove); beyond the page, an add is
+  pinned by the host through the same precheck as a draft (`checkDraft`, origin `person`, in `background.ts`), so the
+  page's payload never chooses a pin; not measured against the real host, the same resolve path the two runs
+  exercised. Written into `ROOT_K_RESULT_2.md` with it. Left: #1070 (the red team's `propose_manifest` pass, on
+  `main`) merges after the janitor; (c2) library manifests only if time allows; the Linux measurement.
   **Root 1 DONE 2026-10-23**: [`ROOT_K_RESULT_1.md`](ROOT_K_RESULT_1.md) merged 9fe4e6a2 (#1075, the coordinator
   reviewed, every claim checked against the merged code). Left by it, each named there: the host's CPU timebase is a
   per-arch constant (an x86_64 host under Rosetta undercounts about 42x), a follow-up root-k's session was refused
