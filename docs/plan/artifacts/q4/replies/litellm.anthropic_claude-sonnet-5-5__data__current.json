@@ -1,0 +1,28 @@
+{
+  "model": "litellm.anthropic/claude-sonnet-5-5",
+  "shape": "data",
+  "task": "current",
+  "text": "```json\n{\n  \"title\": \"Conversation Stats\",\n  \"body\": \"<div class=\\\"panel\\\"><h2>Conversation panel</h2><section><h3>Messages by role</h3><table><thead><tr><th>Role</th><th>Count</th></tr></thead><tbody id=\\\"roles\\\"></tbody></table><p class=\\\"total\\\" id=\\\"total\\\"></p></section><section><h3>Five most recent tool calls</h3><ol id=\\\"calls\\\"></ol></section><section><h3>Longest message</h3><p id=\\\"longest\\\"></p></section></div>\",\n  \"css\": \".panel{font-family:system-ui,sans-serif;padding:12px;color:#222}h2{margin:0 0 12px;font-size:18px}h3{margin:14px 0 6px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:#555}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #ddd}td:last-child,th:last-child{text-align:right}.total{margin:6px 0 0;font-weight:600}ol{margin:0;padding-left:22px}li{padding:2px 0;font-family:ui-monospace,monospace}.empty{color:#888;font-style:italic;list-style:none;margin-left:-22px}#longest{margin:0}\",\n  \"scripts\": [\n    \"const msgs = (ml.current && ml.current.messages) || [];\\nconst roleOrder = ['system','user','assistant','tool'];\\nconst counts = {};\\nfor (const r of roleOrder) { counts[r] = 0; }\\nfor (const m of msgs) { counts[m.role] = (counts[m.role] ?? 0) + 1; }\\nconst roleNames = roleOrder.concat(Object.keys(counts).filter(r => !roleOrder.includes(r)));\\nroot.byId.roles.children = roleNames.map(r => ({ tag: 'tr', attrs: {}, text: '', children: [ { tag: 'td', attrs: {}, text: r, children: [] }, { tag: 'td', attrs: {}, text: String(counts[r]), children: [] } ] }));\\nroot.byId.total.text = `Total: ${msgs.length} message${msgs.length === 1 ? '' : 's'}`;\\n\\nconst names = [];\\nfor (const m of msgs) {\\n  if (m.tool_calls && m.tool_calls.length) {\\n    for (const tc of m.tool_calls) {\\n      names.push(tc?.function?.name ?? '(unknown)');\\n    }\\n  }\\n}\\nconst recent = names.slice(-5).reverse();\\nroot.byId.calls.children = recent.length\\n  ? recent.map(n => ({ tag: 'li', attrs: {}, text: n, children: [] }))\\n  : [{ tag: 'li', attrs: { class: 'empty' }, text: 'No tool calls yet', children: [] }];\\n\\nlet best = -1;\\nlet bestIdx = -1;\\nmsgs.forEach((m, i) => {\\n  const len = (typeof m.content === 'string' ? m.content : '').length;\\n  if (len > best) { best = len; bestIdx = i; }\\n});\\nroot.byId.longest.text = bestIdx < 0\\n  ? 'No messages yet'\\n  : `${best} characters (message #${bestIdx + 1}, role: ${msgs[bestIdx].role})`;\"\n  ]\n}\n```",
+  "usage": {
+    "completion_tokens": 1199,
+    "prompt_tokens": 1001,
+    "total_tokens": 2200,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "text_tokens": 1199
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "text_tokens": 4,
+      "cache_creation_tokens": 997,
+      "cache_creation_token_details": {
+        "ephemeral_5m_input_tokens": 997,
+        "ephemeral_1h_input_tokens": 0
+      }
+    },
+    "cache_creation_input_tokens": 997,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "global",
+    "service_tier": "standard"
+  }
+}

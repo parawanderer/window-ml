@@ -1,0 +1,31 @@
+{
+  "model": "qwen3.6:35b",
+  "shape": "data",
+  "task": "current",
+  "text": "```json\n{\n  \"title\": \"Conversation Insights\",\n  \"body\": \"<div class=\\\"container\\\">\\n  <h1>Chat Stats</h1>\\n  \\n  <div id=\\\"role-counts\\\" class=\\\"count-grid\\\"></div>\\n  \\n  <hr />\\n  \\n  <h3>Top 5 Tool Calls</h3>\\n  <ol id=\\\"tool-calls-list\\\"></ol>\\n  \\n  <hr />\\n  \\n  <p>Longest message: <span id=\\\"longest-msg\\\" class=\\\"val\\\">-</span></p>\\n</div>\",\n  \"css\": \".container { padding: 20px; background: white; border-radius: 8px; font-family: sans-serif; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\\nh1 { margin-top: 0; color: #2c3e50; }\\n.count-grid { display: flex; gap: 10px; }\\n.stat-item { background: #f8f9fa; padding: 10px; border-radius: 4px; text-align: center; flex: 1; border-left: 3px solid #3498db; }\\n.stat-item strong { display: block; color: #555; font-size: 0.9em; }\\n.stat-item span { font-size: 1.2em; font-weight: bold; color: #333; }\\nol { padding-left: 20px; }\\nli { margin-bottom: 4px; color: #444; }\\n.val { font-weight: bold; color: #e74c3c; }\",\n  \"scripts\": [\n    \"(function() {\\n  const messages = ml.current.messages;\\n\\n  // Calculate counts by role\\n  const counts = { System: 0, User: 0, Assistant: 0, Tool: 0 };\\n  messages.forEach(m => {\\n    if (counts[m.role] !== undefined) counts[m.role]++;\\n  });\\n\\n  const roleContainer = root.byId['role-counts'];\\n  roleContainer.children = [];\\n  Object.entries(counts).forEach(([role, count]) => {\\n    roleContainer.children.push({\\n      tag: 'div',\\n      attrs: { class: 'stat-item' },\\n      children: [\\n        { tag: 'strong', text: role },\\n        { tag: 'span', text: String(count) }\\n      ]\\n    });\\n  });\\n\\n  // Get the last 5 tool calls names\\n  const recentCalls = [];\\n  const extractCalls = (msgs) => {\\n    if (msgs.length === 0 || recentCalls.length >= 5) return;\\n    const [msg, ...rest] = msgs;\\n    \\n    if (msg.role === 'assistant' && msg.tool_calls) {\\n      msg.tool_calls.forEach(tc => {\\n        if (recentCalls.length < 5) {\\n          recentCalls.push(tc.function.name);\\n        }\\n      });\\n    }\\n    extractCalls(rest);\\n  };\\n\\n  // Process messages in reverse order (most recent first)\\n  extractCalls([...messages].reverse());\\n\\n  const callsList = root.byId['tool-calls-list'];\\n  callsList.children = [];\\n  recentCalls.forEach((name, i) => {\\n    callsList.children.push({ tag: 'li', text: `${i + 1}. ${name}` });\\n  });\\n\\n  // Find longest message length\\n  const maxLen = messages.reduce((max, msg) => {\\n    const len = (msg.content || \\\"\\\").length;\\n    return Math.max(max, len);\\n  }, 0);\\n\\n  root.byId['longest-msg'].text = `${maxLen} chars`;\\n})();\"\n  ]\n}\n```",
+  "usage": {
+    "input_tokens": 693,
+    "output_tokens": 7902,
+    "total_tokens": 8595,
+    "prompt_tokens": 693,
+    "completion_tokens": 7902,
+    "response_token/s": 250.26,
+    "prompt_token/s": 7036.46,
+    "total_duration": 70862114173,
+    "load_duration": 7368483107,
+    "prompt_eval_count": 693,
+    "prompt_eval_duration": 98487000,
+    "eval_count": 7902,
+    "eval_duration": 31575687000,
+    "approximate_total": "0h1m10s",
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_eval_cached_count": 0
+  }
+}

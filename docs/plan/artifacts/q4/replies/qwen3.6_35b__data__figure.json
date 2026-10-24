@@ -1,0 +1,31 @@
+{
+  "model": "qwen3.6:35b",
+  "shape": "data",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Annual Rainfall Analysis\",\n  \"body\": \"<div class=\\\"report-container\\\">\\n  <h2>Monthly Rainfall Report</h2>\\n  \\n  <div class=\\\"image-section\\\">\\n    <ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed>\\n    <p class=\\\"caption\\\">Annual rainfall distribution across all twelve months.</p>\\n  </div>\\n\\n  <div class=\\\"summary-card\\\">\\n    <h3>Key Findings</h3>\\n    \\n    <div class=\\\"metric-box\\\">\\n      <span class=\\\"metric-label\\\">Yearly Total Rainfall</span>\\n      <span id=\\\"yearly-total\\\" class=\\\"metric-value\\\">--</span>\\n      <span class=\\\"unit\\\">mm</span>\\n    </div>\\n\\n    <h4>Top 3 Wettest Months</h4>\\n    <table class=\\\"summary-table\\\">\\n      <thead>\\n        <tr>\\n          <th>Rank</th>\\n          <th>Month</th>\\n          <th>Rainfall (mm)</th>\\n        </tr>\\n      </thead>\\n      <tbody id=\\\"top-months-body\\\">\\n        <!-- Rows populated by script -->\\n      </tbody>\\n    </table>\\n  </div>\\n</div>\",\n  \"css\": \".report-container {\\n  font-family: system-ui, -apple-system, sans-serif;\\n  color: #333;\\n  line-height: 1.5;\\n}\\n\\nh2 {\\n  border-bottom: 2px solid #3498db;\\n  padding-bottom: 10px;\\n  margin-bottom: 20px;\\n}\\n\\n.image-section {\\n  text-align: center;\\n  background: #fff;\\n  border: 1px solid #e0e0e0;\\n  border-radius: 8px;\\n  padding: 20px;\\n  margin-bottom: 30px;\\n  box-shadow: 0 2px 4px rgba(0,0,0,0.05);\\n}\\n\\n.caption {\\n  font-style: italic;\\n  color: #666;\\n  margin-top: 10px;\\n}\\n\\n.summary-card {\\n  background: #f8fafc;\\n  border: 1px solid #cbd5e1;\\n  border-radius: 8px;\\n  padding: 24px;\\n}\\n\\nh3 {\\n  margin-top: 0;\\n  color: #2c3e50;\\n}\\n\\n.metric-box {\\n  display: inline-flex;\\n  align-items: baseline;\\n  background: #ebf5fb;\\n  border: 1px solid #aed6f1;\\n  border-radius: 6px;\\n  padding: 12px 20px;\\n  margin-bottom: 24px;\\n}\\n\\n.metric-label {\\n  font-size: 0.9em;\\n  color: #5b7a9d;\\n  margin-right: 8px;\\n}\\n\\n.metric-value {\\n  font-size: 1.8em;\\n  font-weight: bold;\\n  color: #2980b9;\\n  margin: 0 4px;\\n}\\n\\n.unit {\\n  font-size: 1.1em;\\n  color: #7f8c8d;\\n}\\n\\n.summary-table {\\n  width: 100%;\\n  border-collapse: collapse;\\n  background: #fff;\\n  border-radius: 6px;\\n  overflow: hidden;\\n  box-shadow: 0 1px 3px rgba(0,0,0,0.05);\\n}\\n\\n.summary-table th {\\n  background-color: #3498db;\\n  color: #fff;\\n  font-weight: 600;\\n  padding: 12px;\\n  text-align: left;\\n}\\n\\n.summary-table td {\\n  padding: 10px 12px;\\n  border-bottom: 1px solid #eee;\\n}\\n\\n.summary-table tr:last-child td {\\n  border-bottom: none;\\n}\\n\\n.summary-table tr:nth-child(even) {\\n  background-color: #f8fcff;\\n}\",\n  \"scripts\": [\n    \"(function() {\\\\n\" +\n    \"  try {\\\\n\" +\n    \"    const csvText = ml.dereference('@tool:7be01d4:out');\\\\n\" +\n    \"    if (!csvText) throw new Error('CSV data missing.');\\\\n\" +\n    \"\\\\n\" +\n    \"    const lines = csvText.trim().split('\\\\\\\\n');\\\\n\" +\n    \"    const rows = lines.slice(1);\\\\n\" +\n    \"    let totalRainfall = 0;\\\\n\" +\n    \"    const months = [];\\\\n\" +\n    \"\\\\n\" +\n    \"    for (const line of rows) {\\\\n\" +\n    \"      if (!line.trim()) continue;\\\\n\" +\n    \"      const parts = line.split(',');\\\\n\" +\n    \"      const mName = parts[0]?.trim() ?? 'Unknown';\\\\n\" +\n    \"      const mValue = parseFloat(parts[1]?.replace('%', '').trim());\\\\n\" +\n    \"\\\\n\" +\n    \"      if (!isNaN(mValue)) {\\\\n\" +\n    \"        totalRainfall += mValue;\\\\n\" +\n    \"        months.push({ name: mName, value: mValue });\\\\n\" +\n    \"      }\\\\n\" +\n    \"    }\\\\n\" +\n    \"\\\\n\" +\n    \"    const totalEl = root.byId['yearly-total'];\\\\n\" +\n    \"    if (totalEl) {\\\\n\" +\n    \"      totalEl.text = totalRainfall.toFixed(1);\\\\n\" +\n    \"    }\\\\n\" +\n    \"\\\\n\" +\n    \"    const topMonths = months.sort((a, b) => b.value - a.value).slice(0, 3);\\\\n\" +\n    \"    const tbodyEl = root.byId['top-months-body'];\\\\n\" +\n    \"    if (tbodyEl) {\\\\n\" +\n    \"      tbodyEl.children.length = 0;\\\\n\" +\n    \"      topMonths.forEach((item, idx) => {\\\\n\" +\n    \"        tbodyEl.children.push({\\\\n\" +\n    \"          tag: 'tr',\\\\n\" +\n    \"          children: [\\\\n\" +\n    \"            { tag: 'td', text: String(idx + 1) },\\\\n\" +\n    \"            { tag: 'td', text: item.name },\\\\n\" +\n    \"            { tag: 'td', text: item.value.toFixed(1) }\\\\n\" +\n    \"          ]\\\\n\" +\n    \"        });\\\\n\" +\n    \"      });\\\\n\" +\n    \"    }\\\\n\" +\n    \"  } catch (e) {\\\\n\" +\n    \"    console.error(e);\\\\n\" +\n    \"    const totalEl = root.byId['yearly-total'];\\\\n\" +\n    \"    if (totalEl) totalEl.text = 'N/A';\\\\n\" +\n    \"  }\\\\n\" +\n    \"})();\\\\n\"\n  ]\n}\n```",
+  "usage": {
+    "input_tokens": 732,
+    "output_tokens": 3953,
+    "total_tokens": 4685,
+    "prompt_tokens": 732,
+    "completion_tokens": 3953,
+    "response_token/s": 248.07,
+    "prompt_token/s": 7191.77,
+    "total_duration": 39083074800,
+    "load_duration": 7318561703,
+    "prompt_eval_count": 732,
+    "prompt_eval_duration": 101783000,
+    "eval_count": 3953,
+    "eval_duration": 15935335000,
+    "approximate_total": "0h0m39s",
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_eval_cached_count": 0
+  }
+}

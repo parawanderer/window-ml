@@ -1,0 +1,19 @@
+{
+  "model": "deepseek.deepseek-v4-pro",
+  "shape": "dom",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Monthly rainfall summary\",\n  \"body\": \"<div class=\\\"card\\\">\\n  <figure>\\n    <ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed>\\n    <figcaption>Figure: Monthly rainfall during the year (mm)</figcaption>\\n  </figure>\\n  <div class=\\\"stats\\\">\\n    <h2>Wettest months</h2>\\n    <ol id=\\\"wettest\\\"></ol>\\n    <p class=\\\"total\\\">Yearly total: <span id=\\\"total\\\"></span> mm</p>\\n  </div>\\n</div>\",\n  \"css\": \".card {\\n  font-family: system-ui, -apple-system, sans-serif;\\n  max-width: 640px;\\n  margin: 0 auto;\\n  padding: 16px;\\n  background: #f8fafc;\\n  border: 1px solid #e2e8f0;\\n  border-radius: 12px;\\n}\\nfigure {\\n  margin: 0 0 16px;\\n}\\nml-embed,\\nfigure img {\\n  display: block;\\n  width: 100%;\\n  height: auto;\\n  border-radius: 8px;\\n}\\nfigcaption {\\n  text-align: center;\\n  font-size: 0.9em;\\n  color: #475569;\\n  margin-top: 8px;\\n}\\nh2 {\\n  font-size: 1.1rem;\\n  margin: 0 0 8px;\\n}\\nol {\\n  margin: 0 0 12px;\\n  padding-left: 20px;\\n}\\nli {\\n  margin: 2px 0;\\n}\\n.total {\\n  font-weight: 600;\\n}\",\n  \"scripts\": [\n    \"const csvText = (ml.dereference('@tool:7be01d4:out') || '').trim();\\nconst lines = csvText.split('\\\\n');\\nconst data = lines.slice(1).map(line => {\\n  const parts = line.trim().split(',');\\n  return { month: parts[0].trim(), mm: Number(parts[1]) };\\n}).filter(row => row.month && !Number.isNaN(row.mm));\\nconst wettest = [...data].sort((a, b) => b.mm - a.mm).slice(0, 3);\\nconst total = data.reduce((sum, row) => sum + row.mm, 0);\\nconst list = root.querySelector('#wettest');\\nconst totalEl = root.querySelector('#total');\\nconst items = wettest.map(row => {\\n  const li = root.create('li');\\n  li.textContent = row.month + ': ' + row.mm + ' mm';\\n  return li;\\n});\\nlist.replaceChildren(...items);\\ntotalEl.textContent = String(total);\"\n  ]\n}\n```",
+  "usage": {
+    "prompt_tokens": 784,
+    "completion_tokens": 3587,
+    "total_tokens": 4371,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2910
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 784
+  }
+}

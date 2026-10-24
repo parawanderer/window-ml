@@ -1,0 +1,31 @@
+{
+  "model": "qwen3.6:35b",
+  "shape": "dom",
+  "task": "current",
+  "text": "```json\n{\n\"title\": \"Conversation Metrics Panel\",\n\"body\": \"<div class=\\\"panel\\\">\\n  <h2 class=\\\"title\\\">📊 Conversation Stats</h2>\\n  \\n  <section class=\\\"section\\\">\\n    <h3 class=\\\"subtitle\\\">Message Counts</h3>\\n    <div id=\\\"role-stats\\\" class=\\\"stats\\\"></div>\\n  </section>\\n\\n  <section class=\\\"section\\\">\\n    <h3 class=\\\"subtitle\\\">Latest Tool Calls (5)</h3>\\n    <ul id=\\\"tool-list\\\" class=\\\"tool-list\\\"></ul>\\n  </section>\\n\\n  <section class=\\\"section\\\">\\n    <h3 class=\\\"subtitle\\\">Longest Message</h3>\\n    <div id=\\\"longest-msg\\\" class=\\\"metric-value\\\"></div>\\n  </section>\\n\\n  <footer class=\\\"footer\\\">\\n    <span>Updated dynamically every draw</span>\\n  </footer>\\n</div>\",\n\"css\": \".panel {\\n  font-family: 'SF Mono', 'Fira Code', monospace;\\n  background: #1a1b26;\\n  color: #a9b1d6;\\n  border-radius: 12px;\\n  padding: 20px;\\n  min-width: 280px;\\n  max-width: 360px;\\n  box-shadow: 0 4px 24px rgba(0,0,0,0.4);\\n  border: 1px solid #292e42;\\n}\\n\\n.title {\\n  margin: 0 0 16px;\\n  font-size: 18px;\\n  color: #c0caf5;\\n  border-bottom: 2px solid #3b4261;\\n  padding-bottom: 10px;\\n}\\n\\n.section {\\n  margin: 14px 0;\\n}\\n\\n.subtitle {\\n  font-size: 11px;\\n  text-transform: uppercase;\\n  letter-spacing: 1.5px;\\n  color: #565f89;\\n  margin: 0 0 8px;\\n}\\n\\n.stats {\\n  display: flex;\\n  flex-wrap: wrap;\\n  gap: 6px;\\n}\\n\\n.stat-badge {\\n  background: #292e42;\\n  padding: 4px 12px;\\n  border-radius: 20px;\\n  font-size: 13px;\\n  color: #7aa2f7;\\n  border: 1px solid #3b4261;\\n}\\n\\n.stat-badge .count {\\n  font-weight: bold;\\n  color: #9ece6a;\\n}\\n\\n.tool-list {\\n  list-style: none;\\n  padding: 0;\\n  margin: 0;\\n}\\n\\n.tool-list li {\\n  background: #24283b;\\n  margin: 4px 0;\\n  padding: 6px 10px;\\n  border-radius: 6px;\\n  font-size: 12px;\\n  color: #bb9af7;\\n  border-left: 3px solid #bb9af7;\\n  overflow: hidden;\\n  text-overflow: ellipsis;\\n  white-space: nowrap;\\n}\\n\\n.tool-list li:first-child {\\n  border-left-color: #7aa2f7;\\n  color: #7aa2f7;\\n}\\n\\n.metric-value {\\n  font-size: 36px;\\n  font-weight: bold;\\n  color: #9ece6a;\\n  line-height: 1;\\n}\\n\\n.longest-label {\\n  font-size: 12px;\\n  color: #565f89;\\n  margin-top: 4px;\\n}\\n\\n.footer {\\n  margin-top: 16px;\\n  padding-top: 10px;\\n  border-top: 1px solid #292e42;\\n  font-size: 10px;\\n  color: #3b4261;\\n  text-align: center;\\n}\",\n\"scripts\": [\n  \"(() => {\\n  const msgs = ml.current.messages || [];\\n\\n  // Count by role\\n  const roleCount = {};\\n  [\\\"system\\\",\\\"user\\\",\\\"assistant\\\",\\\"tool\\\"].forEach(role => {\\n    roleCount[role] = msgs.filter(m => m.role === role).length;\\n  });\\n\\n  const statsEl = root.querySelector('#role-stats');\\n  if (statsEl) {\\n    const badges = Object.entries(roleCount)\\n      .filter(([_, c]) => c > 0)\\n      .map(([role, count]) => \\n        `<span class=\\\"stat-badge\\\">${role}: <span class=\\\"count\\\">${count}</span></span>`\\n      );\\n    statsEl.innerHTML = badges.join('') || '<span style=\\\"color:#565f89;font-size:12px;\\\">None</span>';\\n  }\\n\\n  // Latest 5 tool call names\\n  const tools = msgs\\n    .filter(m => m.tool_calls && m.tool_calls.length > 0)\\n    .flatMap(m => m.tool_calls.map(tc => tc.function.name));\\n  \\n  const recent5 = tools.slice(-5);\\n  const toolListEl = root.querySelector('#tool-list');\\n  if (toolListEl) {\\n    toolListEl.innerHTML = recent5.length > 0\\n      ? recent5.map(name => `<li>${name}</li>`).join('')\\n      : '<li style=\\\"color:#3b4261;\\\">No tool calls yet</li>';\\n  }\\n\\n  // Longest message content length\\n  const lengths = msgs.map(m => (m.content || '').length);\\n  const maxLen = lengths.length > 0 ? Math.max(...lengths) : 0;\\n  \\n  const longestEl = root.querySelector('#longest-msg');\\n  if (longestEl) {\\n    longestEl.innerHTML = `${maxLen}<div class=\\\"longest-label\\\">characters</div>`;\\n  }\\n})();\"\n]\n}\n```",
+  "usage": {
+    "input_tokens": 658,
+    "output_tokens": 1620,
+    "total_tokens": 2278,
+    "prompt_tokens": 658,
+    "completion_tokens": 1620,
+    "response_token/s": 246.84,
+    "prompt_token/s": 6877.38,
+    "total_duration": 87046749003,
+    "load_duration": 7315219361,
+    "prompt_eval_count": 658,
+    "prompt_eval_duration": 95676000,
+    "eval_count": 1620,
+    "eval_duration": 6562900000,
+    "approximate_total": "0h1m27s",
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_eval_cached_count": 0
+  }
+}

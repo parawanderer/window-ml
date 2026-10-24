@@ -1,0 +1,17 @@
+{
+  "model": "moonshot.kimi-k3",
+  "shape": "data",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Monthly Rainfall — Summary\",\n  \"body\": \"<div class=\\\"card\\\"><div class=\\\"fig\\\"><ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed><p class=\\\"caption\\\">Figure 1 — Monthly rainfall for the year (mm).</p></div><div class=\\\"stats\\\"><h3>Wettest months</h3><ol id=\\\"top3\\\" class=\\\"top3\\\"></ol><p id=\\\"total\\\" class=\\\"total\\\"></p></div></div>\",\n  \"css\": \".card{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:16px}.fig{border:1px solid #e2e2e2;border-radius:10px;padding:12px;background:#fafafa}.caption{text-align:center;font-style:italic;color:#555;margin:10px 0 0}.stats{margin-top:16px;border-top:2px solid #3b82f6;padding-top:10px}.stats h3{margin:0 0 8px;color:#1e3a8a}.top3{margin:0;padding-left:22px;line-height:1.7}.top3 li::marker{font-weight:700;color:#3b82f6}.total{margin-top:12px;font-weight:700;font-size:1.05em;background:#eff6ff;border-radius:8px;padding:8px 12px;color:#1e3a8a}\",\n  \"scripts\": [\n    \"const csv = ml.dereference(\\\"@tool:7be01d4:out\\\");\\nconst rows = csv.trim().split(/\\\\r?\\\\n/).slice(1)\\n  .map(line => line.split(\\\",\\\"))\\n  .filter(parts => parts.length >= 2 && parts[0].trim() !== \\\"\\\")\\n  .map(parts => ({ month: parts[0].trim(), mm: Number(parts[1]) }));\\nconst total = rows.reduce((sum, r) => sum + r.mm, 0);\\nconst top3 = rows.slice().sort((a, b) => b.mm - a.mm).slice(0, 3);\\nconst medals = [\\\"\\\\u{1F947}\\\", \\\"\\\\u{1F948}\\\", \\\"\\\\u{1F949}\\\"];\\nroot.byId.top3.children = top3.map((r, i) => ({ tag: \\\"li\\\", attrs: {}, text: `${medals[i] ?? \\\"\\\"} ${r.month} — ${r.mm} mm`, children: [] }));\\nroot.byId.total.text = `Yearly total: ${Math.round(total * 100) / 100} mm`;\"\n  ]\n}\n```",
+  "usage": {
+    "prompt_tokens": 793,
+    "completion_tokens": 1437,
+    "total_tokens": 2230,
+    "completion_tokens_details": {
+      "reasoning_tokens": 852
+    },
+    "prompt_tokens_details": {
+      "cache_write_tokens": 768
+    }
+  }
+}

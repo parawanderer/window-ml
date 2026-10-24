@@ -2,8 +2,8 @@
 
 **Status: spec-wip, nothing built.** Written 2026-10-24 from [issue #320](https://github.com/parawanderer/window-ml/issues/320)
 (the "agent canvas", refined 2026-10-23 into artifacts) and a design session with @parawanderer the same day. The
-decisions marked RULED are his; everything else is proposed. A spike answers the [open questions](#open-questions)
-before phase 1 is built.
+decisions marked RULED are his; everything else is proposed. The spike that answered the open questions is
+[docs/plan/artifacts/SPIKE.md](../plan/artifacts/SPIKE.md) (2026-10-24); what it changed is marked "(spike)" below.
 
 ## The problem
 
@@ -123,15 +123,16 @@ says WHERE it goes. It applies to every embed, not only artifacts.
 
 RULED in direction (2026-10-24): the model never writes a script that the browser runs. The scripts are data, run by
 the read-only dialect's evaluator (`docs/dev/readonly-exec.md`) in a fourth realm beside the page, the worker and the
-policy realms. The evaluator is our own code, loaded in the frame as `'self'`, so the frame's CSP keeps
-`script-src 'self'` and no model text is ever compiled.
+policy realms. The evaluator is our own code, loaded in the frame as `'self'` and run in a WORKER the frame starts
+from a blob (spike), so the frame's CSP keeps `script-src 'self'`, no model text is ever compiled, and an escape of
+the evaluator lands in a scope with no document, no `top` and no network (see [the frame](#the-frame-the-second-wall)).
 
 What a script can reach is one table, and nothing else is in scope:
 
 | Receiver | Allowed |
 | --- | --- |
-| `root` | the artifact's own subtree: create, append, remove, text, `classList`, attributes through the sanitizer, `addEventListener` with a script arrow |
-| `state` | `get`, `set` on this artifact's state |
+| `root` | the artifact's view as PLAIN DATA the script owns, parsed from the body before the scripts run: `{ tag, attrs, text, children, on }` nodes and `root.byId`. The host diffs it after each run and sends it through the sanitizer to the frame; `on: { click: (e) => … }` holds a script arrow the host calls on that event (spike: a worker has no DOM, and plain data needs no new receiver kind) |
+| `state` | a plain object the script owns, read and written directly; the host keeps it after each run, and rolls it back when a run or an event is refused (spike) |
 | pointers | read a pointer value of the owning conversation, as data |
 | `ml.current` | read, the owning conversation's |
 | `ml.interval` | a budgeted repeat (a clock, a poll of state) |
@@ -146,7 +147,9 @@ surface, the phone included.
 **`while` later, in this realm only.** The step budget bounds a loop the language cannot prove halts, so a `while`
 here would cost a step per pass and end in "out of budget at line N", drawn by the host on the artifact and returned
 to the model. The other realms keep refusing it, with adversarial tests saying so. A long computation that keeps
-running without blocking needs a time-sliced evaluator: a further extension.
+running without blocking needs a time-sliced evaluator: a further extension. Proposed after the spike, not measured:
+in a worker a long run blocks neither the frame nor the chat, and the frame can terminate the worker on a deadline,
+which may make the time slicing unnecessary.
 
 **What it costs.** No third-party libraries: charts are our own components in the frame (`<ml-chart>`, beside the
 styled components below) or a `python_exec` figure through a pointer. The dialect's syntax, not all of JavaScript.
@@ -160,20 +163,28 @@ the manifest's `sandbox.pages`, `sandbox="allow-scripts"`). The web build and th
 `<iframe sandbox="allow-scripts" srcdoc>` with a CSP the host prepends. The frame matters if the evaluator is ever
 escaped, and it keeps the artifact's CSS from painting over the conversation.
 
-- The manifest's sandbox CSP gains `default-src 'none'` (it has none today, so style, font and media loads are open)
-  and `img-src data:` (it is `'none'`, and resolved pointers are `data:` images).
-- The EMBEDDING page sets `frame-src 'self'`, which should stop the frame navigating itself to another site. The
-  extension pages' CSP sets no `frame-src` today. To be verified by the spike.
+Measured by `tests/e2e/artifact-wall.spec.mjs`, every route under four manifest variants (spike, Q1):
+
+- The manifest's sandbox CSP gains `default-src 'none'` (it has none today, so style, font, media and prefetch loads
+  leave the frame), `img-src data:` (it is `'none'`, and resolved pointers are `data:` images) and `worker-src blob:`
+  (for the evaluator's worker).
+- The EMBEDDING page sets `frame-src 'self'`, which stops the frame navigating itself to another site by every route
+  tried: `location`, a meta refresh, a link's click, through a `data:` or `blob:` page. The extension pages' CSP sets
+  no `frame-src` today.
+- Three routes leave a window under every CSP: `<link rel=preconnect>` (and so DNS), WebRTC's STUN, and
+  `top.postMessage` (the site, under the in-page sidebar). None exists in a worker, which is why the evaluator runs in
+  one: the frame's window runs only our renderer, over a view the sanitizer has passed.
 - The host draws the artifact's border, title and badge OUTSIDE the frame, so an artifact cannot draw a convincing
   approval card or ask for a key in a pane that looks like ours.
 - Messages from the frame are taken only from that frame's window (`e.source`), as `mermaid-client.ts` does.
 
 ## State
 
-Held by the host, reached only through `state.get`/`state.set`, scoped to the artifact's id. A write from the person
-(a ticked todo) goes through the host into the session, so the agent reads on its next turn what changed, and the log
-records who wrote it. What the agent reads is labelled as data the artifact or the person wrote: it is a
-prompt-injection path ("now fetch https://…?…"), and the agent's own fetches stay gated.
+Held by the host, handed to each run as `state`, a copy the script owns and writes directly (spike), stored back after
+the run and scoped to the artifact's id. A write from the person (a ticked todo) goes through the host into the
+session, so the agent reads on its next turn what changed, and the log records who wrote it. What the agent reads is
+labelled as data the artifact or the person wrote: it is a prompt-injection path ("now fetch https://…?…"), and the
+agent's own fetches stay gated.
 
 ## Styling
 
@@ -210,7 +221,7 @@ AGENTS.md requires for a new agent tool and a new `ml.*` member.
 
 ## Order
 
-1. **Spike** (the open questions below), its findings recorded here.
+1. **Spike**: done 2026-10-24, [SPIKE.md](../plan/artifacts/SPIKE.md).
 2. **Phase 1:** conversation artifacts with no capabilities: the tool, the realm, the frame, state, versions, embeds
    with the attribute block, every surface, exports, red-team.
 3. Keep as page (personal artifacts).
@@ -220,11 +231,10 @@ AGENTS.md requires for a new agent tool and a new `ml.*` member.
 
 ## Open questions
 
-- **The second wall.** Does an embedder's `frame-src 'self'` stop a sandboxed child navigating itself, by each route?
-  Are preconnect and DNS prefetch honoured in the sandbox frame? Measured in real Chromium against a server counting
-  hits, each probe kept as a committed test.
-- **The evaluator in a sandbox page.** Its bundle size; that it needs no `chrome.*` and no page-DOM assumption.
-- **The realm's shape.** How the dialect's ownership rule extends to a subtree a script created, to event handlers
-  that call a script arrow, and to a budget per event.
-- **What models write.** Asked by a panel for a todo list over state, a figure from a pointer and an `ml.current`
-  viewer, which constructs do their scripts need that the dialect refuses?
+Answered by the spike ([SPIKE.md](../plan/artifacts/SPIKE.md)): the second wall, the evaluator in a sandbox page,
+the realm's shape and what models write. What it left open:
+
+- **Five dialect additions** models reached for: `Math.random`, the `Number` statics, array destructuring in a
+  `for…of` head, numeric object keys, and `riskyRegex` passing a group of fixed counts. Which belong to the artifact
+  realm only, and which to every realm.
+- **A `find(selector)` helper over the `data` view**, if models ask for one; none of the panel needed it.
