@@ -209,6 +209,11 @@ freeze for one next session, the coordinator's pick; the root-k lane is CLOSED, 
 `[window-ml security] Site access`, which owns the fetch gate and consent and neither found nor probed anything here;
 the janitor reviews the code, the red team's pass (nine properties, briefed) is a PR stacked on the lane's branch,
 merging after it. The worked example and the demo site follow it, not with it.
+#1120 MERGED 9254b385 (2026-10-24): the janitor reviewed it (no finding); the coordinator reviewed the spec text (the
+"As built" block narrows the ruling at every point, no finding; the allow-row as-you hole it raised was corrected first,
+#1116). Not built: the policy page's rows show no facts yet, `interactive` included; that is #1122 (`@agent,@ui`) and
+needs Shane's design. The red team's stacked pass now targets main, merging after the janitor's review. The lane moves
+to site-access slice 3 PR 3. The worked example and the demo site are the next item here, UNASSIGNED.
 Extended the same day: the worked example and acceptance test (a task on another site scoped by a proposed policy),
 needing a multi-rule `propose_policy`, an `act` consumer that folds in the self-approval origin list, and an approved
 policy counting as the person's word under `crossOrigin: false` (`POLICIES.md`, "Worked example and acceptance test").
