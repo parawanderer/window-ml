@@ -521,7 +521,7 @@ as-you tier), so it lands with a red-team pass by a separate session (rule 10) a
 - **A hold outlives the turn.** A run whose turn ends held is not re-adopted on that page, and its next turn judges the
   page the tab holds then before anything runs (the person may have gone back by hand). Holds are worker memory: a run
   resurrected after an eviction is judged again on the page it wakes on.
-- **Not built:** the policy page's rows do not show `interactive` yet (it needs a design and its strings).
+- **Not built:** the policy page's rows do not show `interactive` yet (it needs a design and its strings: #1122).
 
 ## Worked example and acceptance test: a task on another site, scoped by a proposed policy
 
