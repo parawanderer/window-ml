@@ -237,6 +237,18 @@ export function deletePythonRun(runId: string): void {
     } catch { /* context gone */ }
 }
 
+/**
+ * A tier 3 library was removed: restart every Python worker that was handed one (READONLY_LIBRARY_MANIFEST.md, ruling
+ * D), since a loaded module stays importable until its realm dies. No offscreen document means no worker holds one.
+ * @returns how many workers were restarted
+ */
+export async function dropPythonLibraries(): Promise<number> {
+    try {
+        const r = await chrome.runtime.sendMessage({ type: "PY_DROP_LIBRARIES" }) as { restarted?: number } | undefined;
+        return r?.restarted ?? 0;
+    } catch { return 0; }   // no offscreen listening: no worker to restart
+}
+
 /** PY_STDOUT: relay one live stdout chunk from the offscreen host to whoever is awaiting that stream — a page
  *  through its content script, one of our own surfaces over the runtime channel. */
 export function relayPyStdout(message: any): void {
