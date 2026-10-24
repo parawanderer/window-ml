@@ -203,3 +203,94 @@ def _ml_dialect_setup(_files):
     return ""
 _ml_dialect_setup(${JSON.stringify(files)})
 `;
+
+/** A pure-Python library the person approved for the dialect (READONLY_LIBRARY_MANIFEST.md, tier 3): its source, pinned
+ *  to that source's sha256, and the names a cell may read off it. */
+export interface DialectLibrary {
+    /** The import name: one identifier, never one that already imports. */
+    name: string;
+    source: string;
+    /** sha256 of `source` as UTF-8, hex. */
+    sha256: string;
+    names: string[];
+}
+
+/**
+ * Load approved tier 3 libraries into the dialect, after `dialectSetup`. Each body is checked against the whitelist and
+ * RUN inside the dialect (`mark`, `_restricted.run`), never imported by Python's own machinery, so a body that imports,
+ * loops or opens anything is refused like a cell. What it leaves must carry no state from one run to the next: an object
+ * made in the load run stays owned by every later run (measured on the pinned core, 2026-10-24), so a module-level list
+ * or a mutable default would be written by later cells and remember. Only then is it registered (`sys.modules`,
+ * `allow_module` with its listed names). A pin already loaded is skipped. The script's value is JSON, `[{name, why}]`,
+ * `why` "" when loaded.
+ * @param libs the libraries, each pinned
+ * @param nodes the whitelist's AST node names
+ * @param reserved import names a library may never take, though nothing has imported them yet: the dialect's modules and
+ *   every package in the Pyodide lock, so a later `import scipy` on the full path is never handed a library instead
+ */
+export const libraryLoad = (libs: DialectLibrary[], nodes: string[], reserved: string[]): string => /* python */ `
+def _ml_library_load(_libs, _nodes, _reserved):
+    import hashlib, importlib.util, json, keyword, sys, types, _restricted, restricted
+    _loaded = sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).pins
+    _const = (type(None), bool, int, float, complex, str, bytes)
+    def _frozen(_x):
+        if type(_x) in _const:
+            return True
+        if type(_x) in (tuple, frozenset):
+            return all(_frozen(_y) for _y in _x)
+        return False
+    def _left(_k, _v):
+        # Why the global _k cannot stay in the module, or None.
+        if _frozen(_v) or isinstance(_v, (types.ModuleType, types.BuiltinFunctionType)):
+            return None
+        if type(_v) is types.FunctionType and _v.__code__.co_flags & restricted.CO_RESTRICTED and _v.__closure__ is None:
+            for _d in list(_v.__defaults__ or ()) + list((_v.__kwdefaults__ or {}).values()):
+                if not _frozen(_d):
+                    return "'" + _k + "' has a default that is not a constant, which would keep state from one run to the next"
+            return None
+        return "'" + _k + "' holds a " + type(_v).__name__ + ", which would keep state from one run to the next"
+    def _one(_lib):
+        _name, _src = _lib["name"], _lib["source"]
+        if not _name.isidentifier() or keyword.iskeyword(_name) or _name.startswith("_"):
+            return "its name is not a plain module name"
+        if _loaded.get(_name) == _lib["sha256"]:
+            return ""
+        if _name in _loaded:
+            return "a library of that name is already loaded at another pin; it changes when the sandbox restarts"
+        if (_name in sys.modules or _name in sys.stdlib_module_names or _name in _reserved
+                or importlib.util.find_spec(_name) is not None):
+            return "that name already imports something else"
+        if hashlib.sha256(_src.encode("utf-8")).hexdigest() != _lib["sha256"]:
+            return "its source does not match its sha256 pin"
+        try:
+            restricted.check(_src, _nodes)
+            _code = restricted.mark(compile(_src, "<library " + _name + ">", "exec"))
+            _ns = {"__name__": _name}
+            _restricted.run(_code, _ns, restricted.DEFAULT_BUDGET)
+        except _restricted.NotInDialect as _e:
+            return str(_e)
+        except SyntaxError as _e:
+            return "not in dialect: " + str(_e)
+        except Exception as _e:
+            return "its body raised " + type(_e).__name__ + ": " + str(_e)
+        for _k, _v in _ns.items():
+            if _k not in ("__name__", "__builtins__"):
+                _why = _left(_k, _v)
+                if _why:
+                    return _why
+        for _n in _lib["names"]:
+            if not _n.isidentifier() or _n.startswith("__"):
+                return "'" + _n + "' is not a name a cell may read"
+            if _n not in _ns:
+                return "it defines no '" + _n + "'"
+            if not (_frozen(_ns[_n]) or type(_ns[_n]) is types.FunctionType):
+                return "'" + _n + "' is not a function or a constant"
+        _mod = types.ModuleType(_name)
+        _mod.__dict__.update({_k: _v for _k, _v in _ns.items() if _k != "__builtins__"})
+        sys.modules[_name] = _mod
+        _restricted.allow_module(_name, list(_lib["names"]))
+        _loaded[_name] = _lib["sha256"]
+        return ""
+    return json.dumps([{"name": _l["name"], "why": _one(_l)} for _l in _libs])
+_ml_library_load(${JSON.stringify(libs)}, frozenset(${JSON.stringify(nodes)}), frozenset(${JSON.stringify(reserved)}))
+`;
