@@ -25,9 +25,8 @@ private, isolated and permissioned by default.
 { id, title, version, body, css, scripts[], state }
 ```
 
-- **`body`** is the language answers are already written in: Markdown, with pointer embeds, ```` ```mermaid ````
-  fences, math and the [attribute block](#showing-one-in-an-answer), and raw HTML allowed inside it for layout. See
-  [The body](#the-body).
+- **`body`** is HTML, with our elements for what an answer can draw (pointer embeds, diagrams, Markdown prose), and
+  an optional `format: "markdown"` for an artifact that is mostly prose. See [The body](#the-body).
 - The HTML it produces is sanitized on every write with an allowlist (DOMPurify): no `<script>`, no `on*` attribute,
   no `<meta>`, `<base>`, `<link>`, `<iframe>`, `<object>`, no form `action`. A `src` may only name a pointer
   (`@tool:<id>:out`, `@artifact:<id>`), which the host resolves to a `data:` URL. An `href` opens only through a
@@ -39,12 +38,14 @@ private, isolated and permissioned by default.
 
 ### The body
 
-Proposed: Markdown first, not plain HTML, so that everything an answer can draw an artifact can draw, through the same
-renderer, and the model writes one language for both.
+HTML is the base, because varied layouts are expressed better in HTML than in Markdown (@parawanderer, 2026-10-24).
+Everything an answer can draw is an element, so an artifact can draw it in any layout:
 
-- **Static content** is Markdown: `![the figure](@tool:<id>:out)`, a ```` ```mermaid ```` fence, a table, math.
-- **Layout** is raw HTML inside the Markdown (`<div class="two-col">`). Markdown is not parsed inside an HTML block,
-  so each embed also has an HTML spelling: `<ml-embed ref="@tool:<id>:out">`, `<ml-mermaid>`, `<ml-chart>`.
+- **`<ml-embed ref="@tool:<id>:out">`** shows a pointer's value, as an answer's `![…](@tool:…)` does.
+- **`<ml-mermaid>`**, **`<ml-chart>`** and the styled components below.
+- **`<ml-markdown>`** holds Markdown prose, rendered by the answer renderer, so `![…](@tool:…)`, ```` ```mermaid ````
+  fences, math and the [attribute block](#showing-one-in-an-answer) work inside it as they do in an answer.
+- **`format: "markdown"`** is shorthand for a body that is one `<ml-markdown>`: an artifact that is mostly prose.
 - **Dynamic content** is built by a script with the same elements: a todo row a script creates from `state` can hold
   an `<ml-embed>`. One element type serves both.
 - **The HOST draws every embed, not the frame.** The frame cannot make a frame (`frame-src 'none'`) and holds no
