@@ -178,6 +178,17 @@ most useful open item: first the evidence-run gap (a lying manifest that claims 
 nothing passes the evidence run), measured failing-first, fixed in its own PR, the janitor reviews, root-k merges; then
 (c2) library manifests only if time allows. The other left items stay parked. Rule 10 holds: the red team pins any new
 surface in its own PR stacked on root-k's, merged after. Every other lane stays frozen.
+The gap MEASURED the same day (failing-first, fake host: a recorded `mytool out.txt` creates the file; a draft calling
+it a reader re-runs exit 0 under `write:none` and passes, since the host reports no denials and under `write:none` the
+root cannot change). FIX in #1089 (open; `@exec,@security,@ui,@docs`): the evidence run checks the RECORDED call; every
+non-flag operand and `--flag=value` value is hashed by spawn-then-discard before the call starts and after it is done,
+and a changed one fails evidence without re-running anything. The pass message claims only that ("no named operand of a
+recorded call was created, modified or removed"), the card names what the check cannot see (a write inside a directory
+operand, a file no argument names, a secret path compared by existence only), both pinned. The closure is host-side
+denial reporting (`done.denied`), a left item in [`ROOT_K_RESULT_2.md`](ROOT_K_RESULT_2.md) for Shane to post on the
+host repo. RULED on opening: #1089 edits three of the red team's test files, so it merges only after e3 has posted on
+the PR that each edit keeps its property (a narrowed one is reverted and e3's own version lands stacked after), and
+after the janitor's review of the rest; e3 then pins the residuals in its own file, stacked and merged after.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
