@@ -1,4 +1,4 @@
-// propose-manifest-tool.ts — the `propose_manifest` tool: the model asks the person to store a program manifest it drafted.
+// propose-manifest-tool.ts — the `propose_manifest` tool: the model asks the person to store a program manifest it drafted, or a tier 3 library for the Python dialect.
 
 // It never stores one itself. The call is always gated; the worker resolves the draft through the host, pins it, and
 // leads the card with how the draft reads this run's own calls (sw-manifest-proposal.ts); it is stored, and its evidence
@@ -24,11 +24,14 @@ export interface ProposeManifestDeps {
 export function proposeManifestTool(define: typeof defineTool, deps?: ProposeManifestDeps): MlTool {
     return define({
         name: "propose_manifest",
-        summary: "Asks the person to store a program manifest you drafted, so ml.sh can describe that program's calls.",
+        summary: "Asks the person to store a program manifest you drafted, or a pure-Python library for the read-only Python dialect.",
         description: "Ask the person to store a manifest for a program ml.sh has none for (a CLI on PATH, or a script of this repository), " +
             "drafted from its --help or its source, so its read-only calls can run without a card. " +
             "The host pins it to the program file as it is now. They see it with how it reads this run's own calls of that program. " +
-            "Once approved it applies under the OS sandbox only, until those calls re-run cleanly under it.",
+            "Once approved it applies under the OS sandbox only, until those calls re-run cleanly under it. " +
+            "Or pass library instead of manifest: a pure-Python module of this repository that python_exec cells inside the read-only dialect may then import. " +
+            "Its top level may only import the dialect's modules, define functions whose defaults are constants, and bind constants; its body is judged by the dialect's gate like a cell's. " +
+            "They see its source as read now; a later change to the file needs a new proposal.",
         parameters: {
             type: "object",
             properties: {
@@ -37,14 +40,19 @@ export function proposeManifestTool(define: typeof defineTool, deps?: ProposeMan
                     description: "A program manifest: {program, version: {range, args, pattern} for a binary (range \"*\" when it reports none), " +
                         "or entrypoint: {path} for a script (path relative to the workspace root; its sha256 is filled in), command: {effects, paths, flags}}.",
                 },
-                scope: { type: "string", enum: ["global", "workspace"], description: "global for a tool on PATH; workspace for one of this repository (forced for a script)." },
+                library: {
+                    type: "object",
+                    description: "Instead of manifest: {path, module, names?}. path is the .py file relative to the workspace root; module the import name (one identifier); names the functions and constants a cell may use (default: all it defines).",
+                },
+                scope: { type: "string", enum: ["global", "workspace"], description: "global for a tool on PATH; workspace for one of this repository (forced for a script). A library is global only." },
             },
-            required: ["manifest", "scope"],
+            required: ["scope"],
         },
         requiresApproval: true,
         run: async (args: Record<string, unknown>) => {
             if (!deps) return "Error: propose_manifest runs only in a run the extension started for you.";
-            return (await deps.outcome(args)) ?? "Not stored: the person did not approve it. Its calls still ask.";
+            return (await deps.outcome(args)) ?? (args.library !== undefined ? "Not stored: the person did not approve it. A cell that imports it is outside the dialect and asks."
+                : "Not stored: the person did not approve it. Its calls still ask.");
         },
     });
 }

@@ -14,6 +14,8 @@ import { pyCodeCovers } from "./grant-extract";
 import { pythonCellInDialect } from "../agent/python-dialect";
 import { openWireClient } from "./ml-wire-serve";
 import { recordRunLog } from "./sw-run-log";
+import { dialectLibraries } from "./sw-libraries";
+import type { DialectLibrary } from "../python/python-dialect-run";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -180,6 +182,9 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         : "own";
     const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
     const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}) };
+    // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
+    // sandbox loads each pin once.
+    if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
     try {
         const res = await attempt().catch((err) => {
@@ -277,4 +282,23 @@ export function pythonBundlePresent(): Promise<boolean> {
             return (await Promise.all([exists("pyodide.asm.wasm"), ...files.map((f) => exists(f!))])).every(Boolean);
         } catch { return false; }
     })();
+}
+
+/**
+ * A tier 3 library op in a sandbox of its own (principal `library`, never a run's or a page's): `shape`, the card's
+ * derived verdict, nothing of the library run; `load`, its load after the person's yes, whose check is the enforce layer.
+ * @param op which
+ * @param lib the library
+ * @returns the verdict, `{ why }` with `why` "" when admitted (and, for `shape`, the defs and constants)
+ */
+export async function pythonLibrary(op: "shape" | "load", lib: DialectLibrary): Promise<{ why: string; defs?: { name: string; signature: string }[]; constants?: string[] }> {
+    const msg = { type: "PY_RUN", principal: "library", hardened: true, code: "", image: null, tables: null, library: { op, lib } };
+    const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(msg));
+    const res = await attempt().catch((err) => {
+        if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
+        forgetOffscreen();
+        return attempt();
+    }) as { ok?: boolean; error?: string; library?: { why: string; defs?: { name: string; signature: string }[]; constants?: string[] } } | undefined;
+    if (!res?.ok || !res.library) return { why: `the Python sandbox did not answer (${res?.error ?? "no reply"})` };
+    return res.library;
 }

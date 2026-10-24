@@ -37,6 +37,7 @@ import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFe
 import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
+import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
@@ -1428,6 +1429,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A manifest draft is resolved through the host and checked as the store would; nothing runs.
                     if (name === "propose_manifest") {
                         if (!offersManifests()) return `Error: propose_manifest is not offered in this run.`;
+                        // A library's file is resolved, never read, before the card: the read is the card's own step's call.
+                        if (isLibraryDraft(args)) return precheckLibrary({ runId, seq: seqBase }, args);
                         const c = await checkManifestProposal({ runId, seq: seqBase }, args);
                         return "error" in c ? c.error : null;
                     }
@@ -1468,7 +1471,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // reads this run's own calls of the program (DERIVED: the host resolved them, nothing ran). What the
                     // person approves is `manifest`, and only that is stored (the resolve below).
                     let manifest: CheckedManifest | undefined;
-                    if (tool === "propose_manifest") {
+                    // A library's card: its source as read by this step's recorded cat, under the shape rule's derived note.
+                    let library: CheckedLibrary | undefined;
+                    if (tool === "propose_manifest" && isLibraryDraft(args)) {
+                        const local = { step: step ?? 0, seq: seq ?? 0 };
+                        const c = offersManifests() ? await checkLibraryProposal({ runId, seq: seq != null ? seqBase + seq : seqBase, local, signal: abortCtl.signal, tokens: sessionTokens(runId) }, args) : undefined;
+                        if (c && "request" in c) { library = c; renderIn = { type: "code", text: c.request.source, lang: "python", note: c.note }; }
+                        else renderIn = { type: "code", text: "", lang: "python", note: c ? `This library cannot be stored: ${c.error.replace(/^Error: /, "")}` : "This library cannot be stored: the run does not offer propose_manifest, or ml.sh is not set up." };
+                    } else if (tool === "propose_manifest") {
                         const owner = { runId, seq: seq != null ? seqBase + seq : seqBase };
                         const c = offersManifests() ? await checkManifestProposal(owner, args) : undefined;
                         if (c && "request" in c) {
@@ -1545,6 +1555,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     // its evidence run follows, and the tool's own run reports both.
                                     if (ok && tool === "propose_manifest" && manifest && offersManifests())
                                         approveManifest({ runId, seq: gateSeq ?? seqBase, signal: abortCtl.signal }, manifest);
+                                    // A proposed library: loaded under the gate, and stored only if that load agrees.
+                                    if (ok && tool === "propose_manifest" && library && offersManifests()) approveLibrary(runId, library);
                                     if (ok && tool === "propose_policy" && proposal && offersProposals()) {
                                         const added = addRunPolicy(runId, { consumer: "fetch", ...proposal, origin: "proposed" });
                                         recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool } });
