@@ -59,7 +59,7 @@ find it", it is "I did not think to look": one session produced a CSS copy of th
 handle, and a second view-return signal, and each was one search away. Two of those three were CSS, not JSX,
 which is why it covers the stylesheet; the same thing happens to whole MODULES, which is why a file is a row.
 Output is never column-padded, so it pipes into `grep`, `cut -f3` and `awk -F'\t'`. It replaced
-`scripts/components.mjs` (sidebar components + CSS only). Filters: `--kind file,component,hook,function,
+`components.mjs` (sidebar components + CSS only). Filters: `--kind file,component,hook,function,
 class,type,const,css,style`, `--exported`/`--local`, `--sig`, and `--mobile` to include the phone app (`mobile/`), which a
 query leaves out by default. The checks below cover `mobile/` always: a React Native component needs its docstring and a
 `StyleSheet` key its comment, exactly as a web export and a CSS class do.
@@ -91,7 +91,7 @@ their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/S
 **RULE — a test goes under a SECTION, and `node scripts/test-index.mjs '<regex>'` is how you find one.** The code
 index above made the source searchable and left the tests opaque, which is the worse half: the tests are where the
 knowledge about behaviour lives, and they are what you must read before adding a twelfth test for a thing that has
-eleven. `tests/sidebar.test.js` was 407 tests in 9,300 lines behind ten section comments (it is now twelve
+eleven. `sidebar.test.js` was 407 tests in 9,300 lines behind ten section comments (it is now twelve
 `sidebar-*.test.js` files, and the index is what made that partition plannable) — grep finds a test whose
 name you can already guess and answers neither question you actually have ("is this covered?", "where does a new one
 go?"), and reading the file to find out costs about 150,000 tokens. The index answers both for about 5,000: one
