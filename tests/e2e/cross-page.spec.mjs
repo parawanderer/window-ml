@@ -112,7 +112,8 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
 
     const before = fake.calls().length;
     fake.setScript([
-        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true, credentials: true } },   // always gates: the run stays live
+        // A CROSS-ORIGIN as-you render: it gates, so the run stays live (the same origin's is free, POLICIES.md "One free tier").
+        { tool: "fetch_url", args: { url: site.crossOrigin + "/spa", rendered: true, credentials: true } },
         { content: "done" },
     ]);
     await page.evaluate(() => { window.ml.agent("Fetch it.", { env: false, approvalRouting: "external" }); return true; });
@@ -145,7 +146,8 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
 
 // fetch_url { rendered: true } — loads the URL in a background tab so its JS runs, then returns the SETTLED
 // DOM. /spa's raw HTML is an empty shell ("Loading…"); only after the client script runs does the marker
-// appear. A raw GET would never see it. Gated like a credentialed fetch (always prompts) → resolved via IPC.
+// appear. A raw GET would never see it. As you, on the page's own origin: the free tier (POLICIES.md, "One free tier"),
+// so no gate is raised for it.
 (BACKEND ? test.skip : test)("fetch_url rendered: a background-tab render returns JS-injected content (a raw GET can't) with cookie/ad overlays stripped", async () => {
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
     const page = await ext.context.newPage();
@@ -165,14 +167,12 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
     ]);
     await page.evaluate(() => { window.ml.agent("Fetch the SPA page rendered and report.", { env: false, approvalRouting: "external" }); return true; });
 
-    // The rendered fetch ALWAYS gates → approve it via the IPC channel.
-    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
-    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
-    expect(String(gate.tool)).toBe("fetch_url");
-    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
-
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
     await expect.poll(() => answers.join("|"), { timeout: 10000 }).toContain("RENDERED-CLEAN");   // content present, overlay stripped
+    // Free on the page's own origin: no gate was raised for this fetch (a run an earlier test parked may still hold
+    // one of its own, so a gate is looked for by its URL).
+    const ours = (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).filter((g) => JSON.stringify(g.arguments || {}).includes("/spa"));
+    expect(ours, "the same-origin as-you render asked nothing").toEqual([]);
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off" });
 });
@@ -280,14 +280,7 @@ async function renderAndCheck(path, marker) {
     const mine = () => fake.calls().filter((c) => JSON.stringify(c?.messages || []).includes(tag));
     fake.setScript([{ tool: "fetch_url", args: { url: site.url + path, rendered: true, credentials: true } }, { content: "ok" }]);
     await page.evaluate((t) => { window.ml.agent(`render it ${t}`, { env: false, approvalRouting: "external" }); return true; }, tag);
-    // …AND THE GATE IS FOUND BY ITS ARGUMENTS, for the same reason. The run parked by the previous test is
-    // still pending in the worker, so "exactly one gate is listed" is satisfied by ITS gate before ours even
-    // arrives — we would then resolve a stranger's approval and sit here while our own run stayed blocked.
-    const gateFor = async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list()))
-        .find((g) => JSON.stringify(g.arguments || {}).includes(path) && String(g.tool) === "fetch_url");
-    await expect.poll(async () => !!(await gateFor()), { timeout: 15000 }).toBe(true);
-    const gate = await gateFor();
-    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    // As you on the page's own origin: the free tier, so the run goes on with no gate (POLICIES.md, "One free tier").
     await expect.poll(() => mine().length, { timeout: 30000 }).toBe(2);
     const body = mine().at(-1);   // the final-answer call — its messages carry the fetch tool result
     await page.close();
