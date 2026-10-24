@@ -10,7 +10,7 @@ import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { dialectSetup, libraryLoad } from "../src/python/python-dialect-run.js";
+import { dialectSetup, libraryLoad, libraryShape } from "../src/python/python-dialect-run.js";
 
 const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
 const DATA_DIR = path.resolve(import.meta.dirname, "../notebooks/python-dialect/data");
@@ -157,4 +157,63 @@ except BaseException as _e:
 _r
 `);
     assert.strictEqual(outside, "NotInDialect");
+});
+
+// --- the card's shape rule: derived from the source alone, nothing runs (the coordinator's ruling B, 2026-10-24) ---
+
+/** The shape rule's verdict on `source` as `name`. */
+async function shape(name, source) {
+    return JSON.parse(await py.runPythonAsync(libraryShape(name, source, NODES, reservedNames())));
+}
+
+test("the shape rule admits a docstring, admitted imports, defs with literal defaults and literal constants, and lists signatures", async (t) => {
+    if (skip) return t.skip(skip);
+    const s = await shape("shape_ok", `"""Stats."""\nimport math\nfrom math import fsum\nSCALE = 2\nNEG = -1.5\nPAIR = ("a", (1, b"x"))\ndef total(xs, start=0, *, label=None):\n    return sum(xs) + start\ndef scaled(xs):\n    return [x * SCALE for x in xs]\n`);
+    assert.deepStrictEqual(s, { why: "", defs: [{ name: "total", signature: "xs, start=0, *, label=None" }, { name: "scaled", signature: "xs" }], constants: ["SCALE", "NEG", "PAIR"] });
+});
+
+test("the shape rule refuses, with the line, every top-level statement that would make state or run code at load", async (t) => {
+    if (skip) return t.skip(skip);
+    const cases = {
+        "X = []": 1, "X = {}": 1, "X = {1}": 1, "X = (1, [2])": 1, "X = len('a')": 1, "X = Y = ()": 0,
+        "def f(acc=[]):\n    return acc": 1, "def f(*, acc={}):\n    return acc": 1, "def f(n=len):\n    return n": 1,
+        "for i in range(3):\n    pass": 1, "x = [i for i in range(3)]": 1, "print(1)": 1, "if True:\n    X = 1": 1,
+        "import os": 1, "import os.path": 1, "from os import path": 1, "from . import x": 1, "from statistics import median": 1, "from math import sqrt": 1,
+        "\"\"\"doc\"\"\"\nX = 1\nY = X": 3, "X: int": 1, "X: int = 3": 1, "f = lambda x: x": 1, "assert True": 1, "X = 1\nX += 1": 2,
+    };
+    for (const [src, line] of Object.entries(cases)) {
+        const s = await shape("shape_bad", src);
+        assert.notStrictEqual(s.why, "", src);
+        if (line) assert.match(s.why, new RegExp(`line ${line}\\b`), `${src}: ${s.why}`);
+    }
+});
+
+test("the shape rule refuses a source outside the whitelist, a decorator, and a name that imports or is not plain", async (t) => {
+    if (skip) return t.skip(skip);
+    assert.match((await shape("shape_w", "def f():\n    while True:\n        pass")).why, /While/);
+    assert.match((await shape("shape_d", "def f(o):\n    return o.__class__")).why, /__class__/);
+    assert.match((await shape("shape_dec", "def deco(f):\n    return f\n@deco\ndef g():\n    return 1")).why, /line 3.*decorat/);
+    for (const n of ["json", "numpy", "scipy", "a.b", "_private", "class", ""]) assert.notStrictEqual((await shape(n, "X = 1")).why, "", n);
+});
+
+// Every top-level form the shape rule admits, one module each: the load must admit each too, or the card promised a
+// library the approval cannot deliver (the ruling names that disagreement a same-day finding).
+const ADMITTED_SHAPES = [
+    `"""Only a docstring."""`,
+    "import math", "import math, statistics", "from math import fsum", "from re import compile as rc",
+    "X = 1", "X = -1", "X = +2.5", "X = 1j", "X = None", "X = True", "X = 'a'", "X = b'a'", "X = ()", "X = (1, ('a', b'b', None))",
+    "def f():\n    return 1", "def f(a, b=1, *c, d=(), e=-1, **g):\n    return a", "def f(*, k=None):\n    return k",
+    "def f(xs):\n    def g(x):\n        return x + 1\n    return [g(x) for x in xs]",
+    `"""Doc."""\nimport math\nSCALE = 2\nPAIR = ("a", (1, b"x"))\ndef total(xs, start=0, *, label=None):\n    return sum(xs) + start\n`,
+];
+
+test("whatever the shape rule admits, the load admits too: the enforce layer agrees on every admitted form", async (t) => {
+    if (skip) return t.skip(skip);
+    for (const [i, src] of ADMITTED_SHAPES.entries()) {
+        const name = `agree_${i}`;
+        const s = await shape(name, src);
+        assert.strictEqual(s.why, "", src);
+        const names = [...s.defs.map((d) => d.name), ...s.constants];
+        assert.deepStrictEqual(await load(lib(name, src, names)), { [name]: "" }, src);
+    }
 });
