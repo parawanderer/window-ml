@@ -83,10 +83,21 @@ function inWorker(route) {
     w.onerror = (e) => say({ error: "worker: " + (e.message || "failed to start") });
 }
 
+/** Start the evaluator (`self.__EVAL_SRC`, eval-worker.ts bundled by the spec) in a blob worker, and pass each
+ *  script the embedder posts to it and each answer back. */
+function startEvaluator() {
+    const t = performance.now();
+    const w = new Worker(URL.createObjectURL(new Blob([self.__EVAL_SRC], { type: "text/javascript" })));
+    w.onmessage = (e) => say(e.data.ready ? { ready: true, startMs: performance.now() - t } : { answer: e.data });
+    w.onerror = (e) => say({ error: "worker: " + (e.message || "failed to start") });
+    addEventListener("message", (e) => { if (e.source === parent && e.data && e.data.code !== undefined) w.postMessage(e.data); });
+}
+
 /** Report to the embedder that the probe ran (or why it threw); the route itself is judged by the server's count. */
 const say = (m) => parent.postMessage({ probe: P, ...m }, "*");
 try {
     if (P === "top-post") top.postMessage({ leak: "artifact-secret" }, "*");
+    else if (P === "eval") startEvaluator();
     else if (P.startsWith("w-")) inWorker(P.slice(2));
     else if (!PROBES[P]) throw new Error("no such probe");
     else { say({ ran: true }); Promise.resolve(PROBES[P]()).catch((e) => say({ error: String(e) })); }

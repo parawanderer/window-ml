@@ -9,10 +9,13 @@ import http from "node:http";
 import net from "node:net";
 import dgram from "node:dgram";
 import { fileURLToPath } from "node:url";
+import { buildSync } from "esbuild";
 import { launchExtension } from "./harness.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIX = path.join(HERE, "fixtures/artifact-wall");
+/** The evaluator as a worker body (eval-worker.ts), bundled once; its size is part of what spike Q2 measures. */
+const EVAL_SRC = buildSync({ entryPoints: [path.join(FIX, "eval-worker.ts")], bundle: true, format: "iife", minify: true, target: "chrome120", write: false }).outputFiles[0].text;
 const DIST = process.env.E2E_DIST ? path.resolve(process.env.E2E_DIST) : path.join(HERE, "../../dist");
 
 /** Every route probe.js knows, embedded from an extension page as the sidebar embeds its frames. */
@@ -52,6 +55,7 @@ function distFor(variant) {
     m.sandbox.pages.push("artifact-probe.html");
     m.web_accessible_resources[0].resources.push("artifact-probe.html", "artifact-probe.js");
     fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(m, null, 2));
+    fs.writeFileSync(path.join(dir, "artifact-eval-src.js"), `self.__EVAL_SRC = ${JSON.stringify(EVAL_SRC)};`);
     for (const [from, to] of [["probe.html", "artifact-probe.html"], ["probe.js", "artifact-probe.js"], ["host.html", "artifact-probe-host.html"], ["host.js", "artifact-probe-host.js"]])
         fs.copyFileSync(path.join(FIX, from), path.join(dir, to));
     return dir;
@@ -90,13 +94,9 @@ async function startCounters() {
     };
 }
 
-/** Run every probe under `variant`, waiting for the routes `expected` says leak (so a slow machine cannot pass them off
- * as blocked) and then a further settle for any that are not expected; returns which routes reached the server, what
- * each frame said, and what reached a site embedding the frame. */
-async function measure(variant, expected) {
-    const counters = await startCounters();
-    const dist = distFor(variant);
-    const ext = await launchExtension({
+/** Launch the extension built at `dist` with `leak.test` and `pre.test` resolving to the counting servers. */
+function launchWith(dist) {
+    return launchExtension({
         dist,
         args: [
             "--host-resolver-rules=MAP leak.test 127.0.0.1, MAP pre.test 127.0.0.1",
@@ -105,6 +105,15 @@ async function measure(variant, expected) {
             "--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,BlockInsecurePrivateNetworkRequests",
         ],
     });
+}
+
+/** Run every probe under `variant`, waiting for the routes `expected` says leak (so a slow machine cannot pass them off
+ * as blocked) and then a further settle for any that are not expected; returns which routes reached the server, what
+ * each frame said, and what reached a site embedding the frame. */
+async function measure(variant, expected) {
+    const counters = await startCounters();
+    const dist = distFor(variant);
+    const ext = await launchWith(dist);
     try {
         const host = await ext.context.newPage();
         await host.goto(`chrome-extension://${ext.extensionId}/artifact-probe-host.html`);
@@ -160,3 +169,34 @@ for (const variant of Object.keys(VARIANTS)) {
         expect(r.topPost).toEqual([{ leak: "artifact-secret" }]);
     });
 }
+
+// --- the evaluator in that worker: an artifact's scripts, run where nothing gets out (spike Q2) ---
+
+test("the read-only evaluator runs in the frame's blob worker: the realm's reads answer, its escapes refuse", async () => {
+    test.setTimeout(60_000);
+    const dist = distFor("wall+worker");
+    const ext = await launchWith(dist);
+    try {
+        const host = await ext.context.newPage();
+        await host.goto(`chrome-extension://${ext.extensionId}/artifact-probe-host.html`);
+        const { startMs } = await host.evaluate(() => window.__evalFrame());
+        const current = { messages: [{ role: "user", content: "plan the week" }, { role: "assistant", content: "ok" }], run: { id: "r1" }, meta: [{}, {}], log: [] };
+        const state = { todos: [{ text: "write spec", done: true }, { text: "run spike", done: false }, { text: "estimate", done: false }] };
+        const run = (code) => host.evaluate(([c, cur, g]) => window.__run(c, cur, g), [code, current, { state }]);
+        const r = {
+            todo: await run("state.todos.filter(t => !t.done).map(t => t.text)"),
+            current: await run("ml.current.messages.map(m => m.role + ': ' + m.content).join('\\n')"),
+            fetch: await run("fetch('http://leak.test/x')"),
+            global: await run("globalThis.postMessage('x')"),
+            self: await run("self"),
+            budget: await run("let n = 0; for (const a of Array(2000)) for (const b of Array(2000)) n++; n"),
+        };
+        fs.mkdirSync(path.join(HERE, "artifacts"), { recursive: true });
+        fs.writeFileSync(path.join(HERE, "artifacts/artifact-wall-evaluator.json"), JSON.stringify({ bundleBytes: EVAL_SRC.length, startMs, r }, null, 2));
+        console.log(`[evaluator] bundle ${EVAL_SRC.length} bytes, worker ready in ${startMs.toFixed(1)} ms`, JSON.stringify(r, null, 1));
+        expect(r.todo).toMatchObject({ ok: true, value: ["run spike", "estimate"] });
+        expect(r.current).toMatchObject({ ok: true, value: "user: plan the week\nassistant: ok" });
+        for (const k of ["fetch", "global", "self", "budget"]) expect(r[k].ok, `${k} is refused`).toBe(false);
+        expect(r.budget.error).toMatch(/too much work/);
+    } finally { await ext.close(); fs.rmSync(dist, { recursive: true, force: true }); }
+});
