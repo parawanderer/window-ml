@@ -72,7 +72,7 @@ import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
-import { arrivalAnsweredText, arrivalDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeArrival, watchArrivals } from "./nav-arrival";
+import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeArrival, watchArrivals } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
@@ -1578,7 +1578,17 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                     const env = await sendTool({ runId, name, args, precheck: true })
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
-                    return env && env.precheckFailed ? (env.result || "") : null;
+                    if (env && env.precheckFailed) return env.result || "";
+                    // A click on a link a policy denies is refused before the click: the describe layer of the arrival rule.
+                    if (name === "click" && typeof env?.href === "string") {
+                        const j = judgeCall(runId, "fetch", navigateFacts(env.href));
+                        const v = arrivalVerdict(env.href, j);
+                        if (v.kind === "deny" && j.by && j.by !== "builtin") {
+                            recordRunLog(runId, { subsystem: "policy", kind: "deny", reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "click", url: v.url } });
+                            return clickDeniedText(v);
+                        }
+                    }
+                    return null;
                 },
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the

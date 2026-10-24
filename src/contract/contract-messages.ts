@@ -362,6 +362,9 @@ export interface PageToolEnvelope {
     reused?: ReusedGrant[];
     /** a precheck that found the action doomed (no target) → skip the gate, use `result` */
     precheckFailed?: boolean;
+    /** a passed `click` precheck's link: the absolute `href` of the resolved element's nearest link, which the worker
+     *  judges before the click (nav-arrival.ts). The page's word: the arrival is judged again whatever it says. */
+    href?: string;
     /** RESERVED-surface click: the page-side tool couldn't synth-click a cross-origin iframe / sealed shadow
      *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. `hint` is
      *  an optional stuck-loop re-snap nudge the background appends to the click result. */

@@ -152,6 +152,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
     const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
     const tabsRemoved = [];     // chrome.tabs.remove ids
+    const tabsBack = [];        // chrome.tabs.goBack ids
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
     // A run's try of a python_exec cell INSIDE the dialect (`inside: true`), kept apart from `pyRuns`. `pyInside(msg)`
     // answers it; absent, it is answered as the stock Pyodide core answers (no membership predicate), so the cell asks.
@@ -446,6 +447,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // The PDF-print flow opens a print.html tab and later removes it by id.
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
+                goBack: async (id) => { tabsBack.push(id); },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
                 onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
                 onReplaced: { addListener: (fn) => tabReplacedListeners.add(fn), removeListener: (fn) => tabReplacedListeners.delete(fn) },
@@ -484,6 +486,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         tabMessages,
         tabsCreated,
         tabsRemoved,
+        tabsBack,
         pyRuns,
         pyInsideRuns,
         pyDeletes,

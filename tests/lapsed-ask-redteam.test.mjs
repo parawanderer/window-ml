@@ -68,7 +68,7 @@ test("nothing a call carries produces a reason when no allowing policy is gone: 
         assert.equal(j.lapsed, undefined, `a reason came out of ${url}`);
         assert.equal(j.decision, undefined);
     }
-    assert.deepEqual(Object.keys(facts("https://nogone.example/", { lapsed: 1, policy: 1, label: 1 })).sort(), ["credentials", "effects", "host", "kind", "method", "rendered", "url"], "a call's facts are a fixed set: an option cannot add a field a policy reads");
+    assert.deepEqual(Object.keys(facts("https://nogone.example/", { lapsed: 1, policy: 1, label: 1 })).sort(), ["credentials", "effects", "host", "interactive", "kind", "method", "rendered", "url"], "a call's facts are a fixed set: an option cannot add a field a policy reads");
 });
 
 test("a reason is built from the stored label, cause and time only: the call's url and the label of another policy never enter it, and it decides nothing", () => {

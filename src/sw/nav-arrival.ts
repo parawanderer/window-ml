@@ -62,7 +62,7 @@ export function judgeArrival(tabId: number, url: string | undefined, again = tru
         if (!runs.length) return;
         // A judgement before the person's policies are read would ask about every page: wait for the read.
         await policiesReady.catch(() => {});
-        for (const judge of runs) await Promise.resolve(judge(url ?? "")).catch(() => {});
+        for (const judge of runs) await Promise.resolve().then(() => judge(url ?? "")).catch(() => {});   // a throw, sync or not, stops only its own run's judge
     });
     pending.set(tabId, next);
     void next.finally(() => { if (pending.get(tabId) === next) pending.delete(tabId); });
@@ -134,3 +134,7 @@ export function arrivalAnsweredText(h: Extract<ArrivalHold, { kind: "ask" }>, ap
 /** What the model reads of a call that met an ask hold before the person answered it. */
 export const arrivalWaitingText = (h: Extract<ArrivalHold, { kind: "ask" }>): string =>
     `The tab moved to ${h.origin}, a page the run did not open by name; the person is being asked whether the run may act on it. Call again once they have answered.`;
+
+/** What the model reads of a click refused before it was made: the link it follows goes where a policy denies. */
+export const clickDeniedText = (h: Extract<ArrivalHold, { kind: "deny" }>): string =>
+    `The link this click follows goes to ${h.url}, which the policy "${h.label}" denies: the click was not made.`;

@@ -7,7 +7,7 @@
 
 import type { NeutralMessage } from "../contract/contract-chat";
 import { evalPolicy, type PolicyEffect } from "../readonly-exec";
-import { fetchFacts } from "./sw-policies";
+import { fetchFacts, navigateFacts } from "./sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./policy-valid";
 
 /** A proposal as the worker accepted it: the strings it checked, which are what the card shows and what is added. */
@@ -37,6 +37,8 @@ export interface ProposalBreadth {
     strays: string[];
     /** Other paths, or the other scheme, on the hosts it matched, that it matches too. */
     widens: string[];
+    /** It matches navigating too (`interactive`) on a page it matches: a navigate is the same fetch (POLICIES.md). */
+    navigates: boolean;
 }
 
 /** A host for a line of the card, or the URL itself when it has none. */
@@ -155,12 +157,15 @@ export function recordedFetches(messages: readonly NeutralMessage[]): RecordedFe
  */
 export function measureBreadth(p: PolicyProposal, calls: readonly RecordedFetch[], probes: readonly string[] = probeUrls()): ProposalBreadth {
     const hits = (url: string, o: { rendered?: boolean; credentials?: boolean } = {}): boolean => evalPolicy(p.source, fetchFacts(url, o), p.effect).decision === p.effect;
-    const any = (u: string): boolean => hits(u) || hits(u, { rendered: true });
+    const navs = (url: string): boolean => evalPolicy(p.source, navigateFacts(url), p.effect).decision === p.effect;
+    const any = (u: string): boolean => hits(u) || hits(u, { rendered: true }) || navs(u);
     const matched = calls.filter((c) => hits(c.url, c));
     const used = new Set(calls.map((c) => hostOf(c.url)));
     const { siblings, variants } = relatedProbes(matched.map((c) => c.url));
     const others = [...probes, ...siblings].filter((u) => !used.has(hostOf(u)));
-    return { calls: calls.length, matched, tried: others.length, strays: others.filter(any), widens: variants.filter(any) };
+    const strays = others.filter(any), widens = variants.filter(any);
+    const navigates = [...matched.map((c) => c.url), ...strays, ...widens].some(navs);
+    return { calls: calls.length, matched, tried: others.length, strays, widens, navigates };
 }
 
 /**
@@ -182,5 +187,9 @@ export function breadthNote(p: PolicyProposal, b: ProposalBreadth): string {
         ? `It ALSO matches sites this run never used (${b.strays.map(hostOf).join(", ")}): it reaches past this run's sites.`
         : `It matched none of the ${b.tried} unrelated sites it was tried on.`;
     const wide = b.widens.length ? ` On the sites it matched, it also matches other pages or the other scheme (${b.widens.length} of those tried).` : "";
-    return `${head} ${past} ${reach}${wide} Measured, not proven: other URLs may match.`;
+    const nav = !b.navigates ? ""
+        : p.effect === "allow" ? " It also lets the run go to those pages without asking and act on them."
+        : p.effect === "ask" ? " It also asks before the run goes to those pages."
+        : " It also stops the run going to those pages.";
+    return `${head} ${past} ${reach}${wide}${nav} Measured, not proven: other URLs may match.`;
 }
