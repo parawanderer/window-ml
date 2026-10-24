@@ -36,8 +36,14 @@ is derived from the draft and says so; the evidence run is what caught it. A lyi
 silently under the sandbox (exits 0 having written nothing) would pass; the check is the exit code, the envelope the
 host applied and the protected names, never a diff of the root.
 
+## (d), the registration page: #1063
+
+Settings, "Program manifests (ml.sh)": every stored entry with whose it is, where it describes calls (B5), its evidence
+or the evidence run's failure, and its pin; an add and a remove. What changed beyond the page: `MANIFESTS add` is pinned
+by the host through the same precheck as a draft (`checkDraft`, origin `person`), so the page's payload never chooses a
+pin. Not measured against the real host; the add's resolve is the same code path the two runs above exercised.
+
 ## Not done in root 2
 
-- (d) the registration page in DevTools Settings: next.
 - (c2) library manifests: only if time allows.
 - The evidence run has not been measured on Linux (Landlock).

@@ -99,6 +99,8 @@ over the manifest's data so the profile is derived from the same source as the f
   person. A tool on the person's own `PATH` may be global. A page never registers anything.
 - One page lists them, like the policy page: shipped, installed, proposed, each with its source, its pin and the
   measured evidence (calls run under it, failures under its envelope). It lives in DevTools Settings, the superset.
+  Built in root K slice d (Settings, "Program manifests (ml.sh)"): the person writes the manifest as JSON and picks
+  every workspace or one root; the host pins it, as it pins a draft, and nothing runs.
 
 **The store, ruled 2026-10-23** (coordinator, on the `[window-ml root-k]` session's reading before its PR; root 2(a), the
 host's `exec: program-only` and the `(program, entrypoint)` prefix, was found already on main from K1 and K3, with the
