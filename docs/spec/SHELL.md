@@ -648,5 +648,7 @@ sandbox; Anthropic's `sandbox-runtime` is the reference for the profiles, not a 
   a race for the CHILD'S opens, which reopen by name. The host's own reads open by descriptor without following links
   ("Workspace roots"); the child's are bounded by the OS sandbox in host mode and by construction in a container, and
   on the plain host the race stays open and the call asks anyway.
-- **Interactive programs** (`ssh`, a REPL, `top`): out of scope, or a separate input channel later. The hub spec's
-  "start a process and send input" names it.
+- **Interactive programs** (`ssh`, a REPL, `top`): out of scope for what is built; the shape, the ruling that every
+  write to stdin is a call, the host-side terminal emulator and the order of slices are in
+  [`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md) (proposed 2026-10-24, nothing assigned). The hub spec's "start a
+  process and send input" names the same thing.
