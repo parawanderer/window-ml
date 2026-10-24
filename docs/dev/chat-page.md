@@ -101,6 +101,10 @@ standalone call.
 
 **What changes inside a row's text moves too.** A tool joining a group's list arrives with its comma (`.astreak-name.arrived`, moved by `left` so the list's ellipsis still cuts it rather than dropping it whole), and a figure that ticks (the live line's seconds and step count, a group's total time) rolls only the digit that changed (`Ticking`, ui-kit.tsx: each digit keyed by its place and value, decided at mount so an unchanged digit never starts the roll).
 
+A piece of a line that comes and goes (the live line's `· 8s` once the run is quiet, its `· 1 step`) stays in the line at no width while absent (`InlineFold`, ui-kit.tsx) and eases its width and opacity open and shut, so what follows it slides rather than jumping.
+
+**Reduced motion** turns every one of these into a state change: each has its `prefers-reduced-motion: reduce` rule, and each hold (`--pending-out-ms`, a refold's `--astep-close-ms`) is 0 there, so nothing is kept on screen for a fade that will not play. `chat-calm-details.spec.mjs` runs a whole run under it and asserts that nothing in the transcript animated or transitioned.
+
 **The live line folds rather than cutting** (`.pending-note`, "Thinking about the result… · 67s"). It is hidden while something else shows the run is alive (`.dup`, a call pulsing above it) or an approval card is up (`.blocked`), and back between calls, several times a minute: calm folds it (opacity, height and padding over .22 s, `interpolate-size`) instead of `display: none`, unfolds it on arrival (`@starting-style`), and at the end of the run `PendingSlot` holds it for `--pending-out-ms` saying what it last said (`.leaving`). The panel declares no duration and drops it in the same render.
 
 **The send hint retires.** "Enter to send · Shift+Enter for a new line" (the composer) and "Enter to start · …" (the

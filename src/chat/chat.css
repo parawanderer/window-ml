@@ -2113,6 +2113,16 @@ button.chat-page-go:hover { color: var(--fg); }
    dropped whole by the list's ellipsis instead of being cut, so a long list would end differently once it moved. */
 .chat.calm .astreak-name.arrived { position: relative; animation: chat-name-in .26s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes chat-name-in { from { left: -8px; opacity: 0; } to { left: 0; opacity: 1; } }
+/* A PIECE OF THE LINE COMING OR GOING (`InlineFold`, ui-kit.tsx): the live line's `· 8s` when the run goes quiet, its
+   `· 1 step` after the first step. It opens from nothing to its width as it fades in and closes the same way, holding
+   what it last said, so what follows it on the line slides over rather than jumping by its width; a width that changes
+   while it is open (9s → 10s) eases too. `pre` keeps the leading space an inline-block would otherwise drop. */
+.chat.calm .ifold, .chat.calm .ifold.off {
+    display: inline-block; white-space: pre; vertical-align: bottom; overflow: clip; overflow-clip-margin: 2px;
+    transition: width .26s cubic-bezier(.4, 0, .2, 1), opacity .22s cubic-bezier(.4, 0, .2, 1);
+}
+.chat.calm .ifold.off { width: 0; opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .chat.calm .ifold { transition: none; } }
 /* A FIGURE THAT TICKS (`Ticking`, ui-kit.tsx): the digit that changed rolls up into place and fades in, and only that
    one. The running seconds on the live line, its step count, a group's total time. */
 .chat.calm .tick-d { display: inline-block; }

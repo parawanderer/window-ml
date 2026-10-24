@@ -23,8 +23,8 @@ test.afterAll(async () => { await browser?.close(); server?.close(); });
 
 /** A fresh page, failing the test on any page error; `prefs` seeds this device's stored preferences before the first
  *  paint, as `wml-chat:<key>` in localStorage, which is where the web adapter keeps them. */
-async function open(hash = "", prefs = null) {
-    const page = await browser.newPage({ viewport: DESKTOP });
+async function open(hash = "", prefs = null, { reducedMotion = "no-preference" } = {}) {
+    const page = await browser.newPage({ viewport: DESKTOP, reducedMotion });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     if (prefs) await page.addInitScript((p) => {
@@ -161,8 +161,8 @@ test("the tab picked last is the start page's choice again after a reload, and s
 const RUN = "laptop:9a8b7c6d";
 
 /** Open a running agent session of our own, with "group all" on (the default). */
-async function liveRun() {
-    const { page, errors } = await open();
+async function liveRun(opts = {}) {
+    const { page, errors } = await open("", null, opts);
     await page.evaluate((key) => {
         const [runtime, hash] = key.split(":");
         const now = Date.now();
@@ -380,6 +380,70 @@ test("a ticking figure rolls only the digit that changed, and nothing rolls when
     expect(await tens.evaluate((el) => el.getAnimations().length)).toBe(0);
     expect(await steps.locator(".tick-d").last().evaluate((el) => el.getAnimations().map((a) => a.animationName))).toEqual(["chat-tick-in"]);
     expect(await steps.locator(".tick-d").first().evaluate((el) => getComputedStyle(el).display)).toBe("inline-block");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("the live line's timer opens into the line when the run goes quiet, and the step count after it slides over", async () => {
+    const { page, errors, call } = await liveRun();
+    await call(1);
+    const timer = page.locator(".pending-note .ifold").first();
+    const steps = page.locator(".pending-note .psteps");
+    await expect(steps).toHaveText(" · 1 step");
+    // Absent, the timer is in the line at no width, so nothing after it has anywhere to jump from.
+    await expect(timer).toHaveClass(/\boff\b/);
+    expect(await timer.evaluate((el) => el.getBoundingClientRect().width)).toBe(0);
+
+    // Every frame across the moment the run has been quiet long enough (orb-status.ts STALL_MS, 4 s) to show it.
+    const frames = await page.evaluate(() => new Promise((done) => {
+        const out = [], t = document.querySelector(".pending-note .ifold"), s = document.querySelector(".pending-note .psteps");
+        const end = performance.now() + 5200;
+        const tick = () => {
+            out.push({ w: t.getBoundingClientRect().width, o: Number(getComputedStyle(t).opacity), x: s.getBoundingClientRect().left, off: t.classList.contains("off") });
+            if (performance.now() < end) requestAnimationFrame(tick); else done(out);
+        };
+        requestAnimationFrame(tick);
+    }));
+    await expect(timer).toHaveText(/^ · \d+s$/);
+    const open = frames.filter((f) => !f.off);
+    expect(open.length, "it opened inside the window").toBeGreaterThan(5);
+    const full = open.at(-1).w, x0 = frames[0].x, x1 = frames.at(-1).x;
+    expect(full).toBeGreaterThan(10);
+    expect(x1 - x0, "the step count moved over by the timer's width").toBeGreaterThan(10);
+    expect(open.some((f) => f.w > 2 && f.w < full - 2), "the timer was seen part open").toBe(true);
+    expect(frames.some((f) => f.x > x0 + 2 && f.x < x1 - 2), "the step count was seen part way, not jumping").toBe(true);
+    // No frame moved the step count by more than a fraction of the whole distance.
+    for (let i = 1; i < frames.length; i++) expect(Math.abs(frames[i].x - frames[i - 1].x)).toBeLessThan((x1 - x0) * 0.6);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- reduced motion: every one of these is a state change and nothing else ---
+
+test("with reduced motion, a run's group, names, figures and live line change in place, with nothing animating", async () => {
+    const { page, errors, call, animationsFor } = await liveRun({ reducedMotion: "reduce" });
+    // Everything that moves anywhere in the transcript, transitions included, across a whole run.
+    const moving = () => page.evaluate(() => document.querySelector(".chat-transcript").getAnimations({ subtree: true })
+        .map((a) => a.animationName || a.transitionProperty));
+    const seen = new Set();
+    const watch = async (fn) => { for (const a of await animationsFor(350, fn)) seen.add(a); for (const a of await moving()) seen.add(a); };
+    await watch(() => call(1, 300, "pageInfo"));
+    await page.waitForTimeout(1200);
+    await watch(() => call(2, 300, "exec"));                 // the refold
+    await expect(page.locator(".astreak")).not.toHaveClass(/\bopen\b/);
+    await watch(() => call(3, 300, "look"));                 // a name joins, the step count ticks
+    await expect(page.locator(".astreak-tools")).toHaveText("pageInfo, exec, look");
+    await page.waitForTimeout(4300);                         // quiet long enough for the timer
+    await expect(page.locator(".pending-note .ifold").first()).toHaveText(/^ · \d+s$/);
+    expect(await page.locator(".pending-note .ifold").first().evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(10);
+    await watch(() => page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-result", summary: "Done.", steps: 3, hitCap: false });
+    }, RUN));
+    // No hold: the line is gone with the run, since there is no fade to hold it for.
+    await expect(page.locator(".pending-note")).toHaveCount(0, { timeout: 150 });
+    // The ripple-free busy glyph and the live word's breathing are already off under reduced motion (sidebar.css).
+    expect([...seen], "nothing animated or transitioned").toEqual([]);
     expect(errors).toEqual([]);
     await page.close();
 });

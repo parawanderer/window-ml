@@ -591,3 +591,21 @@ function TickDigit({ d, roll }: { d: string; roll: boolean }) {
     const [rolled] = useState(roll);
     return <span class={`tick-d${rolled ? " rolled" : ""}`}>{d}</span>;
 }
+
+/**
+ * A piece of a line that comes and goes (`· 8s`, `· 1 step`), kept in the line while it is absent so a surface can
+ * fold it open and shut instead of the rest of the line jumping by its width. Absent, it is an empty-looking span
+ * (`.ifold.off`) still holding what it last said, for the fold to close over; its figures roll (`Ticking`). The panel
+ * hides an absent one (sidebar.css); the reading view eases its width and opacity (chat.css).
+ * @group primitives, status
+ * @gallery {"text": " · 8s"}
+ */
+export function InlineFold({ text, class: cls }: { text: string; class?: string }) {
+    const last = useRef(text);
+    if (text) last.current = text;
+    return (
+        <span class={`ifold${text ? "" : " off"}${cls ? ` ${cls}` : ""}`} aria-hidden={text ? undefined : "true"}>
+            {last.current ? <Ticking text={last.current} /> : null}
+        </span>
+    );
+}
