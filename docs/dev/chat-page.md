@@ -107,6 +107,8 @@ A piece of a line that comes and goes (the live line's `· 8s` once the run is q
 
 **The live line folds rather than cutting** (`.pending-note`, "Thinking about the result… · 67s"). It is hidden while something else shows the run is alive (`.dup`, a call pulsing above it) or an approval card is up (`.blocked`), and back between calls, several times a minute: calm folds it (opacity, height and padding over .22 s, `interpolate-size`) instead of `display: none`, unfolds it on arrival (`@starting-style`), and at the end of the run `PendingSlot` holds it for `--pending-out-ms` saying what it last said (`.leaving`). The panel declares no duration and drops it in the same render.
 
+**Its liveness glyph is the start field's ripple** (`FieldBusy`, ui-kit.tsx; the panel keeps its sweep bar). Rings spread from a still dot, each drawn as three blended copies, one per colour channel, whose radii part as it grows, so it fades out red on the outside and blue on the inside like the field's aberration. The ink is `--fg-dim`, not the accent. Under reduced motion it is the dot and one ring, still.
+
 **The send hint retires.** "Enter to send · Shift+Enter for a new line" (the composer) and "Enter to start · …" (the
 start page) are drawn until this device has shown it knows the keys: three sends by Enter with one Shift+Enter, or ten
 sends by Enter alone (`knowsKeys`, counted in `view.keys`). A send by the button counts for nothing. Learned mid-page, the

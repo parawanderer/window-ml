@@ -24,7 +24,7 @@ import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
 import { fmtDur } from "../timestamps";
 import {
-    BusyBlob, Code, CopyBtn, SheetChip, Stamp, Dot, InlineFold,
+    FieldBusy, Code, CopyBtn, SheetChip, Stamp, Dot, InlineFold,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "../ui-kit";
 import { Disclosure } from "../disclosure";
@@ -1189,7 +1189,7 @@ export function PendingNote({ s, leaving = false, rootRef }: { s: Session;
                 instrumentation around it, and the glyph in the reading view, where a full-width rule is furniture.
                 A hidden element's animations do not run, so the one that is not shown costs nothing. */}
             <div class="pbar" aria-hidden="true"><span /></div>
-            {v.blocked ? null : <BusyBlob />}
+            {v.blocked ? null : <FieldBusy />}
             {/* The step count stays, as the one thing the orb has no room for and a trace reader wants; it is
                 dropped before the first step rather than reading "0 steps", which said nothing and crowded out
                 the phrase that did. */}

@@ -338,6 +338,33 @@ test("the live line unfolds between calls, folds away while a call runs, and fad
     await page.close();
 });
 
+test("the live line's glyph is the field's ripple: rings whose colour copies part as they spread, blended onto the page", async () => {
+    const { page, errors, call } = await liveRun();
+    await call(1, 200);
+    const glyph = page.locator(".pending-note .fbusy");
+    await expect(glyph).toBeVisible();
+    await expect.poll(() => page.locator(".pending-note").evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(15);
+    await glyph.screenshot({ path: test.info().outputPath("ripple.png") });
+    const seen = await glyph.evaluate((svg) => svg.getAnimations({ subtree: true }).map((a) => a.animationName));
+    expect(seen).toEqual(expect.arrayContaining(["fb-core", "fb-ring-r", "fb-ring-g", "fb-ring-b"]));
+    // Part way out, red's ring is wider than green's and green's than blue's: that is the split.
+    const radii = await page.evaluate(() => [...document.querySelectorAll(".pending-note .fb-ring-0 circle")].map((c) => {
+        for (const a of c.getAnimations()) { a.pause(); a.currentTime = 1700; }
+        return parseFloat(getComputedStyle(c).r);
+    }));
+    expect(radii[0]).toBeGreaterThan(radii[1]);
+    expect(radii[1]).toBeGreaterThan(radii[2]);
+    // Lifting each channel of a dark page, darkening each of a light one.
+    const blend = (theme) => page.evaluate((t) => {
+        document.documentElement.dataset.theme = t;
+        return getComputedStyle(document.querySelector(".pending-note .fb-ring-0 .fb-r")).mixBlendMode;
+    }, theme);
+    expect(await blend("dark")).toBe("screen");
+    expect(await blend("light")).toBe("multiply");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // --- what changes in a row's text: a name joining the list, a figure ticking ---
 
 test("a tool joining a closed group's list arrives with its comma; the names already there stay still", async () => {

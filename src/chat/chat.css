@@ -770,7 +770,7 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE READING VIEW GETS THE GLYPH, NOT THE BAR. An indeterminate sweep is the browser's own page-loading motif and
    reads right in the panel, among the instrumentation; across a reading column it is a rule drawn under the
    conversation, which is a lot of furniture for one fact. The glyph says the same thing in the width of a character,
-   beside the sentence that says what is happening. (ui-kit.tsx `BusyBlob`.) */
+   beside the sentence that says what is happening. (ui-kit.tsx `FieldBusy`.) */
 .chat.calm .pending-note { flex-direction: row; align-items: center; gap: 8px; }
 /* THE LIVE LINE COMES AND GOES, rather than cutting in and out. It is hidden whenever something else already shows
    the run is alive (a call pulsing above it, `.dup`), shown again between calls, and gone when the run ends — several
@@ -786,7 +786,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .pending-note.dup, .chat.calm .pending-note.blocked, .chat.calm .pending-note.leaving { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .pending-note { --pending-out-ms: 0; transition: none; } }
 .chat.calm .pending-note .pbar { display: none; }
-.chat.calm .pending-note .blob { display: block; }
+.chat.calm .pending-note .fbusy { display: block; }
 /* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
    body, so the rail is a stroke beside a single line — structure drawn for nothing. It keeps its width, so
    opening one moves nothing sideways. */

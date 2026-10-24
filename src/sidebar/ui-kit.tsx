@@ -525,41 +525,27 @@ export function SheetChip({ id, label }: { id: string; label?: string }) {
 }
 
 /**
- * THE LIVENESS GLYPH: a small amorphous blob that wobbles, pulls itself apart into three spinning dots, and comes
- * back together. Fifteen pixels of "something is still happening", for beside the words that say what.
+ * The liveness glyph beside the reading view's live line, drawn in the start page's FIELD language (start-field.ts):
+ * a still dot with rings spreading out of it, and, as each ring spreads, its colour channels pulling apart the way
+ * the field's dots do where the water moves. Each ring is drawn three times, one copy per channel, blended onto the
+ * page (screen on dark, multiply on light, sidebar.css `.fbusy`): where the copies coincide it is the plain ink, and
+ * as red's radius runs ahead and blue's falls behind, the ring leaves grey and fades out fringed. That is the field's
+ * aberration without a canvas.
  *
- * It replaces an indeterminate SWEEP BAR in the reading view. A full-width bar is the browser's own page-loading
- * motif and reads right in the panel, among instrumentation; across a reading column it is a rule drawn under the
- * conversation, which is a lot of furniture to say one thing. This says the same thing in the space of a character,
- * next to the sentence it belongs to.
- *
- * HOW IT MORPHS, which is one trick rather than a sequence of drawings: three circles under a gooey filter (a blur,
- * then a hard alpha curve that re-sharpens it). Overlapping, their blurred edges merge and the filter cuts one
- * outline around the pair, so they ARE a blob; drawn apart, each gets its own outline and they are dots. So the only
- * thing animated is how far from the centre each sits, and the morph falls out of the filter.
- *
- * The group's rotation runs the whole time and is invisible while they are a lump, which is what keeps the two
- * phases from needing to be coordinated: the spin is simply always there and only legible once there is something
- * to spin.
+ * It replaced a purple gooey blob that morphed into three spinning dots: a liveness mark in the accent colour said
+ * "busy" in the panel's language, and this page already had a language of its own for "something is moving".
  * @group primitives, status
- * @gallery {"label": "Thinking"}
+ * @gallery {"label": "Working"}
  */
-export function BusyBlob({ label }: { label?: string }) {
+export function FieldBusy({ label }: { label?: string }) {
     return (
-        <svg class="blob" viewBox="0 0 24 24" role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : "true"}>
-            <defs>
-                {/* The alpha curve is what re-sharpens the blur: everything under about half opacity goes, and what
-                    is left goes opaque, so two blurred discs that touch come out as one solid shape. */}
-                <filter id="blob-goo">
-                    <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
-                    <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 16 -7" />
-                </filter>
-            </defs>
-            <g filter="url(#blob-goo)">
-                <circle class="blob-a" cx="12" cy="12" r="3.6" />
-                <circle class="blob-b" cx="12" cy="12" r="3.6" />
-                <circle class="blob-c" cx="12" cy="12" r="3.6" />
-            </g>
+        <svg class="fbusy" viewBox="0 0 24 24" role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : "true"}>
+            <circle class="fb-core" cx="12" cy="12" r="1.8" />
+            {[0, 1].map((i) => <g key={i} class={`fb-ring fb-ring-${i}`}>
+                <circle class="fb-r" cx="12" cy="12" r="2" />
+                <circle class="fb-g" cx="12" cy="12" r="2" />
+                <circle class="fb-b" cx="12" cy="12" r="2" />
+            </g>)}
         </svg>
     );
 }

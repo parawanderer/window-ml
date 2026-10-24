@@ -2351,37 +2351,34 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* THE FOOTER DRAWS BOTH AND THE VIEW PICKS ONE. The sweep bar is the default, because it is the panel's own
    idiom; the reading view hides it and shows the glyph instead (chat.css). A hidden element's animations do not
    run, so whichever is not shown costs nothing. */
-.pending-note .blob { display: none; }
+.pending-note .fbusy { display: none; }
 
-/** The liveness glyph: a blob that wobbles, comes apart into three spinning dots, and closes up again. */
-/* The morph is the gooey FILTER (ui-kit.tsx `BusyBlob` says why), so the only thing animated here is how far from
-   the centre each circle sits, on one shared clock. The three are the same keyframes at a third of a turn apart,
-   which is what makes them separate evenly instead of needing three sets. */
-.blob { width: 15px; height: 15px; flex: 0 0 auto; color: var(--busy); overflow: visible; }
-.blob circle { fill: currentColor; }
-.blob > g { animation: blob-spin 2.6s linear infinite; transform-box: view-box; transform-origin: 12px 12px; }
-/* The same keyframes, STAGGERED. Without the offsets the lump is perfectly symmetric, which is a circle and not a
-   blob; with them it leans and shifts, and the three pull apart one after another rather than snapping open. */
-.blob-a { animation: blob-out 4.6s ease-in-out infinite; }
-.blob-b { animation: blob-out 4.6s ease-in-out infinite -0.13s; }
-.blob-c { animation: blob-out 4.6s ease-in-out infinite -0.26s; }
-/* Apart on their own axes, so the trio opens like a hand rather than sliding as one. */
-.blob-b { rotate: 120deg; transform-box: view-box; transform-origin: 12px 12px; }
-.blob-c { rotate: 240deg; transform-box: view-box; transform-origin: 12px 12px; }
-@keyframes blob-spin { to { transform: rotate(360deg); } }
-@keyframes blob-out {
-    /* A lump, breathing: they never quite coincide, or it would be a circle rather than a blob. */
-    0%, 26% { transform: translate(1.1px, 0); }
-    12% { transform: translate(2.1px, 0); }
-    /* Apart: far enough that the filter stops bridging them, which is what makes them read as three dots rather
-       than as a clover. Below about twice the circle's radius the blur still joins them up. */
-    42%, 64% { transform: translate(8px, 0); }
-    /* And back. */
-    82%, 100% { transform: translate(1.1px, 0); }
-}
-/* It is saying "still going", which it does as well at a stand as in motion. */
+/* Each ring is three copies, one per channel, blended onto whatever is behind: on dark each copy SCREENS its one
+   channel of the ink up from the page, on light it MULTIPLIES it down, so the three together are the ink and one
+   alone is a tinted edge. Red's radius runs ahead of green's and blue's behind, by more the further out, so a ring is
+   one grey line when it leaves the core and three when it fades. Two rings, half a period apart. */
+/** FieldBusy (ui-kit.tsx): the liveness glyph in the start field's language, rings whose colour channels part as they spread. */
+.fbusy { --fb-ink: var(--fg-dim); width: var(--fb-size, 15px); height: var(--fb-size, 15px); flex: 0 0 auto; overflow: visible; }
+.fbusy .fb-core { fill: var(--fb-ink); opacity: .8; animation: fb-core 2.4s ease-in-out infinite; transform-box: view-box; transform-origin: 12px 12px; }
+.fbusy .fb-ring circle { fill: none; stroke-width: 1.6; mix-blend-mode: screen; animation: 2.4s cubic-bezier(.2, .6, .35, 1) infinite; }
+.fbusy .fb-ring .fb-r { stroke: rgb(from var(--fb-ink) r 0 0); animation-name: fb-ring-r; }
+.fbusy .fb-ring .fb-g { stroke: rgb(from var(--fb-ink) 0 g 0); animation-name: fb-ring-g; }
+.fbusy .fb-ring .fb-b { stroke: rgb(from var(--fb-ink) 0 0 b); animation-name: fb-ring-b; }
+:root[data-theme="light"] .fbusy .fb-ring circle { mix-blend-mode: multiply; }
+:root[data-theme="light"] .fbusy .fb-ring .fb-r { stroke: rgb(from var(--fb-ink) r 255 255); }
+:root[data-theme="light"] .fbusy .fb-ring .fb-g { stroke: rgb(from var(--fb-ink) 255 g 255); }
+:root[data-theme="light"] .fbusy .fb-ring .fb-b { stroke: rgb(from var(--fb-ink) 255 255 b); }
+.fbusy .fb-ring-1 circle { animation-delay: -1.2s; }
+@keyframes fb-ring-r { from { r: 2px; opacity: 1; } to { r: 11.4px; opacity: 0; stroke-width: .8; } }
+@keyframes fb-ring-g { from { r: 2px; opacity: 1; } to { r: 10.2px; opacity: 0; stroke-width: .8; } }
+@keyframes fb-ring-b { from { r: 2px; opacity: 1; } to { r: 9px; opacity: 0; stroke-width: .8; } }
+/* The core gives a little as each ring leaves it. */
+@keyframes fb-core { 0%, 100% { scale: 1; } 12% { scale: .7; } }
+/* Still: the core and a ring at rest, which still says "working" by being there. */
 @media (prefers-reduced-motion: reduce) {
-    .blob > g, .blob circle { animation: none; }
+    .fbusy .fb-core, .fbusy .fb-ring circle { animation: none; }
+    .fbusy .fb-ring-0 circle { r: 6px; opacity: .6; }
+    .fbusy .fb-ring-1 { display: none; }
 }
 /* Collapse toggle: chevron + "assistant" label act as one button. */
 .who-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
