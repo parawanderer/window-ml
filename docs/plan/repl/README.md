@@ -228,6 +228,11 @@ a builtin admitted only as an admitted name; removal restarts only the workers h
 page is a left item). Every difference narrows, so no new ruling. The janitor reviews its code; the red team's pass is
 a PR stacked on the branch, merging after it. Both assigned 2026-10-24.
 
+#1110 MERGED 7891e866 (2026-10-24): the janitor reviewed it (no finding); one test-only fix after the review
+(the Settings page's test waits on conditions, not a sleep). Root K (c2) is BUILT; root-k's clone is removed. Open
+from it: the red team's stacked pass (e3, its own test file, merging after), #1102 (owned-through-reset, awaiting
+Shane's fork-or-not call), the "disk differs" page state, and the Linux Landlock evidence run.
+
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
 listed as remaining is DONE unless named below.
