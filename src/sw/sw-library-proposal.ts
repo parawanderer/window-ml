@@ -55,8 +55,9 @@ async function resolveFile(step: { runId: string; seq: number }, d: LibraryDraft
 }
 
 /**
- * The precheck of a library draft: its arguments, its name against what is stored, and its file as the host resolves
- * it. Nothing runs and nothing is read.
+ * The precheck of a library draft: its arguments, its name against what is stored and against what already imports
+ * in the sandbox, and its file as the host resolves it. Nothing of the library runs and nothing is read: the sandbox is
+ * asked about the name alone (the shape rule over an empty source checks the name first and admits the rest).
  * @param step the proposing step
  * @param args the model's arguments
  * @returns the error the model reads, or null
@@ -66,7 +67,9 @@ export async function precheckLibrary(step: { runId: string; seq: number }, args
     if ("error" in d) return d.error;
     if (storedLibraries().some((s) => s.module === d.module)) return `Error: a library named ${d.module} is already stored.`;
     const f = await resolveFile(step, d);
-    return "error" in f ? f.error : null;
+    if ("error" in f) return f.error;
+    const named = await pythonLibrary("shape", { name: d.module, source: "", sha256: "", names: [] });
+    return named.why ? `Error: ${d.module} cannot be a library's name: ${named.why}.` : null;
 }
 
 /**
