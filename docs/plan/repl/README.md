@@ -405,6 +405,11 @@ listed as remaining is DONE unless named below.
   question whether one implementation can serve both sides: no; one definition and one corpus, two parsers
   ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "one DEFINITION and one CORPUS"); the parity test he asked for
   is `halting.json` read by both suites.
+  cpython#12 (ca282158): the fork's `RegexCorpusTest` reads that corpus (35 `regex` vectors on window-ml's
+  `dialect-artifact-gaps` branch, PR pending). RULED the same day: the shipped core reads the corpus too, in the python
+  genre, each lag a `{ todo }` naming the fork commit and the pin, a passing todo failing
+  ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "the SHIPPED core reads the corpus"). Until the rebuild Shane
+  assigns, the pin 0169c4fd lags fork #10 to #12: the three exponential escapes are KNOWN OPEN in the shipped core.
 
 - **Root K and the rest of the policy layer, ASSIGNED 2026-10-23** on Shane's word (his session) to a new session
   `[window-ml root-k]` (Opus): [`ROOT_K.md`](ROOT_K.md), five roots in order (process ownership on the host, root K in four
