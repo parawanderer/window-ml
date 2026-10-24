@@ -1,7 +1,7 @@
 // sw-manifest-proposal.ts — `propose_manifest` in the worker: a draft resolved through the host (nothing runs), read over
 // this run's calls for the card, stored on the person's word, and its evidence run after.
 
-// The ruling of 2026-10-23 (PROGRAM_MANIFEST.md, "The store, as built"): nothing executes before the person approves. The
+// The ruling of 2026-10-23 (PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23): nothing executes before the person approves. The
 // host's `spawn` only resolves (facts, then `discard`). The evidence run follows approval, on a sandboxed host only, over
 // this run's calls of the program that the stored entry makes free, under the envelope derived from it (writes none,
 // exec the program only), with the version probe's 2 s limit; every one must exit within its okCodes with the envelope
@@ -163,7 +163,7 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
             if (!h.configured.sandboxed) { log("not-sandboxed"); return "This host does not run calls under the OS sandbox, so no evidence run was made; it describes calls only under the sandbox."; }
             const roots = h.configured.roots.map((r) => r.path);
             const list = manifestsFor([entry], roots).list;
-            let passed = 0;
+            let passed = 0, unread = 0;
             for (const call of callsOfDraft(entry, ranCalls(step.runId), roots)) {
                 if (call.env.set.length) continue;
                 if (step.signal.aborted) { log("cancelled"); return "The run was cancelled before its evidence run finished: it describes calls only under the sandbox."; }
@@ -174,12 +174,16 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
                 // Only what the entry makes free is re-run: the evidence run does nothing the approved entry would not allow.
                 if (!f.described || f.placement !== "host-sandbox" || judgeCall(step.runId, "sh", f as never, f.placement).decision !== "allow") { await drop(); continue; }
                 const asked = envelopeFor(f);
+                if (!call.operandsChanged) { unread++; await drop(); continue; }
                 const fail = async (why: string) => {
                     await markEvidence(entry.id, { failure: { argv: [...f.argv], why, at: Date.now() } });
                     log("failed", { program: f.argv[0] ?? "", why });
                     return `Its evidence run failed on ${JSON.stringify(f.argv)}: ${why}. It describes calls only under the sandbox.`;
                 };
                 if (!asked || asked.write !== "none" || !hostTakesEnvelope(h.hello)) { await drop(); return fail("the host cannot hold an envelope that refuses writes for it"); }
+                // What the recorded call did with writes allowed: a program that swallows its refused write exits 0 here.
+                const wrote = call.operandsChanged[0];
+                if (wrote) { await drop(); return fail(`its recorded call ${wrote.change} ${wrote.path}, which the manifest says it does not write`); }
                 await h.client.start(facts.id, asked);
                 const done = await h.client.waitDone(facts.id);
                 for (const s of [done.stdout, done.stderr]) if (!("error" in s)) await h.client.release(s.ptr).catch(() => { /* gone */ });
@@ -196,10 +200,11 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
                 if (why) return fail(why);
                 passed++;
             }
+            if (!passed && unread) { log("none"); return "None of this run's calls of it has a record of what it did to its operands, so it has no evidence and describes calls only under the sandbox."; }
             if (!passed) { log("none"); return "None of this run's calls of it is free to re-run, so it has no evidence and describes calls only under the sandbox."; }
             await markEvidence(entry.id, { evidence: { calls: passed, at: Date.now() } });
             log("passed", { calls: passed });
-            return `Its evidence run re-ran ${passed} call${passed === 1 ? "" : "s"} under the sandbox, all as the manifest says, so it describes calls without the sandbox too.`;
+            return `Its evidence run re-ran ${passed} call${passed === 1 ? "" : "s"} under the sandbox; no named operand of a recorded call was created, modified or removed, so it describes calls without the sandbox too.`;
         });
     } catch (e) { log("unavailable"); return `No evidence run was made (${(e as Error)?.message || String(e)}): it describes calls only under the sandbox.`; }
 }

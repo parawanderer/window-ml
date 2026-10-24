@@ -100,7 +100,7 @@ person approved is described again from fresh facts, once; one the person approv
 and the run log's `shell`/`pin-changed` record keeps them. No script manifest ships: a pin is per repository, so a
 script's manifest lives in its workspace's part of the store below.
 
-**Manifests the person registered are stored beside the shipped ones** (PROGRAM_MANIFEST.md, "The store, as built";
+**Manifests the person registered are stored beside the shipped ones** (PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23;
 root K slice b, rulings B1 to B5 of 2026-10-23). `sw-manifests.ts` keeps them in `chrome.storage.local`
 (`ml_manifests_global`, and `ml_manifests_workspace` by the root's realpath; declared `manifests.global` and
 `manifests.workspace`), and the pure `stored-manifests.ts` says what may be kept and when one describes a call. The
@@ -120,7 +120,7 @@ discards it, so the pin and a script's `sha256` are the host's and a payload's a
 back as `forced`. The page is `manifests-section.tsx` in Settings, after "Programs (ml.sh)", on the policy page's row
 styles; it re-reads on a change to either storage key.
 
-**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "The store, as built", the slice c ruling).
+**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23, the slice c ruling).
 The gate's precheck (`checkManifestProposal`, `sw-manifest-proposal.ts`) parses the draft (`parseDraft`), has the host
 resolve it under each root and discards each resolve, pins it (`draftRequest`: a binary's path and fingerprint, a
 script's `sha256` from the host's `paths`, B3 forcing workspace), and asks `storeRefusal`; an error goes to the model
@@ -136,7 +136,7 @@ Both go to the run log (`shell`/`manifest-added`, `shell`/`manifest-evidence`). 
 outcome (`proposalOutcome`). It is offered by the settings (`shellTurnedOn`), not the measured status, so a run started
 while a woken worker reconnects is offered the same tools; a host that does not answer is the precheck's error.
 
-**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "The store, as built", the slice c ruling).
+**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23, the slice c ruling).
 The gate's precheck (`checkManifestProposal`, `sw-manifest-proposal.ts`) parses the draft (`parseDraft`), has the host
 resolve it under each root and discards each resolve, pins it (`draftRequest`: a binary's path and fingerprint, a
 script's `sha256` from the host's `paths`, B3 forcing workspace), and asks `storeRefusal`; an error goes to the model

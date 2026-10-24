@@ -169,7 +169,10 @@ test("no message type from any tab sender, with ml.sh on and a call waiting on t
     const r = valueOf(results[0]);
     assert.deepEqual([r.ok, r.approvedBy], [true, "person"], `positive control: the person's own answer started it, no forged one or policy did: ${results[0].slice(0, 300)}`);
     assert.equal(host.calls.filter((c) => c.call === "start").length, 1, "one start, the call's");
-    assert.equal(host.calls.filter((c) => c.call === "spawn").length, 1, "one spawn, the call's");
+    assert.equal(host.calls.filter((c) => c.call === "spawn" && c.args.owner).length, 1, "one spawn, the call's");
+    // The rest are the reads of that call's operands around it (no owner, the same argv), which start nothing.
+    const spawns = host.calls.filter((c) => c.call === "spawn");
+    assert.ok(spawns.every((c) => JSON.stringify(c.args.argv) === JSON.stringify(spawns[0].args.argv)), "every spawn is the one call's");
     void bg;
 });
 

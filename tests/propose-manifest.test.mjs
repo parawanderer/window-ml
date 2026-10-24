@@ -1,5 +1,5 @@
 // propose-manifest.test.mjs — `propose_manifest` in a run the worker built, with ml.sh set up (sw-manifest-proposal.ts,
-// the ruling of 2026-10-23 in PROGRAM_MANIFEST.md, "The store, as built"): nothing runs before the person's word; the
+// the ruling of 2026-10-23 in PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23): nothing runs before the person's word; the
 // card is derived from the host's resolve-and-discard facts and this run's calls; an approved draft is stored as
 // proposed, and its evidence run re-runs this run's free calls of it under the sandbox with writes refused. The pure
 // parts are tests/manifest-proposal.test.mjs.
@@ -56,8 +56,9 @@ test("ACCEPTANCE: a draft is resolved and discarded for the card, stored as prop
     assert.match(card.note, /^Proposed by the model: a manifest for mytool, stored for every workspace, pinned to \/usr\/bin\/mytool as it is now \(fingerprint 1:2:3:4\)/);
     assert.match(card.note, /DERIVED, nothing run: the host resolved this run's 1 call of it again and the draft reads it as: mytool a\.txt: read \/w\/proj\/a\.txt, free/);
     assert.match(card.note, /Then the 1 free call is re-run under the sandbox with writes refused/);
+    assert.match(card.note, /A write inside a folder it names, or to a file no argument names, is not seen\.$/, "the card says what the check cannot see");
 
-    assert.match(r.results[1], /^Stored for every workspace: mytool now describes its calls under the OS sandbox\. Its evidence run re-ran 1 call under the sandbox, all as the manifest says, so it describes calls without the sandbox too\.$/);
+    assert.match(r.results[1], /^Stored for every workspace: mytool now describes its calls under the OS sandbox\. Its evidence run re-ran 1 call under the sandbox; no named operand of a recorded call was created, modified or removed, so it describes calls without the sandbox too\.$/);
     assert.equal(starts(r.host.names()), 2, "the evidence run started the one call again");
     const rerun = r.host.calls.filter((c) => c.call === "spawn").at(-1).args;
     assert.deepEqual([rerun.argv, rerun.timeoutMs], [["mytool", "a.txt"], 2000]);
@@ -132,7 +133,7 @@ test("a draft that calls a writer a reader fails its evidence run when the recor
 test("a recorded call that left its operands as they were still passes", T, async () => {
     const fs = { "/w/proj/a.txt": "1".repeat(64) };
     const r = await proposalRun([runs(["mytool", "a.txt"]), propose()], { hostOpts: { fs, done: () => ({ out: "", err: "", code: 0, envelope: ENVELOPE, protectedChanged: [] }) } });
-    assert.match(r.results[1], /Its evidence run re-ran 1 call under the sandbox, all as the manifest says/);
+    assert.match(r.results[1], /Its evidence run re-ran 1 call under the sandbox; no named operand of a recorded call was created, modified or removed/);
     assert.equal(r.stored()[0].evidence.calls, 1);
 });
 

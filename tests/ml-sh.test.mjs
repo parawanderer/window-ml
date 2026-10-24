@@ -237,7 +237,7 @@ test("git on the plain host: no probe is raised, so the call is undescribed and 
     const host = fakeNativeHost({ sandbox: false });
     const ask = answering(true);
     await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
-    assert.equal(host.calls.filter((c) => c.call === "spawn").length, 1, "only the call itself");
+    assert.equal(host.calls.filter((c) => c.call === "spawn" && c.args.owner).length, 1, "only the call itself");
     assert.equal(ask.asked.length, 1);
     assert.equal(ask.asked[0].facts.program.version, null);
     assert.match(ask.asked[0].facts.why.join(" "), /version was not reported/);
@@ -247,7 +247,7 @@ test("a git inside the workspace roots is never probed: the script could have wr
     const host = fakeNativeHost({ facts: (args) => ({ argv: args.argv, program: { path: "/w/proj/bin/git", inRoot: true, fingerprint: "9:9:9:9" }, cwd: { path: args.cwd, inRoot: true }, env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null, paths: [], effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox" }) });
     const ask = answering(true);
     await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
-    assert.equal(host.calls.filter((c) => c.call === "spawn").length, 1);
+    assert.equal(host.calls.filter((c) => c.call === "spawn" && c.args.owner).length, 1);
     assert.equal(ask.asked.length, 1, "undescribed: asks");
 });
 
@@ -367,8 +367,9 @@ test("a call the person approved carries no unasked record: its ask already show
 /** Facts for `python3 x.py` whose script the host hashed, to `hashes[n]` on the n-th spawn (1-based). */
 const hashedFacts = (hashes) => {
     let n = 0;
+    // Counts the call's own spawns (which carry its owner), not the reads of its operands around it.
     return (args) => {
-        n++;
+        if (args.owner) n++;
         return {
             argv: args.argv, program: { path: "/usr/bin/python3", inRoot: false, fingerprint: "1:2:3:4" }, cwd: { path: args.cwd, inRoot: true },
             env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,

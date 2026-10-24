@@ -53,7 +53,7 @@ const SCRIPT_SANDBOX_ONLY = "A script is described under the sandbox only, whoev
 export function evidenceOf(s: Pick<StoredManifest, "manifest" | "origin" | "evidence" | "evidenceFailure">): { label: string; tone: "allow" | "ask" | "deny"; detail?: string } {
     const when = (at: number) => new Date(at).toLocaleString();
     const ev = s.origin === "person" ? undefined
-        : s.evidence ? { tone: "allow" as const, line: `Evidence: ${s.evidence.calls} call${s.evidence.calls === 1 ? "" : "s"} re-run under the sandbox with writes refused, all as it says (${when(s.evidence.at)}).` }
+        : s.evidence ? { tone: "allow" as const, line: `Evidence: ${s.evidence.calls} call${s.evidence.calls === 1 ? "" : "s"} re-run under the sandbox with writes refused; none changed a file it names (${when(s.evidence.at)}).` }
         : s.evidenceFailure ? { tone: "deny" as const, line: `Evidence failed on ${s.evidenceFailure.argv.join(" ")}: ${s.evidenceFailure.why} (${when(s.evidenceFailure.at)}).` }
         : { tone: "ask" as const, line: "No evidence: no call of it was re-run." };
     if (s.manifest.entrypoint) return { label: "under the sandbox only", tone: ev?.tone === "deny" ? "deny" : "ask", detail: [ev?.line, SCRIPT_SANDBOX_ONLY].filter(Boolean).join(" ") };

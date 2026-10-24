@@ -140,8 +140,12 @@ is mixed in. Approved, the entry is stored with `origin: "proposed"` and describ
 evidence run follows approval, on a sandboxed host only: this run's ran calls of the program that the entry makes
 free, at most eight, the latest first, each re-run under the envelope derived from the draft (write none, exec the
 program only) with the version probe's 2 s limit. Each must exit within its `okCodes`, with the envelope applied as
-asked and no protected name changed. If all pass, the entry gets `evidence {calls, at}` and from then on describes
-plain-host calls too; the first failure is stored on the entry (`evidenceFailure`) and it stays sandbox-only. With no
+asked and no protected name changed. A program that swallows its refused write and exits 0 would pass that, so the
+recorded call is checked too: an undescribed `ml.sh` call's arguments are read as paths by the host just before its
+start and after its done (resolved and discarded, nothing run), and a draft calling it a reader fails if it created,
+modified (by sha256) or removed any of them; a recorded call without that record is no evidence. A write inside a
+directory operand, or to a file no argument names, is not seen. If all pass, the entry gets `evidence {calls, at}` and
+from then on describes plain-host calls too; the first failure is stored on the entry (`evidenceFailure`) and it stays sandbox-only. With no
 call to re-run there is no evidence, which the card says beforehand; a synthetic call is never made. Offered only to
 a run the worker built while the settings turn ml.sh on; a page's start never carries it. Built in
 `src/shell/manifest-proposal.ts` (pure) and `src/sw/sw-manifest-proposal.ts`.

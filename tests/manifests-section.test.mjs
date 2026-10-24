@@ -61,7 +61,7 @@ test("the person's entry and a proposed one whose evidence passed describe calls
     const passed = row(host, "man-2");
     assert.ok(passed.querySelector(".pol-effect.pol-allow"));
     assert.match(passed.textContent, /proposed by the model/);
-    assert.match(passed.textContent, /Evidence: 2 calls re-run under the sandbox with writes refused, all as it says/);
+    assert.match(passed.textContent, /Evidence: 2 calls re-run under the sandbox with writes refused; none changed a file it names/);
 });
 
 test("a proposed entry whose evidence failed, or that has none, says it describes sandboxed calls only, and why", async () => {
