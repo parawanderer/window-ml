@@ -215,6 +215,14 @@ Filed as #1102 on window-ml (issues are disabled on the cpython fork; moving it 
 (linear); `(\d{3})+b` on 100k digits charges 273M units, over the 3M budget, so the loosened bound is PRICED; the
 charges are pinned as numbers.
 #1103 MERGED 8f1137b5: the #1093 widening is now covered by its pass, after the fact; the miss stays recorded.
+The red team's #1109 (open, `@python,@security`) turns the three KNOWN OPEN Python-regex backtracking escapes of the
+shipped core into failing-first todos with the harness that sees them; the fix is on the fork, not the shipped pin.
+Root-k's (c2) build is #1110 (open, `manifests/library-tier3`, `@exec,@security,@docs,@ui`): tier 3 libraries to the
+four rulings, with an "As built" list in the spec naming where it narrows them (64 KiB cap; the already-importable
+precheck is a shape op over an empty source; annotated assignments refused for 3.14's `__conditional_annotations__`;
+a builtin admitted only as an admitted name; removal restarts only the workers handed a library; "disk differs" on the
+page is a left item). Every difference narrows, so no new ruling. The janitor reviews its code; the red team's pass is
+a PR stacked on the branch, merging after it. Both assigned 2026-10-24.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
