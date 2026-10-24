@@ -731,10 +731,16 @@ Promise.resolve(1).then(lambda *_a: _m.woke.append("ran"))
 _m.woke.append("armed")
 "x"`);
         assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
-        // The two 10 ms timers and the microtask fire on their own schedule. Wait for the gate to count all
-        // three rather than reading once: a slow runner can return the cell before the timers have fired.
+        // The three callbacks fire on their own schedule (setTimeout 10ms, Promise.then microtask). Under CI load
+        // the 150ms `later` window can leave one unfired, so accumulate cellDropped() with a deadline instead of
+        // a single read after a fixed sleep. #1081 capped the wait at 500ms (50×10ms); CI load still left one
+        // unfired there, so the deadline is 2s with 50ms polls.
         let dropped = 0;
-        for (let i = 0; i < 50 && dropped < 3; i++) { dropped += cellGate.cellDropped(); if (dropped < 3) await new Promise((r2) => setTimeout(r2, 10)); }
+        const deadline = Date.now() + 2000;
+        while (dropped < 3 && Date.now() < deadline) {
+            dropped += cellGate.cellDropped();
+            if (dropped < 3) await new Promise(r => setTimeout(r, 50));
+        }
         assert.equal(dropped, 3, "each of the three fired, ran nothing, and was counted");
     } finally {
         process.off("uncaughtException", onErr);
