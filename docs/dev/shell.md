@@ -136,31 +136,21 @@ Both go to the run log (`shell`/`manifest-added`, `shell`/`manifest-evidence`). 
 outcome (`proposalOutcome`). It is offered by the settings (`shellTurnedOn`), not the measured status, so a run started
 while a woken worker reconnects is offered the same tools; a host that does not answer is the precheck's error.
 
-**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "Registering a program", the store's ruling of 2026-10-23, the slice c ruling).
-The gate's precheck (`checkManifestProposal`, `sw-manifest-proposal.ts`) parses the draft (`parseDraft`), has the host
-resolve it under each root and discards each resolve, pins it (`draftRequest`: a binary's path and fingerprint, a
-script's `sha256` from the host's `paths`, B3 forcing workspace), and asks `storeRefusal`; an error goes to the model
-and no card is shown. The card (`draftCardNote`) re-resolves this run's ran calls of the program with the draft as the
-only stored entry and reads each through `shFacts` and the policies; `draftNote` writes it, DERIVED and said to be.
-This run's ran calls are `shell.ran` (`sw-shell-call.ts`, memory, 64 per run, 32 runs), noted after each successful
-`start`; a call that set environment variables is not re-read, because their values are not kept. On approval
-`approveManifest` stores the entry and runs `evidenceRun`: on a sandboxed host only, it re-spawns each of those calls
-with the 2 s probe limit, re-runs only one the stored entry makes free under the sandbox, starts it with
-`envelopeFor`'s envelope (which must be `write: "none"`, on a host that takes envelopes), and checks the exit against
-`okCodes`, the envelope the host reports, and `protectedChanged`; `markEvidence` stores the pass or the first failure.
-Both go to the run log (`shell`/`manifest-added`, `shell`/`manifest-evidence`). The tool itself only reports the
-outcome (`proposalOutcome`). It is offered by the settings (`shellTurnedOn`), not the measured status, so a run started
-while a woken worker reconnects is offered the same tools; a host that does not answer is the precheck's error.
-
-**CPU is a second measured fact beside memory** (host 0.7.0, root 1 of ROOT_K.md). `done.cpuMs`, the user and system
-time of the call's members with the children they reaped, reaches `ShResult.cpuMs`, the span (`shSpanOf`), the
-`shell`/`run` record and the event lane's row (`shCallText`); it is never bounded, and absent from an older host.
-
-**Whose process is this** (SHELL.md, the ownership ruling of 2026-10-23, R1 to R5). The host answers `owner { pid }` from
-its owner tables, which hold what it spawned and the process groups a connection on that machine declared with
-`register`; `HostClient.owner` and `HostClient.status` read them. The worker only reads: it never sends `register`
-(`tests/sh-call.test.mjs` holds that no file in `src/` does), and no page-started type reaches either call. Nothing in
-the extension shows the answer yet: the agent-status line it is meant for is `AGENT_MAIL.md`'s first build step.
+**`propose_manifest` with `library` proposes a tier 3 Python library** (READONLY_LIBRARY_MANIFEST.md, "The runtime
+import loop", rulings A to D of 2026-10-24; `sw-library-proposal.ts`, the pure half `library-proposal.ts`). The
+precheck (`precheckLibrary`) parses `{ path, module, names? }` (one identifier, no dots, not `_`; global scope only;
+never with `manifest`), refuses a module already stored, and has the host resolve `cat <path>` with `pathArgs` hashing
+the file, then discards it: a file that does not exist, is outside every root, or is a secret path never becomes a card.
+The card (`checkLibraryProposal`) reads the source with ONE `shRun` of `cat` on the resolved path, recorded and judged
+under cat's own manifest like any call; the text must be complete, at most `LIBRARY_MAX_BYTES` (64 KiB), and hash to
+both the stream's and the resolve's sha256, or it "changed while it was read". The verdict is the sandbox's shape rule
+(`pythonLibrary("shape")`, python-sandbox.md), with nothing of the library run; `libraryNote` writes the card, which
+shows the source as Python. On the yes, `approveLibrary` loads it (`pythonLibrary("load")`, the enforce layer) and
+stores it (`addLibrary`, `sw-libraries.ts`, key `ml_libraries_global`, at most 50) only if the load agrees; a
+disagreement is a `python`/`library-disagreed` warn in the run log, a store a `python`/`library-added` record. The
+Settings page "Python libraries" (`libraries-section.tsx`) lists them through `LIBRARIES` (`list`, `remove`, extension
+pages only, no add), and a remove sends `PY_DROP_LIBRARIES`, which kills every Python worker the offscreen document
+handed a library (`libraryPrincipals`), so nothing can still import it.
 
 **CPU is a second measured fact beside memory** (host 0.7.0, root 1 of ROOT_K.md). `done.cpuMs`, the user and system
 time of the call's members with the children they reaped, reaches `ShResult.cpuMs`, the span (`shSpanOf`), the
