@@ -68,15 +68,18 @@ export class Parser {
             if (!(kw.t === "name" && (kw.v === "const" || kw.v === "let" || kw.v === "var")))
                 throw new NotInDialect("only `for (const x of iterable)` is supported — no C-style `for(;;)`");
             this.next();
-            const id = this.next();
-            if (id.t !== "name") throw new NotInDialect("expected loop variable name");
+            // The loop variable is a name or the same destructuring pattern a `const` takes:
+            // `for (const [k, v] of Object.entries(o))`, `for (const { id } of rows)`.
+            const pattern = this.is("[") ? this.parseArrayPattern() : this.is("{") ? this.parseObjectPattern() : null;
+            const id = pattern ? null : this.next();
+            if (id && id.t !== "name") throw new NotInDialect("expected loop variable name");
             const kwd = this.next();
             if (!(kwd.t === "name" && kwd.v === "of"))
                 throw new NotInDialect(kwd.v === "in" ? "`for…in` is not supported — use `for (const x of Object.keys(o))` or `.map`" : "expected `of` in a for-loop");
             const iter = this.parseExpression();
             this.eat(")");
             const body = this.parseStatement();
-            return { type: "ForOf", kind: kw.v, name: id.v, iter, body };
+            return pattern ? { type: "ForOf", kind: kw.v, pattern, iter, body } : { type: "ForOf", kind: kw.v, name: id!.v, iter, body };
         }
         if (t.t === "name" && (t.v === "const" || t.v === "let" || t.v === "var")) {
             this.next();
@@ -421,7 +424,12 @@ export class Parser {
                 const k = this.next();
                 let key: string;
                 if (k.t === "name" || k.t === "str") key = k.v;
+                // A number key is the string JS makes of it (`{ 1.50: x }` is `{ "1.5": x }`), and has no shorthand.
+                else if (k.t === "num" && /^\d+(\.\d*)?$/.test(k.v) && this.is(":")) key = String(parseFloat(k.v));
                 else throw new NotInDialect("object key");
+                // `{ __proto__: x }` sets the new object's PROTOTYPE to x, so reads through it reach a value the
+                // script did not build; reading `__proto__` is denied, so is writing it here.
+                if (key === "__proto__") throw new NotInDialect("a `__proto__` key: it sets the object's prototype");
                 if (this.is(":")) { this.i++; props.push({ key, value: this.parseExpression() }); }
                 else props.push({ key, value: { type: "Ident", name: key } });   // shorthand
             }

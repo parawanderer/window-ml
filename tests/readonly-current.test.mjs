@@ -705,6 +705,25 @@ test("HALTING: dates, the clock and number formatting in a long map are stopped 
     }
 });
 
+test("HALTING: the Number statics, number keys and for…of patterns in a long loop are stopped by the step budget", async () => {
+    for (const [src, want] of [
+        // Ten billion iterations over collections under MAX_COLLECTION, so the budget is what stops each, not the size cap.
+        ["const xs = [...Array(100000).keys()]; xs.map((a) => xs.filter((b) => Number.isNaN(a + b) || Number.isInteger(b)).length).length", "NotInDialect"],
+        ["const xs = [...Array(100000).keys()]; xs.map((a) => xs.map((b) => ({ 1: a, 2.5: b })).length).length", "NotInDialect"],
+        ["const xs = [...Array(100000).keys()].map((i) => [i, i]); let n = 0; for (const x of xs) for (const [k, v] of xs) n += k + v; n", "NotInDialect"],
+        // A pattern over a string copies its characters, charged each iteration: 1,000,000 of them, 1,000,000 times.
+        ["const s = 'x'.repeat(1000000); for (const i of Array(1000000).keys()) for (const [c] of [s]) {} 0", "NotInDialect"],
+        // A pattern does not unhold what it iterates: the loop still cannot grow its own collection.
+        ["const xs = [[1]]; for (const [a] of xs) xs.push([a]); 0", "Denied"],
+        ["for (const { content } of ml.current.messages) ml.current.messages.push({ role: 'user', content }); 0", "TypeError"],
+    ]) {
+        const r = await inThread(src);
+        assertNotHung(r, src, 200_000);
+        assert.equal(r.threw, want, src);
+    }
+    assert.equal((await inThread("const s = 'x'.repeat(1000000); let n = 0; for (const [c] of [s, s]) n++; n")).value, 2, "and two of them answer");
+});
+
 test("FAILURE: a survey that reads ml.current and then falls out of dialect leaves the snapshot as it was", async () => {
     const snap = sampleSnapshot();
     await assert.rejects(inWorkerRealm(`const m = ml.current.meta; m[0].tokens = 0; m.length = 0; window.x`, snap), outOfDialect);

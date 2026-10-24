@@ -234,7 +234,9 @@ AGENTS.md requires for a new agent tool and a new `ml.*` member.
 Answered by the spike ([SPIKE.md](../plan/artifacts/SPIKE.md)): the second wall, the evaluator in a sandbox page,
 the realm's shape and what models write. What it left open:
 
-- **Five dialect additions** models reached for: `Math.random`, the `Number` statics, array destructuring in a
-  `for…of` head, numeric object keys, and `riskyRegex` passing a group of fixed counts. Which belong to the artifact
-  realm only, and which to every realm.
+- **`Math.random`**, which two todo lists reached for to mint ids: the artifact realm only, with that realm in phase
+  1 (or an `ml.id()`). Every other realm keeps contract property 5 of the dialect (no randomness). The other four
+  additions the spike found are in EVERY realm since 2026-10-24: the `Number` statics, a destructuring pattern in a
+  `for…of` head, numeric object keys, and `riskyRegex` passing a group of exact counts (`docs/dev/readonly-exec.md`;
+  the re-graded panel in [`SPIKE.md`](../plan/artifacts/SPIKE.md)).
 - **A `find(selector)` helper over the `data` view**, if models ask for one; none of the panel needed it.
