@@ -109,8 +109,12 @@ says WHERE it goes. It applies to every embed, not only artifacts.
   the spelling the prompt teaches is chosen by a panel of models.
 - **Rejected:** a `| side` pipe stage (a pipe goes value to value, and order would start to matter); the image's
   title slot (`"side"`), where models put real titles.
-- **An embed shows the version current when the answer was written**, with "v3 of 5 · open latest". Old answers do
-  not change under the reader.
+- **An embed is LIVE: the latest code with the live state.** An artifact is a whiteboard that is updated over time
+  (@parawanderer, 2026-10-24), and every embed of it is a window onto the one board.
+- **Each answer records a SNAPSHOT** of the version and the state when it was written (state is small JSON, capped).
+  The embed has "as of this answer", which draws the snapshot read-only, with no script writing state: an old answer's
+  "3 items left" still reads right. Exports draw the snapshot, since the log carries what the model saw. Undo restores
+  a snapshot as a new version. Old code never meets new state: it is the live board, or a version with its own state.
 - **References** take the three forms `@tool:` has, told apart by shape (`docs/dev/pointers.md`): a quoted label, a
   minted id, a bare word for the latest. `ml.answer.add("@artifact:<id>")` and the `answer` tool resolve it through
   the same path.
@@ -224,5 +228,3 @@ AGENTS.md requires for a new agent tool and a new `ml.*` member.
   that call a script arrow, and to a budget per event.
 - **What models write.** Asked by a panel for a todo list over state, a figure from a pointer and an `ml.current`
   viewer, which constructs do their scripts need that the dialect refuses?
-- **Old code, new state.** An answer embeds an old version, but state is shared across versions: is the old code
-  shown with the new state as is?
