@@ -410,6 +410,11 @@ return f.__defaults__`, /the attribute __defaults__/],
 return f.__globals__`, /the attribute __globals__/],
     ["e.__traceback__", `try: 1/0
 except Exception as e: return e.__traceback__`, /Try/],
+    ["class C: pass (ClassDef node)", `class C: pass
+return C`, /ClassDef/],
+    ["yield in a def (Yield node)", `def f():
+    yield 1
+return f`, /Yield/],
     ["import sys", `import sys
 return sys.modules["pyodide_js"]`, /import 'sys'/],
     ["().__class__", `return ().__class__`, /the attribute __class__/],
@@ -434,6 +439,8 @@ return json.decoder`, /attribute 'decoder' of module/],
 return np.sys`, /attribute 'sys' of module/],
     ["operator.attrgetter('__dict__')(math)", `import operator, math
 return operator.attrgetter("__dict__")(math)`, /attribute 'attrgetter' of module/],
+    ["operator.methodcaller('__dict__')(math)", `import operator, math
+return operator.methodcaller("__dict__")(math)`, /attribute 'methodcaller' of module/],
     ["vars(math)", `import math
 return vars(math)`, /call on builtin_function_or_method/],
     ["dir(math)", `import math
