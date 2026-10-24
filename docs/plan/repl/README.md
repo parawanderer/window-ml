@@ -201,6 +201,10 @@ discard; nothing executes before the word, the card's admission is a static MODU
 post-load global check run after approval as enforcement; the stored entry is the snapshot of the approved bytes; global
 scope only, removal restarts the worker. Root-k files the "load-run objects stay owned through reset" finding on the
 fork today. The red team writes the pass in its own file; the janitor reviews the code.
+
+RULED 2026-10-24 (Shane): `navigate` is a credentialed rendered fetch in interactive mode; one consumer, one consent
+scoped by origin, one free tier (`POLICIES.md`, "Navigate is a fetch: one read, two modes"). UNASSIGNED, after the
+freeze: a small build in the run host and the fetch gate with a red-team pass.
 Filed as #1102 on window-ml (issues are disabled on the cpython fork; moving it there is Shane's). The red team's
 #1094 (operand-check residual pins, base `main`) MERGED a988fb6f after a flake rerun. The #1093 red-team pass is #1103
 (open, `@exec,@security`), with the cost measurement in it: `(\d{3})+` on 100k non-matching chars charges 2,735 units
