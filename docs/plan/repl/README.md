@@ -171,7 +171,8 @@ the prose-only leg, running nothing). Ruled 2026-10-24: e3 writes the fix, test 
 already do; assertions unchanged), the janitor reviews, e3 merges; root-k, whose #1063 caused it, touches neither.
 FIXED the same morning: #1084 merged b73dc013 after the janitor's review (the three controls faked a host; one new
 pin: an extension page's add with ml.sh off answers `{error}` and stores nothing); main's unit job passes on it. #1070
-rebased onto it (12 pins green) and is with the janitor; e3 merges it. python-cancel then updates #1081 and merges it.
+rebased onto it (12 pins green) and is with the janitor; e3 merges it. #1081 MERGED 48bee329 (python-cancel, after
+updating onto the fix; no test line removed); that lane is frozen again.
 
 **Freeze exception, 2026-10-24 (Shane).** The root-k lane alone resumes, to spend the week's remaining budget on the
 most useful open item: first the evidence-run gap (a lying manifest that claims an output and exits 0 having written
@@ -410,6 +411,15 @@ listed as remaining is DONE unless named below.
   genre, each lag a `{ todo }` naming the fork commit and the pin, a passing todo failing
   ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "the SHIPPED core reads the corpus"). Until the rebuild Shane
   assigns, the pin 0169c4fd lags fork #10 to #12: the three exponential escapes are KNOWN OPEN in the shipped core.
+  The dialect PR is #1093, MERGED 2fe3e352 after the janitor's review (the corpus; `tests/regex-corpus-core.test.mjs`
+  with 9 lag todos, 6 for fork #10 and 3 for #11, a stale todo and a drift both failing, measured by flipping a verdict;
+  the four idioms the artifacts panel fell out on). MISS, recorded as such: #1093 WIDENS the read-only dialect on three
+  counts (destructuring as a `for…of` variable and decimal object keys; the `Number` statics; a repeated group of an
+  exact count passes `riskyRegex`) and merged BEFORE its red-team pass, which the standing rule says lands with the
+  change; the canvas session and the janitor both missed it. e3 writes the pass now, in its own file, merged after,
+  with the loosened bound pinned by its COST (a repeated exact-count group on a long non-matching input charged at
+  the bound), not only its verdict. The janitor's #1096 (7fea734a) fixed eight stale doc paths the hook and CI never
+  see, since both check changed files only; whether CI runs the bare checker is an open `@ci` item.
 
 - **Root K and the rest of the policy layer, ASSIGNED 2026-10-23** on Shane's word (his session) to a new session
   `[window-ml root-k]` (Opus): [`ROOT_K.md`](ROOT_K.md), five roots in order (process ownership on the host, root K in four
