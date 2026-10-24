@@ -22,6 +22,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { jsonResponse, streamResponse, loadBackground, loadPageWorld } = require("./helpers");
+const { fakeNativeHost } = require("./fake-native-host.mjs");
 const { HANDLE_MAP, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
@@ -213,6 +214,20 @@ const MARKED = {
 const MARKED_PIN = { path: "/opt/rt-marker/bin/rt-marker-tool", fingerprint: "1:2:3:4-rt-marker", inRoot: false };
 const EXT_PAGE = { url: "chrome-extension://test/sidebar.html" };
 
+// Since #1063 an add is pinned by the HOST, so the positive control needs a host whose facts carry the markers
+// (the payload's pin is ignored). `root-k` found that these three tests called add with ml.sh off and got { error }.
+const MARKER_FACTS = (args) => ({
+    argv: args.argv, program: { path: MARKED_PIN.path, inRoot: false, fingerprint: MARKED_PIN.fingerprint },
+    cwd: { path: args.cwd, inRoot: true }, env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+    paths: [], effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox",
+});
+/** A worker with ml.sh on over `roots` and a host that resolves `rt-marker-tool` to the markers. */
+function withMarkerHost(roots = ["/work/rt"], extra = {}) {
+    const host = fakeNativeHost({ landlockAbi: null, facts: MARKER_FACTS });
+    const bg = loadBackground({ config: baseConfig({ shellEnabled: true, shellRoots: roots }), siteGate: true, onNative: host.onNative, ...extra });
+    return { bg, host };
+}
+
 test("GAIN blocked — a page cannot list, add or remove a manifest: MANIFESTS is the extension's alone", async () => {
     // Not a page-started type and not a page request type, so the content script drops it before the background
     // sees it; and the handler's own gate refuses it if it ever does. The oracle: nothing stored, nothing spent.
@@ -227,7 +242,7 @@ test("GAIN blocked — a page cannot list, add or remove a manifest: MANIFESTS i
     assert.ok(relayed.includes("GET_CONFIG"), "positive control: a real request type still relays");
     assert.deepEqual(relayed.filter((t) => t !== "GET_CONFIG"), [], `relayed: ${relayed}`);
 
-    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
+    const { bg } = withMarkerHost([ "/work/rt" ], { onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
     const payloads = [
         {},
         { op: "list" },
@@ -257,7 +272,7 @@ test("GAIN blocked — a page cannot list, add or remove a manifest: MANIFESTS i
 test("GAIN blocked — a stored manifest never reaches a page", async () => {
     // Store one with a marker in every field, then read every page-reachable surface. The store is the person's
     // (a pin names a file on THIS machine), so a page that can read it learns what they registered.
-    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    const { bg } = withMarkerHost([ "/work/rt" ], { onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
     const added = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN, origin: "proposed" } }, EXT_PAGE)));
     assert.equal(added.data.global.length, 1, "positive control: the extension page stored one");
     const markerId = added.data.global[0].id;
@@ -290,7 +305,7 @@ test("GAIN blocked — a page cannot mint a stored entry with origin \"proposed\
     // `origin` decides how widely a manifest describes a call (B5: "person" on both placements, "proposed" only
     // under the OS sandbox). A page that could claim either would be choosing its own privilege. The handler
     // hardcodes the person's word and reads no `origin` from the payload, so the claim never becomes an entry.
-    const bg = loadBackground({ config: baseConfig(), siteGate: true });
+    const { bg } = withMarkerHost([ "/work/rt" ]);
     for (const origin of ["proposed", "person", "shipped", "", undefined, null, 42, { toString: () => "person" }]) {
         const res = await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN, origin } }, hostilePage());
         assert.equal(res?.error, "refused", `origin ${JSON.stringify(origin)}: the page is refused before origin is read`);
@@ -308,6 +323,20 @@ test("GAIN blocked — a page cannot mint a stored entry with origin \"proposed\
     await tick();
     const reloaded = JSON.parse(JSON.stringify(await again.send({ type: "MANIFESTS", payload: {} }, EXT_PAGE)));
     assert.deepEqual(reloaded.data.global, [], "a forged origin does not survive a read");
+});
+
+test("GAIN blocked — an extension page's add with ml.sh off answers {error} and stores nothing", async () => {
+    // #1063's rule: an add is pinned by the host, so one with no host (ml.sh off) cannot be pinned and is refused.
+    // Without this pin the rule is what broke these three tests' positive controls and nothing would notice again.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true });
+    const res = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: { op: "add", scope: "global", manifest: MARKED, pin: MARKED_PIN } }, EXT_PAGE)));
+    assert.match(res.error, /^ml\.sh is not available/);
+    assert.equal(res.data, undefined);
+    assert.equal(bg.localStore.ml_manifests_global, undefined, "nothing was stored");
+    assert.equal(bg.localStore.ml_manifests_workspace, undefined, "in either scope");
+    // A list still works with no host: the store is storage, not the host.
+    const listed = JSON.parse(JSON.stringify(await bg.send({ type: "MANIFESTS", payload: {} }, EXT_PAGE)));
+    assert.deepEqual([listed.data.global, listed.data.workspace], [[], []]);
 });
 
 test("GAIN blocked — an entrypoint manifest cannot name a shipped program and shadow its shipped manifest (B2)", async () => {
