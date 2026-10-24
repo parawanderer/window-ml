@@ -745,8 +745,11 @@ export class Evaluator {
                     for (const item of iterable as Iterable<unknown>) {
                         this.tick();
                         const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
-                        child[node.name] = item;
-                        if (node.kind === "const") this.markConst(child, node.name);
+                        if (node.pattern) this.bindPattern(child, node.pattern, item, node.kind === "const");
+                        else {
+                            child[node.name] = item;
+                            if (node.kind === "const") this.markConst(child, node.name);
+                        }
                         const v = yield* this.eval(node.body, child);
                         if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
                     }

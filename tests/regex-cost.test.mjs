@@ -109,3 +109,22 @@ test("each run scan is charged before it scans, so a pattern of many units over 
     assert.equal(scans, 1, "the first charge stops it");
     assert.equal(REGEX_UNITS_PER_STEP, 512);
 });
+
+// --- the regex CORPUS: the JS dialect's half of the one definition both dialects transcribe ---
+
+// docs/spec/PYTHON_DIALECT.md, "one DEFINITION and one CORPUS": the regex entries of halting.json state each pattern's
+// verdict once, and each dialect's check is held to them on its own side (the fork's Lib/test/test_restricted.py reads
+// the same file). A verdict this check gives that the corpus does not is a failure here, never drift to tolerate.
+test("the regex corpus: every pattern written in JS gets its stated verdict from riskyRegex and the price", async () => {
+    const { regexCorpus, regexInput } = await import("./dialect-vectors.mjs");
+    const corpus = regexCorpus("halting", "js");
+    assert.ok(corpus.length >= 20, `${corpus.length} entries`);
+    for (const v of corpus) {
+        const { pattern, flags, verdict } = v.regex;
+        const jsFlags = flags.replace(/x/g, "");
+        new RegExp(pattern, jsFlags);   // a pattern written in JS compiles as JS
+        const steps = regexSteps(pattern, jsFlags, regexInput(v.regex));
+        const got = riskyRegex(pattern) !== null || !Number.isFinite(steps) ? "refused" : steps > (v.budget ?? STEP_BUDGET) ? "priced" : "ok";
+        assert.equal(got, verdict, `${v.name}: ${pattern} (${v.reason})`);
+    }
+});

@@ -27,6 +27,21 @@ export interface ManifestPin {
     version?: string;
 }
 
+/** What a proposed manifest's evidence run measured once it passed: every one of this run's free calls of the program,
+ *  re-run under the sandbox and the draft's envelope, exited within its `okCodes` with nothing changed. */
+export interface ManifestEvidence {
+    /** How many calls it re-ran, all passing. */
+    calls: number;
+    at: number;
+}
+
+/** The first call an evidence run saw fail, kept for the registration page: the entry stays sandbox-only. */
+export interface ManifestEvidenceFailure {
+    argv: string[];
+    why: string;
+    at: number;
+}
+
 /** One stored program manifest. `global` holds for every workspace; `workspace` only while `root` (a realpath) is a
  *  configured root. An interpreted script's manifest is pinned by its own `entrypoint.sha256`; a binary's by `pin`. */
 export interface StoredManifest {
@@ -37,10 +52,15 @@ export interface StoredManifest {
     origin: ManifestOrigin;
     created: number;
     pin?: ManifestPin;
+    /** A proposed entry's passed evidence run: with it the entry describes plain-host calls too (B5). */
+    evidence?: ManifestEvidence;
+    /** A proposed entry's failed evidence run. */
+    evidenceFailure?: ManifestEvidenceFailure;
 }
 
-/** What a caller asks the store to keep: everything but the id and the time, which the store assigns. */
-export type ManifestRequest = Omit<StoredManifest, "id" | "created">;
+/** What a caller asks the store to keep: everything but the id and the time, which the store assigns, and the evidence,
+ *  which only an evidence run records. */
+export type ManifestRequest = Omit<StoredManifest, "id" | "created" | "evidence" | "evidenceFailure">;
 
 /** The key two manifests compete for: the program, or the program and its script. */
 export function manifestKey(m: Pick<ProgramManifest, "program" | "entrypoint">): string {
@@ -97,6 +117,9 @@ export function storeRefusal(r: ManifestRequest, stored: readonly StoredManifest
 export function validStored(v: unknown, scope: StoredManifest["scope"], shipped: Readonly<Record<string, ProgramManifest>>): v is StoredManifest {
     const s = v as StoredManifest | null;
     if (!s || typeof s !== "object" || typeof s.id !== "string" || typeof s.created !== "number" || s.scope !== scope) return false;
+    const e = s.evidence, f = s.evidenceFailure;
+    if (e !== undefined && (s.origin !== "proposed" || !e || typeof e.calls !== "number" || !(e.calls > 0) || typeof e.at !== "number")) return false;
+    if (f !== undefined && (!f || !Array.isArray(f.argv) || !f.argv.every((a) => typeof a === "string") || typeof f.why !== "string" || typeof f.at !== "number")) return false;
     return storeRefusal({ scope: s.scope, root: s.root, manifest: s.manifest, origin: s.origin, pin: s.pin }, [], shipped) === undefined;
 }
 
@@ -113,15 +136,15 @@ export function applicable(stored: readonly StoredManifest[], roots: readonly st
 
 /**
  * Why a stored entry does not describe this call, each a line of `why`; empty when it does. The host's facts must bear
- * out its pin, and a proposed one needs the sandbox.
+ * out its pin, and a proposed one needs the sandbox until its evidence run passed.
  * @param facts what `spawn` answered
  * @param s the stored entry chosen
  * @param version the version the program reported this call, or null when it was not read
  */
 export function storedMisses(facts: HostFacts, s: StoredManifest, version: string | null): string[] {
     const why: string[] = [];
-    if (s.origin === "proposed" && !facts.sandboxed)
-        why.push(`the manifest for ${manifestKey(s.manifest)} was proposed by the model, so it describes a call only under the OS sandbox until its evidence run`);
+    if (s.origin === "proposed" && !facts.sandboxed && !s.evidence)
+        why.push(`the manifest for ${manifestKey(s.manifest)} was proposed by the model, so it describes a call only under the OS sandbox until an evidence run passes`);
     if (facts.program.inRoot && s.scope !== "workspace")
         why.push(`${facts.program.path} is inside a workspace root, so only that workspace's manifest describes it`);
     const p = s.pin;

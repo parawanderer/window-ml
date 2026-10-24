@@ -1,0 +1,28 @@
+{
+  "model": "litellm.anthropic/claude-sonnet-5-5",
+  "shape": "dom",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Monthly Rainfall\",\n  \"body\": \"<figure class=\\\"fig\\\"><ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed><figcaption>Monthly rainfall over one year (mm per month).</figcaption></figure><section class=\\\"stats\\\"><div class=\\\"total\\\"><span class=\\\"label\\\">Yearly total</span><span class=\\\"value\\\" id=\\\"total\\\">…</span></div><div class=\\\"wet\\\"><h3>Three wettest months</h3><ol id=\\\"wettest\\\"></ol></div><p id=\\\"err\\\" class=\\\"err\\\"></p></section>\",\n  \"css\": \".fig{margin:0 0 16px;text-align:center}.fig figcaption{font-size:0.9em;color:#555;margin-top:6px;font-style:italic}.stats{display:flex;flex-direction:column;gap:12px;font-family:sans-serif}.total{display:flex;justify-content:space-between;align-items:baseline;padding:10px 14px;background:#eef4fb;border-radius:8px}.label{font-weight:600}.value{font-size:1.4em;font-weight:700;color:#1d4f91}.wet h3{margin:0 0 6px;font-size:1em}.wet ol{margin:0;padding-left:22px}.wet li{padding:3px 0}.wet li span{color:#1d4f91;font-weight:600;margin-left:6px}.err{color:#b00020;margin:0}\",\n  \"scripts\": [\n    \"try { const csv = ml.dereference('@tool:7be01d4:out'); const lines = csv.trim().split(/\\\\r?\\\\n/).slice(1).filter(l => l.trim().length > 0); const rows = lines.map(l => { const parts = l.split(','); return { month: parts[0].trim(), mm: Number(parts[1]) }; }).filter(r => !Number.isNaN(r.mm)); const total = rows.reduce((s, r) => s + r.mm, 0); const top = rows.slice().sort((a, b) => b.mm - a.mm).slice(0, 3); root.querySelector('#total').textContent = `${Math.round(total * 10) / 10} mm`; const ol = root.querySelector('#wettest'); ol.replaceChildren(); for (const r of top) { const li = root.create('li'); li.textContent = `${r.month}: `; const sp = root.create('span'); sp.textContent = `${r.mm} mm`; li.append(sp); ol.append(li); } } catch (e) { root.querySelector('#err').textContent = 'Could not read the rainfall data.'; }\"\n  ]\n}\n```",
+  "usage": {
+    "completion_tokens": 900,
+    "prompt_tokens": 1024,
+    "total_tokens": 1924,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "text_tokens": 900
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "text_tokens": 4,
+      "cache_creation_tokens": 1020,
+      "cache_creation_token_details": {
+        "ephemeral_5m_input_tokens": 1020,
+        "ephemeral_1h_input_tokens": 0
+      }
+    },
+    "cache_creation_input_tokens": 1020,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "global",
+    "service_tier": "standard"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "model": "qwen3.6:35b",
+  "shape": "data",
+  "task": "todo",
+  "text": "```json\n{\n  \"title\": \"Shared Weekend Trip Planner\",\n  \"body\": \"<div class='todo-app'>\\n  <header>\\n    <h1>🏕️ Weekend Trip Planner</h1>\\n    <p id='count'>3 tasks remaining</p>\\n  </header>\\n  <form id='add-form' class='add-form'>\\n    <input type='text' id='new-task' placeholder='Add a new task...' />\\n    <button id='add-btn'>Add</button>\\n  </form>\\n  <ul id='todo-list'></ul>\\n</div>\",\n  \"css\": \"* { box-sizing: border-box; margin: 0; padding: 0; }\\n\\n.todo-app {\\n  font-family: 'Segoe UI', system-ui, sans-serif;\\n  max-width: 420px;\\n  margin: 32px auto;\\n  background: #ffffff;\\n  border-radius: 16px;\\n  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);\\n  overflow: hidden;\\n}\\n\\nheader {\\n  background: linear-gradient(135deg, #6a89cc, #4a69bd);\\n  color: white;\\n  padding: 28px 24px 22px;\\n  text-align: center;\\n}\\n\\nh1 {\\n  font-size: 1.4rem;\\n  margin-bottom: 6px;\\n  letter-spacing: 0.5px;\\n}\\n\\n#count {\\n  font-size: 0.85rem;\\n  opacity: 0.85;\\n  font-weight: 500;\\n}\\n\\n.add-form {\\n  display: flex;\\n  padding: 16px 16px 4px;\\n  gap: 8px;\\n  background: #f7f9fc;\\n  border-bottom: 1px solid #e8ecf2;\\n}\\n\\n#new-task {\\n  flex: 1;\\n  padding: 10px 14px;\\n  border: 2px solid #dce3eb;\\n  border-radius: 10px;\\n  font-size: 0.95rem;\\n  outline: none;\\n  transition: border-color 0.2s;\\n}\\n\\n#new-task:focus {\\n  border-color: #6a89cc;\\n}\\n\\n#add-btn {\\n  padding: 10px 18px;\\n  background: linear-gradient(135deg, #6a89cc, #4a69bd);\\n  color: white;\\n  border: none;\\n  border-radius: 10px;\\n  font-size: 0.95rem;\\n  font-weight: 600;\\n  cursor: pointer;\\n  transition: transform 0.1s, box-shadow 0.2s;\\n}\\n\\n#add-btn:hover {\\n  transform: translateY(-1px);\\n  box-shadow: 0 4px 12px rgba(74, 105, 189, 0.35);\\n}\\n\\n#todo-list {\\n  list-style: none;\\n  padding: 0;\\n}\\n\\n.todo-item {\\n  display: flex;\\n  align-items: center;\\n  gap: 12px;\\n  padding: 14px 20px;\\n  border-bottom: 1px solid #f0f3f8;\\n  transition: background 0.15s;\\n}\\n\\n.todo-item:hover {\\n  background: #f9fbfe;\\n}\\n\\n.todo-item:last-child {\\n  border-bottom: none;\\n}\\n\\n.todo-checkbox {\\n  width: 20px;\\n  height: 20px;\\n  accent-color: #4a69bd;\\n  cursor: pointer;\\n  flex-shrink: 0;\\n}\\n\\n.todo-text {\\n  flex: 1;\\n  font-size: 0.95rem;\\n  color: #333;\\n  transition: all 0.2s;\\n}\\n\\n.todo-item.done .todo-text {\\n  text-decoration: line-through;\\n  color: #a0aab8;\\n}\\n\\n.delete-btn {\\n  padding: 4px 10px;\\n  background: none;\\n  border: 1px solid #e0e4ea;\\n  border-radius: 6px;\\n  color: #c0392b;\\n  font-size: 0.78rem;\\n  cursor: pointer;\\n  opacity: 0.5;\\n  transition: opacity 0.15s, background 0.15s;\\n}\\n\\n.todo-item:hover .delete-btn {\\n  opacity: 1;\\n}\\n\\n.delete-btn:hover {\\n  background: #fdf2f2;\\n  border-color: #e74c3c;\\n}\\n\\n.empty-state {\\n  text-align: center;\\n  padding: 32px 20px;\\n  color: #b0b8c5;\\n  font-size: 0.9rem;\\n}\",\n  \"scripts\": [\n    \"function renderTodos() { const list = root.byId['todo-list']; let items = state.todos || []; if (!list) return; list.children = []; if (items.length === 0) { list.children.push({ tag: 'li', attrs: {}, text: 'No tasks yet. Add one above!', children: [] }); return; } for (let i = 0; i < items.length; i++) { const todo = items[i]; const itemNode = { tag: 'li', attrs: { class: 'todo-item' + (todo.done ? ' done' : ''), id: 'item-' + todo.id }, children: [ { tag: 'input', attrs: { type: 'checkbox', class: 'todo-checkbox', checked: todo.done, on: { change: () => toggleTodo(todo.id) } } }, { tag: 'span', attrs: { class: 'todo-text' }, text: todo.text }, { tag: 'button', attrs: { class: 'delete-btn', id: 'del-' + todo.id, on: { click: () => deleteTodo(todo.id) } }, text: 'Delete' } ] }; list.children.push(itemNode); } const count = root.byId['count']; if (count) { const remaining = items.filter(t => !t.done).length; const total = items.length; count.text = `${remaining} task${remaining !== 1 ? 's' : ''} remaining${total > 0 && remaining === 0 ? ' — all done! 🎉' : '.'}; ${total > 0 ? (remaining + '/' + total) : ''}`; } updateCount(); } function addItem() { const input = root.byId['new-task']; if (!input || !input.text || input.text.trim() === '') return; let todos = state.todos || []; const id = 'task-' + Date.now(); todos.push({ id: id, text: input.text.trim(), done: false }); state.todos = todos; if (input) { input.text = ''; } renderTodos(); } function toggleTodo(id) { let todos = state.todos || []; for (let i = 0; i < todos.length; i++) { if (todos[i].id === id) { todos[i].done = !todos[i].done; break; } } state.todos = todos; renderTodos(); } function deleteTodo(id) { let todos = state.todos || []; state.todos = todos.filter(t => t.id !== id); renderTodos(); } function updateCount() { const count = root.byId['count']; if (!count) return; let todos = state.todos || []; const remaining = todos.filter(t => !t.done).length; const total = todos.length; count.text = `${remaining} task${remaining !== 1 ? 's' : ''} remaining${total > 0 && remaining === 0 ? ' — all done! 🎉' : '.'}${total > 0 ? ` (${remaining}/${total})` : ''}`; } state.todos = [ { id: 'task-1', text: 'Book a cabin in the mountains', done: false }, { id: 'task-2', text: 'Pack hiking gear and snacks', done: true }, { id: 'task-3', text: 'Check weather forecast for Saturday', done: false } ]; root.byId['add-form'].on = { submit: () => addItem() }; root.byId['add-btn'].on = { click: () => addItem() }; renderTodos();\"\n  ]\n}\n```",
+  "usage": {
+    "input_tokens": 694,
+    "output_tokens": 2317,
+    "total_tokens": 3011,
+    "prompt_tokens": 694,
+    "completion_tokens": 2317,
+    "response_token/s": 249.8,
+    "prompt_token/s": 6906.98,
+    "total_duration": 22993464485,
+    "load_duration": 7313522602,
+    "prompt_eval_count": 694,
+    "prompt_eval_duration": 100478000,
+    "eval_count": 2317,
+    "eval_duration": 9275592000,
+    "approximate_total": "0h0m22s",
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_eval_cached_count": 0
+  }
+}

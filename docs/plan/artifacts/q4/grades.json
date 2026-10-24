@@ -1,0 +1,581 @@
+[
+  {
+    "model": "deepseek.deepseek-v4-pro",
+    "shape": "data",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 1,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "  Conversation Stats  Messages by role  system 1 user 1 assistant 3 tool 2  Recent tool calls  artifact python_exec fetch_url Longest message: 45 characters",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "deepseek.deepseek-v4-pro",
+    "shape": "data",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 15,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "    Figure: Monthly rainfall for the year.  Three wettest months Nov: 95 mm · Oct: 88 mm · Dec: 84 mm Total annual rainfall: 839 mm",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "deepseek.deepseek-v4-pro",
+    "shape": "data",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 81,
+    "parse": [],
+    "run": [
+      "method .random() on Math",
+      "method .random() on Math"
+    ],
+    "handlers": 8,
+    "fired": 10,
+    "state": "{\"todos\":[]}",
+    "runRaw": [
+      {
+        "where": "click on add-btn",
+        "msg": "method 'random' not allowed on Math"
+      },
+      {
+        "where": "click on add-btn",
+        "msg": "method 'random' not allowed on Math"
+      }
+    ],
+    "right": false,
+    "text": "  Weekend Trip Todos   buy snacks Add  0 of 0 left",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "deepseek.deepseek-v4-pro",
+    "shape": "dom",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 59,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "deepseek.deepseek-v4-pro",
+    "shape": "dom",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 17,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "deepseek.deepseek-v4-pro",
+    "shape": "dom",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 52,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.anthropic/claude-sonnet-5-5",
+    "shape": "data",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 31,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "  Conversation panel  Messages by role    Role Count   system 1  user 1  assistant 3  tool 2 Total: 7 messages  Five most recent tool calls  artifact python_exec fetch_url  Longest message 45 characters (message #7, role: assistant)",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.anthropic/claude-sonnet-5-5",
+    "shape": "data",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 15,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "   Monthly rainfall over one year (mm).  Three wettest months  Nov: 95.0 mm Oct: 88.0 mm Dec: 84.0 mm Yearly total: 839.0 mm (12 months) ",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.anthropic/claude-sonnet-5-5",
+    "shape": "data",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 24,
+    "parse": [],
+    "run": [],
+    "handlers": 8,
+    "fired": 12,
+    "state": "{\"items\":[{\"id\":5,\"text\":\"buy snacks\",\"done\":false}],\"nextId\":6,\"draft\":\"\"}",
+    "runRaw": [],
+    "right": true,
+    "text": "  Weekend trip planning   Add    buy snacks ✕ 1 left of 1",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.anthropic/claude-sonnet-5-5",
+    "shape": "dom",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 53,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.anthropic/claude-sonnet-5-5",
+    "shape": "dom",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 1,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.anthropic/claude-sonnet-5-5",
+    "shape": "dom",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 47,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.google/gemini-flash-latest",
+    "shape": "data",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 82,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "    Conversation Stats Live Real-time message and tool telemetry  Messages by Role  system 1 user 1 assistant 3 tool 2  Longest Message  45  characters from assistant  Recent Tool Calls  #1 artifact #2 python_exec #3 fetch_url",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.google/gemini-flash-latest",
+    "shape": "data",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 41,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "    Figure 1. Monthly precipitation distribution across the year.   Yearly Total 839 mm  Three Wettest Months  Nov 95 mm Oct 88 mm Dec 84 mm",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.google/gemini-flash-latest",
+    "shape": "data",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 123,
+    "parse": [],
+    "run": [
+      "method .random() on Math",
+      "method .random() on Math"
+    ],
+    "handlers": 12,
+    "fired": 24,
+    "state": "{\"items\":[],\"inputText\":\"buy snacks\"}",
+    "runRaw": [
+      {
+        "where": "click on add-btn",
+        "msg": "method 'random' not allowed on Math"
+      },
+      {
+        "where": "click on add-btn",
+        "msg": "method 'random' not allowed on Math"
+      }
+    ],
+    "right": true,
+    "text": "     🌲 Weekend Trip 2 tasks left     + Add  ✓ Book cabin or campsite by the lake ×  Pack hiking boots, fleece & rain gear ×  Download offline trail maps & road trip playlist ×  Click task or checkbox to toggle Clear completed",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.google/gemini-flash-latest",
+    "shape": "dom",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 97,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.google/gemini-flash-latest",
+    "shape": "dom",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 39,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "litellm.google/gemini-flash-latest",
+    "shape": "dom",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 100,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "moonshot.kimi-k3",
+    "shape": "data",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 23,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "  Conversation panel 7 messages total Messages by role   system 1  user 1  assistant 3  tool 2 Five most recent tool calls   1. artifact  2. python_exec  3. fetch_url Longest message 45 characters — in a assistant message",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "moonshot.kimi-k3",
+    "shape": "data",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 10,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": true,
+    "text": "    Figure 1 — Monthly rainfall for the year (mm).  Wettest months  u{1F947} Nov — 95 mm u{1F948} Oct — 88 mm u{1F949} Dec — 84 mm Yearly total: 839 mm",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "moonshot.kimi-k3",
+    "shape": "data",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 49,
+    "parse": [],
+    "run": [],
+    "handlers": 8,
+    "fired": 12,
+    "state": "{\"todos\":[{\"id\":5,\"text\":\"buy snacks\",\"done\":false}],\"nextId\":6,\"draft\":\"\"}",
+    "runRaw": [],
+    "right": true,
+    "text": "   Shared To-Do List Add tasks, tick them off, keep track together.   Add    buy snacks × All clear — nothing on the list.  1 item left",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "moonshot.kimi-k3",
+    "shape": "dom",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 65,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "moonshot.kimi-k3",
+    "shape": "dom",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 25,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "moonshot.kimi-k3",
+    "shape": "dom",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 83,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "qwen3.6:35b",
+    "shape": "data",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 55,
+    "parse": [],
+    "run": [],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [],
+    "right": false,
+    "text": "  Chat Stats  System 0 User 0 Assistant 0 Tool 0  Top 5 Tool Calls  1. python_exec 2. artifact 3. fetch_url  Longest message: 45 chars",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "qwen3.6:35b",
+    "shape": "data",
+    "task": "figure",
+    "json": false,
+    "scripts": 0,
+    "lines": 1,
+    "parse": [],
+    "run": []
+  },
+  {
+    "model": "qwen3.6:35b",
+    "shape": "data",
+    "task": "todo",
+    "json": true,
+    "scripts": 1,
+    "lines": 1,
+    "parse": [
+      "for(;;)"
+    ],
+    "run": [
+      "for(;;)"
+    ],
+    "handlers": 0,
+    "fired": 0,
+    "state": "{}",
+    "runRaw": [
+      {
+        "where": "script 0",
+        "msg": "expected `of` in a for-loop"
+      }
+    ],
+    "right": false,
+    "text": "   🏕️ Weekend Trip Planner 3 tasks remaining   Add ",
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "qwen3.6:35b",
+    "shape": "dom",
+    "task": "current",
+    "json": true,
+    "scripts": 1,
+    "lines": 41,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "qwen3.6:35b",
+    "shape": "dom",
+    "task": "figure",
+    "json": true,
+    "scripts": 1,
+    "lines": 36,
+    "parse": [],
+    "run": [],
+    "domCalls": [
+      "getElementById"
+    ],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  },
+  {
+    "model": "qwen3.6:35b",
+    "shape": "dom",
+    "task": "todo",
+    "json": true,
+    "scripts": 4,
+    "lines": 4,
+    "parse": [],
+    "run": [],
+    "domCalls": [],
+    "sanitizer": {
+      "script": false,
+      "onAttr": false,
+      "url": false
+    }
+  }
+]

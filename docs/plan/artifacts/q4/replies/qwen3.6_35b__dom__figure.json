@@ -1,0 +1,31 @@
+{
+  "model": "qwen3.6:35b",
+  "shape": "dom",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Annual Rainfall Summary\",\n  \"body\": \"<div class='container'>\\n  <h1>Monthly Rainfall Data</h1>\\n  \\n  <div class='figure-wrapper'>\\n    <ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed>\\n    <p class='caption'>Figure 1: Monthly rainfall distribution over the year.</p>\\n  </div>\\n\\n  <div class='summary' id='results'>\\n    <h2>Key Statistics</h2>\\n    <p id='total'><strong>Yearly Total:</strong> Loading...</p>\\n    <h3>Three Wettest Months</h3>\\n    <ol id='wettest-months'></ol>\\n  </div>\\n\\n  <div class='table-wrapper'>\\n    <h2>Monthly Data Table</h2>\\n    <table id='rainfall-table'>\\n      <thead>\\n        <tr>\\n          <th>Month</th>\\n          <th>Rainfall (mm)</th>\\n        </tr>\\n      </thead>\\n      <tbody></tbody>\\n    </table>\\n  </div>\\n</div>\",\n  \"css\": \".container {\\n  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\\n  max-width: 800px;\\n  margin: 20px auto;\\n  padding: 20px;\\n}\\n\\nh1 {\\n  color: #2c3e50;\\n  border-bottom: 2px solid #3498db;\\n  padding-bottom: 10px;\\n}\\n\\n.figure-wrapper {\\n  margin: 20px 0;\\n  text-align: center;\\n}\\n\\n.figure-wrapper ml-embed {\\n  display: block;\\n  margin: 0 auto;\\n}\\n\\n.caption {\\n  font-style: italic;\\n  color: #555;\\n  margin-top: 10px;\\n}\\n\\n.summary {\\n  background: #ecf0f1;\\n  padding: 20px;\\n  border-radius: 8px;\\n  margin: 20px 0;\\n}\\n\\n.summary h2 {\\n  color: #2c3e50;\\n  margin-top: 0;\\n}\\n\\n.summary h3 {\\n  color: #34495e;\\n}\\n\\n#total {\\n  font-size: 1.2em;\\n  margin-bottom: 15px;\\n}\\n\\n#wettest-months {\\n  background: white;\\n  padding: 15px 30px;\\n  border-radius: 6px;\\n  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);\\n}\\n\\n.table-wrapper {\\n  margin-top: 20px;\\n}\\n\\n.table-wrapper h2 {\\n  color: #2c3e50;\\n}\\n\\ntable {\\n  width: 100%;\\n  border-collapse: collapse;\\n  background: white;\\n  box-shadow: 0 1px 3px rgba(0,0,0,0.1);\\n}\\n\\nth {\\n  background: #3498db;\\n  color: white;\\n  padding: 12px;\\n  text-align: left;\\n}\\n\\ntd {\\n  padding: 10px 12px;\\n  border-bottom: 1px solid #ecf0f1;\\n}\\n\\ntr:nth-child(even) {\\n  background: #f8f9fa;\\n}\\n\\ntr:hover {\\n  background: #e8f4fc;\\n}\",\n  \"scripts\": [\n    \"(function() {\\n  const csvText = ml.dereference('@tool:7be01d4:out');\\n  if (!csvText) return;\\n\\n  const rows = csvText.trim().split('\\\\n').slice(1);\\n  const data = rows.map(r => {\\n    const [month, mm] = r.split(',').map(s => s.trim());\\n    return { month: month, rainfall: parseFloat(mm) };\\n  }).filter(d => !isNaN(d.rainfall));\\n\\n  // Yearly total\\n  const yearlyTotal = data.reduce((sum, d) => sum + d.rainfall, 0);\\n  document.getElementById('total').innerHTML = `<strong>Yearly Total:</strong> ${yearlyTotal.toFixed(1)} mm`;\\n\\n  // Three wettest months\\n  const sorted = [...data].sort((a, b) => b.rainfall - a.rainfall);\\n  const top3 = sorted.slice(0, 3);\\n  const wetlist = document.getElementById('wettest-months');\\n  top3.forEach(d => {\\n    const li = wetlist.create('li');\\n    li.textContent = `${d.month}: ${d.rainfall} mm`;\\n    wetlist.append(li);\\n  });\\n\\n  // Table\\n  const tbody = document.querySelector('#rainfall-table tbody');\\n  data.forEach(d => {\\n    const tr = tbody.create('tr');\\n    const td1 = tr.create('td');\\n    td1.textContent = d.month;\\n    const td2 = tr.create('td');\\n    td2.textContent = d.rainfall;\\n    tbody.append(tr);\\n  });\\n})();\\n\"\n  ]\n}\n```",
+  "usage": {
+    "input_tokens": 697,
+    "output_tokens": 1513,
+    "total_tokens": 2210,
+    "prompt_tokens": 697,
+    "completion_tokens": 1513,
+    "response_token/s": 246.89,
+    "prompt_token/s": 5437.58,
+    "total_duration": 13577314587,
+    "load_duration": 7316845807,
+    "prompt_eval_count": 697,
+    "prompt_eval_duration": 128181999,
+    "eval_count": 1513,
+    "eval_duration": 6128345000,
+    "approximate_total": "0h0m13s",
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_eval_cached_count": 0
+  }
+}

@@ -111,10 +111,46 @@ own workspace, and a second entry for one key in one scope and root. A read keep
 the rest, never repairing them. At call time `manifestsFor` puts the workspace's own entries, then the global ones,
 before the shipped list; `storedMisses` makes the call `unknown`, with a `why` line, when the resolved program's path,
 fingerprint or version is not the pin's, when an in-root program meets a non-workspace entry, and when an entry the
-model proposed (`origin: "proposed"`) meets a call not under the sandbox. A change waits for the first read
+model proposed (`origin: "proposed"`) and whose evidence run has not passed meets a call not under the sandbox. A change waits for the first read
 (`manifestsReady`), so an add made before it is not overwritten by it, and `shRun` waits for it too. Only an extension
 page reaches the store: `MANIFESTS` (`list`, `add`, `remove`) refuses any other sender, and what it adds is the
-person's (`origin: "person"`), whatever the payload says.
+person's (`origin: "person"`), whatever the payload says. An add is pinned the way a model's draft is (`checkDraft`,
+`sw-manifest-proposal.ts`): the host resolves `{ manifest, scope }` under the root the page names (or the first) and
+discards it, so the pin and a script's `sha256` are the host's and a payload's are never read; B3's forced scope comes
+back as `forced`. The page is `manifests-section.tsx` in Settings, after "Programs (ml.sh)", on the policy page's row
+styles; it re-reads on a change to either storage key.
+
+**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "The store, as built", the slice c ruling).
+The gate's precheck (`checkManifestProposal`, `sw-manifest-proposal.ts`) parses the draft (`parseDraft`), has the host
+resolve it under each root and discards each resolve, pins it (`draftRequest`: a binary's path and fingerprint, a
+script's `sha256` from the host's `paths`, B3 forcing workspace), and asks `storeRefusal`; an error goes to the model
+and no card is shown. The card (`draftCardNote`) re-resolves this run's ran calls of the program with the draft as the
+only stored entry and reads each through `shFacts` and the policies; `draftNote` writes it, DERIVED and said to be.
+This run's ran calls are `shell.ran` (`sw-shell-call.ts`, memory, 64 per run, 32 runs), noted after each successful
+`start`; a call that set environment variables is not re-read, because their values are not kept. On approval
+`approveManifest` stores the entry and runs `evidenceRun`: on a sandboxed host only, it re-spawns each of those calls
+with the 2 s probe limit, re-runs only one the stored entry makes free under the sandbox, starts it with
+`envelopeFor`'s envelope (which must be `write: "none"`, on a host that takes envelopes), and checks the exit against
+`okCodes`, the envelope the host reports, and `protectedChanged`; `markEvidence` stores the pass or the first failure.
+Both go to the run log (`shell`/`manifest-added`, `shell`/`manifest-evidence`). The tool itself only reports the
+outcome (`proposalOutcome`). It is offered by the settings (`shellTurnedOn`), not the measured status, so a run started
+while a woken worker reconnects is offered the same tools; a host that does not answer is the precheck's error.
+
+**A model's draft goes through `propose_manifest`** (PROGRAM_MANIFEST.md, "The store, as built", the slice c ruling).
+The gate's precheck (`checkManifestProposal`, `sw-manifest-proposal.ts`) parses the draft (`parseDraft`), has the host
+resolve it under each root and discards each resolve, pins it (`draftRequest`: a binary's path and fingerprint, a
+script's `sha256` from the host's `paths`, B3 forcing workspace), and asks `storeRefusal`; an error goes to the model
+and no card is shown. The card (`draftCardNote`) re-resolves this run's ran calls of the program with the draft as the
+only stored entry and reads each through `shFacts` and the policies; `draftNote` writes it, DERIVED and said to be.
+This run's ran calls are `shell.ran` (`sw-shell-call.ts`, memory, 64 per run, 32 runs), noted after each successful
+`start`; a call that set environment variables is not re-read, because their values are not kept. On approval
+`approveManifest` stores the entry and runs `evidenceRun`: on a sandboxed host only, it re-spawns each of those calls
+with the 2 s probe limit, re-runs only one the stored entry makes free under the sandbox, starts it with
+`envelopeFor`'s envelope (which must be `write: "none"`, on a host that takes envelopes), and checks the exit against
+`okCodes`, the envelope the host reports, and `protectedChanged`; `markEvidence` stores the pass or the first failure.
+Both go to the run log (`shell`/`manifest-added`, `shell`/`manifest-evidence`). The tool itself only reports the
+outcome (`proposalOutcome`). It is offered by the settings (`shellTurnedOn`), not the measured status, so a run started
+while a woken worker reconnects is offered the same tools; a host that does not answer is the precheck's error.
 
 **CPU is a second measured fact beside memory** (host 0.7.0, root 1 of ROOT_K.md). `done.cpuMs`, the user and system
 time of the call's members with the children they reaped, reaches `ShResult.cpuMs`, the span (`shSpanOf`), the

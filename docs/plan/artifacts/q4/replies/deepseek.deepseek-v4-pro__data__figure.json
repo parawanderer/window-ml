@@ -1,0 +1,19 @@
+{
+  "model": "deepseek.deepseek-v4-pro",
+  "shape": "data",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Monthly Rainfall Summary\",\n  \"body\": \"<article>\\n  <figure>\\n    <ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed>\\n    <figcaption>Figure: Monthly rainfall for the year.</figcaption>\\n  </figure>\\n  <div id=\\\"summary\\\"></div>\\n</article>\",\n  \"css\": \"article { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1a1a2e; max-width: 720px; margin: 0 auto; }\\nfigure { margin: 0 0 20px; text-align: center; }\\nfigcaption { color: #5a5a72; font-size: 0.9rem; margin-top: 10px; }\\n#summary { background: #f4f8ff; border: 1px solid #d7e6ff; border-radius: 14px; padding: 18px 20px; }\\n#summary h3 { margin: 0 0 10px; font-size: 1.05rem; }\\n#summary p { margin: 6px 0; }\",\n  \"scripts\": [\n    \"const csv = ml.dereference(\\\"@tool:7be01d4:out\\\");\\nconst lines = csv.trim().split(/\\\\r?\\\\n/);\\nconst rows = lines.slice(1).map(line => {\\n  const parts = line.split(\\\",\\\");\\n  return { month: parts[0].trim(), mm: Number(parts[1]) };\\n});\\nconst sorted = rows.slice().sort((a, b) => b.mm - a.mm);\\nconst top3 = sorted.slice(0, 3);\\nconst total = rows.reduce((sum, row) => sum + row.mm, 0);\\nconst summary = root.byId.summary;\\nsummary.children = [\\n  { tag: \\\"h3\\\", attrs: {}, text: \\\"Three wettest months\\\" },\\n  { tag: \\\"p\\\", attrs: {}, text: top3.map(row => `${row.month}: ${row.mm} mm`).join(\\\" · \\\") },\\n  { tag: \\\"p\\\", attrs: {}, text: `Total annual rainfall: ${total} mm` }\\n];\"\n  ]\n}\n```",
+  "usage": {
+    "prompt_tokens": 819,
+    "completion_tokens": 3194,
+    "total_tokens": 4013,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2655
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 819
+  }
+}

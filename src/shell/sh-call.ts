@@ -514,12 +514,12 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
 
 /** An argument as the card prints it: bare when it is plain, else JSON-quoted, so a space or a quote cannot hide where
  *  one argument ends. */
-function quoteArg(a: string): string {
+export function quoteArg(a: string): string {
     return /^[A-Za-z0-9_@%+=:,./-]+$/.test(a) ? a : JSON.stringify(a);
 }
 
 /** A call's effects in words, for the card. */
-function effectsText(e: EffectsData): string {
+export function effectsText(e: EffectsData): string {
     if (e === "unknown") return "unknown";   // why is the card's own line: no manifest, an unknown flag, no version
     if (!e.length) return "nothing beyond running";
     return e.map((x) => `${x.res.kind === "fs" && x.res.names ? "create, remove or rename" : x.op} ${x.res.kind === "fs" ? x.res.path + (x.res.inRoot === false ? " (outside the roots)" : claimsTopLevelName(x) ? " (a name at the top of a workspace root)" : "") : x.res.kind === "net" ? `network ${x.res.host}` : x.res.kind === "secret" ? `secret ${x.res.name}` : x.res.kind}`).join("; ");

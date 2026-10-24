@@ -362,6 +362,57 @@ test("sed: a caller that names no maxChars is still held to MAX_STRING, so $' ca
     assert.equal(runPipe("a".repeat(3000000), `sed "s/a/$&/g"`).length, 3000000, "an identity is the line's own size");
 });
 
+// --- sed's size bound is exact, line by line (the over-count reported against #1010 does not reproduce) ---
+// `sed` works a line at a time, so `$'` and `` $` `` insert the rest or the start of the LINE. The bound counts it that
+// way (replace-size.ts, exact whenever the cheap worst case is over), so the stage refuses what it would build over
+// the limit and nothing under it. Each case: the charge is the built output's length, shown by running with
+// `maxChars` at and around that length.
+const sedBuilt = (text, re, repl) => text.replace(/\n$/, "").split("\n").map((l) => l.replace(re, repl)).join("\n");
+const SED_CASES = [
+    ["4,000 lines of ordinary text, $' (rest of the line)", Array.from({ length: 4000 }, (_, i) => `line ${i} the quick brown fox jumps over a lazy dog and an aardvark`).join("\n"), "s/a/$'/g", /a/g, "$'"],
+    ["4,000 lines of ordinary text, $` (start of the line)", Array.from({ length: 4000 }, (_, i) => `line ${i} the quick brown fox jumps over a lazy dog and an aardvark`).join("\n"), "s/a/$`/g", /a/g, "$`"],
+    ["4,000 lines of ordinary text, $& (the match)", Array.from({ length: 4000 }, (_, i) => `line ${i} the quick brown fox jumps over a lazy dog and an aardvark`).join("\n"), "s/a/$&/g", /a/g, "$&"],
+    ["many matches on short lines", Array.from({ length: 500 }, () => "aaaaaaaaaaaaaaaa").join("\n"), "s/a/$'/g", /a/g, "$'"],
+    ["a single huge line", "a".repeat(3000), "s/a/$'/g", /a/g, "$'"],
+    ["empty matches at every position", Array.from({ length: 60 }, () => "abcdefghij").join("\n"), "s/x*/$'/g", /x*/g, "$'"],
+    ["CRLF line endings (the \\r is part of the line)", Array.from({ length: 200 }, () => "aa bb a\r").join("\n"), "s/a/$'/g", /a/g, "$'"],
+    ["a final line with no newline", "aaa\naaaa\naaaaa", "s/a/$'/g", /a/g, "$'"],
+    ["a final line WITH a newline (one trailing \\n is not a line)", "aaa\naaaa\naaaaa\n", "s/a/$'/g", /a/g, "$'"],
+    ["$' at the end of the line (inserts nothing there)", Array.from({ length: 50 }, () => "xxxxa").join("\n"), "s/a$/$'|$`/g", /a$/g, "$'|$`"],
+    ["not global: only the first match per line", Array.from({ length: 300 }, () => "aaaaaaaa").join("\n"), "s/a/$'/", /a/, "$'"],
+    ["empty lines among others", "a\n\naa\n\n\naaa", "s/a*/<$'>/g", /a*/g, "<$'>"],
+];
+for (const [name, text, expr, re, repl] of SED_CASES) test(`sed: the charge is the built length, exactly: ${name}`, () => {
+    const built = sedBuilt(text, re, repl);
+    assert.equal(runPipe(text, `sed "${expr}"`), built, "it runs under the default limit, to the host's own result");
+    // The pre-check (sed's own) is exact: it lets a limit AT the built length through. The stage-output check after it
+    // counts a newline after every line (`charsOf`), one more than the joined text, so the stage as a whole runs at
+    // built + 1 and is refused by THAT check, not sed's, at built.
+    assert.equal(runPipe(text, `sed "${expr}"`, { maxChars: built.length + 1 }), built, "a limit of built + 1 lets it run");
+    assert.throws(() => runPipe(text, `sed "${expr}"`, { maxChars: built.length }), /produced over/, "at built, only the stage-output check refuses");
+    assert.throws(() => runPipe(text, `sed "${expr}"`, { maxChars: built.length - 1 }), /would produce over/, "one under built, sed's bound refuses");
+});
+
+test("sed: 4,000 lines of ordinary text run under the default limit, at the exact size", () => {
+    const text = Array.from({ length: 4000 }, (_, i) => `line ${i} the quick brown fox jumps over a lazy dog and an aardvark`).join("\n");
+    assert.equal(runPipe(text, `sed "s/a/$'/g"`).length, 586889);
+    assert.equal(runPipe(text, `sed "s/a/$\`/g"`).length, 1739119);
+    assert.equal(runPipe(text, `sed "s/a/$&/g"`).length, 270889);
+});
+
+test("sed: a refusal is per the real output, across lines and at the 10,000,000 default", () => {
+    // 4,000 lines of 70 'a': 9,663,999 built, runs. Of 72: 10,227,999, refused. The same input, only longer lines.
+    const lines = (n, len) => Array.from({ length: n }, () => "a".repeat(len)).join("\n");
+    assert.equal(runPipe(lines(4000, 70), `sed "s/a/$'/g"`).length, 9663999);
+    assert.throws(() => runPipe(lines(4000, 72), `sed "s/a/$'/g"`), /would produce over 10,000,000 characters/);
+    // One line, either side of the limit with a literal replacement: 10,000,000 runs, 10,000,001 refuses.
+    assert.equal(runPipe("a".repeat(10_000_000), "sed s/a/X/").length, 10_000_000);
+    assert.throws(() => runPipe("a".repeat(10_000_001), "sed s/a/X/"), /would produce over/);
+    // Two lines whose joined output is exactly the limit (the newline between them counts).
+    assert.equal(runPipe("a".repeat(4_999_999) + "\n" + "a".repeat(5_000_000), "sed s/a/X/").length, 10_000_000);
+    assert.throws(() => runPipe("a".repeat(5_000_000) + "\n" + "a".repeat(5_000_000), "sed s/a/X/"), /would produce over/);
+});
+
 test("sed: another delimiter for a pattern full of slashes — QUOTED, since | separates stages", () => {
     // Unquoted, `|` would split the pipeline itself, which is why the description says to quote it.
     assert.equal(runPipe("https://a/b", "sed 's|https://a|X|'"), "X/b");

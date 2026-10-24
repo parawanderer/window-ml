@@ -1,0 +1,28 @@
+{
+  "model": "litellm.anthropic/claude-sonnet-5-5",
+  "shape": "data",
+  "task": "figure",
+  "text": "```json\n{\n  \"title\": \"Monthly Rainfall\",\n  \"body\": \"<figure><ml-embed ref=\\\"@tool:3fa9c21:out\\\"></ml-embed><figcaption id=\\\"cap\\\">Monthly rainfall over one year (mm).</figcaption></figure><section><h2>Three wettest months</h2><ol id=\\\"wettest\\\"></ol><p id=\\\"total\\\" class=\\\"total\\\"></p><p id=\\\"err\\\" class=\\\"err\\\"></p></section>\",\n  \"css\": \"body{font-family:sans-serif} figure{margin:0 0 16px} figcaption{font-size:.9em;color:#555;margin-top:6px;text-align:center} h2{font-size:1.1em;margin:0 0 8px} ol{margin:0 0 12px;padding-left:24px} li{margin:4px 0} .total{font-weight:bold;font-size:1.05em} .err{color:#b00020}\",\n  \"scripts\": [\n    \"try {\\n  const raw = ml.dereference('@tool:7be01d4:out');\\n  const lines = raw.trim().split(/\\\\r?\\\\n/).slice(1).filter(l => l.trim().length > 0);\\n  const rows = lines.map(l => {\\n    const parts = l.split(',');\\n    return { month: parts[0].trim().replace(/^\\\"|\\\"$/g, ''), mm: Number(parts[1]) };\\n  }).filter(r => !Number.isNaN(r.mm));\\n  const top = rows.slice().sort((a, b) => b.mm - a.mm).slice(0, 3);\\n  const total = rows.reduce((s, r) => s + r.mm, 0);\\n  const list = root.byId['wettest'];\\n  list.children = top.map(r => ({ tag: 'li', attrs: {}, text: `${r.month}: ${r.mm.toFixed(1)} mm`, children: [] }));\\n  root.byId['total'].text = `Yearly total: ${total.toFixed(1)} mm (${rows.length} months)`;\\n} catch (e) {\\n  root.byId['err'].text = 'Could not read the rainfall data.';\\n}\"\n  ]\n}\n```",
+  "usage": {
+    "completion_tokens": 735,
+    "prompt_tokens": 1050,
+    "total_tokens": 1785,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "text_tokens": 735
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "text_tokens": 4,
+      "cache_creation_tokens": 1046,
+      "cache_creation_token_details": {
+        "ephemeral_5m_input_tokens": 1046,
+        "ephemeral_1h_input_tokens": 0
+      }
+    },
+    "cache_creation_input_tokens": 1046,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "global",
+    "service_tier": "standard"
+  }
+}

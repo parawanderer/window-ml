@@ -90,7 +90,7 @@ export function cdpWorld(getBg, onEvaluate) {
 /**
  * One worker-built run on tab 7 (an approved page) on `path` ("readonly", "userScripts", "cdp", or "none": no isolation,
  * so a pointer script runs in the main world): each of `fetches`, then each of `scripts` as an exec, each script a
- * function of the first fetch's pointer id.
+ * function of the first fetch's pointer id. A script given as `{ name, args }` is that tool's call instead.
  * - `between(i, { bg, idb, id })`: awaited before script `i` is sent.
  * - `onExecute(bg, injection, worlds)`: a user-script injection has arrived and is about to run (its call is in flight).
  * - `onEvaluate(bg, params, ctx)`: an evaluate in the CDP world is about to run.
@@ -98,9 +98,10 @@ export function cdpWorld(getBg, onEvaluate) {
  * - `onStep(bg, event)`: a step event reached the run's tab (a nested ask arrives this way).
  * - `onNative`, `configExtra`, `localExtra`: a fake process host (tests/fake-native-host.mjs), the settings that turn
  *   ml.sh on, and saved local storage (policies).
+ * - `onApproval(event)`: a step's own card; its answer (default true) is the person's.
  * @returns the exec results the model read, the run's routing records, its hash, the worker, and the fetches' ids
  */
-export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg, onStep, onNative, configExtra = {}, localExtra = {}, ticks = 4000 } = {}) {
+export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL, token: "orders" }], bodies = { [DATA_URL]: CSV }, types = {}, onExecute, onEvaluate, onBg, onStep, onNative, onApproval = () => true, configExtra = {}, localExtra = {}, ticks = 4000 } = {}) {
     const idb = new IDBFactory();
     let n = 0, bg, id;
     const worlds = new Map();
@@ -116,7 +117,7 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
             return r && typeof r.then === "function" ? JSON.parse(JSON.stringify(await r)) : r;
         },
     };
-    const steps = [...fetches.map((f) => ({ name: "fetch_url", args: f })), ...scripts.map((s) => ({ name: "exec", script: s }))];
+    const steps = [...fetches.map((f) => ({ name: "fetch_url", args: f })), ...scripts.map((s) => (typeof s === "function" ? { name: "exec", script: s } : s))];
     bg = loadBackground({
         siteGate: true, indexedDB: idb, userScripts,
         config: { ...config, autoApproveReadonly: path === "readonly", cdp: path === "cdp", ...configExtra },
@@ -137,7 +138,7 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
         },
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
-            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: !!(await onApproval(msg.event)) } });
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.kind === "agent-step") await onStep?.(bg, msg.event);
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };

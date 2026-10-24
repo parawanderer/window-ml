@@ -148,6 +148,30 @@ what the count surfaced:
 `riskyRegex` pre-check is ported and applied before the call); and a long numpy operation does not visit the eval
 breaker, so the wall-clock kill stays as the backstop behind the budget.
 
+**RULED 2026-10-24 (Shane's question: can the regex check live in one place, imported by both?): one DEFINITION
+and one CORPUS, two parsers, no shared code.** The two checks judge two languages: Python's `re` has `{,n}`,
+conditional groups `(?(1)a|b)`, verbose mode and `(?P<n>)`; JavaScript has `\k<n>`, the `v` flag's set operations and
+its own lookbehind rules. A pattern string that one engine accepts the other may refuse or read differently, so a
+shared parser is not a thing that can exist, and the lesson of the fork's #11 (three exponential escapes that a hand
+check over the string missed) is that each check walks ITS ENGINE'S OWN parse tree (`re._parser` there; a parser the
+JS side owns here). Running one implementation on both sides would mean Pyodide inside the worker for a JS cell, or the
+`js` bridge from restricted mode, which the lockdown exists to refuse; a WASM judge shared by both builds would save
+about a hundred lines of rule for a second toolchain in both repos, and still needs the two parsers. What IS one:
+(1) the rule, written once, over a common shape (a repeated group holding a quantifier, a count past the bound, or an
+alternation; the backtracking bound of `regex-cost.ts` over the same shape), in `docs/dev/readonly-exec.md`'s Halting
+rows, which both implementations transcribe; and (2) the corpus, `tests/fixtures/dialect-vectors/halting.json`
+(each vector: pattern, flags, the dialect it is written in, expected verdict and reason), read by both
+`tests/regex-cost.test.mjs` and the fork's `Lib/test/test_restricted.py`. A verdict that differs between the sides on a
+pattern both engines accept is a corpus failure, not drift to tolerate; a `{ todo }` marks the one open gap, the
+cost model (`regexWork`) that Python does not price yet. The JS/Python parity test is this corpus read twice, not a
+third list of cases.
+RULED the same day (the canvas session's question): the SHIPPED core reads the corpus too. A test in the python genre
+runs `dist/pyodide`'s own `risky_regex`/`risky_parse` over the `py`/`both` vectors; a vector the shipped core judges
+wrongly is a `{ todo }` naming the fork commit the core lacks and the pin, and a todo that starts passing FAILS (built
+explicitly; `node:test` does not fail a passing todo). A commit list compared with the pin is a proxy and is not the
+test. So the pin's lag behind a security fix is visible in CI as a red todo whose fix is a rebuild, never as a green
+suite over a core that still has the escapes.
+
 **RULE: the patch keeps the ABI.** It touches `ceval`, the abstract object layer and the thread state, never the object
 header or the stable ABI. Then Pyodide's own numpy and pandas builds work unchanged, and on the host a patched CPython
 with the same ABI tag installs stock wheels from PyPI. The cost of the fork stays at "rebase one patch per CPython

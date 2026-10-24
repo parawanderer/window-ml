@@ -157,8 +157,38 @@ surfaces it.
 one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
 stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
-and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048 are merged): #1055, #1051, #1045,
-#1041, then (d), then #1068, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068, #1051, #1045, #1063 are merged): #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+On 2026-10-24 the janitor's fix for #1051's P2-gate flake (#1081, test only) went to the python-cancel lane, the
+test's owner, to review and merge (the janitor built it, root-k found it); it found the fix clean, Shane posted the
+review. #1081's CI then showed main red: the `test (node 26)` job fails three #1068 tests in `tests/redteam.test.js`
+(the page cannot list, add or remove a manifest; a stored manifest never reaches a page; a page cannot mint `origin`
+proposed or person) with a TypeError reading `global` on the extension page's positive-control add. First recorded
+as a flake; root-k, e3 and the janitor each measured it deterministic: #1063 made an extension page's add take its
+pin from the host (`checkDraft` through `withShell`), so with ml.sh off the handler answers `{error}` and no `data`,
+and #1068's positive controls add under `baseConfig()` with no host. The two landed within a minute of each other
+without a shared CI run (a35d7363 and 443c9336 failed, both of #1081's runs failed; cde627ce's unit job "passed" as
+the prose-only leg, running nothing). Ruled 2026-10-24: e3 writes the fix, test only (the three controls get a faked host, as #1070's pins
+already do; assertions unchanged), the janitor reviews, e3 merges; root-k, whose #1063 caused it, touches neither.
+FIXED the same morning: #1084 merged b73dc013 after the janitor's review (the three controls faked a host; one new
+pin: an extension page's add with ml.sh off answers `{error}` and stores nothing); main's unit job passes on it. #1070
+rebased onto it (12 pins green) and is with the janitor; e3 merges it. python-cancel then updates #1081 and merges it.
+
+**Freeze exception, 2026-10-24 (Shane).** The root-k lane alone resumes, to spend the week's remaining budget on the
+most useful open item: first the evidence-run gap (a lying manifest that claims an output and exits 0 having written
+nothing passes the evidence run), measured failing-first, fixed in its own PR, the janitor reviews, root-k merges; then
+(c2) library manifests only if time allows. The other left items stay parked. Rule 10 holds: the red team pins any new
+surface in its own PR stacked on root-k's, merged after. Every other lane stays frozen.
+The gap MEASURED the same day (failing-first, fake host: a recorded `mytool out.txt` creates the file; a draft calling
+it a reader re-runs exit 0 under `write:none` and passes, since the host reports no denials and under `write:none` the
+root cannot change). FIX in #1089 (open; `@exec,@security,@ui,@docs`): the evidence run checks the RECORDED call; every
+non-flag operand and `--flag=value` value is hashed by spawn-then-discard before the call starts and after it is done,
+and a changed one fails evidence without re-running anything. The pass message claims only that ("no named operand of a
+recorded call was created, modified or removed"), the card names what the check cannot see (a write inside a directory
+operand, a file no argument names, a secret path compared by existence only), both pinned. The closure is host-side
+denial reporting (`done.denied`), a left item in [`ROOT_K_RESULT_2.md`](ROOT_K_RESULT_2.md) for Shane to post on the
+host repo. RULED on opening: #1089 edits three of the red team's test files, so it merges only after e3 has posted on
+the PR that each edit keeps its property (a narrowed one is reverted and e3's own version lands stacked after), and
+after the janitor's review of the rest; e3 then pins the residuals in its own file, stacked and merged after.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
@@ -315,7 +345,8 @@ listed as remaining is DONE unless named below.
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
      (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost; taken by root-k's subagent as #1045, a NEGATIVE result
-     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)).
+     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)),
+     MERGED 443c9336 on 2026-10-24 after the janitor's review.
   4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
      ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day (builder corrected within
@@ -364,6 +395,22 @@ listed as remaining is DONE unless named below.
   lost; after a failed read the store no longer counts as loaded, so `judgeCall` asks for every call in that worker
   unless a policy added since denies it; a `forgetRunPolicies` before the read is replayed after it).
 
+- **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
+  (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
+  `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
+  `re`'s parse tree (`risky_parse`, either check refuses); closes the `{,n}`, verbose-via-flags-int and conditional-group
+  escapes, three exponential cells that ran unasked in the shipped core. Neither is in the shipped core: the pin stays
+  0169c4fd until Shane assigns the rebuild. The three escapes went to the red team as a brief; the unpriced quadratic
+  (`regex-cost.ts` has no Python port) is named to the python-cancel lane in #11's body. RULED the same day on Shane's
+  question whether one implementation can serve both sides: no; one definition and one corpus, two parsers
+  ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "one DEFINITION and one CORPUS"); the parity test he asked for
+  is `halting.json` read by both suites.
+  cpython#12 (ca282158): the fork's `RegexCorpusTest` reads that corpus (35 `regex` vectors on window-ml's
+  `dialect-artifact-gaps` branch, PR pending). RULED the same day: the shipped core reads the corpus too, in the python
+  genre, each lag a `{ todo }` naming the fork commit and the pin, a passing todo failing
+  ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "the SHIPPED core reads the corpus"). Until the rebuild Shane
+  assigns, the pin 0169c4fd lags fork #10 to #12: the three exponential escapes are KNOWN OPEN in the shipped core.
+
 - **Root K and the rest of the policy layer, ASSIGNED 2026-10-23** on Shane's word (his session) to a new session
   `[window-ml root-k]` (Opus): [`ROOT_K.md`](ROOT_K.md), five roots in order (process ownership on the host, root K in four
   PRs, the shell probes then `propose_policy` to `sh`, file-kept policies, co-writing's two items), and the small
@@ -385,8 +432,22 @@ listed as remaining is DONE unless named below.
   owner table and CPU time read; the worker never registers), host #28 MERGED ae7284e6, #1048 retargeted to `main`.
   Root-k merged `main` into `manifests/store`; main's backup inventory then failed on the store's two keys, classified
   `never` backed up in a48e9743; the janitor cleared that commit (review 5631381308) and **#1048 MERGED 703e8724**
-  the same evening. GitHub retargeted #1068 and #1055 to `main`; #1068 is the red team's to merge next, then #1055,
-  #1070, #1063 in dependency order.
+  the same evening. GitHub retargeted #1068 and #1055 to `main`. The next morning (2026-10-24): #1068 MERGED
+  ce2a96bb (the red team's `MANIFESTS` pass, its entrypoint pin passing), #1055 MERGED 76ef2f7d, #1041 MERGED
+  326ff8cf (the corpus append). **Root 2 DONE 2026-10-24**: [`ROOT_K_RESULT_2.md`](ROOT_K_RESULT_2.md) landed with
+  #1055 (the coordinator checked its claims against the merged code: the tool is offered on `shellTurnedOn` at run
+  start, a draft stores `origin: "proposed"`, the evidence run requires the host to hold a `write: none` envelope;
+  host `c107434` is host #28's head before its squash). Measured there on the real host: a true read-only draft gets
+  `evidence {calls: 1}`; a lying one (`touch` drafted as a reader) fails its re-run on exit 1 and stays sandbox-only.
+  Named as left: a lying manifest whose program exits 0 having written nothing would pass (the check is exit code,
+  envelope and protected names, never a diff of the root); the evidence run is unmeasured on Linux (Landlock); one
+  accepted change beyond the ruling, the tool is offered by the settings, not the measured host status. **(d) DONE
+  2026-10-24**: #1063 MERGED a35d7363, the Settings page "Program manifests (ml.sh)" (every stored entry with whose it
+  is, where it describes calls, its evidence or the run's failure, its pin; add and remove); beyond the page, an add is
+  pinned by the host through the same precheck as a draft (`checkDraft`, origin `person`, in `background.ts`), so the
+  page's payload never chooses a pin; not measured against the real host, the same resolve path the two runs
+  exercised. Written into `ROOT_K_RESULT_2.md` with it. Left: #1070 (the red team's `propose_manifest` pass, on
+  `main`) merges after the janitor; (c2) library manifests only if time allows; the Linux measurement.
   **Root 1 DONE 2026-10-23**: [`ROOT_K_RESULT_1.md`](ROOT_K_RESULT_1.md) merged 9fe4e6a2 (#1075, the coordinator
   reviewed, every claim checked against the merged code). Left by it, each named there: the host's CPU timebase is a
   per-arch constant (an x86_64 host under Rosetta undercounts about 42x), a follow-up root-k's session was refused

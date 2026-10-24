@@ -45,15 +45,19 @@ export function replaceWorstCase(n: number, text: string, global: boolean): numb
  * reference counted at what it inserts there (`$&` the match, `` $` `` what precedes it, `$'` what follows it, a `$n`,
  * `$nn` or `$<name>` its capture, read as GetSubstitution reads it: its own text when it names no group). Exact.
  *
- * Counted as a running total, the size of what the host has built so far plus the rest of the receiver, and stopped
- * once over `limit`: past that the replace is refused, and a later match that shrinks the result cannot bring back a
- * peak the host would already have reached. `matches` is how many were read, for the caller to charge.
+ * Counted as a running total, the size of what the host has built so far plus the rest of the receiver. That total
+ * is NOT a lower bound of the result (a later match takes its own length out of the rest, and a `$'` that inserted the
+ * tail at every match ends up smaller than it peaked: 16 `a` through `s/a/$'/g` peaked at 121 and built 120), so it
+ * cannot decide the count on its own. Counting stops only when what is BUILT so far, without the rest, is over
+ * `limit`: every later match adds at least nothing to that, so the result is over it too. Otherwise the count runs to
+ * the last match, and `size` is the result's own length, over `limit` exactly when the host's result would be.
+ * `matches` is how many were read, for the caller to charge.
  *
  * @param str the receiver
  * @param pattern the RegExp as the host would run it (its flags and, for a sticky one, its `lastIndex`), or a string
  * @param text the replacement
  * @param global every match (a `g` RegExp, `replaceAll`), or only the first
- * @param limit the size past which counting stops
+ * @param limit the size past which the replace is refused; counting stops once the result is certain to pass it
  */
 export function replaceSize(str: string, pattern: RegExp | string, text: string, global: boolean, limit: number): { size: number; matches: number } {
     const { literal, refs } = replacementParts(text);
@@ -63,7 +67,7 @@ export function replaceSize(str: string, pattern: RegExp | string, text: string,
         matches++;
         size += literal - len;
         for (const t of refs) size += t === "$&" ? len : t === "$`" ? index : t === "$'" ? n - index - len : inserted(t, m);
-        return size > limit || !global;
+        return !global || size - (n - index - len) > limit;
     };
     if (typeof pattern === "string") {
         // An empty pattern matches at every position, 0 to n. Found by indexOf it never ends: past the end,

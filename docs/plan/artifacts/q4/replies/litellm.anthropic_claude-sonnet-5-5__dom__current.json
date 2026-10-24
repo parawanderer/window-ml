@@ -1,0 +1,28 @@
+{
+  "model": "litellm.anthropic/claude-sonnet-5-5",
+  "shape": "dom",
+  "task": "current",
+  "text": "```json\n{\n  \"title\": \"Conversation stats\",\n  \"body\": \"<div class=\\\"panel\\\"><section><h2>Messages by role</h2><div class=\\\"total\\\">Total: <strong id=\\\"total\\\">0</strong></div><ul id=\\\"roles\\\"></ul></section><section><h2>Five most recent tool calls</h2><ol id=\\\"calls\\\"></ol></section><section><h2>Longest message</h2><div id=\\\"longest\\\"></div></section></div>\",\n  \"css\": \".panel{font-family:system-ui,sans-serif;padding:12px;color:#222}h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#666;margin:16px 0 6px}section:first-child h2{margin-top:0}ul,ol{margin:0;padding-left:20px}ul{list-style:none;padding:0}li{padding:3px 0}#roles li{display:flex;justify-content:space-between;border-bottom:1px solid #eee;max-width:240px}.total{margin-bottom:6px}.empty{color:#999;font-style:italic}.big{font-size:22px;font-weight:600}.sub{color:#666;font-size:13px}code{background:#f1f1f1;padding:1px 5px;border-radius:3px}\",\n  \"scripts\": [\n    \"const msgs = (ml.current && ml.current.messages) ? ml.current.messages : [];\\nconst counts = { system: 0, user: 0, assistant: 0, tool: 0 };\\nfor (const m of msgs) { counts[m.role] = (counts[m.role] ?? 0) + 1; }\\nroot.querySelector('#total').textContent = String(msgs.length);\\nconst rolesEl = root.querySelector('#roles');\\nrolesEl.replaceChildren();\\nfor (const [role, n] of Object.entries(counts)) {\\n  const li = root.create('li');\\n  const a = root.create('span');\\n  a.textContent = role;\\n  const b = root.create('strong');\\n  b.textContent = String(n);\\n  li.append(a);\\n  li.append(b);\\n  rolesEl.append(li);\\n}\\nconst calls = [];\\nfor (const m of msgs) {\\n  for (const c of (m.tool_calls ?? [])) {\\n    calls.push(c?.function?.name ?? '(unnamed)');\\n  }\\n}\\nconst recent = calls.slice(-5).reverse();\\nconst callsEl = root.querySelector('#calls');\\ncallsEl.replaceChildren();\\nif (recent.length === 0) {\\n  const li = root.create('li');\\n  li.textContent = 'No tool calls yet';\\n  li.classList.add('empty');\\n  callsEl.append(li);\\n} else {\\n  for (const name of recent) {\\n    const li = root.create('li');\\n    const code = root.create('code');\\n    code.textContent = name;\\n    li.append(code);\\n    callsEl.append(li);\\n  }\\n}\\nconst longest = msgs.reduce((acc, m, i) => {\\n  const len = String(m.content ?? '').length;\\n  return len > acc.len ? { len, role: m.role, index: i + 1 } : acc;\\n}, { len: 0, role: null, index: 0 });\\nconst lEl = root.querySelector('#longest');\\nlEl.replaceChildren();\\nconst big = root.create('div');\\nbig.classList.add('big');\\nbig.textContent = longest.len + ' characters';\\nlEl.append(big);\\nconst sub = root.create('div');\\nsub.classList.add('sub');\\nsub.textContent = longest.role ? ('message #' + longest.index + ' (' + longest.role + ')') : 'no messages yet';\\nlEl.append(sub);\"\n  ]\n}\n```",
+  "usage": {
+    "completion_tokens": 1939,
+    "prompt_tokens": 975,
+    "total_tokens": 2914,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "text_tokens": 1939
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "text_tokens": 4,
+      "cache_creation_tokens": 971,
+      "cache_creation_token_details": {
+        "ephemeral_5m_input_tokens": 971,
+        "ephemeral_1h_input_tokens": 0
+      }
+    },
+    "cache_creation_input_tokens": 971,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "global",
+    "service_tier": "standard"
+  }
+}

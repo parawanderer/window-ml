@@ -1,0 +1,19 @@
+{
+  "model": "deepseek.deepseek-v4-pro",
+  "shape": "dom",
+  "task": "current",
+  "text": "```json\n{\n  \"title\": \"Conversation Stats\",\n  \"body\": \"<div class=\\\"panel\\\">\\n  <div class=\\\"header\\\">Conversation stats</div>\\n\\n  <div class=\\\"section\\\">\\n    <div class=\\\"section-title\\\">Messages by role</div>\\n    <div id=\\\"role-counts\\\" class=\\\"role-counts\\\"></div>\\n  </div>\\n\\n  <div class=\\\"section\\\">\\n    <div class=\\\"section-title\\\">Most recent tool calls</div>\\n    <ol id=\\\"recent-tools\\\" class=\\\"tool-list\\\"></ol>\\n  </div>\\n\\n  <div class=\\\"section\\\">\\n    <div class=\\\"section-title\\\">Longest message</div>\\n    <div id=\\\"longest-length\\\" class=\\\"longest\\\"></div>\\n  </div>\\n</div>\",\n  \"css\": \"* { box-sizing: border-box; }\\n.panel { font-family: system-ui, sans-serif; padding: 16px; background: #ffffff; color: #1f2933; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); height: 100%; overflow: auto; }\\n.header { font-weight: 700; font-size: 16px; margin-bottom: 12px; color: #0f172a; }\\n.section { margin-bottom: 14px; }\\n.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 6px; }\\n.role-counts p { margin: 3px 0; font-size: 14px; display: flex; justify-content: space-between; max-width: 240px; }\\n.tool-list { margin: 0; padding-left: 20px; font-size: 14px; }\\n.tool-list li { margin: 2px 0; }\\n.longest { font-size: 14px; color: #334155; }\",\n  \"scripts\": [\n    \"const messages = ml.current.messages ?? [];\\n\\nconst roleCounts = {};\\nfor (const msg of messages) {\\n  const role = msg.role ?? \\\"unknown\\\";\\n  roleCounts[role] = (roleCounts[role] ?? 0) + 1;\\n}\\n\\nconst roleEl = root.querySelector(\\\"#role-counts\\\");\\nroleEl.replaceChildren();\\n\\nfor (const role of Object.keys(roleCounts).sort()) {\\n  const row = root.create(\\\"p\\\");\\n  const name = root.create(\\\"span\\\");\\n  name.textContent = role;\\n  const count = root.create(\\\"span\\\");\\n  count.textContent = String(roleCounts[role]);\\n  row.append(name);\\n  row.append(count);\\n  roleEl.append(row);\\n}\\n\\nconst toolNames = [];\\nfor (const msg of messages) {\\n  const calls = msg.tool_calls;\\n  if (calls) {\\n    for (const call of calls) {\\n      const name = call.function && call.function.name ? call.function.name : \\\"unnamed\\\";\\n      toolNames.push(name);\\n    }\\n  }\\n}\\n\\nconst recent = toolNames.slice(-5).reverse();\\nconst recentEl = root.querySelector(\\\"#recent-tools\\\");\\nrecentEl.replaceChildren();\\n\\nif (recent.length === 0) {\\n  const empty = root.create(\\\"li\\\");\\n  empty.textContent = \\\"No tool calls yet\\\";\\n  recentEl.append(empty);\\n} else {\\n  for (const name of recent) {\\n    const item = root.create(\\\"li\\\");\\n    item.textContent = name;\\n    recentEl.append(item);\\n  }\\n}\\n\\nlet longest = 0;\\nfor (const msg of messages) {\\n  const len = (msg.content ?? \\\"\\\").length;\\n  if (len > longest) {\\n    longest = len;\\n  }\\n}\\n\\nconst longestEl = root.querySelector(\\\"#longest-length\\\");\\nlongestEl.textContent = longest + \\\" characters\\\";\"\n  ]\n}\n```",
+  "usage": {
+    "prompt_tokens": 748,
+    "completion_tokens": 3545,
+    "total_tokens": 4293,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2563
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 748
+  }
+}

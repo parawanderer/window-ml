@@ -17,17 +17,18 @@ const reg = await import("../src/tools/tool-registry.ts");
 
 // Copied verbatim from origin/main at 18cbd211, the commit before the registry. A difference is a behaviour change:
 // edit these only in a change that means to make one, and say why there; never to make a test pass.
-// Changed once since: `propose_policy` (REPL lane 2, 3c) is a new builtin, gated and run in the worker.
+// Changed twice since: `propose_policy` (REPL lane 2, 3c) and `propose_manifest` (root K, slice c) are new builtins,
+// each gated and run in the worker.
 const OLD = {
     /** src/sw/sw-run-host.ts `GATED_TOOL_NAMES` */
-    gated: ["exec", "python_exec", "fetch_url", "navigate", "click", "type", "propose_policy"],
+    gated: ["exec", "python_exec", "fetch_url", "navigate", "click", "type", "propose_policy", "propose_manifest"],
     /** src/tools/tool-params.ts `CITABLE_TOOLS` */
     citable: ["exec", "python_exec", "look", "locate", "fetch_url", "agent_api_docs"],
     /** src/sw/worker-tools.ts `WORKER_TOOL_NAMES` */
-    worker: ["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate", "propose_policy"],
+    worker: ["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate", "propose_policy", "propose_manifest"],
     /** Every tool a factory under src/ built (`node scripts/check-tools.mjs --list` at that commit). */
     builtins: ["agent_api_docs", "ancestors", "answer", "chat_metadata", "click", "countMatches", "dereference", "describeElement",
-        "exec", "fetch_url", "findByText", "interactives", "locate", "look", "navigate", "pageInfo", "propose_policy", "python_exec", "sampleText",
+        "exec", "fetch_url", "findByText", "interactives", "locate", "look", "navigate", "pageInfo", "propose_manifest", "propose_policy", "python_exec", "sampleText",
         "scroll", "type", "wait"],
 };
 
@@ -124,6 +125,8 @@ test("every builtin's card line is the spec's wording, or none for a tool that r
         dereference: null, agent_api_docs: null, chat_metadata: null,
         // propose_policy reaches nothing: each proposal is its own card, and only the person's answer there adds a policy.
         propose_policy: null,
+        // propose_manifest likewise: the host only resolves the draft for its card; the person's answer stores it.
+        propose_manifest: null,
         navigate: "Open other pages of this site in this tab",
     };
     for (const name of OLD.builtins) assert.equal(reg.cardLine(name), want[name], name);
@@ -197,7 +200,7 @@ const registryText = readFileSync(path.join(ROOT, check.REGISTRY), "utf8");
 
 test("check-tools passes on the repo as it is", () => {
     const out = execFileSync(process.execPath, [path.join(ROOT, "scripts/check-tools.mjs")], { encoding: "utf8" });
-    assert.match(out, /22 builtin tools, each declared/);
+    assert.match(out, /23 builtin tools, each declared/);
 });
 
 const decl = (name, factories) => `defineBuiltinTool({ name: "${name}", factories: [${factories.map((f) => `"${f}"`).join(", ")}], gated: false, citable: false, realm: "page", cardLine: null });\n`;

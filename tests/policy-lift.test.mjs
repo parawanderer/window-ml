@@ -9,6 +9,7 @@ const { liftPolicy } = await import("../src/readonly-exec/policy-lift.ts");
 const { evalPolicy } = await import("../src/readonly-exec.ts");
 const { CONSUMER_FIELDS } = await import("../src/readonly-exec/policy-lift.ts");
 const { evalTree, treeVerdict, cells, asView } = await import("./fixtures/policy-tree-cells.mjs");
+const { NEEDS } = await import("./e2e/panel/policy-proposals.score.ts");
 
 const corpus = JSON.parse(fs.readFileSync(new URL("./fixtures/policy-corpus.json", import.meta.url), "utf8"));
 const measured = corpus.policies.filter((e) => e.tree);
@@ -56,7 +57,7 @@ test("the lifter lifts exactly the corpus entries recorded as fitting, as writte
 
 test("the corpus's figure is reproduced from the file: 36 of 39 consumer policies and 49 of 60 lift", () => {
     const bySrc = new Map();
-    for (const e of measured) bySrc.set(e.src.split(/\s+/).join(" "), e);
+    for (const e of measured.filter((x) => x.author !== "model")) bySrc.set(e.src.split(/\s+/).join(" "), e);
     const count = (pred) => [...bySrc.values()].filter(pred).length;
     const lifted = (e) => !!liftPolicy(e.src, e.consumer).tree;
     assert.equal(bySrc.size, 60);
@@ -65,19 +66,53 @@ test("the corpus's figure is reproduced from the file: 36 of 39 consumer policie
     assert.equal(count(lifted), 49);
 });
 
+test("the model-written entries' figure is reproduced from the file: 45 of 74 distinct policies lift, 25 of 37 fetch and 20 of 37 sh", () => {
+    const bySrc = new Map();
+    for (const e of measured.filter((x) => x.author === "model")) bySrc.set(e.consumer + e.src.split(/\s+/).join(" "), e);
+    const lifted = (e) => !!liftPolicy(e.src, e.consumer).tree;
+    const n = (pred) => [...bySrc.values()].filter(pred).length;
+    assert.equal(bySrc.size, 74);
+    assert.equal(n(lifted), 45);
+    assert.equal(n((e) => e.consumer === "fetch" && lifted(e)), 25);
+    assert.equal(n((e) => e.consumer === "sh" && lifted(e)), 20);
+    for (const e of bySrc.values()) assert.equal(e.tree.group, "consumer", "a model's proposal is over a real consumer");
+});
+
 // --- a lifted tree agrees with its source ---
 
 test("every lifted corpus policy agrees with its source, in the real policy realm, on every cell", () => {
     const seen = new Set();
+    const tooBig = [];
     for (const e of measured) {
         if (seen.has(e.src) || !lifts(e.tree.fit)) continue;
         seen.add(e.src);
         const { tree } = liftPolicy(e.src, e.consumer);
-        const r = agreement(e.src, e.consumer, tree);
+        let r;
+        try { r = agreement(e.src, e.consumer, tree); }
+        catch (err) {
+            // A model's long proposal can induce more cells than the generator enumerates (it throws past its cap, never samples).
+            if (e.author !== "model" || !/past the test's cap/.test(err.message)) throw err;
+            // Compared instead on the need's hand-labelled calls, the facts the bench scored it on.
+            const need = NEEDS[e.consumer].find((x) => x.id === e.notes[1].split(" ")[0]);
+            assert.ok(need, `${e.src}: its notes name no need`);
+            let n = 0;
+            for (const v of need.vectors) {
+                const o = evalPolicy(e.src, v.facts, need.effect);
+                if (o.broken) continue;
+                n++;
+                assert.equal(treeVerdict(tree, asView(v.facts), CONSUMER_FIELDS[e.consumer], need.effect), o.decision === need.effect, `${e.src}\n  disagrees on ${v.name}`);
+            }
+            assert.ok(n > 0, `${e.src}: some call of ${need.id} must evaluate`);
+            tooBig.push(e.src);
+            continue;
+        }
         assert.equal(r.mismatch, undefined, `${e.src}\n  source says ${r.want}, tree says ${r.got} on ${JSON.stringify(r.mismatch)}`);
         assert.ok(r.compared > 0, `${e.src}: some cell must evaluate (broken on all ${r.broken})`);
         assert.equal(r.flat, undefined, `${e.src}: no cell makes ${JSON.stringify(r.flat)} take both values`);
     }
+    // Pinned, so a third one is noticed: two sh answers (S2, S3) read too many fields to enumerate, and are compared on
+    // their need's calls only.
+    assert.equal(tooBig.length, 2, `sources too big to enumerate:\n${tooBig.join("\n---\n")}`);
 });
 
 test("an ALLOW lifted over a nullable fact agrees on the null cell too: the tree, like the realm, does not fire there", () => {

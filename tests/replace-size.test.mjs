@@ -53,6 +53,36 @@ test("the worst case is never under the measured size, and counting stops once p
     assert.ok(size > 1000000 && matches < 100, `stopped at match ${matches}, size ${size}`);
 });
 
+test("the verdict against a limit is the host's own: over exactly when the result is, at one under, at, and one over", () => {
+    // The running total (built so far + the rest of the receiver) peaks above the final length when a later match
+    // takes its own length out of the rest: 16 `a` through `s/a/$'/g` peaked at 121 and built 120, and a limit of 120
+    // was refused. Counting stops only when the BUILT part is over, so the verdict is exact in both directions.
+    assert.equal(replaceSize("a".repeat(16), /a/g, "$'", true, 120).size, 120);
+    assert.ok(replaceSize("a".repeat(16), /a/g, "$'", true, 119).size > 119);
+    const inputs = ["", "a", "aaaa", "a".repeat(16), "abcabc", "the cat sat on the mat", "a-b-c-", "\r\n", "x".repeat(40) + "y" + "x".repeat(40)];
+    const patterns = [/a/g, /a/, /(?:)/g, /x*/g, /\w+/g, /b/, /-/g, /y$/, /^/g, /$/g, /a|bc/g, "a", "-", "", "cat"];
+    const texts = ["", "Z", "$&", "$`", "$'", "<$&>", "$'$`", "$$'", "[$&|$`|$']", "$1"];
+    for (const str of inputs) for (const p of patterns) for (const t of texts) {
+        const g = typeof p === "string" ? true : p.global;
+        if (p instanceof RegExp) p.lastIndex = 0;
+        const built = (typeof p === "string" ? str.replaceAll(p, t) : str.replace(p, t)).length;
+        for (const limit of [built - 1, built, built + 1]) {
+            if (p instanceof RegExp) p.lastIndex = 0;
+            const { size } = replaceSize(str, p, t, g, limit);
+            assert.equal(size > limit, built > limit, `${JSON.stringify(str)}.replace(${p}, ${JSON.stringify(t)}) at limit ${limit}: counted ${size}, built ${built}`);
+            if (built <= limit) assert.equal(size, built, "under the limit the count is the length");
+        }
+    }
+});
+
+test("counting a huge receiver still stops early once the BUILT part is over the limit", () => {
+    const { size, matches } = replaceSize("a".repeat(200000), /a/g, "$'", true, 1000000);
+    assert.ok(size > 1000000 && matches < 100, `stopped at match ${matches}, size ${size}`);
+    // And an empty-match pattern over a long receiver, where every position matches.
+    const e = replaceSize("a".repeat(200000), /(?:)/g, "$'", true, 1000000);
+    assert.ok(e.size > 1000000 && e.matches < 100, `stopped at match ${e.matches}`);
+});
+
 test("a sticky RegExp that is not global is measured from its lastIndex, as the host runs it", () => {
     const re = /a/y;
     re.lastIndex = 2;
