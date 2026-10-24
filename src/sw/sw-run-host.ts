@@ -36,6 +36,7 @@ import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
 import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
+import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { isExtensionSender } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
@@ -57,7 +58,7 @@ import { handOverSettled } from "./nav-handover";
 import { grantRunFetch, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
@@ -333,8 +334,9 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
     rest.autoApproveSelfSource = !!rest.autoApproveSelfSource && !!cfg.autoApproveSelfSource;
     // Absent is on, for the page's payload as for the config (an older stored config).
     rest.selfIntrospection = rest.selfIntrospection !== false && cfg.selfIntrospection !== false;
-    // propose_policy is the worker's to offer: a page naming it would turn its own run into a way to ask for policies.
-    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && t.name === "propose_policy"));
+    // propose_policy and propose_manifest are the worker's to offer: a page naming one would turn its own run into a way to
+    // ask for policies or manifests.
+    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && PROPOSAL_TOOLS.has(t.name)));
     if (Array.isArray(rest.tools)) rest.tools = rest.tools.map((t) => (t && typeof t === "object" && (GATED_TOOL_NAMES.has(t.name) || t.remote) ? { ...t, requiresApproval: true } : t));
     const url = sender.url ?? sender.tab?.url;
     const g = grantableOrigin({ origin: sender.origin, url, frameId: sender.frameId });
@@ -492,6 +494,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
      *  page's run never does (`pageStartPayload`), nor one handed to the worker: within the turn of its hand-over `p` is
      *  still the page's, and after it the stored copy has the tool stripped (`markWorkerRun`). */
     const offersProposals = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_policy");
+    /** Whether this run may ask the person to store a program manifest (`propose_manifest`): one the worker built, whose
+     *  tools offer it (the settings turned ml.sh on when it started). Whether the host answers is the check's. */
+    const offersManifests = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_manifest");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
@@ -1420,6 +1425,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         const c = checkProposal(args);
                         return "error" in c ? c.error : null;
                     }
+                    // A manifest draft is resolved through the host and checked as the store would; nothing runs.
+                    if (name === "propose_manifest") {
+                        if (!offersManifests()) return `Error: propose_manifest is not offered in this run.`;
+                        const c = await checkManifestProposal({ runId, seq: seqBase }, args);
+                        return "error" in c ? c.error : null;
+                    }
                     // A worker-built run's exec is checked here, never on the page: its checks need nothing of the page's, and
                     // the page is not shown a call that may run in another world. A `world` it cannot have is refused before
                     // the person is asked to approve it (a call without one is routed after approval, as before).
@@ -1452,6 +1463,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             try { messages = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { /* no history: measured over nothing, and the card says so */ }
                             renderIn = { type: "code", text: proposal.source, lang: "javascript", format: true, note: breadthNote(proposal, measureBreadth(proposal, recordedFetches(messages))) };
                         } else renderIn = { type: "code", text: "", lang: "javascript", note: "This proposal cannot be added: the run does not offer propose_policy, or it does not run." };
+                    }
+                    // propose_manifest's card is the worker's too: the draft pinned to what the host resolved, led by how it
+                    // reads this run's own calls of the program (DERIVED: the host resolved them, nothing ran). What the
+                    // person approves is `manifest`, and only that is stored (the resolve below).
+                    let manifest: CheckedManifest | undefined;
+                    if (tool === "propose_manifest") {
+                        const owner = { runId, seq: seq != null ? seqBase + seq : seqBase };
+                        const c = offersManifests() ? await checkManifestProposal(owner, args) : undefined;
+                        if (c && "request" in c) {
+                            manifest = c;
+                            renderIn = { type: "code", text: JSON.stringify(c.request.manifest, null, 2), lang: "json", note: await draftCardNote(owner, c) };
+                        } else renderIn = { type: "code", text: "", lang: "json", note: c ? `This manifest cannot be stored: ${c.error.replace(/^Error: /, "")}` : "This manifest cannot be stored: the run does not offer propose_manifest, or ml.sh is not set up." };
                     }
                     if (!renderIn) try {
                         const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
@@ -1518,6 +1541,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                         for (const g of grants) if (g.kind === "fetch-url") rememberFetchUrls(runId, g.urls);
                                     // A proposed policy is added HERE, from the person's answer, and only the proposal the card
                                     // showed; the tool's own run only reports whether it is there.
+                                    // A proposed manifest is stored HERE, from the person's answer, and only the one the card showed;
+                                    // its evidence run follows, and the tool's own run reports both.
+                                    if (ok && tool === "propose_manifest" && manifest && offersManifests())
+                                        approveManifest({ runId, seq: gateSeq ?? seqBase, signal: abortCtl.signal }, manifest);
                                     if (ok && tool === "propose_policy" && proposal && offersProposals()) {
                                         const added = addRunPolicy(runId, { consumer: "fetch", ...proposal, origin: "proposed" });
                                         recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool } });

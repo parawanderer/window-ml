@@ -23,7 +23,38 @@ that needs a decision goes to the coordinator, who writes the ruling into the sp
    for interpreted scripts; (b) extension, the manifests store with workspace and global scope (declared in the state
    registry from its first commit; read `docs/dev/state.md` first); (c) `propose_manifest`, a builtin tool in the tool
    registry, drafting a program manifest from `--help` or script source, or a library manifest from module source, into a
-   card with sandbox or probe evidence, loaded live on approval; (d) the registration page in DevTools Settings. (c) is a
+   card with sandbox or probe evidence, loaded live on approval; (d) the registration page in DevTools Settings. RULED
+   2026-10-23: (c) is PROGRAM manifests only this round; a library manifest needs the Tier 3 admission check or the
+   Tier 1 isolated probe (`READONLY_LIBRARY_MANIFEST.md`, "Generating and importing a manifest into the runtime"),
+   neither built, and a Tier 1 `@lift` entry suspends the in-process gate, so it is its own root. (c2), after (c) merges
+   and only if time allows: Tier 3 (`@cost interpret`) entries only, sha256-pinned, delivered through the existing
+   `src/python/dialect-data.ts` path to the fork's `load_manifests`, no fork change; Tier 1 stays out of root K, listed
+   for Shane. RULED 2026-10-23, the evidence run of (c): nothing executes before the person's word; the card's block is
+   DERIVED and says so (the host resolves the program and discards: pin path, fingerprint, `inRoot`, the version when
+   the draft reads one, a script's sha256; plus this run's recorded `ml.sh` calls of that program with the draft's
+   reading of each, free or asks), never mixed with MEASURED; on approval the entry is stored `origin: "proposed"` and
+   applies sandboxed only (B5), loaded live; the MEASURED run follows approval, on a sandboxed host only, over this
+   run's recorded calls of the program the draft makes free, under the envelope derived from the draft (write none, net
+   none, program-only exec) with the 2 s / 4 KiB probe limits, each within `okCodes` with no envelope mismatch and no
+   `protectedChanged`; all pass marks `evidence {calls, at}` and the entry then also describes plain-host calls; any
+   failure keeps it sandbox-only and is stored on the entry for (d)'s page; zero recorded free calls means no evidence,
+   sandbox-only, said on the card, never a synthetic call. Measuring before the card was refused: an execution no card
+   covered. Scope is the model's choice, B3 forcing workspace for an in-root program or a script, said on the card; the
+   tool is offered only to a worker-built run with `ml.sh` bound, like `propose_policy`. BUILT as #1055 (stacked on
+   #1048; the red team's tool pass, the janitor's review). Ruled on it 2026-10-23: the tool is offered on the DECLARED
+   settings (`ml.sh` enabled with roots), never on the measured host status, which is empty in a just-woken worker until
+   its refresh lands; a run started in that window must not lose the tool to timing. When the host does not answer, the
+   precheck tells the model and no card is shown (a committed test). Measured in tests: 0 starts before the card is
+   answered (asserted); the evidence run passes, fails on each of five causes, covers no calls and the plain host, on the
+   FAKE host only. MEASURED the same day on the real sandboxed macOS host (wmlhost 0.7.0, Seatbelt, the built worker's
+   native port bridged to the binary; `ROOT_K_RESULT_2.md` on #1055): `file a.txt` re-ran under `write:none,
+   exec:program-only`, exited 0 in 9 ms, `evidence {calls:1}` set, 147 ms from the first host message to the outcome;
+   `touch b.txt` drafted as a reader (a lying manifest) read on the card as "read, free" since the card is derived from
+   the draft, exited 1 in 7 ms under the sandbox, `evidenceFailure` stored, the entry sandbox-only; nothing started
+   before the card was answered in either run. Accepted residual, in the result file: a program that would write on the
+   plain host but writes nothing under the sandbox and exits 0 passes (the check is exit code, envelope and protected
+   names, never a diff of the root), the spec's own evidence-before-trust limit; a root diff is a later widening of the
+   check, on a need. Not measured on Linux/Landlock. (c) is a
    new tool and (b) adds message types: each gets the red-team pass AGENTS.md requires, written by a separate agent with
    tests that fail first (`tests/redteam.test.js`; the `redteam` skill). The sh-policy session's #990 (destructive
    programs, no shipped manifest inside a workspace root) and #995 (the manifest JSON Schemas) are K's edges, already on
@@ -58,15 +89,31 @@ and the sh-policy session, none of which is your subagent.
   left"; `LANE_11_ENDED_RECORD_DESIGN.md`), and K3b's open item that the deadline kill's record is consumed once
   (`README.md`, "K3b"). Host side.
 - The two uncharged reads named in #1007's body: the unpiped stored-text read and `serveWireCall`'s argument copies
-  (`ML_WIRE.md`, "One budget a cell").
+  (`ML_WIRE.md`, "One budget a cell"). DONE as #1053 (root-k, merged bb881ed7, 2026-10-23): both charged their size at
+  the pipe rate before the copy, so a loop of either stops like a loop of pipes (`ML_WIRE.md`, same section). Its e2e
+  failed twice on site-access attack 13 ("cannot be cancelled by the page") with the diff untouched and passed on
+  rerun: that attack is flaky, not #1053's.
 - `sed`'s size bound over-counts (`s/a/$'/g` refused at 4,000 lines; `src/readonly-exec/replace-size.ts`, the
   `replaceCharge` row of `docs/dev/readonly-exec.md`): exact where the worst case is wrong, never looser than exact.
+  DONE as #1045 (a Sonnet subagent of root-k, 2026-10-23), a NEGATIVE result on the stated bug: the 4,000-line refusal
+  does not reproduce on main; the real defect was `replaceSize` stopping on built plus rest, which peaks above the
+  final length (16 `a`: peak 121, built 120, so a limit of 120 refused); the fix stops on the built part only, which
+  never decreases. Accepted residual: the replacer-arrow path keeps the running total and can refuse transiently near
+  the limit, erring toward asking.
 - An `ask` saved between `decide` and host start is not re-checked, only a deny is (`docs/dev/policies.md`, "What an ask
   cannot reach" and the sh-policy session's #999).
 - The lost-POLICIES-add race (the sh-policy session's note; its record is `~/git/window-ml-sh-policy/tmp/CHECKPOINT.md`,
   a local file outside git that Shane keeps for you: READ it, never work in that clone; ask that session if the shape is
   unclear, it found it).
 - The model-written proposals appended to `tests/fixtures/policy-corpus.json` (`LANE_11_RESULT.md`, "Left by #961").
+  OPEN as #1041 (a Sonnet subagent of root-k, 2026-10-23, the janitor reviews): 110 model entries (206 occurrences), the
+  corpus from 221 to 331; by distinct source 45 of 74 lift (fetch 25 of 37, sh 20 of 37); the per-run figures reproduce
+  the documented ones with the scorer's own extract and lift (run A fetch 33 of 52 and sh 24 of 53; run B fetch 46 of
+  52; run C fetch 41 of 49); no lifted tree disagrees with its source; the two sh answers that cannot be enumerated are
+  compared on their need's calls, now a committed assertion. Judgment calls, stated in the entries' notes: run B (the
+  withdrawn details text) included and labelled; Gemini-flash's 12:15Z fetch attempt excluded (setup unidentifiable);
+  the 19 entries marked `no` had no rewrite attempted. Not recomputed: the counts in
+  `tests/e2e/panel/policy-proposals.md`, which root 3's rerun recomputes.
 
 Not yours, said so you do not take them: `riskyRegex` stays as it is (ruled, lane 11); the python cancel gaps are
 `[window-ml python-cancel]`'s; site access and presence are `[window-ml security] Site access`'s; the Pyodide fork is

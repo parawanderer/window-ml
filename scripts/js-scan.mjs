@@ -13,7 +13,8 @@
 //
 // What it deliberately does not do: interpolation. A template with `${…}` in it has no constant value, so its
 // parts are dropped and the sentinel marks it as unknowable — which is what both callers want, since a name or a
-// specifier built at runtime is one they refuse to guess at rather than report wrongly.
+// specifier built at runtime is one they refuse to guess at rather than report wrongly. The constant text BEFORE the
+// first `${` is kept as `head`, for the one caller that wants a prefix (tests/backup-inventory.test.mjs).
 
 /** The sentinel that stands in for a string. `\0` cannot appear in source, so it cannot collide with real text. */
 const MARK = "\0";
@@ -65,8 +66,8 @@ export function scan(text) {
         // Strings and templates.
         if (ch === '"' || ch === "'" || ch === "`") {
             const at = line;
-            const { value, end, interpolated } = readString(text, i);
-            strings.push({ value: interpolated ? null : value, line: at });
+            const { value, end, interpolated, head } = readString(text, i);
+            strings.push({ value: interpolated ? null : value, line: at, ...(interpolated ? { head } : {}) });
             code += `${MARK}${strings.length - 1}${MARK}`;
             // The literal's own newlines go into `code` after the sentinel, not only into the counter: `lineAt` counts
             // the newlines in `code`, so without them every test after a multi-line template was placed that many
@@ -116,12 +117,14 @@ function readString(text, i) {
     const quote = text[i];
     let out = "";
     let interpolated = false;
+    let head = "";
     let j = i + 1;
     while (j < text.length) {
         const ch = text[j];
         if (ch === "\\") { out += text[j + 1] ?? ""; j += 2; continue; }
-        if (ch === quote) return { value: out, end: j + 1, interpolated };
+        if (ch === quote) return { value: out, end: j + 1, interpolated, head };
         if (quote === "`" && ch === "$" && text[j + 1] === "{") {
+            if (!interpolated) head = out;   // the constant text before the first `${`: a key's prefix is knowable
             interpolated = true;
             // Skip to the matching brace, counting nesting so `${ {a:1} }` does not end it early.
             let depth = 1;
@@ -136,7 +139,7 @@ function readString(text, i) {
         out += ch;
         j++;
     }
-    return { value: out, end: text.length, interpolated };   // unterminated: take what there is
+    return { value: out, end: text.length, interpolated, head };   // unterminated: take what there is
 }
 
 /** The index a sentinel names, for a `\0<n>\0` found in scanned code. */

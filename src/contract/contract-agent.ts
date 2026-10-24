@@ -226,6 +226,9 @@ export interface ShCallSpan {
     peakFootprint?: number;
     memoryBound?: number;
     killed?: "oom";
+    /** The CPU time the host measured, in milliseconds (host 0.7.0): a second fact beside memory, never bounded.
+     *  Absent from an older host: absent is not zero. */
+    cpuMs?: number;
     /** Set when the call ran with no one asked (a policy or the built-in default allowed it); a call the person
      *  approved is recorded on its ask instead (`StepAsk.outcome`). */
     unasked?: ShUnasked;

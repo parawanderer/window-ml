@@ -57,6 +57,26 @@ test("a described call inside the roots, under the sandbox, runs without a card:
     assert.match(results[0], /it runs programs through ml\.sh/, "the exec ran in an isolated world for it");
 });
 
+// --- a program described by a stored manifest (PROGRAM_MANIFEST.md, "Registering a program") ---
+
+/** The person's own tool, stored globally, pinned to what the fake host resolves `mytool` to. */
+const storedTool = (fingerprint = "1:2:3:4") => ({ ml_manifests_global: [{ id: "man-t", scope: "global", origin: "person", created: 1,
+    manifest: { program: "mytool", version: { range: "*", args: [], pattern: "" }, command: { effects: ["read"], paths: "operands", flags: {} } },
+    pin: { path: "/usr/bin/mytool", fingerprint, inRoot: false } }] });
+
+test("a program a stored manifest describes runs without a card under the sandbox, and asks once its binary changed", T, async () => {
+    for (const [fingerprint, cards] of [["1:2:3:4", 0], ["1:2:3:5", 1]]) {
+        const host = fakeNativeHost({ done: () => ({ out: "ok\n", err: "", code: 0 }) });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["mytool"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, localExtra: storedTool(fingerprint), onStep: ask.onStep });
+        const r = valueOf(results[0]);
+        assert.equal(r.ok, true, fingerprint);
+        assert.equal(ask.asked.length, cards, `pinned to 1:2:3:4, the host reported it as ${fingerprint}`);
+        assert.equal(r.approvedBy, cards ? "person" : "builtin");
+        if (cards) assert.match(ask.asked[0].facts.why.join("; "), /not the program its manifest was registered for/);
+    }
+});
+
 // --- a call the person is asked about ---
 
 test("an undescribed program asks inside the running step, showing the host's facts; allowed, it runs and says it waited", T, async () => {
@@ -258,18 +278,19 @@ test("each spawn names its run and step as its owner; a script cannot name one",
 });
 
 test("a call the host killed past its memory bound is a result with killed oom and its peak, and the run log says so", T, async () => {
-    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0, killed: "oom", peakFootprint: 140 << 20, memoryBound: 128 << 20 }) });
+    const host = fakeNativeHost({ done: () => ({ out: "", err: "", code: 0, killed: "oom", peakFootprint: 140 << 20, memoryBound: 128 << 20, cpuMs: 1520 }) });
     const { results, bg, hash } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
     const r = valueOf(results[0]);
     assert.equal(r.ok, false);
     assert.equal(r.killed, "oom");
     assert.equal(r.peakFootprint, 140 << 20);
     assert.equal(r.memoryBound, 128 << 20);
+    assert.equal(r.cpuMs, 1520, "the CPU time the host measured (host 0.7.0)");
     assert.match(r.error, /memory bound/);
     const ran = (await bg.context.__mlRunLog.all()).filter((x) => x.run === hash && x.subsystem === "shell" && x.kind === "run");
     assert.equal(ran.length, 1);
     assert.equal(ran[0].level, "warn");
-    assert.deepEqual([ran[0].detail.killed, ran[0].detail.peakFootprint], ["oom", 140 << 20]);
+    assert.deepEqual([ran[0].detail.killed, ran[0].detail.peakFootprint, ran[0].detail.cpuMs], ["oom", 140 << 20, 1520]);
 });
 
 test("an older host's done (no footprint fields) still makes a result, with none of them", T, async () => {
@@ -277,14 +298,14 @@ test("an older host's done (no footprint fields) still makes a result, with none
     const { results } = await runOn("userScripts", [runs(["ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
     const r = valueOf(results[0]);
     assert.equal(r.ok, true);
-    assert.deepEqual([r.killed, r.peakFootprint, r.memoryBound], [undefined, undefined, undefined]);
+    assert.deepEqual([r.killed, r.peakFootprint, r.memoryBound, r.cpuMs], [undefined, undefined, undefined, undefined], "absent is unknown, never 0");
 });
 
 // --- the event lane gets each call's footprint on the step that made it ---
 
 test("the finished step carries its ml.sh calls with peak and bound; a killed one says so; an older host's carries neither", T, async () => {
     for (const [done, expect] of [
-        [{ peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576 }, { peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576 }],
+        [{ peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576, cpuMs: 840 }, { peakFootprint: 300 * 1048576, memoryBound: 4096 * 1048576, cpuMs: 840 }],
         [{ killed: "oom", peakFootprint: 5000 * 1048576, memoryBound: 4096 * 1048576 }, { killed: "oom", peakFootprint: 5000 * 1048576, memoryBound: 4096 * 1048576 }],
         [{}, {}],
     ]) {

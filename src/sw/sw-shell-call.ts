@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
+import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
@@ -23,6 +23,8 @@ import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
+import { manifestsReady, storedManifests } from "./sw-manifests";
+import type { ProgramManifest } from "../shell/program-manifest";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
 export interface ShCallContext {
@@ -59,10 +61,11 @@ const SPAN_STEPS_MAX = 256;
  * @param unasked what let it run without asking, for a call no one was asked about
  * @returns the span
  */
-export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed">, unasked?: ShUnasked): ShCallSpan {
+export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed" | "cpuMs">, unasked?: ShUnasked): ShCallSpan {
     return { program: program.split("/").pop() || program, durationMs: r.durationMs,
         ...(r.peakFootprint !== undefined ? { peakFootprint: r.peakFootprint } : {}),
         ...(r.memoryBound !== undefined ? { memoryBound: r.memoryBound } : {}),
+        ...(r.cpuMs !== undefined ? { cpuMs: r.cpuMs } : {}),
         ...(r.killed ? { killed: r.killed } : {}),
         ...(unasked ? { unasked } : {}) };
 }
@@ -84,6 +87,11 @@ export function takeShSpans(runId: string, seq: number): ShCallSpan[] | undefine
 interface HeldOut { runId: string; ptr: string; size: number; client: HostClient }
 
 const held = new Map<string, HeldOut>();   // state: declared below as "shell.outputs"
+/** The calls each run made that RAN (a policy, the built-in default or the person let them start), as the host resolved
+ *  them: what `propose_manifest`'s card reads a draft over and its evidence run re-runs. A refused call is never here. */
+const ranByRun = new Map<string, HostFacts[]>();   // state: declared below as "shell.ran"
+/** At most this many calls a run, the latest kept, and this many runs, the oldest dropped. */
+export const RAN_PER_RUN = 64, RAN_RUNS_MAX = 32;
 const versions = new Map<string, string | null>();   // state: declared below as "shell.versions"
 const watched = new WeakSet<HostClient>();   // state: plumbing — the clients whose closing already forgets what they held
 
@@ -95,6 +103,32 @@ defineState({
         return mine.length ? mine : undefined;
     },
 });
+defineState({
+    id: "shell.ran", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
+    describe: "The ml.sh calls this run made that ran, as the host resolved them (argv, cwd, program and its fingerprint): what a propose_manifest card reads a draft over, and what its evidence run re-runs under the sandbox.",
+    read: ({ runId }) => {
+        const mine = runId ? ranByRun.get(runId) : undefined;
+        return mine?.length ? mine.map((f) => ({ argv: [...f.argv], cwd: f.cwd.path, program: f.program.path, placement: f.placement })) : undefined;
+    },
+});
+
+/**
+ * The calls a run made that ran, oldest first, as copies.
+ * @param runId the run
+ * @returns the host's facts of each
+ */
+export function ranCalls(runId: string): HostFacts[] {
+    return (ranByRun.get(runId) ?? []).map((f) => structuredClone(f));
+}
+
+/** Note a call that ran, keeping the latest {@link RAN_PER_RUN} of the run and the latest {@link RAN_RUNS_MAX} runs. */
+function noteRan(runId: string, facts: HostFacts): void {
+    const list = ranByRun.get(runId) ?? [];
+    ranByRun.delete(runId);
+    ranByRun.set(runId, [...list, structuredClone(facts)].slice(-RAN_PER_RUN));
+    while (ranByRun.size > RAN_RUNS_MAX) ranByRun.delete(ranByRun.keys().next().value!);
+}
+
 defineState({
     id: "shell.versions", scope: "browser", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
     describe: "The version each program reported to the version probe, by the program file's fingerprint (device, inode, size, modification time): a program that changes on disk is probed again.",
@@ -127,7 +161,10 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             if (!cwd) return refuse("Refused", "No workspace folder is configured for ml.sh.");
             // The roots as the host resolved them (realpaths), which its path facts are compared against.
             const roots = h.configured.roots.map((r) => r.path);
-            const plan = planSpawn(req, { cwd, roots });
+            // The stored manifests, once storage has been read (a failed read leaves none, so a call one would describe asks).
+            await manifestsReady;
+            const stored = storedManifests();
+            const plan = planSpawn(req, { cwd, roots, stored });
             const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
             let facts = await spawn();
             let f: ShFacts;
@@ -137,7 +174,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             for (let attempt = 0; ; attempt++) {
                 const id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
-                try { f = shFacts(facts, await versionOf(ctx, h, facts), { roots }); }
+                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list), { roots, stored }); }
                 catch (e) { await discard(); throw e; }
                 const v = await decide(ctx, f);
                 if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
@@ -172,6 +209,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                             detail: { seq: ctx.seq, path: was?.path ?? "", approved: was?.sha256 ?? "unreadable", now: now?.sha256 ?? "unreadable" } });
                         return refuse("Denied", `ml.sh: ${was?.path ?? "the script"} changed between approval and start (sha256 ${was?.sha256 ?? "unreadable"} approved, now ${now?.sha256 ?? "unreadable"}): not run`);
                     }
+                    noteRan(ctx.runId, facts);
                     if (ctx.signal.aborted) onAbort();
                     done = await h.client.waitDone(id);
                 } finally { ctx.signal.removeEventListener("abort", onAbort); }
@@ -183,7 +221,8 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             recordRunLog(ctx.runId, { ...(result.ok ? {} : { level: "warn" as const }), subsystem: "shell", kind: "run", reason: verdict.by === "person" ? "person" : verdict.by === "builtin" ? "builtin" : "policy",
                 ms: done.durationMs, detail: { seq: ctx.seq, program: f.argv[0] ?? "", code: done.code ?? -1, placement: f.placement,
                     ...(result.killed ? { killed: result.killed } : {}), ...(result.peakFootprint !== undefined ? { peakFootprint: result.peakFootprint } : {}),
-                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}), ...envelopeDetail(result) } });
+                    ...(result.memoryBound !== undefined ? { memoryBound: result.memoryBound } : {}),
+                    ...(result.cpuMs !== undefined ? { cpuMs: result.cpuMs } : {}), ...envelopeDetail(result) } });
             if (result.protectedChanged?.length) {
                 // Its own record, at warn: what someone reading the log after a surprise looks for.
                 recordRunLog(ctx.runId, { level: "warn", subsystem: "shell", kind: "protected-changed", reason: f.placement,
@@ -205,7 +244,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
 }
 
 /** The owner the host records for a call (its `status`, its orphan list): the run and the step's seq, never the script's word. */
-const ownerOf = (ctx: ShCallContext): { run: string; seq: number } => ({ run: ctx.runId, seq: ctx.seq });
+const ownerOf = (ctx: Pick<ShCallContext, "runId" | "seq">): { run: string; seq: number } => ({ run: ctx.runId, seq: ctx.seq });
 
 /** The facts as a policy's `c`: ShFacts is plain data with `effects`. */
 const asPolicyFacts = (f: ShFacts): Record<string, unknown> & { effects: EffectsData } => f as unknown as Record<string, unknown> & { effects: EffectsData };
@@ -260,10 +299,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
  * @param ctx the step
  * @param h the host
  * @param facts the call's facts
+ * @param manifests the manifests the call is described by (default: the shipped ones)
  * @returns the version, null when it was not read, or null too for a manifest that reads none
  */
-async function versionOf(ctx: ShCallContext, h: ShellHost, facts: HostFacts): Promise<string | null> {
-    const m = manifestFor(facts.argv);
+export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
+    const m = manifestFor(facts.argv, undefined, manifests);
     if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
     const fp = facts.program.fingerprint;
     const log = (reason: string, version?: string | null) => recordRunLog(ctx.runId, { subsystem: "shell", kind: "version-probe", reason, detail: { program: facts.program.path, ...(version !== undefined ? { version: version ?? "unread" } : {}) } });

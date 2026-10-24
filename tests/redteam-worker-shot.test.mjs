@@ -184,11 +184,13 @@ test("the page's own hide ends on its own: a page cannot keep the extension's si
     assert.equal(surface.hidden, true, "control: the page's hide hides");
     await tick(200);
     assert.equal(surface.hidden, false, "the page's hide is still holding the sidebar hidden");
-    // The shell takes the handshake only from its own window (shell.ts: e.source === window), so a cross-origin
-    // subframe's post does not hide anything.
+    // The shell takes the handshake only from the page channel, injected.js's port to this document's content scripts
+    // (shell.ts onWindowMessage, SITE_PRESENCE step 2b), which a cross-origin subframe does not have; and only while the
+    // worker has opened the page.
     const shell = readFileSync(new URL("../src/sidebar/shell.ts", import.meta.url), "utf8");
-    assert.match(shell, /__mlSidebarShot === "hide" && e\.source === window/);
-    assert.match(shell, /__mlSidebarShot === "show" && e\.source === window/);
+    assert.match(shell, /onPage\(onWindowMessage\)/);
+    assert.match(shell, /if \(!gateOpen\(\)\) \{ whenOpen\(\(\) => onWindowMessage\(e\)\); return; \}/);
+    assert.match(shell, /__mlSidebarShot === "hide" && gateOpen\(\)/);
 });
 
 // --- (c) spend: only the worker's own calls, only into its own run ---

@@ -13,13 +13,11 @@ import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
+import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
 export type PolicyConsumer = "fetch" | "sh";
-
-/** Every consumer, for checking what storage held. */
-const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh"]);
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */
@@ -61,8 +59,8 @@ export interface LapsedAsk { id: string; scope: StoredPolicy["scope"]; label: st
 /** A policy that allowed calls and is gone, kept with its source so a later ask can tell whether it would have covered it. */
 interface LapsedPolicy extends LapsedAsk { consumer: PolicyConsumer; source: string }
 
-/** The storage key of the global policies. */
-export const GLOBAL_POLICIES_KEY = "ml_policies_global";
+/** The storage key of the global policies (declared in policy-valid.ts, which a backup reads without this module). */
+export { GLOBAL_POLICIES_KEY };
 /** The storage key of every session's run policies, by session hash. */
 export const RUN_POLICIES_KEY = "ml_policies_run";
 /** The storage key of what each ARCHIVED session lost: when its run policies were removed, and their labels. */
@@ -134,36 +132,70 @@ function changed(): void {
 const brokenWhy = new Map<string, string>();   // state: cache — recomputed on the next evaluation
 
 /** Whether storage has been read. Until it has, a `deny` the person saved is not known yet, so a consumer must ASK
- *  rather than let a free tier answer (`fetchPolicy` in sw-run-host.ts). */
+ *  rather than let a free tier answer (`fetchPolicy` in sw-run-host.ts). True only once memory holds the merge below. */
 let loaded = false;   // state: plumbing — set once per worker by the read below
+
+/** How the one storage read went: `failed` means the saved lists are unknown, so no save may replace them. */
+let readState: "pending" | "read" | "failed" = "pending";   // state: plumbing — set once per worker by the read below
+/** Saves asked for before the read finished, issued right after it (a save writes the whole in-memory state). */
+const owed = { globals: false, runs: false };   // state: plumbing — drained once by the read below
+/** Sessions forgotten before the read: replayed after it, or the merge would bring their saved policies back. */
+const forgottenEarly: [string, "deleted" | "archived"][] = [];   // state: plumbing — drained once by the read below
 
 /** Whether every saved policy is known. */
 export const policiesLoaded = (): boolean => loaded;
 
-/** Storage has been read, so a judgement made now sees every saved policy. Until then a call asks (fails closed). */
+/** The read's result merged into what was added meanwhile: the stored entries first, then each early one whose id is not
+ *  stored (and, for `dup`, that does not duplicate a stored one: `addRunPolicy`'s own dedupe). */
+function mergeEarly<T extends { id: string }>(stored: T[], early: T[], dup: (a: T, b: T) => boolean = () => false): T[] {
+    return [...stored, ...early.filter((e) => !stored.some((s) => s.id === e.id || dup(s, e)))];
+}
+const sameRunPolicy = (a: StoredPolicy, b: StoredPolicy): boolean => a.source === b.source && a.effect === b.effect && a.consumer === b.consumer;
+
+/** Fill memory from what storage held, keeping what was added before it answered (POLICIES add before the read, "Approve +
+ *  remember" on a card). Synchronous, so no judgement sees a half-filled store. */
+function mergeStored(got: Record<string, unknown> | undefined): void {
+    const early = { globals: globals.slice(), runs: new Map(byRun), lapsed: new Map(lapsed) };
+    globals.splice(0, globals.length, ...mergeEarly(validList(got?.[GLOBAL_POLICIES_KEY], "global"), early.globals));
+    const runs = (got?.[RUN_POLICIES_KEY] ?? {}) as Record<string, unknown>;
+    byRun.clear();
+    for (const [hash, list] of Object.entries(runs)) if (!early.runs.has(hash)) byRun.set(hash, validList(list, "run"));
+    for (const [hash, mine] of early.runs) byRun.set(hash, mergeEarly(validList(runs[hash], "run"), mine, sameRunPolicy));   // re-inserted last, as `addRunPolicy` does
+    const lost = (got?.[ARCHIVED_POLICIES_KEY] ?? {}) as Record<string, { at?: unknown; labels?: unknown; told?: unknown }>;
+    for (const [hash, l] of Object.entries(lost))
+        if (!archivedLoss.has(hash) && typeof l?.at === "number" && Array.isArray(l.labels) && l.labels.every((x) => typeof x === "string"))
+            archivedLoss.set(hash, { at: l.at, labels: l.labels as string[], ...((l as { told?: unknown }).told === true ? { told: true as const } : {}) });
+    const gone = (got?.[LAPSED_POLICIES_KEY] ?? {}) as Record<string, unknown>;
+    lapsed.clear();
+    for (const [key, list] of Object.entries(gone)) if (!early.lapsed.has(key) && Array.isArray(list)) lapsed.set(key, list.filter(validLapsed).slice(-LAPSED_PER_KEY_MAX));
+    for (const [key, mine] of early.lapsed) {
+        const stored = Array.isArray(gone[key]) ? (gone[key] as unknown[]).filter(validLapsed) : [];
+        lapsed.set(key, mergeEarly(stored, mine).slice(-LAPSED_PER_KEY_MAX));
+    }
+}
+
+/** Storage has been read, so a judgement made now sees every saved policy. Until then a call asks (fails closed). A policy
+ *  added before this resolves is merged in, not dropped, and its save waits for the read (`saveGlobals`, `saveRuns`). */
 export const policiesReady: Promise<void> = (() => {
     try {
-        return chrome.storage.local.get([GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY, ARCHIVED_POLICIES_KEY, LAPSED_POLICIES_KEY]).finally(() => { loaded = true; }).then((got) => {
-            globals.splice(0, globals.length, ...validList(got?.[GLOBAL_POLICIES_KEY], "global"));
-            const runs = (got?.[RUN_POLICIES_KEY] ?? {}) as Record<string, unknown>;
-            for (const [hash, list] of Object.entries(runs)) if (!byRun.has(hash)) byRun.set(hash, validList(list, "run"));
-            const lost = (got?.[ARCHIVED_POLICIES_KEY] ?? {}) as Record<string, { at?: unknown; labels?: unknown; told?: unknown }>;
-            for (const [hash, l] of Object.entries(lost))
-                if (!archivedLoss.has(hash) && typeof l?.at === "number" && Array.isArray(l.labels) && l.labels.every((x) => typeof x === "string"))
-                    archivedLoss.set(hash, { at: l.at, labels: l.labels as string[], ...((l as { told?: unknown }).told === true ? { told: true as const } : {}) });
-            const gone = (got?.[LAPSED_POLICIES_KEY] ?? {}) as Record<string, unknown>;
-            for (const [key, list] of Object.entries(gone)) if (!lapsed.has(key) && Array.isArray(list)) lapsed.set(key, list.filter(validLapsed).slice(-LAPSED_PER_KEY_MAX));
-        }).catch(() => { /* storage unavailable: nothing saved is honoured, so every call asks */ });
-    } catch { loaded = true; return Promise.resolve(); }   // no storage (a test harness): nothing saved to wait for
+        return chrome.storage.local.get([GLOBAL_POLICIES_KEY, RUN_POLICIES_KEY, ARCHIVED_POLICIES_KEY, LAPSED_POLICIES_KEY]).then((got) => {
+            mergeStored(got);
+            readState = "read";
+            loaded = true;   // after the merge, in the same turn: no judgement sees `loaded` with memory unfilled
+            for (const [runId, why] of forgottenEarly.splice(0)) forgetRunPolicies(runId, why);
+            const { globals: g, runs: r } = owed;
+            owed.globals = owed.runs = false;
+            // Through the saves, not the writes: the merge can hold more sessions than the cap, which `saveRuns` trims.
+            if (g) saveGlobals();
+            if (r) saveRuns();
+        }).catch(() => {
+            /* storage unavailable: nothing saved is known, so every call asks (`judgeCall`), save one an add made meanwhile
+               denies; and no save may replace the lists we could not read with a partial one */
+            if (readState === "pending") readState = "failed";
+            loaded = true;
+        });
+    } catch { readState = "read"; loaded = true; return Promise.resolve(); }   // no storage (a test harness): nothing saved to wait for
 })();
-
-/** Keep only well-formed policies of a scope from what storage held; anything else is dropped, never guessed at. */
-function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
-    if (!Array.isArray(v)) return [];
-    return v.filter((p): p is StoredPolicy => !!p && typeof p === "object"
-        && typeof p.id === "string" && typeof p.source === "string" && typeof p.label === "string"
-        && (p.effect === "allow" || p.effect === "deny" || p.effect === "ask") && CONSUMERS.has(p.consumer) && p.scope === scope);
-}
 
 /** Whether storage held a well-formed lapsed policy. */
 function validLapsed(p: unknown): p is LapsedPolicy {
@@ -173,15 +205,23 @@ function validLapsed(p: unknown): p is LapsedPolicy {
         && (q.cause === "archived" || q.cause === "removed" || q.cause === "narrowed" || q.cause === "expired");
 }
 
-function saveGlobals(): void {
+function writeGlobals(): void {
     try { void chrome.storage.local.set({ [GLOBAL_POLICIES_KEY]: globals, [LAPSED_POLICIES_KEY]: Object.fromEntries(lapsed) }).catch(() => {}); } catch { /* storage unavailable */ }
+}
+function writeRuns(): void {
+    try { void chrome.storage.local.set({ [RUN_POLICIES_KEY]: Object.fromEntries(byRun), [ARCHIVED_POLICIES_KEY]: Object.fromEntries(archivedLoss), [LAPSED_POLICIES_KEY]: Object.fromEntries(lapsed) }).catch(() => {}); } catch { /* storage unavailable */ }
+}
+/** A save writes the whole in-memory state, so before the read it would replace the stored lists with a partial one: it is
+ *  owed until the read merges (`policiesReady`), and dropped for good when the read failed. */
+function saveGlobals(): void {
+    if (readState === "pending") owed.globals = true; else if (readState === "read") writeGlobals();
     changed();
 }
 function saveRuns(): void {
     while (byRun.size > RUN_POLICY_SESSIONS_MAX) byRun.delete(byRun.keys().next().value!);
     while (archivedLoss.size > RUN_POLICY_SESSIONS_MAX) archivedLoss.delete(archivedLoss.keys().next().value!);
     while (lapsed.size > RUN_POLICY_SESSIONS_MAX + 1) { const k = [...lapsed.keys()].find((x) => x !== GLOBAL_LAPSED); if (k === undefined) break; lapsed.delete(k); }
-    try { void chrome.storage.local.set({ [RUN_POLICIES_KEY]: Object.fromEntries(byRun), [ARCHIVED_POLICIES_KEY]: Object.fromEntries(archivedLoss), [LAPSED_POLICIES_KEY]: Object.fromEntries(lapsed) }).catch(() => {}); } catch { /* storage unavailable */ }
+    if (readState === "pending") owed.runs = true; else if (readState === "read") writeRuns();
     changed();
 }
 
@@ -238,6 +278,7 @@ export function removePolicy(id: string): boolean {
  *  the session is archived, so an archived session that comes back has none). An ARCHIVED session's loss is recorded,
  *  with the time, so its resume says so (`archivedPolicyLoss`); a deleted session's record goes with it. */
 export function forgetRunPolicies(runId: string, why: "deleted" | "archived" = "deleted"): void {
+    if (readState === "pending") forgottenEarly.push([runId, why]);
     const list = byRun.get(runId);
     if (why === "deleted") { archivedLoss.delete(runId); lapsed.delete(runId); }
     if (!list) { if (why === "deleted") saveRuns(); return; }
@@ -317,8 +358,9 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
  * - **A store not yet loaded means ASK, free tiers included.** Until the saved policies are read after a worker wake
  *   this returns `"ask"` (no `by`), and the consumer must put the call to the person without letting any free tier of
  *   its own answer: an unloaded `deny` is an unenforced one. A matching `ask` policy returns the same `"ask"` WITH `by`,
- *   and the consumer treats it the same way, adding the policy's label to the card (`askWhyOf`). This function carries
- *   the rule so a consumer cannot forget it.
+ *   and the consumer treats it the same way, adding the policy's label to the card (`askWhyOf`). A read that FAILED
+ *   keeps this for good in that worker: a policy added since may deny, but nothing else answers without the person.
+ *   This function carries the rule so a consumer cannot forget it.
  * - **Judge again at the choke point.** A consumer whose call runs somewhere other than its gate (the worker's fetch,
  *   the host's process start) calls this again there, over the same facts, rather than trusting the gate's answer.
  * @param runId the run's session hash, or undefined for a call no run made
@@ -341,6 +383,8 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
         if (r.decision === "allow" && !allow) allow = p;
     }
     if (ask) return { decision: "ask", by: { ...ask }, broken };
+    // The read failed: a saved `deny` may be missing, so nothing short of an added one's deny answers without the person.
+    if (readState === "failed") return { decision: "ask", broken };
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
     const gone = lapsedCover(runId, consumer, facts);
@@ -459,6 +503,3 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
 export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: PolicyEffect; label: string; source: string }[] {
     return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }
-
-/** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
-export const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;

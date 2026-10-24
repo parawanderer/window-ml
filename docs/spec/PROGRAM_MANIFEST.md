@@ -85,8 +85,9 @@ over the manifest's data so the profile is derived from the same source as the f
 
 **How a program is registered.**
 
-- The person names it. The host resolves it, and a tool the person owns is pinned by the HASH of its binary or script,
-  a better pin than `git` can have; a changed script drops back to `unknown`.
+- The person names it. The host resolves it, and a tool the person owns is pinned: a script by its `sha256`, a binary
+  (this round, B4 below) by the host's fingerprint and resolved path, both better pins than `git` can have; a changed
+  script or binary drops back to `unknown`.
 - A draft manifest is generated from the program's `--help`, its man page, its shell completion files (which encode
   the flags and whether they take file arguments), or—for a script in the workspace—directly from its source and
   argument parser (`parseArgs`, `argparse`, `process.argv` walk). A model with `ml.sh` enabled can draft the manifest
@@ -98,6 +99,50 @@ over the manifest's data so the profile is derived from the same source as the f
   person. A tool on the person's own `PATH` may be global. A page never registers anything.
 - One page lists them, like the policy page: shipped, installed, proposed, each with its source, its pin and the
   measured evidence (calls run under it, failures under its envelope). It lives in DevTools Settings, the superset.
+
+**The store, ruled 2026-10-23** (coordinator, on the `[window-ml root-k]` session's reading before its PR; root 2(a), the
+host's `exec: program-only` and the `(program, entrypoint)` prefix, was found already on main from K1 and K3, with the
+plain-host import-closure hash unbuilt and K1's "applies only when `sandboxed: true`" standing in its place).
+
+- B1. Two keys in `chrome.storage.local`, never `sync`: `manifests.global` and `manifests.workspace` (the latter keyed by
+  the root's realpath), each declared in the state registry from the first commit. An entry is `{ id, scope, root?,
+  manifest, origin: "person" | "proposed", created }`; `manifestFor` reads shipped and stored.
+- B2. SHIPPED WINS this round. A stored entry whose key (`program`, or `program` + `entrypoint`) a shipped manifest
+  already describes is refused at store time with the shipped file named, on both placements: the same key is then
+  never read differently by placement, and the delete family cannot be made free on a person's word through the store.
+  Person-wins is a widening, Shane's later on a number. Among stored entries, workspace beats global.
+- B3. A program that resolves inside a workspace root is describable by workspace scope only, and only pinned; a global
+  entry for an in-root program is refused at store time, mirroring the shipped rule above.
+- B4. A binary is pinned by the host's `program.fingerprint` (`dev:ino:size:mtime`), plus the `version` string when the
+  program reports one; any change drops it to `unknown`. A content hash of a binary (past the 16 MiB path-argument cap;
+  `node` is about 100 MB) is a host change, on a need, not this round.
+- B5. `origin: "proposed"` (from `propose_manifest`) applies only when the call is sandboxed, until the tool's evidence
+  run marks it; `origin: "person"` applies on both placements.
+- The store's message types get the red-team pass from the red team's lane: a page cannot store, list or delete a
+  manifest, and a stored manifest never reaches a page.
+
+As built (`src/sw/sw-manifests.ts`, the storage; `src/shell/stored-manifests.ts`, the rules, pure; mechanics in
+`docs/dev/shell.md`), on top of the ruling: a workspace's entries describe a call only while that root is configured;
+another workspace's entry for an in-root program misses at call time as well as being refused when stored; a script's
+manifest (`entrypoint`) is workspace scope always, since it arrived with the repository; B2 is checked at store, load
+and call time; a pin that no longer matches leaves the call `unknown` with the reason on the card. `MANIFESTS` is
+answered for extension pages only, and what it adds is `origin: "person"`.
+
+**`propose_manifest` (ruled 2026-10-23, root K slice c).** The model drafts a manifest for a program it read the
+`--help` or the source of; the person stores it or not on a card. Nothing executes before the person's word: the host
+only resolves the draft (`spawn`, then `discard`), which pins it (B4, or a script's `sha256` as the host read it) and
+applies B3 (a program inside a root, and any script, is forced to its workspace, and the card says why). The card is
+DERIVED only, and says so: the host's resolve-and-discard facts, and this run's calls of that program that ran, each
+resolved again with the draft and read by it (its effects, and whether it would go without a card). Nothing measured
+is mixed in. Approved, the entry is stored with `origin: "proposed"` and describes sandboxed calls only (B5). The
+evidence run follows approval, on a sandboxed host only: this run's ran calls of the program that the entry makes
+free, at most eight, the latest first, each re-run under the envelope derived from the draft (write none, exec the
+program only) with the version probe's 2 s limit. Each must exit within its `okCodes`, with the envelope applied as
+asked and no protected name changed. If all pass, the entry gets `evidence {calls, at}` and from then on describes
+plain-host calls too; the first failure is stored on the entry (`evidenceFailure`) and it stays sandbox-only. With no
+call to re-run there is no evidence, which the card says beforehand; a synthetic call is never made. Offered only to
+a run the worker built while the settings turn ml.sh on; a page's start never carries it. Built in
+`src/shell/manifest-proposal.ts` (pure) and `src/sw/sw-manifest-proposal.ts`.
 
 ### Interpreted script tools (`node scripts/<name>.mjs`, `python3 <script>.py`)
 

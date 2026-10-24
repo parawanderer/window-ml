@@ -272,8 +272,8 @@ test("an in-page ml.agent run given world \"isolated\" refuses, with and without
         });
         const win = world.context.window;
         const events = [];
-        win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-        win.postMessage({ __mlSidebar: "ready" });
+        world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+        world.asContent({ __mlSidebar: "ready" });
         await new Promise((r) => setTimeout(r, 0));
         const exec = world.ml.domTools.find((t) => t.name === "exec");
         await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });

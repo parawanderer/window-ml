@@ -1026,10 +1026,9 @@ test("createAgent: a 2nd run CONTINUES the session (agent-say, not a fresh `agen
     // keying firstTurn off control.messages re-announced `agent`, whose onDebug handler REPLACES the sidebar
     // session, wiping the whole history. We reproduce the not-synced state by clearing a.messages between runs.
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("turn one"), reply("turn two")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
 
     const a = world.ml.createAgent({ tools: [], maxSteps: 3 });
@@ -1193,10 +1192,9 @@ test("toolTokens: a MULTI-TURN run mints DISTINCT ids per turn (no cross-turn co
         toolCall("python_exec", {}, "c1"), reply("turn one"),
         toolCall("python_exec", {}, "c2"), reply("turn two"),
     ]) });
-    const win = world.context.window;
     const tokens = [];
-    win.addEventListener("message", (e) => { const ev = e.data && e.data.__mlDebug; if (ev && ev.kind === "agent-step" && ev.token) tokens.push(ev.token); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { const ev = e.data && e.data.__mlDebug; if (ev && ev.kind === "agent-step" && ev.token) tokens.push(ev.token); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "df", render: { type: "python-out", df: { columns: ["x"], rows: [[1]] } } }) });
     const a = world.ml.createAgent({ maxSteps: 4, vision: false, tools: [py], toolTokens: true });
@@ -1264,8 +1262,8 @@ test("agent: aborting mid-run stops at the next step boundary with the partial t
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("cut", {}, "c1"), reply("should-not-reach")]) });
     const cut = world.ml.defineTool({ name: "cut", run: () => { ac.abort(); return "snip"; } });   // abort DURING step 1
     const events = [], win = world.context.window;
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const res = await world.ml.agent("x", { tools: [cut], vision: false, signal: ac.signal });
     assert.equal(res.cancelled, true);
@@ -1330,8 +1328,8 @@ test("agent: result carries a session hash, and { resume } appends a follow-up t
 test("agent: { silent } rides the run's debug config so the HUD card can stay hidden", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
     const events = [], win = world.context.window;
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
 
     await world.ml.agent("quietly", { silent: true, vision: false });
@@ -1389,8 +1387,8 @@ test("agent: step seq stays session-unique across a resume (the sidebar patches 
     const t1 = world.ml.defineTool({ name: "t1", run: () => "r1" });
     const t2 = world.ml.defineTool({ name: "t2", run: () => "r2" });
     const events = [], win = world.context.window;
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
 
     const first = await world.ml.agent("go", { tools: [t1, t2], vision: false, maxSteps: 5 });
@@ -1427,14 +1425,13 @@ test("a composer follow-up with a right-clicked element, to a page-built handle:
     // The page-side path (injected.ts __mlSessionSend): a run a page built is driven by its handle, so the framing and
     // the display are made here, not in the worker, and must come out the same as the worker's (framePrompt).
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("first answer"), reply("it is cheap")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     const a = world.ml.createAgent({ tools: [], maxSteps: 3 });
     await a.run("first task");
     const el = { selector: "#price", role: "cell", text: "€4", media: [], links: [] };
-    win.postMessage({ __mlSessionSend: { hash: a.hash, text: "is this cheap?", elementContext: el } });
+    world.asContent({ __mlSessionSend: { hash: a.hash, text: "is this cheap?", elementContext: el } });
     for (let i = 0; i < 50 && !events.some((e) => e.kind === "agent-result" && e.summary === "it is cheap"); i++) await new Promise((r) => setTimeout(r, 5));
     const say = events.find((e) => e.kind === "agent-say");
     assert.ok(say, "the follow-up was shown as a message");
@@ -1605,8 +1602,8 @@ test("createAgent: fork() copies the history into a FRESH session, independent o
 test("createAgent: maxSteps setter updates the live cap + emits an agent-cap event for the UI", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("x")]) });
     const events = [], win = world.context.window;
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const a = world.ml.createAgent({ maxSteps: 10, vision: false });
     assert.equal(a.maxSteps, 10);
@@ -1876,10 +1873,9 @@ test("agent emits debug events (start → steps → result) after the sidebar ha
         ])
     });
     const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
 
     await world.ml.agent("find x", { tools: [ping], model: "qwen3:14b", vision: false });
@@ -1909,10 +1905,9 @@ test("agent suppresses orphan chat sessions from a tool's internal ml.chat", asy
     });
     // A tool that itself calls ml.chat, like the auto-wired `look` vision tool.
     const askvision = world.ml.defineTool({ name: "askvision", run: async () => world.ml.chat("describe") });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
 
     await world.ml.agent("x", { tools: [askvision], vision: false });
@@ -1927,10 +1922,9 @@ test("agent suppresses orphan chat sessions from a tool's internal ml.chat", asy
 // vision auto-wire, so we can assert what got wired without a real screenshot.
 async function agentStartEvent(opts, agentOpts = { tools: [] }) {
     const world = loadPageWorld({ ...opts, onRuntimeMessage: scriptedModel([reply("done")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.agent("find the like button", agentOpts);
     return events.find(e => e.kind === "agent");
@@ -2117,10 +2111,9 @@ test("locate selector '@pt:…' ('snap around point') rejects an unknown token, 
 async function agentDebugEvents(tool) {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall(tool.name, {}, "c1"), reply("done")]) });
     const t = world.ml.defineTool(tool);
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const res = await world.ml.agent("x", { tools: [t], vision: false, navigate: false });
     return { events, res, step: events.find(e => e.kind === "agent-step" && e.tool === tool.name && !e.pending) };
@@ -2169,10 +2162,9 @@ test("agent-start carries the resolved config (system prompt, tools, maxSteps)",
 
 test("python_exec in the toolset adds the computation-delegation clause to the system prompt", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false });
     const sys = events.find(e => e.kind === "agent").config.system;
@@ -2183,10 +2175,9 @@ test("python_exec in the toolset adds the computation-delegation clause to the s
 
 test("navigate is auto-wired by default: the tool is in the toolset + config logs navigation ON, no nav-off clause", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.agent("x", { vision: false });   // default toolset, navigation defaults ON
     const cfg = events.find(e => e.kind === "agent").config;
@@ -2197,10 +2188,9 @@ test("navigate is auto-wired by default: the tool is in the toolset + config log
 
 test("navigate: false strips the navigate tool AND appends the nav-off clause to the system prompt", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.agent("x", { vision: false, navigate: false });
     const cfg = events.find(e => e.kind === "agent").config;
@@ -2235,8 +2225,8 @@ test("_rebuildToolset rebuilds every builtin a run can delegate to the page, enu
     const base = { model: "m", driverSees: false, visionModel: "vm", groundingModel: null, groundingRange: 1000, pierceClosed: false };
     for (const d of builtinTools()) {
         const names = ml._rebuildToolset({ ...base, toolNames: [d.name] }).map(t => t.name);
-        // propose_policy is built in the worker alone (worker-tools.ts) and never offered by a page's run: the page has no factory for it.
-        assert.deepEqual(names, d.realm === "loop" || d.name === "propose_policy" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
+        // propose_policy and propose_manifest are built in the worker alone (worker-tools.ts) and never offered by a page's run: the page has no factory for them.
+        assert.deepEqual(names, d.realm === "loop" || d.name === "propose_policy" || d.name === "propose_manifest" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
     }
     // A name the registry does not declare is the site's own tool: never conjured on the new page.
     assert.equal(isBuiltinTool("my_site_tool"), false);
@@ -2256,10 +2246,9 @@ test("navigate is approval-gated and its render shows the DESTINATION url (a con
 
 test("exec without python_exec adds the JS-compute fallback clause", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false });
@@ -2275,10 +2264,9 @@ test("agent flags a tool call whose args don't match its parameter schema", asyn
         parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
         run: () => "ok"
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.agent("x", { tools: [grab], vision: false });
     const step = events.find(e => e.kind === "agent-step" && e.tool === "grab" && !e.pending);
@@ -2295,10 +2283,9 @@ test("a valid tool call carries no argIssues", async () => {
 
 test("built-in exec renders the run JS as a javascript code descriptor", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("exec", { js: "1 + 1" }, "c1"), reply("done")]) });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
@@ -2311,10 +2298,9 @@ test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt"
         config: { model: "", ocrModel: "", autoApproveReadonly: true },
         onRuntimeMessage: scriptedModel([toolCall("exec", { js: "[1,2,3].filter(x => x > 1).map(x => x * 10)" }, "c1"), reply("done")]),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     let approvals = 0;
@@ -2333,10 +2319,9 @@ test("autoApproveReadonly: a survey's Out renders as exec-out (console + value s
         config: { model: "", ocrModel: "", autoApproveReadonly: true },
         onRuntimeMessage: scriptedModel([toolCall("exec", { js: "console.log('x'.repeat(600)); return [1,2,3].map(n => n * 2)" }, "c1"), reply("done")]),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
@@ -2361,10 +2346,9 @@ for (const [name, js, cfg] of [
             config: { model: "", ocrModel: "", ...cfg },
             onRuntimeMessage: scriptedModel([toolCall("exec", { js }, "c1"), reply("done")]),
         });
-        const win = world.context.window;
-        const events = [];
-        win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-        win.postMessage({ __mlSidebar: "ready" });
+            const events = [];
+        world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+        world.asContent({ __mlSidebar: "ready" });
         await new Promise(r => setTimeout(r, 0));
         const exec = world.ml.domTools.find(t => t.name === "exec");
         await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
@@ -2387,10 +2371,9 @@ test("autoApproveReadonly: the agent reads its OWN setup (ml.config) with NO app
         config: { model: "gemma4:31b", ocrModel: "", autoApproveReadonly: true },
         onRuntimeMessage: scriptedModel([toolCall("exec", { js: "(await ml.config()).model" }, "c1"), reply("done")]),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     let approvals = 0;
@@ -2410,10 +2393,9 @@ test("autoApproveReadonly: a survey that reads an earlier output by POINTER runs
         config: { model: "m", ocrModel: "", autoApproveReadonly: true },
         onRuntimeMessage: scriptedModel([toolCall("wants", { token: true }, "c1"), toolCall("exec", { js: "@tool:wants.length" }, "c2"), reply("done")]),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     const wants = world.ml.defineTool({ name: "wants", run: () => "a computed result" });
@@ -2442,9 +2424,8 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
         onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: fetchResult } : script(m)),
     });
     const events = [];
-    const win = world.context.window;
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     let approvals = 0;
@@ -2482,7 +2463,7 @@ test("ml.fetch: a SESSION RENDER of the page you are on is its live DOM — and 
     // The other modes go to the BACKGROUND (which refuses a file: URL, naming the mode that works) rather than
     // being handed the live DOM under the name of the bytes. Observed as the relay message they post.
     const posted = [];
-    world.window.addEventListener("message", (e) => { if (e.data?.type === "FETCH_URL_REQUEST") posted.push(e.data.payload); });
+    world.fromInjected((e) => { if (e.data?.type === "FETCH_URL_REQUEST") posted.push(e.data.payload); });
     for (const opts of [{}, { format: "html" }, { credentials: true }, { rendered: true }]) void world.ml.fetch(url, opts);
     await new Promise((res) => setTimeout(res, 20));
     assert.equal(posted.length, 4, `every non-session-render mode went to the background (${JSON.stringify(posted)})`);
@@ -2616,10 +2597,9 @@ test("autoApproveReadonly: an out-of-dialect exec still goes through the approva
         // A C-style for loop is NOT in the read-only dialect (only for…of is) → it must still gate.
         onRuntimeMessage: scriptedModel([toolCall("exec", { js: "for (let i = 0; i < 1; i++) { i }" }, "c1"), reply("done")]),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     let approvals = 0;
@@ -2632,10 +2612,9 @@ test("a denied exec call is tagged 'denied' in its step", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([toolCall("exec", { js: "document.title" }, "c1"), reply("ok, stopped")]),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => false });
@@ -2671,10 +2650,9 @@ const runPyAgent = async ({ config, code, args = {}, approve }) => {
         config: { model: "", ocrModel: "", ...config },
         onRuntimeMessage: pyBackend([toolCall("python_exec", { code, ...args }, "c1"), reply("done")], p => (pyPayload = p)),
     });
-    const win = world.context.window;
     const events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     let approvals = 0;
     await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => { approvals++; return approve ? approve() : true; } });
@@ -2786,8 +2764,8 @@ const runPySeq = async (calls) => {
         onRuntimeMessage: pyBackend([...calls.map((a, i) => toolCall("python_exec", a, "c" + i)), reply("done")]),
     });
     const win = world.context.window, events = [];
-    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
-    win.postMessage({ __mlSidebar: "ready" });
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     let approvals = 0;
     await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => { approvals++; return true; } });
@@ -4321,11 +4299,11 @@ test("a run with python_exec asks for a Pyodide pre-warm at start; a run without
 test("fetch_url: a preview table passes on the stored value's key in its render; a whole table does not, whatever it is handed", { timeout: 5000 }, async () => {
     const world = loadDomWorld(`<p>hi</p>`, { url: "https://x.test/" });
     const table = (n) => ({ columns: ["id", "v"], rows: [[1, 2], [3, 4]], shape: [n, 2], dtypes: { id: "int64", v: "int64" }, ...(n > 2 ? { truncated: true } : {}) });
-    world.window.addEventListener("message", (e) => {
+    world.fromInjected((e) => {
         if (e.data?.type !== "FETCH_URL_REQUEST") return;
         const big = e.data.payload.url.includes("big");
         const result = { url: e.data.payload.url, status: 200, ok: true, type: "parquet", typeByHeader: "parquet", typeByContent: "parquet", typeByExtension: null, contentType: "application/vnd.apache.parquet", text: "(a Parquet file)", table: table(big ? 300_000 : 2), valueKey: "v0123456789abcdef" };
-        world.window.postMessage({ type: "FETCH_URL_RESPONSE", requestId: e.data.requestId, result }, "*");
+        world.asContent({ type: "FETCH_URL_RESPONSE", requestId: e.data.requestId, result });
     });
     const big = await world.ml.fetchTool().run({ url: "https://x.test/big.parquet" });
     assert.equal(big.render.type, "table");
@@ -4338,11 +4316,11 @@ test("fetch_url: a preview table passes on the stored value's key in its render;
 test("ml.fetch: a CSV whose text is a prefix of a body the worker read whole reports the WHOLE table's row count", { timeout: 5000 }, async () => {
     const world = loadDomWorld(`<p>hi</p>`, { url: "https://x.test/" });
     const text = "id,v\n1,2\n3,4\n5,";   // cut mid-row, as a capped read ends
-    world.window.addEventListener("message", (e) => {
+    world.fromInjected((e) => {
         if (e.data?.type !== "FETCH_URL_REQUEST") return;
         const whole = e.data.payload.url.includes("whole");
         const result = { url: e.data.payload.url, status: 200, ok: true, type: "csv", typeByHeader: "csv", typeByContent: "csv", typeByExtension: { type: "csv" }, contentType: "text/csv", text, truncated: true, ...(whole ? { bodyLines: 600_001, valueKey: "v0123456789abcdef" } : {}) };
-        world.window.postMessage({ type: "FETCH_URL_RESPONSE", requestId: e.data.requestId, result }, "*");
+        world.asContent({ type: "FETCH_URL_RESPONSE", requestId: e.data.requestId, result });
     });
     const stored = await world.ml.fetch("https://x.test/whole.csv");
     assert.deepEqual(stored.table.rows, [[1, 2], [3, 4]], "the half row at the cut is still dropped");

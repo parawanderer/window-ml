@@ -261,8 +261,18 @@ reader of it fails there.
   worker's requests wait), then `open` or `closed`. A closed gate relays nothing the page posts, answers nothing, and
   posts nothing (the sidebar shell's handshake included). The page script's hello only marks it alive, for how long to
   wait: a hidden page can forge a hello, and gets nothing for it.
-- **Residuals:** a run on a hidden page exposes what it did before step 2 (rows 4 and 6 of detection-surface.md); the
-  sidebar's files stay web-accessible until `use_dynamic_url` (row 5).
+- **injected.js talks to the content scripts on a MessagePort, never the page's window** (step 2b, `page-channel.ts`).
+  It makes the channel on first use and hands one port to the isolated world with a synchronous `ml-page-port` event on
+  `window`; content.js listens from `document_start` and keeps the FIRST port while armed, so a page cannot swap its own
+  in once injected.js has handed one over. `injectPageScripts` sends `PAGE_PORT_ARM` before a late injection, which drops
+  any port the page handed over first. content.js and the shell hear nothing the page posts on
+  `window`, and nothing on the channel either while the gate is not open (the shell's handler and the session relay
+  check `gateOpen()` like every other send).
+- **Residuals:** a run on a hidden page exposes what it did before step 2 (rows 4 and 6 of detection-surface.md): there
+  injected.js arrives after the page's scripts, which can take the port from the hand-off (or race the injection with
+  ports of their own) and speak as injected.js. On a visible origin the main side keeps the port's builtins from load, so
+  a page that wraps them later is not handed the port. The sidebar's files stay web-accessible
+  until `use_dynamic_url` (row 5).
 
 ## Starting agents
 
@@ -683,7 +693,8 @@ The red-team pass AGENTS.md requires. Run it as its own agent, told to find wher
 than to review; each gap it finds becomes a test titled by the property, failing before the fix, and each shape it
 tried that HELD is pinned too (or given a one-line reason it is not), so a re-pin or refactor that reopens it fails a
 test. A scratch probe script is never the only record. The threat is a page
-that shares the main world with `window.ml` and with any tool code run there, posts any window message, acts on the
+that shares the main world with `window.ml` and with any tool code run there, holds injected.js's port when it ran first
+(`asInjected` in the vm worlds; nothing it posts on `window` is heard), acts on the
 extension's shadow HOSTS (their roots are closed since attack 17), and knows every run id. Cover:
 
 - **Where it runs.** A tool run in the page puts its inputs and results into the page's world. Prefer the worker; if

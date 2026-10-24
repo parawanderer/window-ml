@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, waitInShell, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, onChannel } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -745,12 +745,14 @@ test("the page's own hide handshake still hides our pinned host, and its show br
     await withShell(async (s) => {
         await waitForMl(s.page);   // a page-built run, so an allowed page: a hidden one's hide is dropped
         const before = await paintBox(s.page, (await s.bare()).dataUrl);
-        await s.page.evaluate(() => new Promise((ok) => {
-            addEventListener("message", (e) => { if (e.data?.__mlSidebarShot === "hidden") ok(); });
-            postMessage({ __mlSidebarShot: "hide" }, "*");
+        // The ack travels down the port to injected.js, so listen on the port's send side, here in the content script's world.
+        await onChannel(s.page, (ch) => new Promise((ok) => {
+            const side = globalThis.__mlPageChannel, send = side.port.postMessage.bind(side.port);
+            side.port.postMessage = (d, ...r) => { if (d?.__mlSidebarShot === "hidden") ok(); return send(d, ...r); };
+            ch.asInjected({ __mlSidebarShot: "hide" });
         }));
         expect(await offGreen(s.page, (await s.bare()).dataUrl), "the hide hid the UI").toBe(0);
-        await s.page.evaluate(() => postMessage({ __mlSidebarShot: "show" }, "*"));
+        await onChannel(s.page, (ch) => ch.asInjected({ __mlSidebarShot: "show" }));
         await s.page.waitForTimeout(200);
         expect(await paintBox(s.page, (await s.bare()).dataUrl), "the show brought it back").toEqual(before);
         expect(await s.page.evaluate(() => document.getElementById("ml-sb-root").style.cssText), "the hide left nothing behind").toBe("all: initial !important;");

@@ -8,6 +8,8 @@
 import { judgeCall, fetchFacts, runPolicies } from "./sw-policies";
 import { checkProposal } from "./policy-proposal";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
+import { proposeManifestTool } from "../tools/propose-manifest-tool";
+import { proposalOutcome } from "./sw-manifest-proposal";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
 import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
@@ -384,5 +386,6 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     // `look` and `locate` are none of these: the run host builds them for each call (worker-look.ts, worker-locate.ts).
     return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer())
         : n === "propose_policy" ? proposePolicyTool(defineTool, { check: checkProposal, added: (q) => runPolicies(runId).some((r) => r.consumer === "fetch" && r.source === q.source && r.effect === q.effect) })
+        : n === "propose_manifest" ? proposeManifestTool(defineTool, { outcome: (a) => proposalOutcome(runId, a) })
         : null)).filter((t): t is MlTool => !!t);
 }

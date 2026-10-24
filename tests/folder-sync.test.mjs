@@ -162,3 +162,23 @@ async function otherMachinesOctober(hash) {
     await put(a, hash, OCT);
     return exportMonth(sqlite3, a.raw, "2026-10").bytes;
 }
+
+// --- a month file's unreferenced images ---
+
+test("a folder merge takes in only the images the new sessions reference: an orphan image in a month file is not imported", async () => {
+    const old = fresh();
+    await put(old, "01d00001", OCT);
+    old.db.exec({ sql: "INSERT INTO images(sha, mime, data) VALUES (?, ?, ?)", bind: ["orphan0000", "image/png", new Uint8Array(2000)] });
+    // A hostile (or damaged) month file: the whole database, orphan included. exportMonth would never write one.
+    const folder = mapFolder(new Map([["2026-10", sqlite3.capi.sqlite3_js_db_export(old.raw.pointer)]]));
+    const neu = fresh();
+    const r = await importMonths(neu.h, folder);
+    assert.equal(r.sessions, 1, "control: the session came in");
+    assert.deepEqual(neu.db.selectValues("SELECT sha FROM images WHERE sha = 'orphan0000'"), [], "the orphan blob did not");
+    // A month file whose sessions the archive already holds imports nothing, images included.
+    const again = fresh();
+    await put(again, "01d00001", OCT);
+    const before = Number(again.db.selectValue("SELECT count(*) FROM images"));
+    await importMonths(again.h, folder);
+    assert.equal(Number(again.db.selectValue("SELECT count(*) FROM images")), before);
+});

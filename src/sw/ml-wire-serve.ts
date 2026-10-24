@@ -192,6 +192,30 @@ async function answerOf(seq: number, name: string, member: WireMember, args: unk
     }
 }
 
+/**
+ * The size of a call's arguments as the wire measures them, in characters: a string's length, a key's length, a few
+ * characters for a number, boolean or null, a byte view as its base64 form. Stops walking once the sum passes `cap`,
+ * so measuring never costs more than the budget it is measured against. Unwalkable shapes (a cycle, a getter) are left
+ * to the copy to refuse, which this walk does not follow past `MAX_DEPTH`.
+ * @param v the arguments as they arrived
+ * @param cap the size past which the exact figure no longer matters
+ * @returns the size, or a value past `cap` when it is larger
+ */
+export function wireSize(v: unknown, cap: number, depth = 0): number {
+    if (typeof v === "string") return v.length;
+    if (v === null || typeof v !== "object") return v === undefined ? 0 : 5;
+    if (depth > MAX_DEPTH) return 0;
+    if (Object.prototype.toString.call(v) === "[object ArrayBuffer]" || ArrayBuffer.isView(v)) return Math.ceil((v as ArrayBufferView).byteLength * 4 / 3);
+    let n = 0;
+    const items = Array.isArray(v) ? v : Object.keys(v).flatMap((k) => { n += k.length; return [Object.getOwnPropertyDescriptor(v, k)?.value]; });
+    for (const x of items) if ((n += wireSize(x, cap - n, depth + 1)) > cap) return n;
+    return n;
+}
+
+/** How a client's budget is charged for a call's arguments: what is left, in characters, and the charge itself (which
+ *  throws a {@link WireError} `OverBudget` when it crosses what is left). */
+export interface WireArgsMeter { room(): number; charge(chars: number): void }
+
 /** How a call is answered: the members this client may call, the run it is bound to, and where later answers go. */
 export interface WireServeContext {
     /** The run the client was opened for, or null for a client with none. */
@@ -204,6 +228,8 @@ export interface WireServeContext {
     isOpen: () => boolean;
     /** How long a card may wait unanswered before the call fails (not the script). Default {@link ASK_TIMEOUT_MS}. */
     askTimeoutMs?: number;
+    /** The client's budget for a call's arguments: charged once per call, before they are copied. Absent: not charged. */
+    argsMeter?: WireArgsMeter;
     /** Scrub an error's text before it crosses (sw-scrub.ts `forPage` in the worker). */
     scrub: (text: string) => Promise<string>;
 }
@@ -223,6 +249,12 @@ export async function serveWireCall(req: Partial<MlWireRequest> | null | undefin
     if (!Object.prototype.hasOwnProperty.call(ctx.members, name)) {
         const have = Object.keys(ctx.members);
         return fail(seq, "Absent", `ml.${name} is not available here${have.length ? `: this code has ml.${have.join(", ml.")}` : ""}`, ctx.scrub);
+    }
+    // THE ARGUMENTS' COPY IS WORK THE BUDGET MUST SEE (ML_WIRE.md, "One budget a cell"): charged once, before the copy,
+    // on their size as measured here, so a loop of large calls is stopped like a loop of large reads. No arguments, no charge.
+    if (ctx.argsMeter) {
+        const size = wireSize(req.args, ctx.argsMeter.room());
+        if (size > 0) try { ctx.argsMeter.charge(size); } catch (e) { return fail(seq, (e as WireError).code ?? "Failed", (e as Error).message, ctx.scrub); }
     }
     let args: unknown[];
     // ARGS ARRIVE IN WIRE FORM (the facade's `_out`): tag-shaped data is wrapped as `{ "$": … }`, bytes as

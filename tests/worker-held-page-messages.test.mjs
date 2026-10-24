@@ -79,6 +79,8 @@ function problems(m, runIds) {
     if (m.type === "RUN_STATE_IN_PAGE") { if (JSON.stringify(Object.keys(m.payload ?? {})) !== JSON.stringify(["runId"])) out.push("RUN_STATE_IN_PAGE fields"); return out; }
     // A run the worker holds runs python and server tools in the worker: no stream for them goes to the page.
     if (m.type === "PYTHON_STREAM" || m.type === "SERVER_TOOL_STREAM") { const l = leaks(m); out.push(`${m.type} sent${l.length ? ` carrying ${l}` : ""}`); return out; }
+    // Sent before the worker injects the page script (sw-presence.ts injectPageScripts): its type and nothing else.
+    if (m.type === "PAGE_PORT_ARM") { if (JSON.stringify(Object.keys(m)) !== JSON.stringify(["type"])) out.push("PAGE_PORT_ARM fields"); return out; }
     if (m.type === "ML_SESSION_TO_PAGE") { if (runIds.includes(m.hash)) out.push(`ML_SESSION_TO_PAGE for the run carries ${leaks(m)}`); return out; }
     out.push(`unclassified message type ${m.type}: add it here with what it may carry`);
     return out;

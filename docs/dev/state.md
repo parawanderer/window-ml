@@ -27,7 +27,7 @@ declaration yet still gets a row here.
 | `chrome.storage.session` | worker eviction | browser restart |
 | `chrome.storage.local` | restarts | uninstall, explicit removal |
 | `chrome.storage.sync` | restarts; syncs across the person's browsers | uninstall |
-| IndexedDB (extension origin): `ml-values`, `ml-saved-sessions`, `ml-hub-keyring`, `ml-archive-folder` | restarts | budget and retention eviction, uninstall |
+| IndexedDB (extension origin): `ml-values`, `ml-saved-sessions`, `ml-hub-keyring`, `ml-archive-folder`, `ml-backup-keyring` (the backup data key: a non-extractable `CryptoKey` and its two wrapped copies, `backup-keyring.ts`) | restarts | budget and retention eviction, uninstall |
 | OPFS: the session archive (`archive.sqlite`) | restarts | uninstall |
 | `localStorage` (extension pages, chat page) | restarts | clearing site data |
 
@@ -41,6 +41,7 @@ page-hosted one. Several stores exist once per host.
 | Start payload: task, system prompt, tools, model, max steps, auto-approve flags | `bgRuns[runId].p` (`sw-runs.ts`); page: `toolCtx`, `AgentControl` | `ml_bgrun_<runId>` while live (deleted when the run settles); session store `history` if saved | `init`, `input` |
 | The live context (`messages`) and per-message `meta` | the loop's closure (`agent-loop.ts`) | per-step checkpoint into `bgRuns` / `ml_bgrun_*`, without meta | `messages` / `meta`. **The background host does not pass `contextSink`, so a background run's context cannot be snapshotted yet** |
 | `@tool:` values | `tokensByRun` TokenStore (`sw-runs.ts`, memory, 200 per session); page-hosted: `control.tokens` | no | `pointers` |
+| The `ml.sh` calls that ran, as the host resolved them (what a `propose_manifest` card reads and its evidence run re-runs) | `ranByRun` (`sw-shell-call.ts`, memory, 64 per run, 32 runs); declared `shell.ran` | no: an eviction loses them, and a draft then has no evidence | `shell.ran` |
 | Large stored values (fetched tables) | `ml-values` IndexedDB (`ValueStore`), claimed per session | yes | `pointers` (the join reads both stores) |
 | `@pt` / `@box` tokens | `pointRegistry`, `boxRegistry` (`util.ts`, page) | no; die on navigation, unannounced | `page.points`, `page.boxes` (page realm) |
 | The answer set (what the run hands the person) | page-hosted run: `answerSets` (`tool-exec.ts`, page), reset each turn; worker-built run: `sets` (`worker-answer.ts`, worker), reset each turn | worker-built: `ml_answer:<runId>` (session storage) | `run.answer` (page realm for a page-hosted run, worker realm for a worker-built one) |
@@ -69,6 +70,7 @@ page-hosted one. Several stores exist once per host.
 | Sub-operations of an approved call: sheets, Python code, server-tool calls, fetches inside an approved `exec` | `pendingGrants` (`sw-consent.ts`), per tab and per CALL; checks read their union (`tabGrants`) | ONE DELEGATED CALL. `delegateTool`'s `finally` drops only its own call's grants (`dropCallGrants`), so two runs on one tab keep theirs |
 | Repeat `ml.fetch` of an approved URL | `fetchConsent` | the tab, until it closes (memory) |
 | URLs remembered with "Approve + remember", and any policy | run and global policies: `policies.run`, `policies.global` (`sw-policies.ts`), `chrome.storage.local`; never the tab's `fetchConsent` | run: the session, survives a resume; global: until removed. `docs/dev/policies.md` |
+| Program manifests the person registered: what makes a program's calls describable (a description, never a permission) | `ml_manifests_global`, `ml_manifests_workspace` (local, by root realpath); declared `manifests.global`, `manifests.workspace` (`sw-manifests.ts`) | until removed. `docs/dev/shell.md` |
 | One credentialed fetch | `credFetchGrants` | one use |
 | Remembered `confirm()` decisions | `approveOnce.remembered` (`ml-agent-handle.ts`, page) | the gate |
 | `window.ml` on an origin | `ml_site_always` / `ml_site_denied` (local), `ml_site_session` (session storage); declared `site.levels` (`sw-site-access.ts`) | persistent / browser session |
@@ -149,7 +151,7 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.startAsk`, `run.startApproval`, `run.personTurn`, `site.startDenials`, `site.agentOpened`, `site.notStarted` (`sw-start-approval.ts`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.startAsk`, `run.startApproval`, `run.personTurn`, `site.startDenials`, `site.agentOpened`, `site.notStarted` (`sw-start-approval.ts`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`), `manifests.global` and `manifests.workspace` (`sw-manifests.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
 not overall: both hosts declare the same member of a run. Each realm

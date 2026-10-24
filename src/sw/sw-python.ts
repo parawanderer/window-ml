@@ -13,6 +13,7 @@ import { defineJob } from "../job-registry";
 import { pyCodeCovers } from "./grant-extract";
 import { pythonCellInDialect } from "../agent/python-dialect";
 import { openWireClient } from "./ml-wire-serve";
+import { recordRunLog } from "./sw-run-log";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -191,6 +192,9 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         // A returned DataFrame past its preview was stored by the offscreen document, and its key is about to reach the
         // caller. Same rule as a fetched body: disclosing the key to a tab entitles that tab's page-hosted run to it.
         const key = (res as { valueKey?: string } | undefined)?.valueKey;
+        // Callbacks an earlier cell of this run handed to JavaScript fired after its result and ran nothing (cell-gate.ts).
+        const dropped = (res as { dropped?: { count: number; afterCell: number } } | undefined)?.dropped;
+        if (dropped && caller.wireRun) recordRunLog(caller.wireRun, { subsystem: "python", kind: "dropped", reason: "after-result", detail: { count: dropped.count, afterCell: dropped.afterCell } });
         if (key && caller.disclose && caller.tabId != null) claimValue(key, pageValueSession(caller.tabId));
         return { data: res };
     } catch (err) {
