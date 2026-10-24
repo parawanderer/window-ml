@@ -7,6 +7,7 @@ import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
 import { onMlCall } from "./sw/sw-ml-wire";
 import { changesSiteAccess, forgetHandOverTab, handOverOnCommit, handOverOnRevoke } from "./sw/nav-handover";
+import { arrivalHold, arrivalSettled, forgetArrivalTab, judgeArrival } from "./sw/nav-arrival";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
@@ -54,7 +55,8 @@ import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, cl
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
-import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
+import { startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
+import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { originOf, type SiteEdit } from "./site-access";
@@ -184,6 +186,8 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // A page-built run on the tab is the worker's from here when the new document's site may not use window.ml
         // (nav-handover.ts). Started now, at the browser's report; the re-adopt and every tool send wait for it.
         if (d.frameId === 0) void handOverOnCommit(d.tabId, d.url);
+        // And every live run on the tab judges the page it arrived on (nav-arrival.ts); the re-adopt waits for that too.
+        if (d.frameId === 0) void judgeArrival(d.tabId, d.url);
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
         // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
@@ -206,7 +210,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
     void handOverOnRevoke().catch(() => []);
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -436,7 +440,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // And the hand-over of a page-built run whose tab is now on a site that may not use window.ml (nav-handover.ts):
         // the commit started it; asked again here from the sender's own URL, in case this worker never saw the commit.
         const handOver = tabId != null && (sender.frameId ?? 0) === 0 ? handOverOnCommit(tabId, sender.url ?? sender.tab?.url) : Promise.resolve([]);
-        void Promise.all([hydrationDone, handOver.catch(() => [])]).then(async () => {
+        // The arrival judgement too (nav-arrival.ts): a run its page holds is not re-adopted there. Judged again from the
+        // sender's URL only if this worker never judged it (a worker woken by this message saw no commit).
+        const arrival = tabId != null && (sender.frameId ?? 0) === 0 ? arrivalSettled(tabId).then(() => judgeArrival(tabId, sender.url ?? sender.tab?.url, false)) : Promise.resolve();
+        void Promise.all([hydrationDone, handOver.catch(() => []), arrival.catch(() => {})]).then(async () => {
             const ids = tabId != null ? activeRuns.get(tabId) : undefined;
             // An INTERRUPTED (evicted) run is continued by the WORKER once the page has re-registered its tools, never by
             // the page. It always meets a fresh document, so nothing page-side is left to own it: it becomes the worker's.
@@ -444,9 +451,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             const resumeIds: string[] = [];
             const seen = new Set<string>();
             const live = new Set<string>();   // still going: running here, or resumed from storage just now
+            let held = false;   // a run here is held on this page by its arrival judgement: nothing of it is sent to the page
             const addAdopt = (runId: string, rebuild: import("./contract").RebuildConfig): void => {
                 if (seen.has(runId)) return;
                 seen.add(runId);
+                if (arrivalHold(runId)) { held = true; return; }
                 const resume = hydratedRuns.has(runId) && !runControllers.has(runId);   // evicted & not running → re-drive
                 if (resume) {
                     hydratedRuns.delete(runId); resurrectedRuns.add(runId);   // auto-resume ONCE; RESUME_RUN re-emits its `agent` start
@@ -478,6 +487,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 } else adopt.length = 0;
             }
             sendResponse({ adopt, open });
+            // A held run re-adopts once the person lets it act here (sw-run-host.ts); until then its calls are answered by
+            // the hold, not left waiting on a re-adopt that is not coming.
+            if (held && !adopt.length && tabId != null) navBarrier.noteReadopted(tabId, doc);
             // Durable resume, driven from here. The barrier holds the run's first tool call until the page answers the
             // adopt (RUN_READOPTED), so the call cannot reach a page whose toolset is not registered yet.
             if (tabId != null && resumeIds.length) {

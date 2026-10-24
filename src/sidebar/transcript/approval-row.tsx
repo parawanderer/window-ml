@@ -16,7 +16,10 @@ import { cursorTipOn } from "../ui-kit";
  *
  * Pure and exported so a test can read the sentences without rendering an approval.
  */
-export function approvalMechanics({ grants }: { grants: boolean }): string[] {
+export function approvalMechanics({ grants, arrival }: { grants: boolean; arrival?: "ask" | "deny" }): string[] {
+    // A run held on the page its tab arrived on (src/sw/nav-arrival.ts): the answers are about the page, not a call.
+    if (arrival === "deny") return ["Go back returns the tab to the page before. The run carries on there.", "End run stops the run here."];
+    if (arrival === "ask") return ["Approve lets the run act on this page, and as you on its origin, for the rest of the run.", "Deny takes the tab back to the page before. The run carries on there."];
     return [
         "Approve runs this one call. The agent asks again the next time it wants something.",
         "Deny refuses this call. The run carries on and the agent may try another way.",
@@ -36,11 +39,11 @@ export function approvalMechanics({ grants }: { grants: boolean }): string[] {
  * to something you read once. A dialog costs nothing until it is asked for and nothing after it is dismissed. The
  * control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
  */
-export function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void }) {
+export function ApprovalRow({ grants, decide, arrival }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void; arrival?: "ask" | "deny" }) {
     const [why, setWhy] = useState(false);
     const [saying, setSaying] = useState(false);
     const note = useRef<HTMLTextAreaElement>(null);
-    const lines = approvalMechanics({ grants });
+    const lines = approvalMechanics({ grants, arrival });
     const list = <ul class="appr-why-list">{lines.map((l) => <li key={l}>{l}</li>)}</ul>;
     return (
         <>
@@ -52,6 +55,10 @@ export function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: 
                     the chevron is where the rarer, wordier one lives. A bare refusal tells the model nothing, so it
                     guesses — often by trying the same thing a slightly different way. A sentence is what turns a
                     denial into a redirection, and the contract has carried `feedback` the whole time. */}
+                {arrival === "deny" ? <>
+                    <button class="appr-btn no" onClick={() => decide(false)}>End run</button>
+                    <button class="appr-btn yes" onClick={() => decide(true)}>Go back</button>
+                </> : <>
                 <span class="appr-deny-wrap">
                     <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
                     <button class="appr-btn no appr-deny-more" aria-label="Deny with a message" aria-haspopup="dialog"
@@ -59,6 +66,7 @@ export function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: 
                 </span>
                 <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
                 {grants ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Keep</button> : null}
+                </>}
             </div>
             {saying ? (
                 <Dialog onClose={() => setSaying(false)} labelledBy="appr-say-h" initialFocus={note}

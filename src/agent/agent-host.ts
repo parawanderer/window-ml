@@ -100,6 +100,9 @@ export interface RunAgentHostDeps {
      *  (sw-policies.ts `navigateFacts`), or undefined when none decides. A `deny` refuses it without a card, an `ask`
      *  always shows the card, an `allow` skips the card a cross-origin navigate would show. */
     navPolicy?(url: string): { decision: "allow" | "deny" | "ask"; label: string } | "unknown" | undefined;
+    /** The model's text when the run is held on a page a `deny` policy denies (sw/nav-arrival.ts): every call is refused
+     *  with it, without a card; undefined when the run may act on its page. */
+    arrivalRefused?(): string | undefined;
     // ml.fetch consent: true → this exact URL hasn't been approved on this tab yet → GATE; false → already
     // approved this session → auto-approve (no re-prompt). Trusted (background-side, per-URL), not forgeable.
     fetchNeedsConsent?(url: string): boolean;
@@ -191,6 +194,8 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
         // (friction, never less safety — see auto-approve.ts).
         autoApprove: (name, args) => {
+            const held = deps.arrivalRefused?.();
+            if (held) return { approval: "denied", refused: held };
             if (name === "python_exec") {
                 const isApproved = deps.isSheetApproved || (() => false);
                 const prov = autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, isApproved);

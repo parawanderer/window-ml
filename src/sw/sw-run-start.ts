@@ -8,21 +8,18 @@
 // flags.
 
 import type { ElementContext } from "../contract";
-import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
+import type { StartRunPayload } from "../contract/contract-messages";
 import { shortHash, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
-import { assembleRun, pageRebuild, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
+import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
-import { injectPageScripts } from "./sw-presence";
-import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { hostRun } from "./sw-run-host";
-import { delegateSend } from "./delegate-send";
 import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting, beginStart, endStart } from "./sw-runs";
 import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
@@ -35,40 +32,7 @@ import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { shellTurnedOn } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
 import { notePersonTurn } from "./sw-start-approval";
-
-/**
- * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
- * waits out a navigation and rebuilds a discarded tab). A tab whose content script went with an extension reload gets
- * it put back and is asked once more, as the chat page's own page commands do (sw-page-restore.ts).
- * @param tabId the tab
- * @param runId the run
- * @param rebuild what the page needs to rebuild the toolset
- * @returns the page's answer; `{ error }` when it could not host the run, with `unanswered` when nothing in the tab
- *   answered at all (as opposed to a page that answered that it cannot)
- */
-export async function adoptOnTab(tabId: number, runId: string, rebuild: RebuildConfig): Promise<{ pageInfo?: string; error?: string; unanswered?: true }> {
-    // The content script posts this to the page's window: only what the page still needs of it (`pageRebuild`).
-    const msg = { type: "ADOPT_RUN_NOW", payload: { runId, rebuild: pageRebuild(rebuild) } };
-    const why = (e: unknown): string => String((e as Error)?.message || e);
-    const silent = { error: "the page did not answer; it may still be loading, or the extension cannot run there", unanswered: true as const };
-    // A hidden page (SITE_PRESENCE.md step 2) has no page script: the content script asks for one, the worker puts it in
-    // this document, and sends the adopt again saying so, which is what lets the content script speak to the page.
-    const send = async (): Promise<{ pageInfo?: string; error?: string; unanswered?: true } | undefined> => {
-        const r = await delegateSend(tabId, msg) as { pageInfo?: string; error?: string; needInject?: boolean } | undefined;
-        if (!r?.needInject) return r;
-        await injectPageScripts(tabId);
-        return await delegateSend(tabId, { ...msg, payload: { ...msg.payload, injected: true } }) as { pageInfo?: string; error?: string } | undefined;
-    };
-    try {
-        return (await send()) ?? silent;
-    } catch (e) {
-        if (!NO_RECEIVER.test(why(e))) return { error: why(e), unanswered: true };
-    }
-    try {
-        if (!await restoreContentScripts(tabId)) return silent;
-        return (await send()) ?? silent;
-    } catch { return silent; }
-}
+import { adoptOnTab } from "./adopt-run";
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;

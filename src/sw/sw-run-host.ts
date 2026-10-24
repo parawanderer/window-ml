@@ -34,7 +34,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
@@ -70,7 +70,10 @@ import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
-import { hostAsks, stepAsks } from "./sw-asks";
+import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
+import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
+import { arrivalAnsweredText, arrivalDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeArrival, watchArrivals } from "./nav-arrival";
+import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 
@@ -538,12 +541,25 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (payload.name === "exec" && payload.args) payload = { ...payload, args: withoutWorld(payload.args) };
         // Nothing goes to the tab while a navigation's hand-over is undecided (nav-handover.ts): the send is routed by it.
         await handOverSettled(tabId);
+        // Nor while the run is held on the page its tab holds (nav-arrival.ts): a preview, a precheck or a survey is not
+        // asked of it, and a call is answered by the hold (a call reaching here past `withArrival` arrived meanwhile).
+        await arrivalSettled(tabId);
+        const held = arrivalHold(runId);
+        if (held) {
+            if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run is held on this page");
+            return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
+        }
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
         handedSince();
         // At the send itself, decided again from the lists as they are then: a send held meanwhile (a navigation's wait, a
         // tab rebuilt) must not go out on a decision made before a revoke whose storage event this worker has not acted on.
-        const decidedAtSend = async (): Promise<void> => { if (pageRouted) await handOverSettled(tabId); handedSince(); };
+        const decidedAtSend = async (): Promise<void> => {
+            if (pageRouted) await handOverSettled(tabId);
+            handedSince();
+            await arrivalSettled(tabId);
+            if (arrivalHold(runId)) throw new Error("the tab arrived on a page this run is held on");
+        };
         // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
         // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
@@ -601,7 +617,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let hasNavigated = false;
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
-    const settle = (): void => { unhostAsks?.(); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -732,6 +749,101 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             stepOf: (seq) => stepBase + (Number(lastStepEv.get(seq - seqBase)?.step) || 0),
             running: (seq) => !!lastStepEv.get(seq - seqBase)?.pending,
         });
+        // Arrivals (nav-arrival.ts, docs/spec/POLICIES.md "judged on arrival"): every page the tab commits while this turn
+        // runs is judged as the `fetch` consumer in its interactive mode, before the run re-adopts there. A hold is answered
+        // by the person on a card raised under the step running then, or under the next call's step if none is.
+        /** The OFFSET seq of the step running now, if any. */
+        const runningSeq = (): number | undefined => {
+            let raw: number | undefined;
+            for (const [s, ev] of lastStepEv) if (ev.pending && (raw === undefined || s > raw)) raw = s;
+            return raw === undefined ? undefined : seqBase + raw;
+        };
+        let denyCarded = false;   // the deny hold's card is up
+        // The ask hold's card, answered once for every call waiting on it: whether the run may act on the page, and what
+        // the model reads of the answer.
+        let askAnswer: Promise<{ allowed: boolean; text: string }> | undefined;
+        /** The deny hold's card: Go back takes the tab back (that arrival is judged in turn), End run stops the run. */
+        const raiseDenyCard = (seq = runningSeq()): void => {
+            const h = arrivalHold(runId);
+            if (h?.kind !== "deny" || denyCarded || seq === undefined) return;
+            denyCarded = true;
+            const line = arrivalLine(h);
+            void raiseAsk(runId, seq, { kind: ARRIVAL_DENIED, facts: { url: h.url }, why: { line, detail: line, cause: "deny-policy", policy: h.label } }).then(async (o) => {
+                if (arrivalHold(runId) !== h) return;
+                if (o.allowed) { await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {}); return; }
+                if (o.state === "denied") { endRun(); return; }
+                denyCarded = false;   // nobody answered: the next call raises it again
+            });
+        };
+        /** The ask hold's card, raised under `seq`; undefined when nothing is held, or when no step is running to raise it under. */
+        const answerArrival = (seq = runningSeq()): Promise<{ allowed: boolean; text: string }> | undefined => {
+            const h = arrivalHold(runId);
+            if (h?.kind !== "ask") return undefined;
+            if (askAnswer || seq === undefined) return askAnswer;
+            const line = arrivalLine(h);
+            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}) } }).then(async (o) => {
+                if (arrivalHold(runId) !== h) return { allowed: true, text: "" };   // judged again meanwhile: the new judgement holds or not
+                if (o.allowed) {
+                    // A person on a card: the origin is consented, and as the person for a fetch the worker runs.
+                    consentedOrigins.add(h.origin);
+                    if (byWorker() && runsInWorker(p, "fetch_url")) grantRunOrigin(runId, h.origin);
+                    clearArrival(runId);
+                    const info = await readoptHere();
+                    return { allowed: true, text: `${arrivalAnsweredText(h, true)}${info ? `\n\nYou are now on the new page:\n${info}` : ""}` };
+                }
+                if (o.state !== "cancelled") await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {});
+                return { allowed: false, text: arrivalAnsweredText(h, false, o.state === "denied" ? o.note : undefined) };
+            });
+            return askAnswer;
+        };
+        /** Register the run on the page it may now act on, as the re-adopt it was held from would have. */
+        const readoptHere = async (): Promise<string | undefined> => {
+            const rebuild = runRebuilds.get(runId) ?? p.rebuild;
+            if (p.crossPage === false || !rebuild) return undefined;
+            const r = await adoptOnTab(tabId, runId, rebuild).catch(() => null);
+            return r?.pageInfo ? capPageContext(r.pageInfo, byWorker()) : undefined;
+        };
+        /** End the run from its deny card, as Stop does: the controller, and any gate it waits at. */
+        const endRun = (): void => {
+            abortCtl.abort();
+            for (const [key, entry] of [...pendingApprovals]) if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve({ approved: false, cancelled: true }); }
+        };
+        /**
+         * What a call meets on a page its run is held on: the deny text at once (and the card, if it is not up), or the
+         * ask's answer. Undefined when the run may act on the page; `{ text }` with `allowed` when the person let it.
+         * @param seq the OFFSET seq of the call's step
+         */
+        const passArrival = async (seq?: number): Promise<{ allowed: boolean; text: string } | undefined> => {
+            await arrivalSettled(tabId);
+            const h = arrivalHold(runId);
+            if (!h) return undefined;
+            if (h.kind === "deny") { raiseDenyCard(seq ?? runningSeq()); return { allowed: false, text: arrivalDeniedText(h) }; }
+            return await answerArrival(seq ?? runningSeq()) ?? { allowed: false, text: arrivalAnsweredText(h, false) };
+        };
+        /** Run a tool call unless the run is held on its page: refused with the hold's text, or run after the person let
+         *  it act there, with their answer ahead of its result. */
+        const withArrival = async <T extends { result?: string }>(call: { seq: number } | undefined, run: () => Promise<T>): Promise<T | { result: string }> => {
+            const arrived = await passArrival(call ? seqBase + call.seq : undefined);
+            if (arrived && !arrived.allowed) return { result: arrived.text };
+            const env = await run();
+            return arrived?.text ? { ...env, result: `${arrived.text}\n\n${env.result ?? ""}` } : env;
+        };
+        const judgeHere = (url: string): void => {
+            const j = judgeCall(runId, "fetch", navigateFacts(url));
+            for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "arrival" } });
+            const v = arrivalVerdict(url, j);
+            if (v.kind === "pass") { clearArrival(runId); return; }
+            // An `allow` row lets the run on, and consents the origin for navigation and uncredentialed reads: never as the
+            // person, which only a person on a card grants (ruling (b)).
+            if (v.kind === "allow") { consentedOrigins.add(v.origin); clearArrival(runId); return; }
+            const now = arrivalHold(runId);
+            if (now?.kind === v.kind && now.url === v.url) return;   // the same page judged again: its card stands
+            holdArrival(runId, v);
+            denyCarded = false; askAnswer = undefined;
+            recordRunLog(runId, { level: "warn", subsystem: "policy", kind: v.kind === "deny" ? "arrival-denied" : "arrival-asks", reason: v.label ?? "unread", detail: { tool: "arrival", url: v.url } });
+            if (v.kind === "deny") raiseDenyCard(); else void answerArrival();
+        };
+        unwatchArrivals = watchArrivals(tabId, runId, judgeHere);
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
          *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
          *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */
@@ -776,6 +888,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // makes this safe if a stray session somehow survived.
         const resurrected = resurrectedRuns.has(runId);
         resurrectedRuns.delete(runId);
+        // A worker evicted while the run was held forgot the hold: the page it wakes on is judged again.
+        if (resurrected) void Promise.resolve(chrome.tabs.get(tabId)).then((t) => judgeArrival(tabId, t?.url)).catch(() => {});
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
             task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
@@ -945,7 +1059,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
-                delegateTool: (name, args, onStream, call) => withShCalls(runId, call ? seqBase + call.seq : undefined, () => againIfHandedOver(async () => {
+                // A page the run is held on (nav-arrival.ts) runs nothing of it: the call is answered by the hold, or waits for
+                // the person's answer and carries it (`withArrival`).
+                delegateTool: (name, args, onStream, call) => withArrival(call, () => withShCalls(runId, call ? seqBase + call.seq : undefined, () => againIfHandedOver(async () => {
                     // This call's own key for the grants it mints on the tab (sw-consent.ts): another run on the same tab
                     // ending its call drops only its own.
                     const callKey = {};
@@ -1082,6 +1198,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // own timeout, then a generic "still loading" note).
                                 let info = takeInfo();
                                 if (!info) { navBarrier.noteNavigating(tabId, sentTo); await navBarrier.whenReady(tabId); info = takeInfo(); }
+                                const arrived = await passArrival(call ? seqBase + call.seq : undefined);
+                                if (arrived) info = arrived.text;
                                 hasNavigated = true;   // the run moved pages → the terminal result must fan to the new page
                                 workerMade = true;
                                 env = { result: `The page navigated while running "${name}" — the action triggered a navigation, or the page redirected mid-call.${info ? `\n\nYou are now on the new page:\n${info}` : " The new page is still loading — wait, then look."}\n\nNOTE: "${name}" may NOT have taken effect on the previous page. Verify the CURRENT page (look / findByText) and re-run "${name}" here if the change didn't happen.` };
@@ -1120,7 +1238,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             // fallback (a nav that never re-adopts → whenReady resolves, no pageInfo → plain result).
                             if (env) {
                                 await navBarrier.whenReady(tabId);
-                                const info = takeInfo();
+                                // Where it landed may hold the run (nav-arrival.ts): the model reads the hold, or the person's answer.
+                                const arrived = await passArrival(call ? seqBase + call.seq : undefined);
+                                const info = arrived ? undefined : takeInfo();
+                                if (arrived) env.result = `${env.result || ""}\n\n${arrived.text}`;
                                 if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
                                 // verify → fold a view of the DESTINATION page into the result, captured on the NEW
                                 // page after re-adopt (same await path as the click/type verify). "viewport" (or
@@ -1317,7 +1438,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         if (reads) execReads.delete(runId);
                         if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                     }
-                })),
+                }))),
                 // Pre-run In render for a PENDING step (streaming runs): ask the page to compute the tool's
                 // In descriptor without running it, so a step you watch stream shows exec's beautified JS /
                 // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.
@@ -1344,6 +1465,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // The whole of a stored text the run's pointer names, for the dereference tool. Only a value this run holds.
                 readText: (key) => readStoredText(key, runId),
                 tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live) => {
+                    // A run held on its page (nav-arrival.ts) surveys nothing there, and runs no cell: the call goes on to its hold.
+                    await arrivalSettled(tabId);
+                    if (arrivalHold(runId)) return null;
                     if (name === "python_exec") return tryPythonInside(args);
                     if (name !== "exec" || !p.autoApproveReadonly) return null;
                     // Every decision below reads `byWorker()`: a navigation's hand-over must be decided first, as delegateTool does.
@@ -1424,6 +1548,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
                 // that HAVE a precheck (avoids a useless round-trip on every gated call).
                 precheck: async (name, args) => {
+                    await arrivalSettled(tabId);
+                    if (arrivalHold(runId)) return null;   // nothing is asked of a page the run is held on
                     // A proposal is checked in the worker: one that does not run, or a run that does not offer the tool, is
                     // told to the model and never shown to the person as a card.
                     if (name === "propose_policy") {
@@ -1455,6 +1581,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return env && env.precheckFailed ? (env.result || "") : null;
                 },
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
+                    // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
+                    // person lets the run act there.
+                    const arrived = await passArrival(seq != null ? seqBase + seq : undefined);
+                    if (arrived && !arrived.allowed) return { approved: false, feedback: arrived.text };
                     // Ask the page to compute the In render for THIS call (without running the tool) so the
                     // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
                     // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
@@ -1609,6 +1739,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
+                // A page a policy denies runs no call of the run: refused without a card, and the deny card is put up.
+                arrivalRefused: () => {
+                    const h = arrivalHold(runId);
+                    if (h?.kind !== "deny") return undefined;
+                    raiseDenyCard();
+                    return arrivalDeniedText(h);
+                },
                 // A navigate is the `fetch` consumer in its interactive mode: a policy over a host or a URL governs it as it
                 // governs the fetch. An `allow` covers a navigate whoever built the run: its arrival is judged again there.
                 navPolicy: (url) => {
@@ -1756,7 +1893,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // is the worker's set (worker-answer.ts). Sent and not awaited: nothing the page answers is read, and a page
                 // that never answers (content.ts waits two minutes) would hold the run's result and its next turn. A next
                 // turn's adopt goes out behind it on the same channel, so the page still ends the old registration first.
-                if (workerNow) void delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true } }).catch(() => null);
+                if (workerNow && !arrivalHold(runId)) void delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true } }).catch(() => null);
                 const own = workerNow ? await answerFor(runId) : undefined;
                 const answer = own ? (finalizeAnswer(own, res.summary) || undefined) : undefined;
                 if (own) { const m = own.media(); answerMedia = m.length ? m : undefined; }
