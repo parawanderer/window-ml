@@ -1476,6 +1476,42 @@ test.describe("@security attack 19: the start card", () => {
             await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
         } finally { await close(); }
     });
+
+    test("the toolbar badge counts the waiting start on its tab, and the popup's Show unfolds its collapsed card without taking focus", async () => {
+        // SITE_ACCESS_SLICE3.md PR 3. What vm cannot represent: chrome.action's real per-tab badge, and the message from an
+        // extension page reaching the card through the shell.
+        const { fake, ext, page, close } = await asking();
+        try {
+            await page.evaluate(() => { const i = Object.assign(document.createElement("input"), { id: "field" }); document.body.prepend(i); i.focus(); });
+            await startAgent(page);
+            const card = await startCard(page);
+            const popup = await ext.context.newPage();
+            await popup.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            const tabId = await popup.evaluate(async (url) => (await chrome.tabs.query({})).find((t) => t.url === url)?.id, page.url());
+            expect(typeof tabId).toBe("number");
+            const badge = () => popup.evaluate((id) => chrome.action.getBadgeText({ tabId: id }), tabId);
+            await expect.poll(badge, { timeout: 5000 }).toBe("1");
+            expect(await popup.evaluate((id) => chrome.action.getTitle({ tabId: id }), tabId)).toBe("window.ml: an agent start is waiting for you on this tab");
+
+            await card.getByRole("button", { name: "Collapse" }).first().click();
+            await expect(card.locator(".start-ask")).toHaveCount(0, { timeout: 5000 });
+            await page.evaluate(() => document.getElementById("field").focus());   // the Collapse click focused the card's frame
+            expect(await page.evaluate(() => document.activeElement?.id)).toBe("field");
+            const { asks } = (await popup.evaluate((id) => chrome.runtime.sendMessage({ type: "START_ASKS", payload: { tabId: id } }), tabId)).data;
+            expect(asks.length).toBe(1);
+            const r = await popup.evaluate(([id, q]) => chrome.runtime.sendMessage({ type: "START_ASKS", payload: { tabId: id, show: q } }), [tabId, asks[0].requestId]);
+            expect(r.data.shown).toBe(true);
+            await card.waitForSelector(".start-ask", { timeout: 5000 });
+            expect(await page.evaluate(() => document.activeElement?.id), "Show moved focus off the page's own input").toBe("field");
+            expect(fake.calls().length).toBe(0);
+
+            // Answered: the badge clears.
+            await page.waitForTimeout(1200);   // the card arms
+            await card.locator(".start-row .appr-btn.yes").first().click();
+            await expect.poll(badge, { timeout: 5000 }).toBe("");
+            await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
+        } finally { await close(); }
+    });
 });
 
 test.describe("@security attack 20: the diagram sandbox is not a render oracle", () => {

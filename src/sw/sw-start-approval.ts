@@ -66,6 +66,12 @@ interface PendingStart {
 export type StartDecision = "allow" | "always" | "deny" | "timeout" | "gone";
 
 const pending = new Map<string, PendingStart>();   // state: declared below (run.startAsk)
+/** Who hears that an ask was raised or settled: the toolbar badge (sw-badge.ts). */
+const pendingListeners: (() => void)[] = [];   // state: plumbing (set once at worker start)
+/** Tell every listener the asks changed. A listener that throws does not stop the others. */
+function pendingChanged(): void {
+    for (const f of pendingListeners) { try { f(); } catch { /* the badge is not worth an ask */ } }
+}
 
 /** Writes to the two session keys, one after another. */
 let writes: Promise<unknown> = Promise.resolve();   // state: plumbing
@@ -545,12 +551,14 @@ function askPerson(ask: StartAsk, t: PageTurn): Promise<StartDecision> {
         const settle = (d: StartDecision): void => {
             if (!pending.has(ask.requestId)) return;
             pending.delete(ask.requestId);
+            pendingChanged();
             clearTimeout(timer as Parameters<typeof clearTimeout>[0]);
             fan(t.tabId, { kind: "agent-start-decided", id: t.runId, ts: Date.now(), save: false, session: { hash: t.runId, turn: 0 }, requestId: ask.requestId,
                 outcome: d === "allow" || d === "always" ? "allowed" : d === "deny" ? "denied" : "expired" });
             resolve(d);
         };
         pending.set(ask.requestId, { ask, runId: t.runId, tabId: t.tabId, origin: t.origin, since: ask.since, ...(t.docId ? { docId: t.docId } : {}), settle });
+        pendingChanged();
         fan(t.tabId, { kind: "agent-start-ask", id: t.runId, ts: Date.now(), save: false, session: { hash: t.runId, turn: 0 }, ask });
     });
 }
@@ -591,6 +599,29 @@ export function cancelAllStarts(): void {
 /** The asks waiting now, for a surface that opens after one was raised (the DevTools panel replays its buffer). */
 export function pendingStarts(): StartAsk[] {
     return [...pending.values()].map((p) => p.ask);
+}
+
+/** An ask waiting now, by where it waits: what the toolbar badge counts and the popup lists. */
+export interface WaitingStart { requestId: string; runId: string; tabId: number; origin: string; since: number }
+
+/**
+ * The asks waiting now, with their tab and site, oldest first.
+ * @param tabId only the asks on this tab, when given
+ * @returns the asks
+ */
+export function waitingStarts(tabId?: number): WaitingStart[] {
+    return [...pending.values()]
+        .filter((p) => tabId == null || p.tabId === tabId)
+        .map((p) => ({ requestId: p.ask.requestId, runId: p.runId, tabId: p.tabId, origin: p.origin, since: p.since }))
+        .sort((a, b) => a.since - b.since);
+}
+
+/**
+ * Hear every ask raised or settled (a decision, a timeout, a cancel, a closed tab).
+ * @param f called after the change, with nothing: read {@link waitingStarts}
+ */
+export function onStartsChanged(f: () => void): void {
+    pendingListeners.push(f);
 }
 
 // --- revokes (3.4, Q9) ---

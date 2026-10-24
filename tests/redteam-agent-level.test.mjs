@@ -107,8 +107,10 @@ test("a site that may use window.ml but not start agents: START_RUN, RESUME_RUN 
 test("the Q1 refusal names host: \"page\" for a START_RUN (what ml.agent sends), and the others name where the person sets the level", () => {
     assert.match(START_REFUSED.noLevelStart(ORIGIN), /Pass `host: "page"`/);
     assert.match(START_REFUSED.noLevel(ORIGIN), /DevTools Settings → Permissions/);
-    // Neither names a call or a control that cannot grant the level yet: ml.requestAccess and the popup's buttons come in slice 3 PR 3 and 4.
-    for (const t of [START_REFUSED.noLevelStart(ORIGIN), START_REFUSED.noLevel(ORIGIN)]) assert.doesNotMatch(t, /requestAccess|toolbar/);
+    // The popup's agents buttons can grant the level (slice 3 PR 3), so the refusal a site's agent can act on names them.
+    assert.match(START_REFUSED.noLevel(ORIGIN), /toolbar button/);
+    // Neither names ml.requestAccess, which cannot ask for the level until slice 3 PR 4.
+    for (const t of [START_REFUSED.noLevelStart(ORIGIN), START_REFUSED.noLevel(ORIGIN)]) assert.doesNotMatch(t, /requestAccess/);
 });
 
 // --- "ask": the start card ---

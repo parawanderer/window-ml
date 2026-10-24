@@ -116,7 +116,10 @@
     /* The rule above the per-site controls: they are about the tab you are on, below what is about window.ml. */
     hr.site-rule { border: 0; border-top: 1px solid var(--border); margin: 14px 0 4px; }
     /* Up to four buttons in a 340px popup: wrap rather than run past the edge. */
-    #siteButtons { flex-wrap: wrap; margin-top: 10px; }
+    #siteButtons, #siteAgentButtons { flex-wrap: wrap; margin-top: 10px; }
+    /* One waiting thing: its line, then its button on the right. */
+    .wait-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .wait-row .hint { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
         border: 1px solid var(--border); border-radius: 14px; padding: 3px 4px 3px 10px; }
@@ -146,6 +149,13 @@
             <span class="pending-dot" id="configPending" hidden></span>
         </button>
         </span>
+    </div>
+
+    <!-- WAITING FOR YOU, at the top and only while something waits (docs/spec/SITE_ACCESS_SLICE3.md 1.3): the start asks
+         on this tab, each with Show. The access requests of slice 3 PR 4 join it. Built by popup.ts. -->
+    <div id="waiting" hidden>
+        <label>Waiting for you</label>
+        <div id="waitingList"></div>
     </div>
 
     <!-- Connection: the bare minimum to make the extension work. Collapsed once a URL is
@@ -290,6 +300,8 @@
         <label>This site</label>
         <div class="hint"><code id="siteOrigin"></code> <span id="siteState"></span></div>
         <div class="hint" id="siteAgents" hidden></div>
+        <!-- The agent level's buttons, by level (popup.ts AGENT_BUTTONS); hidden with the agents line. -->
+        <div class="row" id="siteAgentButtons" hidden></div>
         <div class="row" id="siteButtons">
             <button id="siteAllowSession" title="Allowed until the browser restarts">Allow this session</button>
             <button id="siteAllowAlways">Always allow</button>

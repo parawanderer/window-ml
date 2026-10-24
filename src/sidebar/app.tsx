@@ -37,6 +37,7 @@ import { CardApp, endActiveCardDrag } from "./card/hud-card";
 import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
+    cardSelectedHash, cardDetail, cardDismissedSet, isCardDismissed,
 } from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export/export";
@@ -508,6 +509,15 @@ function onMessage(d: any): void {
         composerOpen.value = true;
     }
     else if (d.__mlSidebarCardEndDrag) endActiveCardDrag?.();   // shell's safety net force-ended a stuck drag → clean up our listeners
+    else if (d.__mlShowRun && typeof d.__mlShowRun.hash === "string") {
+        // The popup's Show: the run whose start card waits on this tab comes to the front, unfolded and undismissed.
+        const h = d.__mlShowRun.hash;
+        if (isCardDismissed(h)) { const s = new Set(cardDismissedSet.value); s.delete(h); cardDismissedSet.value = s; }
+        cardSelectedHash.value = h;
+        cardDetail.value = true;
+        setCardCollapsed(h, false);
+        // No focus: a start card never takes it (the page's Enter must not land on Allow), and Show needs none.
+    }
     else if (d.__mlSteerRun && typeof d.__mlSteerRun.hash === "string") {
         // Orb right-click → "Steer this run…": open the inline steer box on this run's card. Uncollapse it
         // (a collapsed toast can't hold the input) and ask the shell to focus the frame so typing lands.

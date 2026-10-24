@@ -12,7 +12,7 @@ export const START_REFUSED = {
     /** `ml.agent` without `host: "page"` (a START_RUN) from a site without the agent level (Q1). */
     noLevelStart: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Pass \`host: "page"\` to run the loop in the page.`,
     /** RESUME_RUN or INJECT_MESSAGE from a site without the agent level. */
-    noLevel: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. The person can allow it in DevTools Settings → Permissions.`,
+    noLevel: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. The person can allow it from the extension's toolbar button or in DevTools Settings → Permissions.`,
     denied: (origin: string): string => `Refused: ${origin} is not allowed to start agents.`,
     declined: "Refused: the person declined to start this agent. Nothing ran.",
     unanswered: "Refused: nobody answered the request to start this agent. Nothing ran.",

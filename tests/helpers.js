@@ -187,6 +187,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
     const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
     const tabReplacedListeners = new Set();   // chrome.tabs.onReplaced listeners; fired by bg.replaceTab(oldId, newId)
+    const badges = new Map();   // tabId → { text, title }: what chrome.action shows on each tab (the toolbar badge)
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
@@ -267,6 +268,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             return onFetch(call);
         },
         chrome: {
+            // The toolbar button: per-tab badge text and tooltip, recorded in `badges`; the colours in `badges.colours`.
+            action: {
+                setBadgeText: async ({ tabId, text }) => { badges.set(tabId, { ...badges.get(tabId), text }); },
+                setTitle: async ({ tabId, title }) => { badges.set(tabId, { ...badges.get(tabId), title }); },
+                setBadgeBackgroundColor: async ({ color }) => { badges.colours = { ...badges.colours, bg: color }; },
+                setBadgeTextColor: async ({ color }) => { badges.colours = { ...badges.colours, fg: color }; },
+            },
             // Only what the worker reads to know which document a tab holds: a commit is fired by bg.commit, never by
             // the harness on its own, so a test that never commits sees no document at all.
             webNavigation: {
@@ -481,6 +489,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 
     return {
         calls,
+        badges,   // tabId → { text, title } the toolbar button shows there (chrome.action)
         nativeConnects,
         captures,
         tabMessages,

@@ -988,6 +988,15 @@ the closed root, the iframe and the top layer.
 
 **Labels.** `@ui`.
 
+**As built.**
+
+- The badge counts start asks only. A refused start from a page a running agent reached (`site.notStarted`) is not
+  counted yet: it joins the count with PR 4's request store, where it has an answer the person can give.
+- Several start asks on one tab use the "n things are waiting for you" title, the one written for a mix.
+- Show unfolds the card without focusing it, so the start card's rule that it never takes focus holds for it too.
+- The second row of 1.7 now names the toolbar button: "The person can allow it from the extension's toolbar button or
+  in DevTools Settings → Permissions."
+
 It could fold into PR 2 or PR 4. It is kept apart because it is the one place both feed.
 
 ### PR 4: `requestAccess`
