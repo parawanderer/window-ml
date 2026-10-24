@@ -18,7 +18,7 @@ import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, sh
 import type { Session, AgentStep, Status } from "../store";
 import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "../format";
 import { sessionProfile } from "../model";
-import { useCloseAnimation } from "../use-close";
+import { cssDurationMs, useCloseAnimation } from "../use-close";
 import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "../icons";
 import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
@@ -1066,9 +1066,10 @@ export function AgentRunView({ s }: { s: Session }) {
                 leaves nothing after its last step, so the page went on claiming it was running — and when the
                 runtime settled it, the only place that said so was the row in the list. One of them was a history
                 and the other a state, both true and neither reconcilable from the other. */}
-            {s.status === "pending"
-                ? (runLive ? <PendingNote s={s} /> : <div class="arun-cut">This run was interrupted. It never reported how it ended, so what is above is everything it got through.</div>)
+            {s.status === "pending" && !runLive
+                ? <div class="arun-cut">This run was interrupted. It never reported how it ended, so what is above is everything it got through.</div>
                 : null}
+            <PendingSlot on={s.status === "pending" && runLive} s={s} />
         </>
     );
 }
@@ -1104,11 +1105,35 @@ export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; 
     );
 }
 
-// The live footer of a running agent. Its bar is a browser-native motif — the thin indeterminate
-// "page is loading" sweep an SPA shows on navigation — so an active run reads as the browser working.
-// When the run is BLOCKED on your approval it swaps to a breathing amber bar (no forward motion) +
-// "waiting…", so paused-needs-you vs actively-running is legible at a glance from colour + motion.
-export function PendingNote({ s }: { s: Session }) {
+/**
+ * The live footer while the run is live, and for the length of its fade after: a surface that fades it out declares
+ * how long on the node (`--pending-out-ms`, the reading view's), and the footer is held that long saying what it last
+ * said (`leaving`). A surface that declares nothing drops it in the same render, as it always did.
+ */
+function PendingSlot({ on, s }: { on: boolean; s: Session }) {
+    const node = useRef<HTMLDivElement>(null);
+    const [held, setHeld] = useState(false);
+    const was = useRef(on);
+    // Decided DURING render, from the node still on screen: a frame without the footer before the hold began would be
+    // the pop this exists to remove.
+    if (was.current && !on && !held && cssDurationMs(node.current, "--pending-out-ms") > 0) setHeld(true);
+    was.current = on;
+    useEffect(() => {
+        if (!held) return;
+        if (on) { setHeld(false); return; }
+        const t = setTimeout(() => setHeld(false), cssDurationMs(node.current, "--pending-out-ms"));
+        return () => clearTimeout(t);
+    }, [held, on]);
+    return on || held ? <PendingNote s={s} leaving={!on} rootRef={node} /> : null;
+}
+
+/** The live footer of a running agent: what it is doing now, and how long. Its bar is a browser-native motif — the thin
+ *  indeterminate "page is loading" sweep an SPA shows on navigation — so an active run reads as the browser working.
+ *  When the run is BLOCKED on your approval it swaps to a breathing amber bar (no forward motion) + "waiting…", so
+ *  paused-needs-you vs actively-running is legible at a glance from colour + motion. */
+export function PendingNote({ s, leaving = false, rootRef }: { s: Session;
+    /** the run has stopped being live: draw what was last said, faded out by the surface */
+    leaving?: boolean; rootRef?: preact.RefObject<HTMLDivElement> }) {
     // Blocked = a step is still awaiting the gate AND you haven't decided it yet (decidedSteps flips
     // the instant you click, before the tool's DONE event clears awaitingApproval).
     const blocked = (s.steps || []).some(st => st.pending && st.awaitingApproval && !(st.seq != null && decidedSteps.has(stepKey(s.hash, st.seq))));
@@ -1133,10 +1158,10 @@ export function PendingNote({ s }: { s: Session }) {
     rev.value;
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
-        if (blocked) return;
+        if (blocked || leaving) return;
         const t = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(t);
-    }, [blocked]);
+    }, [blocked, leaving]);
     // `residentNow` is what lets it say "Awakening…" rather than "Waiting for the model…" while tens of GiB
     // go into VRAM — the longest wait there is, and the one that most looks like a hang. It answers
     // `undefined` where no /api/ps reading exists (a remote runtime, or the panel never opened), which
@@ -1151,19 +1176,24 @@ export function PendingNote({ s }: { s: Session }) {
     // covers a tool in flight: its step pulses just above (`liveShownByTranscript` holds the whole list). And the label
     // is never the model's narrated thought, which this surface prints already; the HUD, with no transcript, keeps it.
     const dup = !blocked && liveShownByTranscript(s);
+    // LEAVING, it says what it said last: the run has ended and its state no longer describes a live run, so a
+    // phrase read from it now would change under the fade.
+    const said = useRef<{ blocked: boolean; dup: boolean; text: ComponentChildren }>({ blocked, dup, text: null });
+    if (!leaving) said.current = { blocked, dup, text: blocked
+        ? "waiting for your approval…"
+        : <>{live?.label}{live?.suffix}{n > 0 ? <span class="psteps"> · {n} {n === 1 ? "step" : "steps"}</span> : null}</> };
+    const v = said.current;
     return (
-        <div class={`pending-note${blocked ? " blocked" : ""}${dup ? " dup" : ""}`}>
+        <div ref={rootRef} class={`pending-note${v.blocked ? " blocked" : ""}${v.dup ? " dup" : ""}${leaving ? " leaving" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
                 instrumentation around it, and the glyph in the reading view, where a full-width rule is furniture.
                 A hidden element's animations do not run, so the one that is not shown costs nothing. */}
             <div class="pbar" aria-hidden="true"><span /></div>
-            {blocked ? null : <BusyBlob />}
+            {v.blocked ? null : <BusyBlob />}
             {/* The step count stays, as the one thing the orb has no room for and a trace reader wants; it is
                 dropped before the first step rather than reading "0 steps", which said nothing and crowded out
                 the phrase that did. */}
-            <span class="ptext">{blocked
-                ? "waiting for your approval…"
-                : <>{live?.label}{live?.suffix}{n > 0 ? <span class="psteps"> · {n} {n === 1 ? "step" : "steps"}</span> : null}</>}</span>
+            <span class="ptext">{v.text}</span>
         </div>
     );
 }

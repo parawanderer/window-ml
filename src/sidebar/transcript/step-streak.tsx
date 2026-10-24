@@ -14,7 +14,7 @@
 // CALM ONLY, and nothing is dropped: the busy view keeps the whole trace, and so do both exports. Design note and
 // the rules behind each clause: tmp/design-tool-streaks.md.
 import { createContext } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { AgentStep } from "../store";
 import { rev, revealSeq } from "../store";
 import type { AgentTurnGroup } from "../debug-reducer";
@@ -77,6 +77,17 @@ export const foldedInView = (s: ToolStreak, now = Date.now()): boolean => {
 
 /** How long a group's rows must have been on screen before folding them is worth animating. */
 export const FOLD_SEEN_MS = 600;
+
+/**
+ * The rows a refold collapses: the members that were on screen, not the call that CAUSED the fold. That one landed a
+ * moment ago and was never a row to the reader; drawn into the collapse, it made the group's first frame a row taller
+ * than the transcript had been the frame before, and then shrink. It arrives already inside the head instead, so the
+ * collapse starts at exactly the height the reader was looking at.
+ * @param turns the group's members
+ * @param now when the group mounted
+ */
+export const rowsSeen = (turns: AgentTurnGroup[], now = Date.now()): AgentTurnGroup[] =>
+    turns.filter(t => t.tools.some(st => !!st.ts && now - st.ts >= FOLD_SEEN_MS));
 
 /**
  * Did this group COME TOGETHER in front of the reader, without the collapse above having been the motion?
@@ -263,7 +274,10 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // FOLDING IN FRONT OF A READER, as a collapse rather than a cut. Captured ONCE, on mount: it is a fact about
     // how this streak came to exist, and re-reading the clock on later renders would make it decay mid-animation.
     const history = useHistoryPaint();
-    const [refolding] = useState(() => !history && foldedInView(s));
+    // Cleared once the collapse is done, so a group opened later by a click is an ordinary open group (its rail, its
+    // titles) rather than one still dressed for the fold.
+    const [refolding, setRefolding] = useState(() => !history && foldedInView(s));
+    const [mountedAt] = useState(() => Date.now());
     // …AND A GROUP THAT NEVER HAD ROWS TO COLLAPSE still has to say it gathered them. `forming` is the pair
     // `foldedInView` refuses: the component mounted already folded, so the head is the only motion there is.
     // `grouped` is the wider set — a watched fold washes the head too, so the row you are left looking at is
@@ -316,10 +330,11 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
         if (!shown) { cancel(); setOpen(true); return; }
         close(() => { setStuck(false); setOpen(false); });
     };
-    // The run shut on the frame AFTER mount, so the rows are on screen in their old places first and the collapse
-    // starts from where they were. An effect rather than a render-time call: `close` measures the duration off the
-    // node, which does not exist until this has been painted once.
-    useEffect(() => { if (refolding) close(() => setOpen(false)); }, []);
+    // The collapse starts BEFORE the first paint, from where the rows were: a layout effect, which runs once the node
+    // exists (`close` measures the duration off it) and before the browser draws. It was an ordinary effect, which
+    // painted one frame of the group OPEN first — the head appearing above both rows with the rail beside them —
+    // and then shut it, which read as the group popping into existence and snapping closed.
+    useLayoutEffect(() => { if (refolding) close(() => { setOpen(false); setRefolding(false); }); }, []);
     // ONE TOOL NAMES ITSELF — `exec × 4` reads as the rows it replaced. SEVERAL cannot, so the row counts the calls
     // and names the tools beside it: "11 tool calls · exec, look, python_exec". Dropping the names would make the
     // one row standing for a whole run of work say less about it than any one of the rows did.
@@ -358,7 +373,7 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                         waiting to happen on a phone, which is why the stylesheet takes this one's clicks away on a
                         coarse pointer. */}
                     <FoldRail onFold={toggle} tip="Collapse this group" />
-                    {s.turns.map(t => <InStreak.Provider key={`m${t.step}`} value={groupOwns(known.current, t.step)}>{render(t)}</InStreak.Provider>)}
+                    {(refolding ? rowsSeen(s.turns, mountedAt) : s.turns).map(t => <InStreak.Provider key={`m${t.step}`} value={groupOwns(known.current, t.step)}>{render(t)}</InStreak.Provider>)}
                   </div>
                 : null}
         </div>

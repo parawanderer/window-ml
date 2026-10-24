@@ -199,7 +199,33 @@ async function liveRun() {
         await page.waitForTimeout(ms);
         return page.evaluate(() => { const s = [...globalThis.__seen]; globalThis.__seen = null; return s; });
     };
-    return { page, errors, call, animationsFor };
+    /** Every frame while `during` runs and for `ms` after: the group's and the live line's geometry and classes. */
+    const framesFor = async (ms, during) => {
+        await page.evaluate(() => {
+            const out = globalThis.__frames = [];
+            const tick = () => {
+                const tr = document.querySelector(".chat-transcript");
+                const st = tr.querySelector(".astreak"), note = tr.querySelector(".pending-note");
+                const h = (el) => (el ? el.getBoundingClientRect().height : null);
+                const rail = st?.querySelector(".astreak-body > .fold-rail");
+                // How far below the row or the group the next thing starts: what the reader sees move.
+                const top = (st ?? tr.querySelector(".aturn"))?.getBoundingClientRect().top;
+                out.push({
+                    below: note && top != null ? note.getBoundingClientRect().top - top : null,
+                    streak: h(st), head: h(st?.querySelector(".astreak-head")), cls: st?.className ?? null,
+                    rail: rail ? Number(getComputedStyle(rail).opacity) : null,
+                    note: note ? { h: h(note), o: Number(getComputedStyle(note).opacity), cls: note.className } : null,
+                });
+                if (globalThis.__frames === out) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        });
+        await page.waitForTimeout(100);   // a few frames of how it was, to compare the first one after with
+        await during();
+        await page.waitForTimeout(ms);
+        return page.evaluate(() => { const f = globalThis.__frames; globalThis.__frames = null; return f; });
+    };
+    return { page, errors, call, animationsFor, framesFor };
 }
 
 test("a group forming over rows already on screen collapses them without playing their entrance again", async () => {
@@ -242,6 +268,72 @@ test("a call joining an OPEN group slides in from the left; the rows it was open
     });
     expect(from.opacity).toBe("0");
     expect(from.transform).toMatch(/^translateX\(-\d+px\)$/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- the group forming, frame by frame: the rows become the row, with nothing popping in or out ---
+
+test("a refold never paints the group open: no rail, no head above the rows, no row taller than the one on screen", async () => {
+    const { page, errors, call, framesFor } = await liveRun();
+    await call(1);
+    await page.waitForTimeout(1200);
+    const all = await framesFor(700, () => call(2, 100));
+    const at = all.findIndex((f) => f.streak != null);
+    expect(at, "a frame of the lone row first").toBeGreaterThan(0);
+    const before = all[at - 1].below;
+    const frames = all.slice(at);
+    expect(frames.length).toBeGreaterThan(5);
+    // The first frame the group exists, it is already collapsing, from where the reader was looking: what follows it
+    // has not moved.
+    expect(frames[0].cls).toMatch(/\bclosing\b/);
+    expect(frames[0].head).toBeLessThan(2);
+    expect(Math.abs(frames[0].below - before)).toBeLessThan(2);
+    for (const f of frames) {
+        if (f.below != null) expect(f.below, "the group never grows past the row it is replacing").toBeLessThanOrEqual(before + 1);
+        if (f.rail != null) expect(f.rail, "the rail is not drawn while the rows fold").toBe(0);
+    }
+    // …and it eases there: the head unfolds through intermediate heights rather than appearing.
+    const heads = frames.map((f) => f.head);
+    expect(heads.some((x) => x > 4 && x < heads.at(-1) - 4)).toBe(true);
+    expect(frames.at(-1).cls).not.toMatch(/\bopen\b/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("the live line unfolds between calls, folds away while a call runs, and fades out when the run ends", async () => {
+    const { page, errors, call, framesFor } = await liveRun();
+    // Between calls: it comes back through intermediate heights, not in one frame.
+    const back = (await framesFor(500, () => call(1, 400))).map((f) => f.note).filter(Boolean);
+    const full = back.at(-1).h;
+    expect(full).toBeGreaterThan(15);
+    expect(back.some((n) => n.h > 2 && n.h < full - 2 && n.o > 0.05 && n.o < 0.95), "seen part way").toBe(true);
+
+    // A call in flight already shows the run is alive: the line folds rather than vanishing.
+    const away = (await framesFor(450, () => page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-step",
+            step: 2, seq: 2, tool: "exec", approval: "readonly", arguments: { js: "1" }, pending: true });
+    }, RUN))).map((f) => f.note);
+    expect(away.every(Boolean), "still in the document while it folds").toBe(true);
+    expect(away.some((n) => n.h > 2 && n.h < full - 2)).toBe(true);
+    expect(away.at(-1).h).toBeLessThan(1);
+
+    // The run ends: the line is held while it fades, saying what it last said, and then goes.
+    await page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-step",
+            step: 2, seq: 2, tool: "exec", approval: "readonly", arguments: { js: "1" }, pending: false, result: "ok", toolMs: 50 });
+    }, RUN);
+    await expect.poll(() => page.locator(".pending-note").evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(full - 1);
+    const end = (await framesFor(500, () => page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-result", summary: "Three fares.", steps: 2, hitCap: false });
+    }, RUN))).map((f) => f.note);
+    const leaving = end.filter((n) => n && /\bleaving\b/.test(n.cls));
+    expect(leaving.length, "held on screen while it fades").toBeGreaterThan(3);
+    expect(leaving.some((n) => n.o > 0.05 && n.o < 0.95)).toBe(true);
+    expect(end.at(-1), "gone once faded").toBeNull();
     expect(errors).toEqual([]);
     await page.close();
 });

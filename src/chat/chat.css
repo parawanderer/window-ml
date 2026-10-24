@@ -756,13 +756,13 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .astep.awaiting .io + .io { display: none; }
 /* The approval card states it, with the buttons on it; the note under the rule states it again, and the bar at the
    top of the pane a third time (that one is hidden from the component, which knows whether the card is in view). */
-.chat.calm .pending-note.blocked { display: none; }
+/* (`.blocked` folds away like `.dup`: see "THE LIVE LINE COMES AND GOES" below.) */
 /* THE SAME EVENT, DRAWN TWICE. While the model is streaming, the reply itself is being written on screen a
    line above — that growing text IS the liveness signal, so the footer's phrase is a clone of the first line
    of it, and the "thinking" count is a clone of the thought block's. The reading view shows a status line only
    when nothing else represents status: before the first token, between steps, while a tool runs. The panel
    keeps its bar (it is instrumentation), and the HUD keeps its phrase (it has no transcript to show instead). */
-.chat.calm .pending-note.dup { display: none; }
+/* (`.dup` folds away rather than being removed: see "THE LIVE LINE COMES AND GOES" below.) */
 /* And the live pulse beside a streaming reply, for the same reason: the words appearing are the pulse. Left on
    in the panel, where it sits in a row of instrumentation; in the reading view it is a lone purple dot in the
    margin with nothing to belong to. */
@@ -772,6 +772,19 @@ button.chat-page-go:hover { color: var(--fg); }
    conversation, which is a lot of furniture for one fact. The glyph says the same thing in the width of a character,
    beside the sentence that says what is happening. (ui-kit.tsx `BusyBlob`.) */
 .chat.calm .pending-note { flex-direction: row; align-items: center; gap: 8px; }
+/* THE LIVE LINE COMES AND GOES, rather than cutting in and out. It is hidden whenever something else already shows
+   the run is alive (a call pulsing above it, `.dup`), shown again between calls, and gone when the run ends — several
+   times a minute, each one a line of the transcript appearing or vanishing in one frame. It folds instead: opacity
+   and height together, so what is under it moves with it. Arriving it unfolds from nothing (`@starting-style`); at the
+   end of the run it is held for `--pending-out-ms` saying what it last said (`.leaving`, agent-detail.tsx). */
+.chat.calm .pending-note {
+    --pending-out-ms: 220; overflow: clip; overflow-clip-margin: 8px;
+    transition: opacity .22s cubic-bezier(.4, 0, .2, 1), height .22s cubic-bezier(.4, 0, .2, 1),
+        padding .22s cubic-bezier(.4, 0, .2, 1);
+}
+@starting-style { .chat.calm .pending-note { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; } }
+.chat.calm .pending-note.dup, .chat.calm .pending-note.blocked, .chat.calm .pending-note.leaving { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .chat.calm .pending-note { --pending-out-ms: 0; transition: none; } }
 .chat.calm .pending-note .pbar { display: none; }
 .chat.calm .pending-note .blob { display: block; }
 /* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
@@ -1959,7 +1972,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .astreak { margin: 3px 0; --astep-close-ms: 200; }
 /* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
    place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
-.chat.calm .astreak.open .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
+.chat.calm .astreak.expanded .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
 
 /* THE ROW SITS WHERE THE TURNS DO. Its text begins on the transcript's own left edge — the line `thinking` and a
    turn's prose start from — so a folded run reads as one more thing in the column rather than as a control
@@ -2038,7 +2051,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
 .astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
-    .astreak { --astep-close-ms: 0; }
+    .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }
     .astreak-body, .astreak-body.closing { animation: none; }
 }
 
@@ -2059,6 +2072,24 @@ button.chat-page-go:hover { color: var(--fg); }
     animation: chat-streak-form .26s cubic-bezier(.2, .8, .2, 1) backwards, chat-streak-wash .7s ease backwards;
 }
 @keyframes chat-streak-form { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+/* `.refolding` — THE ROWS BECOME THE ROW. The group mounts with its rows in their old places and already collapsing
+   (step-streak.tsx starts it before the first paint), and the head UNFOLDS from nothing over the same time instead
+   of appearing above them: the height lost by the rows is taken up by the head as they go, so the transcript under
+   them moves once, smoothly, by the difference. The rail is not drawn while it happens — it says "these are inside
+   an open group", which they never are to the reader, and it was the stroke that flashed. Slower than a click's
+   close (.3s against .2s): nobody asked for this one, so it is watched rather than expected. */
+/* Its own margins (3px each side, which a lone turn does not have) ease in with the head, or the first frame steps by it. */
+.chat.calm .astreak.refolding { --astep-close-ms: 300; animation: chat-streak-settle .3s cubic-bezier(.4, 0, .2, 1) backwards; }
+@keyframes chat-streak-settle { from { margin-top: 0; margin-bottom: 0; } }
+.chat.calm .astreak.refolding > .astreak-body.closing { animation-duration: .3s; }
+.chat.calm .astreak.refolding > .astreak-body > .fold-rail { opacity: 0; }
+.chat.calm .astreak.refolding > .astreak-head {
+    animation: chat-streak-unfold .3s cubic-bezier(.4, 0, .2, 1) backwards, chat-streak-wash .7s ease .1s backwards;
+}
+@keyframes chat-streak-unfold {
+    from { height: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0; opacity: 0; overflow: hidden; }
+    to { height: auto; opacity: 1; overflow: hidden; }
+}
 /* A tinted wash rather than a border flash: the row is grey on purpose (the failure count is the only colour),
    and a coloured ring here would spend that signal on "this is new" instead of "two of these failed". */
 @keyframes chat-streak-wash {
@@ -2077,5 +2108,6 @@ button.chat-page-go:hover { color: var(--fg); }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .astreak.grouped > .astreak-head,
     .chat.calm .astreak.forming > .astreak-head,
+    .chat.calm .astreak.refolding, .chat.calm .astreak.refolding > .astreak-head,
     .chat.calm .astreak-n.bumped { animation: none; }
 }
