@@ -33,6 +33,7 @@ import { shellTurnedOn } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
 import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
+import { holdStands } from "./nav-arrival";
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;
@@ -194,9 +195,10 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     if (!stored) return "none";
     // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
     // Registered as a start for that await: a CANCEL_ALL_RUNS there must stop this resume, not find nothing live.
+    // Not on a page the run is still held on (nav-arrival.ts): the turn judges it again, and the person answers first.
     const starting = beginStart(hash, tabId);
     try {
-        if (!stored.p.rebuild || (await adoptOnTab(tabId, hash, stored.p.rebuild)).error) { endStart(hash, starting); return "none"; }
+        if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return "none"; }
         if (starting.signal.aborted) { endStart(hash, starting); return "none"; }
     } catch (e) {
         endStart(hash, starting);

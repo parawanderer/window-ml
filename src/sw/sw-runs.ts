@@ -29,6 +29,7 @@ import { defineState } from "../state-registry";
 import { type CurrentSnapshot } from "../agent/current-context";
 import { contextTextOf, messageRow, pointerRow } from "../agent/state-rows";
 import { releaseShOutputs } from "./sw-shell-call";
+import { clearArrival } from "./nav-arrival";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -605,7 +606,7 @@ export const sessionTokens = (runId: string): TokenStore => {
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
  *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
-export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); }
+export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); clearArrival(runId); }
 
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.

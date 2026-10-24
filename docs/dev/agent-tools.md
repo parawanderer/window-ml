@@ -338,9 +338,20 @@ NEW cross-origin nav must pass an **interactive consent gate** — a page can't 
 another site (prompt-injection exfil). Mechanism: `navigate` is `requiresApproval`, but **same-origin
 auto-approves** (`autoApprove` → `"same-origin"` provenance, no prompt) on BOTH loop paths — page-side via
 `sameOriginNav(location)`, background-side via `navNeedsConsent` — while a cross-origin nav to an origin NOT
-in the run's `consentedOrigins` (seeded with the start origin via `StartRunPayload.pageOrigin`; grown as the
-user approves) falls through to the gate. Approving an origin consents to it for the rest of the run (repeat
-navs skip). Once approved, it just works mechanically: the content script re-injects on the new site
+in the run's `consentedOrigins` (seeded with the start origin via `StartRunPayload.pageOrigin` and with the
+origins the person approved in earlier turns, `runOrigins`; grown as the user approves) falls through to the gate.
+Approving an origin consents to it for the rest of the run (repeat navs skip), and for a run the worker built it is
+an as-you grant for `fetch_url` there too (`grantRunOrigin`). A policy is judged first: `navigate` is the `fetch`
+consumer's interactive mode (`docs/dev/policies.md`).
+**Arrivals (`nav-arrival.ts`).** A page the tab commits while the run is live is judged before the run re-adopts
+there, whatever moved the tab (a click, a redirect, a timer). A `deny` HOLDS the run: CONTENT_READY does not hand
+the page the run, every call is answered with the hold's text (`withArrival`, `sendTool`), and a nested ask of kind
+`arrival-denied` offers Go back (`chrome.tabs.goBack`) or End run. An `ask` raises an `arrival` ask; Approve
+consents the origin (as-you, as an approved navigate card does), clears the hold and re-adopts the run
+(`readoptHere`); Deny goes back. The model reads the answer on the call that waited for it, or on the next call
+when it came while the step that moved the tab still ran. A hold is the SESSION's: a turn that ends held is not
+re-adopted (`holdStands` in `userRunAction`) and the next turn judges the tab's page again. It is worker memory:
+a resurrected run is judged again where it wakes. Once approved, it just works mechanically: the content script re-injects on the new site
 (`<all_urls>`), so re-adoption + delegation continue there; `crossOrigin` rides on `RebuildConfig` so the
 rebuilt tool keeps crossing after a nav, and it's logged in the "agent options" block with a data-carry
 caution in the tool description. (v2: an "allow / allow-for-this-run / deny" 3-way + "on-click"

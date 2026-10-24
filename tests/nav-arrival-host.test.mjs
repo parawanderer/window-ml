@@ -26,26 +26,34 @@ const policy = (id, effect, source, label) => ({ id, scope: "global", consumer: 
 const DENY_ADMIN = policy("p-deny", "deny", '(c) => c.kind === "fetch" && c.url.startsWith("https://b.example/admin/")', "No admin pages");
 const ASK_B = policy("p-ask", "ask", '(c) => c.host === "b.example"', "Check with me on b.example");
 const ALLOW_B = policy("p-allow", "allow", '(c) => c.host === "b.example"', "b.example is fine");
+// Over the navigation only (`interactive`), so a later fetch_url there meets no policy, only what the arrival granted.
+const ASK_B_NAV = policy("p-ask-nav", "ask", '(c) => c.host === "b.example" && c.interactive', "Check with me before going to b.example");
+const ALLOW_B_NAV = policy("p-allow-nav", "allow", '(c) => c.host === "b.example" && c.interactive', "Going to b.example is fine");
+/** The adopts on b.example: the run's own adopt on its start page is not one. */
+const onB = (adopts) => adopts.filter((a) => a.includes("b.example"));
 
 /**
- * A run the worker built on tab 7 whose model calls `calls` in turn, then answers "done". A real `click` the page runs moves
+ * A run the worker built on tab 7 whose model calls `calls` in turn, then answers "done"; a `null` in `calls` answers "done"
+ * there and the person sends a follow-up, which the model answers with the calls after it. A real `click` the page runs moves
  * the tab to `clickTo[selector]`, when there is one. `precheck(payload)` plays the page's precheck; `card(tool)` answers a
- * call's card, `ask(kind)` a nested ask (true approves; a string denies with that note).
+ * call's card, `ask(kind)` a nested ask (true approves; a string denies with that note; undefined leaves it unanswered).
+ * `between(go)` runs before the follow-up is sent; `go(url)` moves the tab as the person would.
  */
-async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true } = {}) {
+async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between } = {}) {
     const tab = { id: 7, windowId: 3, active: true, url: START, title: "Site" };
-    let turns = 0, docN = 1, bg;
+    let turns = 0, docN = 1, bg, hash;
     const seen = [], cards = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
     const answered = new Set();
     const sender = () => ({ tab: { id: 7, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-${docN}` });
-    const go = async (url) => {
-        tab.url = url; docN++;
-        bg.commit(7, { documentId: `doc-${docN}`, url });
+    // The browser commits the destination; `ready` is the new document's content script saying so, which must not be
+    // awaited inside the call that navigated (CONTENT_READY waits on the run that call belongs to).
+    const commit = (url) => { tab.url = url; docN++; bg.commit(7, { documentId: `doc-${docN}`, url }); };
+    const ready = async (url) => {
         const ready = plain(await bg.send({ type: "CONTENT_READY" }, sender()));
         readies.push(ready);
         // The destination re-registers each run it was handed, then says so (content.ts), which releases the barrier.
         for (const a of ready?.adopt ?? []) {
-            adopts.push(url);
+            adopts.push(`ready ${url}`);
             await bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${url}` } }, sender());
         }
     };
@@ -56,12 +64,13 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             seen.push(call.body.messages);
             const next = calls[turns++];
+            if (next === null) setTimeout(async () => { await between?.(async (url) => { commit(url); await ready(url); }); void bg.context.__mlUserRunActionForTest(hash, "send", { text: "go on", surface: "hud" }); }, 20);
             return next
                 ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (_t, msg) => {
-            if (msg.type === "ADOPT_RUN_NOW") { adopts.push(tab.url); return { pageInfo: `You are on ${tab.url}` }; }
+            if (msg.type === "ADOPT_RUN_NOW") { adopts.push(`now ${tab.url}`); return { pageInfo: `You are on ${tab.url}` }; }
             if (msg.type === "ML_DEBUG_TO_PAGE") {
                 const e = msg.event;
                 if (e?.awaitingApproval && !answered.has(`${e.id}:${e.seq}`)) {
@@ -74,6 +83,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
                     answered.add(a.id);
                     asks.push({ kind: a.kind, line: a.why?.line });
                     const d = ask(a.kind);
+                    if (d === undefined) continue;   // left on screen, unanswered
                     void bg.send({ type: "SET_APPROVAL", payload: { runId: e.id, seq: e.seq, ask: a.id, decision: d === true, ...(typeof d === "string" ? { feedback: d } : {}) } });
                 }
                 return undefined;
@@ -84,11 +94,13 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
             if (p.precheck) return precheck(p) ?? { result: "", precheckFailed: false };
             if (p.renderOnly || p.readonlyTry || p.geometry) return { result: "" };
             toPage.push({ name: p.name, url: tab.url });
-            if (p.name === "click" && clickTo[p.args.selector]) { await go(clickTo[p.args.selector]); return { result: `Clicked ${p.args.selector}.` }; }
+            // A click on a link commits before its answer reaches the worker; the destination reports ready after.
+            if (p.name === "navigate") { commit(p.args.url); setTimeout(() => void ready(p.args.url), 5); return { result: `Navigating to ${p.args.url}` }; }
+            if (p.name === "click" && clickTo[p.args.selector]) { const to = clickTo[p.args.selector]; commit(to); setTimeout(() => void ready(to), 5); return { result: `Clicked ${p.args.selector}.` }; }
             return { result: `ran ${p.name}` };
         },
     });
-    await bg.context.__mlStartUserRunForTest(7, { task: "work on the site", surface: "hud" });
+    ({ hash } = await bg.context.__mlStartUserRunForTest(7, { task: "work on the site", surface: "hud" }));
     for (let i = 0; i < 600 && turns <= calls.length; i++) await sleep(1);
     await sleep(40);
     const results = (seen.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -110,7 +122,7 @@ test("a click that lands on a page a policy denies holds the run there: its next
     assert.deepEqual(r.cards, ["click"], "only the first click asked; the refused one showed no card");
     assert.equal(r.asks.filter((a) => a.kind === "arrival-denied").length, 1, "one deny card, not one per call");
     assert.match(r.asks[0].line, /^The run arrived on https:\/\/b\.example\/admin\/users, which the policy "No admin pages" denies\./);
-    assert.equal(r.adopts.length, 0, "the run was not re-adopted on the denied page");
+    assert.deepEqual(onB(r.adopts), [], "the run was not re-adopted on the denied page, not even once its turn ended");
     assert.deepEqual(r.readies.at(-1)?.adopt ?? [], [], "CONTENT_READY did not hand the page the run");
     assert.ok((await r.log()).some((x) => x.kind === "arrival-denied"), "the run log says why");
 });
@@ -124,6 +136,28 @@ test("Go back on the deny card takes the tab back, and End run stops the run", T
     assert.ok(end.turns() < 5, `the run was stopped before its model answered (${end.turns()} model calls)`);
 });
 
+test("a turn that ends on a page a policy denies leaves the run held: the person's follow-up there runs nothing on the page", T, async () => {
+    const r = await hostRun([
+        { name: "click", args: { selector: "#admin" } },
+        null,
+        { name: "scroll", args: {} },
+    ], { policies: [DENY_ADMIN], clickTo: { "#admin": ADMIN }, ask: () => undefined });
+    assert.equal(r.turns(), 4, "the follow-up turn ran");
+    assert.deepEqual(r.toPage, [{ name: "click", url: START }], "the follow-up's scroll never reached the denied page");
+    assert.match(r.results.at(-1), /"No admin pages" denies: no tool runs on this page/);
+    assert.deepEqual(onB(r.adopts), []);
+});
+
+test("a person who goes back by hand between turns finds the run free again on the page they went back to", T, async () => {
+    const r = await hostRun([
+        { name: "click", args: { selector: "#admin" } },
+        null,
+        { name: "scroll", args: {} },
+    ], { policies: [DENY_ADMIN], clickTo: { "#admin": ADMIN }, ask: () => undefined, between: (go) => go(START) });
+    assert.deepEqual(r.toPage, [{ name: "click", url: START }, { name: "scroll", url: START }]);
+    assert.equal(r.results.at(-1), "ran scroll");
+});
+
 // --- an ask: the run waits for the person ---
 
 test("an arrival a policy asks about waits for the person: Approve re-adopts the run there and the waiting call runs with the answer ahead of its result", T, async () => {
@@ -134,7 +168,7 @@ test("an arrival a policy asks about waits for the person: Approve re-adopts the
     assert.equal(r.asks.length, 1);
     assert.equal(r.asks[0].kind, "arrival");
     assert.match(r.asks[0].line, /^The run arrived on https:\/\/b\.example, a page it did not open by name\. Asking because the policy "Check with me on b\.example" asks about pages like this\.$/);
-    assert.deepEqual(r.adopts, [OTHER], "approved: the run is adopted on the page");
+    assert.ok(onB(r.adopts).length >= 1, "approved: the run is adopted on the page");
     assert.deepEqual(r.toPage.map((x) => x.name), ["click", "scroll"]);
     assert.match(r.results[1], /^The tab moved to https:\/\/b\.example, .*The person approved the run acting on it\./);
     assert.match(r.results[1], /ran scroll$/);
@@ -149,35 +183,58 @@ test("Deny on an arrival ask takes the tab back, the waiting call does not reach
     assert.deepEqual([...r.bg.tabsBack], [7]);
     assert.deepEqual(r.toPage.map((x) => x.name), ["click"], "the scroll never ran on the asked page");
     assert.match(r.results[1], /The person declined, and the tab went back to the page before\. They said: not that site/);
-    assert.equal(r.adopts.length, 0);
+    assert.deepEqual(onB(r.adopts), []);
 });
 
 test("an approved arrival is the person's grant of the origin: a later as-you fetch_url there asks nothing", T, async () => {
     const r = await hostRun([
         { name: "click", args: { selector: "#docs" } },
         { name: "fetch_url", args: { url: "https://b.example/data", credentials: true } },
-    ], { policies: [ASK_B], clickTo: { "#docs": OTHER }, ask: () => true });
+    ], { policies: [ASK_B_NAV], clickTo: { "#docs": OTHER }, ask: () => true });
     assert.deepEqual(r.cards, ["click"], "the fetch rode the arrival's approval, with no card of its own");
     assert.deepEqual(r.fetched, ["https://b.example/data"]);
 });
 
+test("an origin the person approved a navigate to is theirs for the rest of the run: a later turn navigates back there with no card", T, async () => {
+    const r = await hostRun([
+        { name: "navigate", args: { url: OTHER } },
+        { name: "navigate", args: { url: START } },
+        null,
+        { name: "navigate", args: { url: OTHER } },
+    ], {});
+    assert.equal(r.turns(), 5, "the follow-up turn ran");
+    assert.deepEqual(r.cards, ["navigate"], "only the first navigate to b.example asked");
+});
+
 // --- an allow, and no policy at all ---
 
-test("RED TEAM (ruling (b)): an allow row lets the arrival through with no card, but never as the person: an as-you fetch there still asks", T, async () => {
+test("RED TEAM (ruling (b)): an allow row lets the arrival through with no card, but grants nothing as the person: once the tab leaves, an as-you fetch back there asks", T, async () => {
+    // While the tab is ON b.example, an as-you fetch of it is the free tier's (the page you are on), whatever let the
+    // tab get there. What (b) withholds is the grant: the origin is not the run's as-you origin after the tab leaves.
     const r = await hostRun([
         { name: "click", args: { selector: "#docs" } },
         { name: "scroll", args: {} },
+        { name: "click", args: { selector: "#home" } },
         { name: "fetch_url", args: { url: "https://b.example/data", credentials: true } },
-    ], { policies: [ALLOW_B], clickTo: { "#docs": OTHER }, card: (tool) => tool !== "fetch_url" });
+    ], { policies: [ALLOW_B_NAV], clickTo: { "#docs": OTHER, "#home": START }, card: (tool) => tool !== "fetch_url" });
     assert.deepEqual(r.asks, [], "no arrival card");
-    assert.deepEqual(r.toPage.map((x) => x.name), ["click", "scroll"]);
-    assert.deepEqual(r.cards, ["click", "fetch_url"], "the as-you fetch went to the person");
+    assert.deepEqual(r.toPage.map((x) => x.name), ["click", "scroll", "click"]);
+    assert.deepEqual(r.cards, ["click", "click", "fetch_url"], "the as-you fetch went to the person");
     assert.deepEqual(r.fetched, [], "refused on its card, it read nothing");
+});
+
+test("against it: an arrival the person approved IS the as-you grant, after the tab leaves too", T, async () => {
+    const r = await hostRun([
+        { name: "click", args: { selector: "#docs" } },
+        { name: "click", args: { selector: "#home" } },
+        { name: "fetch_url", args: { url: "https://b.example/data", credentials: true } },
+    ], { policies: [ASK_B_NAV], clickTo: { "#docs": OTHER, "#home": START }, ask: () => true });
+    assert.deepEqual(r.cards, ["click", "click"], "no card for the fetch");
+    assert.deepEqual(r.fetched, ["https://b.example/data"]);
 });
 
 test("an arrival no policy covers passes as it is: no card, no hold", T, async () => {
     const r = await hostRun([{ name: "click", args: { selector: "#docs" } }, { name: "scroll", args: {} }], { clickTo: { "#docs": OTHER } });
-    if (process.env.DBG) { console.log("turns", r.turns(), JSON.stringify(r.results), JSON.stringify(r.readies), JSON.stringify(r.adopts)); console.log(JSON.stringify((await r.bg.context.__mlRunLog.all()).map((x) => [x.subsystem, x.kind, x.reason]))); console.log(r.bg.tabMessages.map(([, m]) => m.type + (m.payload?.name ? ":" + m.payload.name : "") + (m.event?.kind ? ":" + m.event.kind : "")).join(" ")); }
     assert.deepEqual(r.asks, []);
     assert.deepEqual(r.toPage.map((x) => x.name), ["click", "scroll"]);
     assert.equal(r.results[1], "ran scroll");

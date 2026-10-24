@@ -7,10 +7,12 @@
 // run left on a page it may not act on is HELD (`arrivalHold`). The run host reads the hold before anything of the run
 // reaches the page: the re-adopt (CONTENT_READY), every send to the tab, every tool. Only the run host clears it.
 //
-// Held in worker memory, as the hand-over's decision is: an evicted worker forgets it, and a run resurrected after an
-// eviction is judged again on the page it wakes on (sw-run-host.ts).
+// A hold is the SESSION's, not the turn's: a run that ends its turn on a page it is held on is not re-adopted there,
+// and its next turn judges the tab's page again before anything of it runs. Held in worker memory, as the hand-over's
+// decision is: an evicted worker forgets it, and a run resurrected after an eviction is judged again on the page it
+// wakes on (sw-run-host.ts).
 
-import { policiesReady, speakable, type PolicyJudgement } from "./sw-policies";
+import { judgeCall, navigateFacts, policiesReady, speakable, type PolicyJudgement } from "./sw-policies";
 
 /** Why a run may not act on the page its tab holds: a policy denies it, or asks about it and the person has not answered. */
 export type ArrivalHold =
@@ -26,14 +28,14 @@ type Judge = (url: string) => void | Promise<void>;
 const judges = new Map<number, Map<string, Judge>>();   // state: plumbing — the live runs watching each tab, gone with each turn
 const pending = new Map<number, Promise<void>>();   // state: plumbing — the arrival judgement in flight for each tab
 const lastJudged = new Map<number, string>();   // state: plumbing — the URL each tab's last arrival was judged for, so a re-adopt does not judge it twice
-const holds = new Map<string, ArrivalHold>();   // state: plumbing — the runs held on the page their tab holds, by run
+const holds = new Map<string, ArrivalHold>();   // state: plumbing — the runs held on the page their tab holds, by run, until the session is released
 
 /**
  * Judge each arrival of the run's tab while the run is live.
  * @param tabId the run's tab
  * @param runId the run
  * @param judge decides the arrival and holds or clears the run (`holdArrival`, `clearArrival`)
- * @returns stops watching, and drops the run's hold
+ * @returns stops watching; the run's hold stays, for its next turn
  */
 export function watchArrivals(tabId: number, runId: string, judge: Judge): () => void {
     let m = judges.get(tabId);
@@ -42,7 +44,6 @@ export function watchArrivals(tabId: number, runId: string, judge: Judge): () =>
     return () => {
         const now = judges.get(tabId);
         if (now?.get(runId) === judge) { now.delete(runId); if (!now.size) judges.delete(tabId); }
-        holds.delete(runId);
     };
 }
 
@@ -78,8 +79,23 @@ export const arrivalHold = (runId: string): ArrivalHold | undefined => holds.get
 /** Hold a run on the page its tab holds. */
 export function holdArrival(runId: string, hold: ArrivalHold): void { holds.set(runId, hold); }
 
-/** Let a run act on the page its tab holds again. */
+/** Let a run act on the page its tab holds again; also called when its session is released (`releaseSessionTokens`). */
 export function clearArrival(runId: string): void { holds.delete(runId); }
+
+/**
+ * Whether a run's hold still stands on the page its tab holds now, judged again: for a turn the person starts after one
+ * that ended held, when no judge watched the tab in between (they may have gone back by hand).
+ * @param tabId the run's tab
+ * @param runId the run
+ * @returns true when the page would hold the run again; false when it is not held, or the page no longer holds it
+ */
+export async function holdStands(tabId: number, runId: string): Promise<boolean> {
+    if (!holds.has(runId)) return false;
+    await policiesReady.catch(() => {});
+    const url = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => undefined))?.url ?? "";
+    const v = arrivalVerdict(url, judgeCall(runId, "fetch", navigateFacts(url)));
+    return v.kind === "deny" || v.kind === "ask";
+}
 
 /** Forget a closed tab. */
 export function forgetArrivalTab(tabId: number): void { lastJudged.delete(tabId); }

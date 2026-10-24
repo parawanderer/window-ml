@@ -148,6 +148,9 @@ export function grantRunOrigin(runId: string, origin: string): boolean {
     return true;
 }
 
+/** The origins the person approved this run a navigate to ({@link grantRunOrigin}), kept across its turns. */
+export const runOrigins = (runId: string): string[] => [...(runs.get(runId)?.origins ?? [])];
+
 /** Whether `url` is under an origin the person approved this run a navigate to ({@link grantRunOrigin}). */
 export function runOriginGranted(runId: string, url: string): boolean {
     const ctx = runs.get(runId);

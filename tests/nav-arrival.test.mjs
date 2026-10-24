@@ -105,7 +105,7 @@ test("a judge that throws does not stop the next run's judge or the next commit"
     un1(); un2();
 });
 
-test("a hold is the run's until it is cleared or the run stops watching", () => {
+test("a hold is the run's until it is cleared, and outlives the turn that stops watching", () => {
     const un = A.watchArrivals(43, "r3", () => {});
     const h = { kind: "deny", url: "https://b.example/admin/", label: "No admin" };
     A.holdArrival("r3", h);
@@ -115,7 +115,8 @@ test("a hold is the run's until it is cleared or the run stops watching", () => 
     assert.equal(A.arrivalHold("r3"), undefined);
     A.holdArrival("r3", h);
     un();
-    assert.equal(A.arrivalHold("r3"), undefined, "a settled run leaves no hold behind");
+    assert.deepEqual(A.arrivalHold("r3"), h, "a turn that ends held leaves the hold for the next one");
+    A.clearArrival("r3");
 });
 
 // --- the describe layer: where a click would go ---

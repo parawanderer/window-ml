@@ -56,7 +56,7 @@ import { withEnv } from "./sw-current-env";
 import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
-import { grantRunFetch, grantRunOrigin, runOriginGranted, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
+import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
@@ -651,7 +651,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
         // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
         // skip the gate). A run that didn't opt into crossOrigin never gates (its tool refuses cross-origin).
-        const consentedOrigins = new Set<string>();
+        // An origin the person approved in an earlier turn is theirs for the rest of the run, in both modes (POLICIES.md,
+        // "One consent, scoped by the origin"): the worker's grant outlives the turn, so the turn starts from it.
+        const consentedOrigins = new Set<string>(runOrigins(runId));
         if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
         // The turn's ask and its grants, readable by the state inspector (`run.input`, `grants.turn`) for as long as the turn runs.
         const turnStarted = Date.now();
@@ -762,6 +764,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // The ask hold's card, answered once for every call waiting on it: whether the run may act on the page, and what
         // the model reads of the answer.
         let askAnswer: Promise<{ allowed: boolean; text: string }> | undefined;
+        // That answer when no call waited on it (the person answered while the step that moved the tab still ran): the
+        // next call's result carries it, so the model reads it once.
+        let unreadAnswer: string | undefined;
         /** The deny hold's card: Go back takes the tab back (that arrival is judged in turn), End run stops the run. */
         const raiseDenyCard = (seq = runningSeq()): void => {
             const h = arrivalHold(runId);
@@ -781,18 +786,22 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (h?.kind !== "ask") return undefined;
             if (askAnswer || seq === undefined) return askAnswer;
             const line = arrivalLine(h);
+            const answered = (a: { allowed: boolean; text: string }) => { unreadAnswer = a.text || undefined; return a; };
             askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}) } }).then(async (o) => {
                 if (arrivalHold(runId) !== h) return { allowed: true, text: "" };   // judged again meanwhile: the new judgement holds or not
                 if (o.allowed) {
                     // A person on a card: the origin is consented, and as the person for a fetch the worker runs.
                     consentedOrigins.add(h.origin);
                     if (byWorker() && runsInWorker(p, "fetch_url")) grantRunOrigin(runId, h.origin);
-                    clearArrival(runId);
+                    // Re-adopted while still held, and the answer kept before the hold goes: a call in between waits on
+                    // this answer and carries it, instead of finding neither.
                     const info = await readoptHere();
-                    return { allowed: true, text: `${arrivalAnsweredText(h, true)}${info ? `\n\nYou are now on the new page:\n${info}` : ""}` };
+                    const a = answered({ allowed: true, text: `${arrivalAnsweredText(h, true)}${info ? `\n\nYou are now on the new page:\n${info}` : ""}` });
+                    if (arrivalHold(runId) === h) clearArrival(runId);
+                    return a;
                 }
                 if (o.state !== "cancelled") await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {});
-                return { allowed: false, text: arrivalAnsweredText(h, false, o.state === "denied" ? o.note : undefined) };
+                return answered({ allowed: false, text: arrivalAnsweredText(h, false, o.state === "denied" ? o.note : undefined) });
             });
             return askAnswer;
         };
@@ -816,9 +825,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const passArrival = async (seq?: number): Promise<{ allowed: boolean; text: string } | undefined> => {
             await arrivalSettled(tabId);
             const h = arrivalHold(runId);
-            if (!h) return undefined;
+            if (!h) {
+                // The person answered an ask no call waited on: the tab is where their answer left it, so the call runs.
+                const text = unreadAnswer;
+                unreadAnswer = undefined;
+                return text ? { allowed: true, text } : undefined;
+            }
             if (h.kind === "deny") { raiseDenyCard(seq ?? runningSeq()); return { allowed: false, text: arrivalDeniedText(h) }; }
-            return await answerArrival(seq ?? runningSeq()) ?? { allowed: false, text: arrivalAnsweredText(h, false) };
+            const a = await answerArrival(seq ?? runningSeq());
+            unreadAnswer = undefined;
+            return a ?? { allowed: false, text: arrivalAnsweredText(h, false) };
         };
         /** Run a tool call unless the run is held on its page: refused with the hold's text, or run after the person let
          *  it act there, with their answer ahead of its result. */
@@ -839,7 +855,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             const now = arrivalHold(runId);
             if (now?.kind === v.kind && now.url === v.url) return;   // the same page judged again: its card stands
             holdArrival(runId, v);
-            denyCarded = false; askAnswer = undefined;
+            denyCarded = false; askAnswer = undefined; unreadAnswer = undefined;
             recordRunLog(runId, { level: "warn", subsystem: "policy", kind: v.kind === "deny" ? "arrival-denied" : "arrival-asks", reason: v.label ?? "unread", detail: { tool: "arrival", url: v.url } });
             if (v.kind === "deny") raiseDenyCard(); else void answerArrival();
         };
@@ -888,8 +904,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // makes this safe if a stray session somehow survived.
         const resurrected = resurrectedRuns.has(runId);
         resurrectedRuns.delete(runId);
-        // A worker evicted while the run was held forgot the hold: the page it wakes on is judged again.
-        if (resurrected) void Promise.resolve(chrome.tabs.get(tabId)).then((t) => judgeArrival(tabId, t?.url)).catch(() => {});
+        // A worker evicted while the run was held forgot the hold, and a turn after one that ended held may meet another
+        // page (the person went back by hand): either way the page the tab holds now is judged again.
+        if (resurrected || arrivalHold(runId)) void Promise.resolve(chrome.tabs.get(tabId)).then((t) => judgeArrival(tabId, t?.url)).catch(() => {});
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
             task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
