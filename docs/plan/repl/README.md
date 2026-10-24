@@ -451,7 +451,10 @@ listed as remaining is DONE unless named below.
   `re`'s parse tree (`risky_parse`, either check refuses); closes the `{,n}`, verbose-via-flags-int and conditional-group
   escapes, three exponential cells that ran unasked in the shipped core. Neither is in the shipped core: the pin stays
   0169c4fd until Shane assigns the rebuild. The three escapes went to the red team as a brief; the unpriced quadratic
-  (`regex-cost.ts` has no Python port) is named to the python-cancel lane in #11's body. RULED the same day on Shane's
+  (`regex-cost.ts` has no Python port) is named to the python-cancel lane in #11's body. REBUILD ASSIGNED 2026-10-24
+  (Shane) to a new session, `[window-ml pyodide]`: the core at the fork's head (ca282158, #10–#12 merged), released on
+  the fork, the pin moved in one PR (`@python,@security`), the janitor reviewing; the red team turns #1109's
+  fail-on-land todos into plain tests in step with it. RULED the same day on Shane's
   question whether one implementation can serve both sides: no; one definition and one corpus, two parsers
   ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "one DEFINITION and one CORPUS"); the parity test he asked for
   is `halting.json` read by both suites.
