@@ -464,6 +464,9 @@ listed as remaining is DONE unless named below.
   genre, each lag a `{ todo }` naming the fork commit and the pin, a passing todo failing
   ([`PYTHON_DIALECT.md`](../../spec/PYTHON_DIALECT.md), "the SHIPPED core reads the corpus"). Until the rebuild Shane
   assigns, the pin 0169c4fd lags fork #10 to #12: the three exponential escapes are KNOWN OPEN in the shipped core.
+  #1119 MERGED 0d6bcdde (2026-10-24): main pins the core from ca282158 (release `pyodide-314.0.3-ml-ca282158`),
+  so the three escapes are CLOSED in the shipped core; e3's #1121 (merged into the branch first) emptied both LAG maps,
+  the corpus test's and the red-team file's. The janitor reviewed with no finding. The pyodide session's clone is removed.
   The dialect PR is #1093, MERGED 2fe3e352 after the janitor's review (the corpus; `tests/regex-corpus-core.test.mjs`
   with 9 lag todos, 6 for fork #10 and 3 for #11, a stale todo and a drift both failing, measured by flipping a verdict;
   the four idioms the artifacts panel fell out on). MISS, recorded as such: #1093 WIDENS the read-only dialect on three
