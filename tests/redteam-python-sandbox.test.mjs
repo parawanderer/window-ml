@@ -731,12 +731,16 @@ Promise.resolve(1).then(lambda *_a: _m.woke.append("ran"))
 _m.woke.append("armed")
 "x"`);
         assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
+        // The two 10 ms timers and the microtask fire on their own schedule. Wait for the gate to count all
+        // three rather than reading once: a slow runner can return the cell before the timers have fired.
+        let dropped = 0;
+        for (let i = 0; i < 50 && dropped < 3; i++) { dropped += cellGate.cellDropped(); if (dropped < 3) await new Promise((r2) => setTimeout(r2, 10)); }
+        assert.equal(dropped, 3, "each of the three fired, ran nothing, and was counted");
     } finally {
         process.off("uncaughtException", onErr);
         process.off("unhandledRejection", onErr);
     }
     assert.deepEqual(thrown, [], "a revoked callback must not throw into the process (the worker's onerror kills it)");
-    assert.equal(cellGate.cellDropped(), 3, "each of the three fired, ran nothing, and was counted");
 });
 
 test("P2-gate: the hooks are fixed, so a cell that reaches Module cannot put the originals back", { skip }, async () => {
