@@ -195,6 +195,13 @@ third run, the two before it the P2-gate flake in `tests/redteam-python-sandbox.
 janitor's #1098 (test only, open) accumulates with a deadline. e3's residual pins are #1094, retargeted to main, e3's
 to merge. Root-k moves to (c2) library manifests, the last item of its exception.
 
+(c2) RULED 2026-10-24 on root-k's measurement of the pinned core (the four rulings and the fork finding are in
+`READONLY_LIBRARY_MANIFEST.md`, "The runtime import loop"): the source is read as a recorded `cat` call, spawn then
+discard; nothing executes before the word, the card's admission is a static MODULE-SHAPE rule and the load plus the
+post-load global check run after approval as enforcement; the stored entry is the snapshot of the approved bytes; global
+scope only, removal restarts the worker. Root-k files the "load-run objects stay owned through reset" finding on the
+fork today. The red team writes the pass in its own file; the janitor reviews the code.
+
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
 listed as remaining is DONE unless named below.
