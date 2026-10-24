@@ -5,7 +5,7 @@
 // small click-to-copy chips (Hash / CopyBtn / Stamp / TagBadge / SheetChip / …).
 import { useGoneOnScrollOrBlur, underPointer } from "./pointer-gone";
 import type { ComponentChildren } from "preact";
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { AnswerMedia } from "../contract/contract-render";
 import type { Status, AgentStep } from "./store";
@@ -561,5 +561,51 @@ export function BusyBlob({ label }: { label?: string }) {
                 <circle class="blob-c" cx="12" cy="12" r="3.6" />
             </g>
         </svg>
+    );
+}
+
+/**
+ * A changing figure in running text (`· 14s`, `5 steps`) whose digits ROLL when they change, rather than the whole
+ * string being redrawn in one frame. Each digit is its own span keyed by its place counted from the right and its value,
+ * so only a digit that changed is new: `14s → 15s` moves the 5 and nothing else, and `9s → 10s` rolls the units and
+ * brings the tens in. A surface that animates it says so in CSS (`.tick-d.rolled`, chat.css); elsewhere it is text.
+ * Nothing rolls on the first render, which is the figure being drawn, not changing.
+ * @group primitives, status
+ * @gallery {"text": " · 14s"}
+ */
+export function Ticking({ text }: { text: string }) {
+    const first = useRef(true);
+    useEffect(() => { first.current = false; }, []);
+    const parts = text.split(/(\d+)/);
+    return (
+        <>{parts.map((p, i) => i % 2
+            ? <span key={`n${parts.length - i}`} class="tick-n">{[...p].map((d, j) =>
+                <TickDigit key={`${p.length - j}:${d}`} d={d} roll={!first.current} />)}</span>
+            : p)}</>
+    );
+}
+
+/** One digit of a `Ticking` figure. Whether it rolls is decided when it MOUNTS and kept: a digit that did not change
+ *  is the same element on the next render, and a class arriving on it then would start the roll anyway. */
+function TickDigit({ d, roll }: { d: string; roll: boolean }) {
+    const [rolled] = useState(roll);
+    return <span class={`tick-d${rolled ? " rolled" : ""}`}>{d}</span>;
+}
+
+/**
+ * A piece of a line that comes and goes (`· 8s`, `· 1 step`), kept in the line while it is absent so a surface can
+ * fold it open and shut instead of the rest of the line jumping by its width. Absent, it is an empty-looking span
+ * (`.ifold.off`) still holding what it last said, for the fold to close over; its figures roll (`Ticking`). The panel
+ * hides an absent one (sidebar.css); the reading view eases its width and opacity (chat.css).
+ * @group primitives, status
+ * @gallery {"text": " · 8s"}
+ */
+export function InlineFold({ text, class: cls }: { text: string; class?: string }) {
+    const last = useRef(text);
+    if (text) last.current = text;
+    return (
+        <span class={`ifold${text ? "" : " off"}${cls ? ` ${cls}` : ""}`} aria-hidden={text ? undefined : "true"}>
+            {last.current ? <Ticking text={last.current} /> : null}
+        </span>
     );
 }

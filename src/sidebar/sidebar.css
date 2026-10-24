@@ -2334,6 +2334,8 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* The step count beside the live phrase: present for a trace reader, quieter than the phrase, because what
    is happening now is the thing being read and how many steps it took is the context around it. */
 .pending-note .psteps { color: var(--fg-faint); }
+/* A piece of a line that is absent (`InlineFold`, ui-kit.tsx): not drawn here; the reading view folds it instead. */
+.ifold.off { display: none; }
 /* Browser page-load bar: the thin indeterminate sweep an SPA shows on navigation. */
 .pbar { position: relative; height: 2px; width: 100%; background: var(--border); border-radius: 2px; overflow: hidden; }
 .pbar > span { position: absolute; top: 0; bottom: 0; left: -35%; width: 35%; border-radius: 2px;

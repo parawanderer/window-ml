@@ -60,13 +60,13 @@ export const FIELD = {   // state: ui
     aberration: 12, aberrationMax: 2,
     /** THE INK, per theme: the dots' colour and the canvas's opacity over the page, on a dark page and on a light one
      *  (told apart by the page's own background, so however the theme was chosen). */
-    inkDark: "#3b3941", opacityDark: 0.55, inkLight: "#9e9eae", opacityLight: 0.45,
+    inkDark: "#595760", opacityDark: 0.5, inkLight: "#79798b", opacityLight: 0.5,
     /** the most frames a second it draws (the display may offer 120; the swell is slow and the water steps at 60
      *  regardless), and the resolution it draws at, as a fraction of the screen's (capped at 2x) */
     fps: 60, renderScale: 1,
     /** draw one frame and stop, whatever else holds (see STILL above) */
     still: false,
-    fadePx: 110, fadeSoft: 275, fadeWobble: 110, fadeWobbleScale: 1.35, fadeWobbleSpeed: 1,
+    fadePx: 20, fadeSoft: 275, fadeWobble: 110, fadeWobbleScale: 1.35, fadeWobbleSpeed: 1,
 };
 
 const VS = `

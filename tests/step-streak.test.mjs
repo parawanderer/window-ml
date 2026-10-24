@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { groupOwns, foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
+import { groupOwns, rowsSeen, foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
@@ -293,4 +293,14 @@ test("a group speaks for the members it was opened with; a call that joins an op
     const known = new Set([1, 2, 3]);
     assert.equal(groupOwns(known, 2), true, "a row the refold collapses, or the click opens, does not slide in again");
     assert.equal(groupOwns(known, 4), false, "a call landing while the group is open slides in like any call");
+});
+
+test("a refold collapses the rows that were on screen, not the call that caused it", () => {
+    const now = 100_000;
+    const at = (step, ts) => ({ step, localStep: step, tools: [{ step, seq: step, tool: "exec", ts }] });
+    const seen = at(1, now - FOLD_SEEN_MS - 500), justNow = at(2, now - 40), unstamped = at(3, undefined);
+    assert.deepEqual(rowsSeen([seen, justNow], now).map((t) => t.step), [1],
+        "the new call was never a row to the reader: drawn into the collapse, the group's first frame was a row taller than the one before");
+    assert.deepEqual(rowsSeen([seen, at(4, now - FOLD_SEEN_MS)], now).map((t) => t.step), [1, 4], "on screen exactly long enough counts");
+    assert.deepEqual(rowsSeen([unstamped], now), [], "no stamp is no evidence it was seen");
 });

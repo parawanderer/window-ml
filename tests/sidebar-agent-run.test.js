@@ -454,7 +454,10 @@ test("the footer counts THIS turn's steps: a follow-up starts a new loop and the
     // finished when it was typed.
     await w.dispatch(agentSay("agT", "Can you write me a response here?", "say1"));
     await w.tick();
-    assert.equal(w.shadow.querySelector(".pending-note .psteps"), null, "no count until the new turn has run a step");
+    // Shown as nothing: the count stays in the line FOLDED (`InlineFold`, so the reading view can fold it shut rather
+    // than the line jumping), hidden here and from assistive tech.
+    const count = w.shadow.querySelector(".pending-note .psteps");
+    assert.ok(count?.classList.contains("off") && count.getAttribute("aria-hidden") === "true", "no count until the new turn has run a step");
     assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
 
     // And it counts the new turn's work, not the session's.

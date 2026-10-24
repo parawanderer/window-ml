@@ -23,8 +23,8 @@ test.afterAll(async () => { await browser?.close(); server?.close(); });
 
 /** A fresh page, failing the test on any page error; `prefs` seeds this device's stored preferences before the first
  *  paint, as `wml-chat:<key>` in localStorage, which is where the web adapter keeps them. */
-async function open(hash = "", prefs = null) {
-    const page = await browser.newPage({ viewport: DESKTOP });
+async function open(hash = "", prefs = null, { reducedMotion = "no-preference" } = {}) {
+    const page = await browser.newPage({ viewport: DESKTOP, reducedMotion });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     if (prefs) await page.addInitScript((p) => {
@@ -161,8 +161,8 @@ test("the tab picked last is the start page's choice again after a reload, and s
 const RUN = "laptop:9a8b7c6d";
 
 /** Open a running agent session of our own, with "group all" on (the default). */
-async function liveRun() {
-    const { page, errors } = await open();
+async function liveRun(opts = {}) {
+    const { page, errors } = await open("", null, opts);
     await page.evaluate((key) => {
         const [runtime, hash] = key.split(":");
         const now = Date.now();
@@ -173,12 +173,12 @@ async function liveRun() {
     await page.goto(server.url + `#/s/${encodeURIComponent(RUN)}`);
     await page.locator(".chat-transcript").waitFor();
     /** One call as a run sends it: a pending START, then its DONE under the same seq. */
-    const call = async (n, doneAfter = 300) => {
-        const emit = (over) => page.evaluate(([key, n, over]) => {
+    const call = async (n, doneAfter = 300, tool = n % 2 ? "exec" : "look") => {
+        const emit = (over) => page.evaluate(([key, n, tool, over]) => {
             const hash = key.split(":")[1];
             globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-step",
-                step: n, seq: n, tool: n % 2 ? "exec" : "look", approval: "readonly", arguments: { js: "1" }, reasoning: "Checking.", reasoningTokens: 9, ...over });
-        }, [RUN, n, over]);
+                step: n, seq: n, tool, approval: "readonly", arguments: { js: "1" }, reasoning: "Checking.", reasoningTokens: 9, ...over });
+        }, [RUN, n, tool, over]);
         await emit({ pending: true });
         await page.waitForTimeout(doneAfter);
         await emit({ pending: false, result: "ok", toolMs: 200 });
@@ -199,7 +199,33 @@ async function liveRun() {
         await page.waitForTimeout(ms);
         return page.evaluate(() => { const s = [...globalThis.__seen]; globalThis.__seen = null; return s; });
     };
-    return { page, errors, call, animationsFor };
+    /** Every frame while `during` runs and for `ms` after: the group's and the live line's geometry and classes. */
+    const framesFor = async (ms, during) => {
+        await page.evaluate(() => {
+            const out = globalThis.__frames = [];
+            const tick = () => {
+                const tr = document.querySelector(".chat-transcript");
+                const st = tr.querySelector(".astreak"), note = tr.querySelector(".pending-note");
+                const h = (el) => (el ? el.getBoundingClientRect().height : null);
+                const rail = st?.querySelector(".astreak-body > .fold-rail");
+                // How far below the row or the group the next thing starts: what the reader sees move.
+                const top = (st ?? tr.querySelector(".aturn"))?.getBoundingClientRect().top;
+                out.push({
+                    below: note && top != null ? note.getBoundingClientRect().top - top : null,
+                    streak: h(st), head: h(st?.querySelector(".astreak-head")), cls: st?.className ?? null,
+                    rail: rail ? Number(getComputedStyle(rail).opacity) : null,
+                    note: note ? { h: h(note), o: Number(getComputedStyle(note).opacity), cls: note.className } : null,
+                });
+                if (globalThis.__frames === out) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        });
+        await page.waitForTimeout(100);   // a few frames of how it was, to compare the first one after with
+        await during();
+        await page.waitForTimeout(ms);
+        return page.evaluate(() => { const f = globalThis.__frames; globalThis.__frames = null; return f; });
+    };
+    return { page, errors, call, animationsFor, framesFor };
 }
 
 test("a group forming over rows already on screen collapses them without playing their entrance again", async () => {
@@ -242,6 +268,182 @@ test("a call joining an OPEN group slides in from the left; the rows it was open
     });
     expect(from.opacity).toBe("0");
     expect(from.transform).toMatch(/^translateX\(-\d+px\)$/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- the group forming, frame by frame: the rows become the row, with nothing popping in or out ---
+
+test("a refold never paints the group open: no rail, no head above the rows, no row taller than the one on screen", async () => {
+    const { page, errors, call, framesFor } = await liveRun();
+    await call(1);
+    await page.waitForTimeout(1200);
+    const all = await framesFor(700, () => call(2, 100));
+    const at = all.findIndex((f) => f.streak != null);
+    expect(at, "a frame of the lone row first").toBeGreaterThan(0);
+    const before = all[at - 1].below;
+    const frames = all.slice(at);
+    expect(frames.length).toBeGreaterThan(5);
+    // The first frame the group exists, it is already collapsing, from where the reader was looking: what follows it
+    // has not moved.
+    expect(frames[0].cls).toMatch(/\bclosing\b/);
+    expect(frames[0].head).toBeLessThan(2);
+    expect(Math.abs(frames[0].below - before)).toBeLessThan(2);
+    for (const f of frames) {
+        if (f.below != null) expect(f.below, "the group never grows past the row it is replacing").toBeLessThanOrEqual(before + 1);
+        if (f.rail != null) expect(f.rail, "the rail is not drawn while the rows fold").toBe(0);
+    }
+    // …and it eases there: the head unfolds through intermediate heights rather than appearing.
+    const heads = frames.map((f) => f.head);
+    expect(heads.some((x) => x > 4 && x < heads.at(-1) - 4)).toBe(true);
+    expect(frames.at(-1).cls).not.toMatch(/\bopen\b/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("the live line unfolds between calls, folds away while a call runs, and fades out when the run ends", async () => {
+    const { page, errors, call, framesFor } = await liveRun();
+    // Between calls: it comes back through intermediate heights, not in one frame.
+    const back = (await framesFor(500, () => call(1, 400))).map((f) => f.note).filter(Boolean);
+    const full = back.at(-1).h;
+    expect(full).toBeGreaterThan(15);
+    expect(back.some((n) => n.h > 2 && n.h < full - 2 && n.o > 0.05 && n.o < 0.95), "seen part way").toBe(true);
+
+    // A call in flight already shows the run is alive: the line folds rather than vanishing.
+    const away = (await framesFor(450, () => page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-step",
+            step: 2, seq: 2, tool: "exec", approval: "readonly", arguments: { js: "1" }, pending: true });
+    }, RUN))).map((f) => f.note);
+    expect(away.every(Boolean), "still in the document while it folds").toBe(true);
+    expect(away.some((n) => n.h > 2 && n.h < full - 2)).toBe(true);
+    expect(away.at(-1).h).toBeLessThan(1);
+
+    // The run ends: the line is held while it fades, saying what it last said, and then goes.
+    await page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-step",
+            step: 2, seq: 2, tool: "exec", approval: "readonly", arguments: { js: "1" }, pending: false, result: "ok", toolMs: 50 });
+    }, RUN);
+    await expect.poll(() => page.locator(".pending-note").evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(full - 1);
+    const end = (await framesFor(500, () => page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-result", summary: "Three fares.", steps: 2, hitCap: false });
+    }, RUN))).map((f) => f.note);
+    const leaving = end.filter((n) => n && /\bleaving\b/.test(n.cls));
+    expect(leaving.length, "held on screen while it fades").toBeGreaterThan(3);
+    expect(leaving.some((n) => n.o > 0.05 && n.o < 0.95)).toBe(true);
+    expect(end.at(-1), "gone once faded").toBeNull();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- what changes in a row's text: a name joining the list, a figure ticking ---
+
+test("a tool joining a closed group's list arrives with its comma; the names already there stay still", async () => {
+    const { page, errors, call, animationsFor } = await liveRun();
+    await call(1, 300, "pageInfo");
+    await page.waitForTimeout(1200);
+    await call(2, 300, "exec");
+    await page.waitForTimeout(900);
+    const names = page.locator(".astreak-tools .astreak-name");
+    await expect(names).toHaveText(["pageInfo", ", exec"]);
+    await expect(page.locator(".astreak-name.arrived")).toHaveCount(0);
+
+    const seen = await animationsFor(300, () => call(3, 200, "look"));
+    await expect(page.locator(".astreak-tools")).toHaveText("pageInfo, exec, look");
+    await expect(page.locator(".astreak-name.arrived")).toHaveText([", look"]);
+    expect(seen).toContain("chat-name-in@astreak-name");
+    // A tool already named does not arrive again when it is called again.
+    await call(4, 200, "exec");
+    await expect(page.locator(".astreak-name.arrived")).toHaveCount(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a ticking figure rolls only the digit that changed, and nothing rolls when it is first drawn", async () => {
+    const { page, errors, call } = await liveRun();
+    await call(1);
+    const steps = page.locator(".pending-note .psteps");
+    await expect(steps).toHaveText(" · 1 step");
+    await expect(steps.locator(".tick-d.rolled"), "drawn, not changed").toHaveCount(0);
+    for (let n = 2; n <= 10; n++) await call(n, 60);
+    await expect(steps).toHaveText(" · 10 steps");
+    // 9 → 10: the units rolled to 0 and the tens came in; both are new digits.
+    await expect(steps.locator(".tick-d.rolled")).toHaveText(["1", "0"]);
+    await page.waitForTimeout(400);   // that roll is over
+    const tens = await steps.locator(".tick-d").first().elementHandle();
+    await call(11, 60);
+    await expect(steps).toHaveText(" · 11 steps");
+    // 10 → 11: the tens is the SAME element, and still; only the units is new and rolling.
+    expect(await tens.evaluate((el) => el.isConnected && el.textContent === "1")).toBe(true);
+    expect(await tens.evaluate((el) => el.getAnimations().length)).toBe(0);
+    expect(await steps.locator(".tick-d").last().evaluate((el) => el.getAnimations().map((a) => a.animationName))).toEqual(["chat-tick-in"]);
+    expect(await steps.locator(".tick-d").first().evaluate((el) => getComputedStyle(el).display)).toBe("inline-block");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("the live line's timer opens into the line when the run goes quiet, and the step count after it slides over", async () => {
+    const { page, errors, call } = await liveRun();
+    await call(1);
+    const timer = page.locator(".pending-note .ifold").first();
+    const steps = page.locator(".pending-note .psteps");
+    await expect(steps).toHaveText(" · 1 step");
+    // Absent, the timer is in the line at no width, so nothing after it has anywhere to jump from.
+    await expect(timer).toHaveClass(/\boff\b/);
+    expect(await timer.evaluate((el) => el.getBoundingClientRect().width)).toBe(0);
+
+    // Every frame across the moment the run has been quiet long enough (orb-status.ts STALL_MS, 4 s) to show it.
+    const frames = await page.evaluate(() => new Promise((done) => {
+        const out = [], t = document.querySelector(".pending-note .ifold"), s = document.querySelector(".pending-note .psteps");
+        const end = performance.now() + 5200;
+        const tick = () => {
+            out.push({ w: t.getBoundingClientRect().width, o: Number(getComputedStyle(t).opacity), x: s.getBoundingClientRect().left, off: t.classList.contains("off") });
+            if (performance.now() < end) requestAnimationFrame(tick); else done(out);
+        };
+        requestAnimationFrame(tick);
+    }));
+    await expect(timer).toHaveText(/^ · \d+s$/);
+    const open = frames.filter((f) => !f.off);
+    expect(open.length, "it opened inside the window").toBeGreaterThan(5);
+    const full = open.at(-1).w, x0 = frames[0].x, x1 = frames.at(-1).x;
+    expect(full).toBeGreaterThan(10);
+    expect(x1 - x0, "the step count moved over by the timer's width").toBeGreaterThan(10);
+    expect(open.some((f) => f.w > 2 && f.w < full - 2), "the timer was seen part open").toBe(true);
+    expect(frames.some((f) => f.x > x0 + 2 && f.x < x1 - 2), "the step count was seen part way, not jumping").toBe(true);
+    // No frame moved the step count by more than a fraction of the whole distance.
+    for (let i = 1; i < frames.length; i++) expect(Math.abs(frames[i].x - frames[i - 1].x)).toBeLessThan((x1 - x0) * 0.6);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- reduced motion: every one of these is a state change and nothing else ---
+
+test("with reduced motion, a run's group, names, figures and live line change in place, with nothing animating", async () => {
+    const { page, errors, call, animationsFor } = await liveRun({ reducedMotion: "reduce" });
+    // Everything that moves anywhere in the transcript, transitions included, across a whole run.
+    const moving = () => page.evaluate(() => document.querySelector(".chat-transcript").getAnimations({ subtree: true })
+        .map((a) => a.animationName || a.transitionProperty));
+    const seen = new Set();
+    const watch = async (fn) => { for (const a of await animationsFor(350, fn)) seen.add(a); for (const a of await moving()) seen.add(a); };
+    await watch(() => call(1, 300, "pageInfo"));
+    await page.waitForTimeout(1200);
+    await watch(() => call(2, 300, "exec"));                 // the refold
+    await expect(page.locator(".astreak")).not.toHaveClass(/\bopen\b/);
+    await watch(() => call(3, 300, "look"));                 // a name joins, the step count ticks
+    await expect(page.locator(".astreak-tools")).toHaveText("pageInfo, exec, look");
+    await page.waitForTimeout(4300);                         // quiet long enough for the timer
+    await expect(page.locator(".pending-note .ifold").first()).toHaveText(/^ · \d+s$/);
+    expect(await page.locator(".pending-note .ifold").first().evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(10);
+    await watch(() => page.evaluate((key) => {
+        const hash = key.split(":")[1];
+        globalThis.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 }, kind: "agent-result", summary: "Done.", steps: 3, hitCap: false });
+    }, RUN));
+    // No hold: the line is gone with the run, since there is no fade to hold it for.
+    await expect(page.locator(".pending-note")).toHaveCount(0, { timeout: 150 });
+    // The ripple-free busy glyph and the live word's breathing are already off under reduced motion (sidebar.css).
+    expect([...seen], "nothing animated or transitioned").toEqual([]);
     expect(errors).toEqual([]);
     await page.close();
 });
