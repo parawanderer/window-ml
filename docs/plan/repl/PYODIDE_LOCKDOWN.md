@@ -37,6 +37,64 @@ starts from main.
    3's corpus of real cells (`notebooks/python-dialect/`, PR #677) under lockdown against unlocked, and carry the number
    in the PR. If `.sig` is Pyodide's FFI signature cache, keep those properties through `ses`'s allowlist rather than
    skipping `lockdown()`.
+   DEFECT FOUND 2026-10-23 by the `[window-ml python-cancel]` session, reproduced by the coordinator the same hour in
+   Node with `ses` 2.3.0: on main `lockdown()` THROWS ("Accessor not expected at intrinsics.%ObjectPrototype%.constructor")
+   because `lockdown.ts` defines an accessor on `Object.prototype.constructor` just before it (the #735 fix for Pyodide's
+   `getPyProxyClass` assigning `n.constructor`); the `try/catch` around the call swallows the throw, `locked` never sets,
+   every `lockdownReadonly` call reruns the boot, and `Object.isFrozen(Promise.prototype)` is false afterwards. The
+   control without the accessor freezes. P1 still passes because `ses` tames the `Function` constructors before its
+   permit check throws, which is why no vector noticed: nothing tests that the realm is FROZEN. The worker
+   (`python-worker.ts`) takes the same path; not yet measured in a browser. ASSIGNED the same day, with the step 4 gap, to the
+   `[window-ml security] Site access` session as BUILDER (corrected within the hour: the red team is a finder-side lane
+   and builds no defence, rule 10; it delivers the failing-first tests as their own PR; the finder builds and reviews
+   nothing on it; the janitor reviews both PRs): a failing-first test that `Object.prototype` and `Promise.prototype` are frozen after boot and
+   that the latch sets; keep the `n.constructor` path of #735 working, measured both ways (an `ses` option that permits
+   the accessor, or the accessor installed by another route after the freeze). Step 5's gate is built not to depend on
+   the latch, so it holds either way. Property from the red team, ruled in: do NOT widen the `ses` permit to allow the
+   accessor, since an accessor on `Object.prototype.constructor` is a write path to `Function` for anything that reaches
+   the prototype; install it after `lockdown()`, or by a route `ses` does not treat as an intrinsic write.
+   FIX SHAPE ruled 2026-10-23 on the builder's candidate, measured in Node: drop our accessor and pass `ses`'s own
+   `overrideTaming: "severe"`, under which `lockdown()` installs the `Object.prototype.constructor` accessor itself
+   (getter returns the frozen original, setter refuses `this === Object.prototype` and otherwise defines an own
+   property); `lockdown()` then succeeds, the realm is frozen, and `n.constructor = v` on a plain object is an own
+   property. Narrower than ours, which would have redefined the accessor on the prototype itself. Carried in the PR:
+   the #735 DataFrame/table path in the real worker both ways; the `notebooks/python-dialect/` corpus under the new
+   boot against the old (cell count, any new failure) since "severe" puts accessors on every property of the tamed
+   intrinsics; boot time next to lane 1's 18 ms; a test that the freeze is real and the latch set, and that a cell
+   assigning `Object.prototype.constructor` is refused.
+   MEASURED 2026-10-23 by the builder (branch `fix/python-lockdown`, before its PR): the table/DataFrame cells never
+   exercised #735 (they pass under a plain freeze); the real #735 property is a probe of 14 PyProxy kinds after boot,
+   of which a plain freeze breaks 6 (tuple, set, generator, ndarray, iterator, memoryview), the old boot leaves the
+   realm unfrozen and lets `Object.prototype.constructor = Function` through, and the severe boot freezes with 0 of 14
+   broken and refuses that write; that probe is the committed test. The dialect corpus of 1714 real cells gives
+   identical outcomes old against new (318 ok, 1396 error, 0 changed; 9 ok results differ only by random output); the
+   lockdown step goes from 8.1 ms to 9.0 ms; a boot that leaves the realm unfrozen now FAILS. For the step 4 gap:
+   `pyodide_js` is unregistered after webloop and the package loader bind what they import, `sys.modules` purged, the
+   old JsLoaders' proxy cleared (a loader held the API alive past `gc.collect`, findable via `gc.get_objects`), and a
+   stand-in re-registered carrying only `_api.config.enableRunUntilComplete` (webloop and the patched `asyncio.run`
+   import config at call time); the gc walk finds 0 live proxies of the API, `_api` or `_module` (2 before), and
+   `asyncio.run` works, also after a cell pops the stand-in. OPEN, the red team's probe in its test-only PR: in Node
+   `run_js` still answers under the stand-in scope; in the worker that rests on step 3's strip removing eval, measured
+   only in the real worker.
+   RULED 2026-10-23 (coordinator, on the builder's question after running the red team's #1060 against #1046's branch):
+   #1046 merges as ruled, the stand-in and nothing wider. (i) `run_js` is OPEN, now with its route: `pyodide/code.py`'s
+   `run_js` does `from js import eval`, not `pyodide_js`, and `from js import Function` is the same route, so the
+   stand-in cannot close it and a clean `lockdown()` does not either (the kept `Function` binding still evaluates);
+   closing it is a step 3 property (the strip) or a refusal of `js` in an approved cell, which is a NEW defence with a
+   corpus cost: widening, Shane's call, parked under the 2026-10-23 freeze. (ii) The red team's todos that ask for
+   `import js`, `pyodide.ffi`, `pyodide.webloop` and `import asyncio` to fail in an approved cell ask for that same
+   widening; they stay `todo`, labelled as parked, not as #1046's debt. (iii) Its todos that ask for `pyodide_js` not to
+   import assert a property wider than the ruled one; the ruled property is "`pyodide_js` imports as a config-only
+   stand-in with no `_module` and no `_api` beyond `config`", and the red team, never the builder (rule 10), rewrites
+   those todos against it or keeps them as a record of the wider ask. (iv) The finder's and the builder's tests live in
+   separate files: the red team's keep `redteam-python-lockdown.test.mjs` (on #1060's branch); #1046 renames its own to a non-`redteam-`
+   name before it is marked ready, so neither PR merges the other's file. Severity, from #1060: the bridge imports reach
+   from an APPROVED cell; the auto-approved inside path refuses every import form unasked.
+   FIXED 2026-10-23: #1046 merged de645ea3 (`[window-ml security] Site access`, rebased on #1051; the janitor reviewed,
+   its one finding, pin the stand-in's `enableRunUntilComplete`, fixed in 117bd3e1 before merge; builder's tests in
+   `python-lockdown.test.mjs`). The DEFECT and the step 4 GAP above are closed as measured; `run_js` and the parked
+   widening questions stay as ruled. CI's first run failed one #1051 test (P2 gate, "a revoked callback that fires
+   after the result is silent and counted"), green alone, in its file and on the rerun: a timing flake, watched.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
@@ -55,8 +113,10 @@ starts from main.
    `Module`). `js.setTimeout(pyodide_js._api.runPythonInternal.bind(None, src), 10)` runs `src` after the cell's result
    with no Python callable crossing, so step 5's cancel has nothing to revoke; a later cell can un-revoke a proxy
    through `PyProxy_getAttrsQuiet(p).shared.ptr`. The pre-lockdown `harden()` in `python-runtime.ts` unregisters
-   `js` and `pyodide_js` and purges `sys.modules`; the lockdown worker does not call it. ASSIGNED the same day to the
-   red team as this document's lane (the finder builds and reviews nothing on it, rule 10; the janitor reviews): make
+   `js` and `pyodide_js` and purges `sys.modules`; the lockdown worker does not call it. ASSIGNED the same day, corrected
+   within the hour, to the `[window-ml security] Site access` session as builder (the red team, a finder-side lane,
+   builds no defence and delivers the attribute-gate probe as failing-first tests; the finder builds and reviews
+   nothing on it, rule 10; the janitor reviews): make
    `pyodide_js`, `_module` and `_api` unreachable from a cell while Pyodide's own boot-time `from pyodide_js._api
    import scheduleCallback` keeps working; a gc-walk test that no live Python object holds a JsProxy of `Module` or
    the API; every other way to the API object enumerated. The finder's PR carries the two failing-first `{ todo }`

@@ -113,11 +113,7 @@ try {
     // The run's own debug stream, so the terminal can echo what a step actually produced rather than only
     // pointing at the rendered block.
     const events = [];
-    await page.exposeFunction("__demoEvent", (e) => { events.push(e); });
-    await page.evaluate(() => window.addEventListener("message", (m) => {
-        if (m.data?.__mlDebug) window.__demoEvent(m.data.__mlDebug);
-    }));
-    await watchRunEvents(ext, page, (e) => { events.push(e); });   // the worker's events, which never reach the page
+    await watchRunEvents(ext, page, (e) => { events.push(e); });
 
     // A console-first look at the namespace BEFORE the run: the schema is on the callable, and it is the
     // same object the call is validated against.

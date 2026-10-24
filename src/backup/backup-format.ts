@@ -34,7 +34,9 @@ export class BackupError extends Error {
             /** a recovery key that is mistyped (bad characters or checksum) */
             | "bad-recovery-key"
             /** the file is encrypted and nothing was given to open it */
-            | "needs-key",
+            | "needs-key"
+            /** the file a restore was previewed from is no longer the one in the slot */
+            | "changed",
         message: string,
     ) {
         super(message);

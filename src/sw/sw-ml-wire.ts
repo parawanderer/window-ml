@@ -19,7 +19,7 @@ import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/l
 import { derefByRun, runControllers, sessionTokens } from "./sw-runs";
 import { shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
-import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom } from "./ml-wire-serve";
+import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom, type WireArgsMeter } from "./ml-wire-serve";
 
 /** The largest value a call answers in full, as JSON characters; past it, a pointer read answers its pointer instead.
  *  One megabyte: chrome serialises each message as JSON, and a cell awaiting more than this wants a pipe, not the bytes. */
@@ -104,6 +104,17 @@ function meterOf(client: WireClient): PipeLimits {
 }
 
 /**
+ * The client's budget as a call's arguments are charged against it: the same meter and rate as the pipe's, so there is
+ * one budget and one price.
+ * @param client the client
+ * @returns what {@link serveWireCall} charges the arguments' size to
+ */
+function argsMeterOf(client: WireClient): WireArgsMeter {
+    const limits = meterOf(client);
+    return { room: () => Math.max(0, client.budget.left) * PIPE_CHARS_PER_STEP, charge: (chars) => limits.charge!(chars) };
+}
+
+/**
  * `dereference` for the wire, read from the run's resolver rather than through the page's DerefText: its `DerefRead` is
  * already plain data. Answers `{ text, meta?, warning? }`, or the pointer when that is larger than {@link WIRE_VALUE_CAP}.
  * A text whose whole body is stored is read whole (`derefWhole`), so a pipe runs at the store and only its result crosses.
@@ -156,7 +167,7 @@ export function onMlCall(message: Partial<MlWireRequest>, sender: chrome.runtime
         sendResponse({ seq, error: { code: "Refused", message: "this sender cannot call ml over the wire" } });
         return true;
     }
-    serveWireCall(message, { run: client.run, members: membersFor(client), later: (a) => deliverLater(handle, a), isOpen: () => wireClient(handle) !== undefined, scrub })
+    serveWireCall(message, { run: client.run, members: membersFor(client), argsMeter: argsMeterOf(client), later: (a) => deliverLater(handle, a), isOpen: () => wireClient(handle) !== undefined, scrub })
         .then(sendResponse, async (e) => sendResponse({ seq, error: { code: "Failed", message: await scrub(String((e as Error)?.message || e)) } }));
     return true;
 }

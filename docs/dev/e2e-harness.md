@@ -542,8 +542,13 @@ thing. The parts:
 - **A background run's events are not on the page's window: watch them with `watchRunEvents(ext, page, fn)`**
   (harness.mjs), which holds the DevTools panel's `ml-devtools` port for the page's tab from an extension page and
   hands each event to Node. Since attack 15 (docs/spec/SITE_ACCESS.md) the worker sends a run's events to the shell
-  over `chrome.runtime` only; a `message` listener on the page now sees just the page's OWN events (a run the page
-  hosts), so a spec keeps that listener for those and adds the watcher for the rest. Open the sidebar by CLICKING its
+  over `chrome.runtime` only, and since SITE_PRESENCE step 2b the page's OWN events (a run the page hosts) ride a
+  private MessagePort, not the window: a `message` listener on the page hears nothing of ours. Hear the page's own with
+  `tapPageChannel(page, fn)`, in any debug mode (run-once.mjs does), or with `watchRunEvents` in `debugMode:
+  "devtools"`. To DRIVE the UI as injected.js or the sidebar would (a forged `__mlDebug`, a `__mlSessionSend`), use
+  `onChannel(page, (ch, arg) => …)`: `ch.asInjected` and `ch.asIsolated` stand in for either end of the channel. A
+  red-team spec that wants the page's strongest footing holds a port with the hostile fixture's `?grab=1` or
+  `__handOwnPort` (tests/e2e/fixtures/hostile/evil.js). Open the sidebar by CLICKING its
   tab (`#ml-sb-tab` in the `#ml-sb-root` shadow root), never by posting `__mlSidebarOpen` into its iframe: the app
   ignores window messages on a web page, because the page could send them too.
 - **Our shadow roots are CLOSED: reach them with `inShell`, `waitInShell` and `clickInShell`** (harness.mjs), never

@@ -193,7 +193,7 @@ test("a strict-page exec that throws while it RUNS is not run a second time, wha
 
 // --- open while the exec shares the page's world ---
 
-const SHARED = "Inherent while the exec runs in the page's realm (docs/spec/SITE_PRESENCE.md, step 1): its collector, its result string and the envelope that carries them are built with builtins the page can rewrite and posted on the page's window (PAGE_TOOL_RESULT, which the page can also forge by callId until step 2's MessagePort), so closing one vector closes none. The model is told its console is page-writable (MAIN_CONSOLE_HEAD).";
+const SHARED = "Inherent while the exec runs in the page's realm (docs/spec/SITE_PRESENCE.md, step 1): its collector, its result string and the envelope that carries them are built with builtins the page can rewrite, and sent on a MessagePort whose postMessage is one of them, so closing one vector closes none. The model is told its console is page-writable (MAIN_CONSOLE_HEAD).";
 
 test("a page function the exec calls cannot reach the exec's collector, state or ml through Function.caller", T, async () => {
     const p = page();
@@ -248,19 +248,37 @@ test("the VALUE of a main-world exec is the script's own: a page cannot rewrite 
     assert.match(r.content, /"price":10/, r.content);
 });
 
-test("a page reads neither a delegated exec's live stream nor its result off its own window", { ...T, todo: `${SHARED} The delegated path posts PAGE_TOOL_STREAM and PAGE_TOOL_RESULT through the page's window.postMessage (run-delegation.ts), which the page wraps; detection-surface.md row 6, step 2's MessagePort.` }, async () => {
+// The delegated exec's request, live stream and result travel on injected.js's port to the content script (SITE_PRESENCE
+// step 2b), not on the page's window. `run` sends the PAGE_TOOL_RUN as content.js would and resolves to its result.
+function delegatedExec(p, runId) {
+    p.ml._adoptRun(runId, { toolNames: ["exec"], builtBy: "worker" });
+    const done = new Promise((res) => p.fromInjected((e) => { if (e.data?.type === "PAGE_TOOL_RESULT") res(e.data); }));
+    p.asContent({ type: "PAGE_TOOL_RUN", callId: "c1", runId, name: "exec", args: { js: "console.log('the script prints this'); 1" }, stream: true });
+    return Promise.race([done, sleep(3000).then(() => null)]);
+}
+
+test("a page reads neither a delegated exec's live stream nor its result off its own window", T, async () => {
     const p = page();
-    p.ml._adoptRun("r-stream", { toolNames: ["exec"], builtBy: "worker" });
     p.pageRun(`
         globalThis.__heard = [];
         const post = window.postMessage.bind(window);
         window.postMessage = function (m, o) { if (m && /^PAGE_TOOL_(STREAM|RESULT)$/.test(m.type)) __heard.push(JSON.stringify(m)); return post(m, o); };
+        window.addEventListener("message", (e) => { if (e.data && /^PAGE_TOOL_(STREAM|RESULT)$/.test(e.data.type)) __heard.push(JSON.stringify(e.data)); }, true);
     `);
-    const done = new Promise((res) => p.window.addEventListener("message", (e) => { if (e.data?.type === "PAGE_TOOL_RESULT") res(e.data); }));
-    p.window.dispatchEvent(new p.window.MessageEvent("message", { source: p.window, data: { type: "PAGE_TOOL_RUN", callId: "c1", runId: "r-stream", name: "exec", args: { js: "console.log('the script prints this'); 1" }, stream: true } }));
-    const res = await Promise.race([done, sleep(3000).then(() => null)]);
-    assert.ok(res, "positive control: the delegated exec answered");
+    assert.ok(await delegatedExec(p, "r-stream"), "positive control: the delegated exec answered");
     assert.deepEqual(plain(p.pageRun("__heard")).filter((m) => m.includes("the script prints this")), [], "the page read the exec's output off its window");
+});
+
+test("a page that rewrites MessagePort.prototype.postMessage reads neither a delegated exec's stream nor its result", { ...T, todo: `${SHARED} This vector: injected.js's port is a MessagePort of the page's realm, and its postMessage the page's to wrap (docs/dev/detection-surface.md).` }, async () => {
+    const p = page();
+    p.pageRun(`
+        globalThis.__heard = [];
+        const proto = Object.getPrototypeOf(new MessageChannel().port1);
+        const post = proto.postMessage;
+        proto.postMessage = function (m) { if (m && /^PAGE_TOOL_(STREAM|RESULT)$/.test(m.type)) __heard.push(JSON.stringify(m)); return post.apply(this, arguments); };
+    `);
+    assert.ok(await delegatedExec(p, "r-proto"), "positive control: the delegated exec answered");
+    assert.deepEqual(plain(p.pageRun("__heard")).filter((m) => m.includes("the script prints this")), [], "the page read the exec's output off the port");
 });
 
 test("an error a page function throws cannot point the model at a line of its choosing", { ...T, todo: "Inherent: a page function the exec calls throws what it likes, and execErrorLine (exec-trace.ts) reads the line from the error's stack, which the page writes. The range check keeps it inside the script, not on the line that threw." }, async () => {

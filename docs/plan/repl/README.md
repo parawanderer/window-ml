@@ -153,6 +153,13 @@ surfaces it.
 
 ## Status (2026-10-19)
 
+**Freeze, 2026-10-23 (Shane, day 5 of the usage week at 81%): land, then stop, "for now".** Every builder finishes the
+one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
+python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
+stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
+and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046 are merged): #1048, #1055, #1051, #1045,
+#1041, then (d), then #1068, then #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
+
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
 listed as remaining is DONE unless named below.
@@ -282,6 +289,16 @@ listed as remaining is DONE unless named below.
      callable handed to a kept JS scheduler (`setTimeout`, `queueMicrotask`, `Promise.then`) makes no Handle; a started
      task kept on a module keeps a live `_coro` a later cell can `throw` into. Also: the two existing `finally` tests
      never started the coroutine, so they would have passed with the cancel deleted; #987 reshaped them.
+     FIXED 2026-10-23: #1051 merged 5dd5a1fc (reviewed by the janitor, two rounds), result
+     [`LANE_PYTHON_CANCEL_RESULT.md`](LANE_PYTHON_CANCEL_RESULT.md) merged 7fbb8eca. The spend cancels every task and
+     turns the loop up to 8 rounds, a task still pending refuses the cell's result, named; the cell gate
+     (`src/python/cell-gate.ts`) hooks Pyodide's three doors from Python to JS before `lockdown()`, once per realm,
+     non-configurable, and a revoked callable that fires is a silent counted no-op reported on the next cell. Order:
+     spend, then revoke (ruled). The six todos are plain tests; gate reverted alone fails 21 tests, spend alone 1.
+     Left, named in the result: two todos through `pyodide_js` that turn plain when #1046 lands; drops after a run's
+     last cell unreported, and a task that never yields hangs to the run's timeout, both unowned. Lane STOPPED
+     2026-10-23 under the freeze; clone removed. #1046 landed the same day, so the two `pyodide_js` todos can turn plain;
+     unowned until the week resets.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
@@ -290,21 +307,35 @@ listed as remaining is DONE unless named below.
      did not cause, named in its PR: a Python cell calling through the ml wire has no shared step meter, so each search
      gets the per-call cap (handed to the repl follow-up session; BUILT in #1007, merged 9ec17928, 2026-10-23: one ml-wire
      step budget a cell, `ML_WIRE.md` "One budget a cell", the red team's grep `-A/-B/-C` quadratic fixed with it;
-     named there and unowned: the unpiped stored-text read and `serveWireCall`'s argument copies are uncharged); a `replace` whose replacement uses `$'` or `` $` ``
+     named there and since charged by #1053, merged bb881ed7, 2026-10-23: the unpiped stored-text read and `serveWireCall`'s argument copies); a `replace` whose replacement uses `$'` or `` $` ``
      builds output quadratic in its input while only the input's length is charged. ASSIGNED 2026-10-23 on Shane's word
      (relayed by the quadratic-regex session) to that session: [`REPLACE_OUTPUT_BOUND.md`](REPLACE_OUTPUT_BOUND.md); the
      red team found it and reviews nothing, the janitor reviews. Measured since: memory, not halting (V8 refuses the
      string at about 0.5G characters in milliseconds). Built in #1010 (merged a83afab2, 2026-10-23, the janitor reviewed): the
      `replaceCharge` row of `docs/dev/readonly-exec.md`; also found there, a `sed` stage outside the dialect had no
      output bound at all, now held to `MAX_STRING`. Found since by the repl follow-up session: `sed`'s bound over-counts
-     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost, unowned.
+     (`s/a/$'/g` refused at 4,000 lines), safe, a usability cost; taken by root-k's subagent as #1045, a NEGATIVE result
+     (does not reproduce on main; the real defect, a transient peak in `replaceSize`, fixed there; [`ROOT_K.md`](ROOT_K.md)).
   4. FOUND 2026-10-23 by `[window-ml python-cancel]` while building item 2: a lockdown cell can `import pyodide_js` and
      reach `_api`/`_module`, running Python after its result with no proxy to revoke and un-revoking old proxies
-     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day to the red team as
-     the lockdown's lane (it did not find this one), the janitor reviews, the finder builds and reviews nothing on it;
+     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 4, the GAP paragraph). ASSIGNED the same day (builder corrected within
+     the hour) to `[window-ml security] Site access`, which neither found nor probed it; the red team delivers the
+     attribute-gate probe as failing-first tests in its own PR; the janitor reviews; the finder builds and reviews nothing on it;
      item 2's fix is sound only once this is closed. Severity MEASURED the same day: the dialect refuses every import form
      involved, so this and item 2's six routes escape an APPROVED readonly cell, not the auto-approved path; the
-     attribute-gate route is the red team's to probe with the fix.
+     attribute-gate route is the red team's to probe with the fix. FIXED 2026-10-23: #1046 merged de645ea3 (the
+     config-only stand-in; the gc walk finds 0 live proxies of the API); the red team's attribute-gate probe is #1060,
+     37 pinned routes hold. `run_js` stays OPEN as a step 3 property ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2,
+     RULED). Lane STOPPED under the freeze; clone removed.
+  5. FOUND 2026-10-23 by `[window-ml python-cancel]`, reproduced by the coordinator: `lockdown()` THROWS on main (the
+     `Object.prototype.constructor` accessor from #735 is refused by `ses`'s permit check), the `try/catch` swallows it, so
+     the readonly realm is never frozen and the latch never sets; P1 still holds, nothing tests the freeze
+     ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2, the DEFECT paragraph). ASSIGNED the same day with item 4 to
+     `[window-ml security] Site access` as builder (the red team's first assignment withdrawn under rule 10; it delivers
+     the frozen-realm tests), the janitor reviews, the finder builds nothing on it. Fix shape ruled: the accessor goes
+     in AFTER `lockdown()`, the `ses` permit is not widened. FIXED 2026-10-23 in the same #1046 (de645ea3):
+     `overrideTaming: "severe"` in place of our accessor, the realm frozen and the latch set, 0 of 14 PyProxy kinds
+     broken, corpus 0 changed, lockdown 9.0 ms from 8.1.
 - **The repl follow-up session's merges (sh-policy, `2df4ae0f`, Opus; synced 2026-10-23 at Shane's request).** #989
   (6ace2dbf): an undescribed exec call answers an ALLOW's direction only, said in the policy prompt; a refused `in` is
   named. #990 (46ca8dc9, with host #25): manifests for `rm`, `mv`, `rmdir`, `unlink`, `git rm`, `git mv`; no shipped
@@ -328,14 +359,39 @@ listed as remaining is DONE unless named below.
   open from it: an ask saved between `decide` and host start is not re-checked (only deny is); a URL consented BEFORE
   an ask existed is already refused while an ask or deny matches (`sw-fetch-url.ts` `withdrawn`; `docs/dev/policies.md`,
   "A remembered consent yields to an `ask` or a `deny`"). Unstarted and unrequested: the
-  symlink link as a second claim resource; `RIPGREP_CONFIG_PATH`; the lost-POLICIES-add race (awaits Shane).
+  symlink link as a second claim resource; `RIPGREP_CONFIG_PATH`; the lost-POLICIES-add race, FIXED 2026-10-23 by root-k
+  as #1052 (merged 265d055f, the janitor reviewed: a policy added before the worker's first storage read is merged, not
+  lost; after a failed read the store no longer counts as loaded, so `judgeCall` asks for every call in that worker
+  unless a policy added since denies it; a `forgetRunPolicies` before the read is replayed after it).
 
 - **Root K and the rest of the policy layer, ASSIGNED 2026-10-23** on Shane's word (his session) to a new session
   `[window-ml root-k]` (Opus): [`ROOT_K.md`](ROOT_K.md), five roots in order (process ownership on the host, root K in four
   PRs, the shell probes then `propose_policy` to `sh`, file-kept policies, co-writing's two items), and the small
   unowned items of this section (the `ended` record at a deadline kill, #1007's two uncharged reads, the `sed`
   over-count, the `ask` re-check, the lost-POLICIES-add race, the corpus append) run through Sonnet subagents that the
-  session briefs, reviews and merges, never two in one tree.
+  session briefs, reviews and merges, never two in one tree. The red team's `MANIFESTS` pass is #1068 (2026-10-23,
+  test-only, stacked on #1048's branch `manifests/store` as ruled, head b05f0650, rebased on the janitor's B2 fix
+  fec2cbd7): the three page properties hold (pinned, positive controls, mutation-checked); one residual B2 gap as a
+  failing-first todo, the entrypoint branch of `storeRefusal` runs no shipped-program check, so a stored entrypoint
+  manifest naming `git` is kept, survives load and shadows `git.json` at call time. The fix is root-k's, on #1048's
+  branch before it merges (a hole in the item being landed, inside the freeze); #1068 merges after #1048 and the
+  janitor reviews it. The red team's `propose_manifest` pass is #1070 (2026-10-23, test-only, stacked on #1055's
+  branch `manifests/propose`, head 5ee9eb92, `redteam-propose-manifest.test.mjs` on its branch): twelve pins, all six
+  boundary properties hold against c0ca2a09, mutation-checked, no gap; it merges after #1055, the janitor reviews it.
+  #1068's entrypoint todo is a passing pin since 4d80c878 (root-k's fix 01f3952f on `manifests/store`). The janitor's
+  re-reviews cleared #1048 and #1063 on 2026-10-23. Blocked the same day: #1048's base was #1042's branch and
+  `merge-when-green` refuses a PR another is stacked on; root-k's session was refused permission to retarget #1048 or
+  to merge host #28, and stopped there. Shane cleared it himself the same afternoon: #1042 MERGED b7e9a3c1 (the host's
+  owner table and CPU time read; the worker never registers), host #28 MERGED ae7284e6, #1048 retargeted to `main`.
+  Root-k merged `main` into `manifests/store`; main's backup inventory then failed on the store's two keys, classified
+  `never` backed up in a48e9743, a commit the janitor has not yet seen (asked the same hour; #1048 waits on CI).
+  **Root 1 DONE 2026-10-23**: [`ROOT_K_RESULT_1.md`](ROOT_K_RESULT_1.md) merged 9fe4e6a2 (#1075, the coordinator
+  reviewed, every claim checked against the merged code). Left by it, each named there: the host's CPU timebase is a
+  per-arch constant (an x86_64 host under Rosetta undercounts about 42x), a follow-up root-k's session was refused
+  permission to post on host #28, so it is Shane's to post or assign; `HostStatus` is narrower than PROTOCOL.md's
+  `status`, to widen before the first `status()` consumer, unowned; nothing reads `owner` until the agent-status line
+  (`AGENT_MAIL.md` step 1); a registered row counts toward the 32 running calls, unmeasured against a session that
+  registers many.
 
 ## The lanes
 

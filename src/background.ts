@@ -39,7 +39,8 @@ import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, injectPageScripts } from "./sw/sw-presence";
 import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { checkDraft } from "./sw/sw-manifest-proposal";
 
@@ -49,12 +50,11 @@ import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./s
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { pageInject } from "./sw/sw-page-turn";
 import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart, cancelStarts, cancelAllStarts } from "./sw/sw-start-approval";
-import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES } from "./page-relay";
+import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { pageRebuild } from "./agent/run-assembly";
-import { RUN_CONTROL_TYPES } from "./page-relay";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
@@ -638,20 +638,25 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
         const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
         const effect = p.effect === "allow" || p.effect === "deny" || p.effect === "ask" ? p.effect : undefined;
-        if (p.op === "add") {
-            const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
-            const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
-            if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow, deny or ask), a label and its code" }); return; }
-            addGlobalPolicy({ consumer, effect, source, label });
-        } else if (p.op === "edit") {
-            const id = str(p.id, 100);
-            if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
-        } else if (p.op === "remove") {
-            const id = str(p.id, 100);
-            if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
-        } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
-        sendResponse({ data: policyView() });
-        return;
+        // Awaits the store's first storage read: a page that listed policies in an earlier worker life names ids this one
+        // has not loaded yet, and a list answered before the read would be partial.
+        void (async () => {
+            await policiesReady;
+            if (p.op === "add") {
+                const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
+                const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
+                if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow, deny or ask), a label and its code" }); return; }
+                addGlobalPolicy({ consumer, effect, source, label });
+            } else if (p.op === "edit") {
+                const id = str(p.id, 100);
+                if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
+            } else if (p.op === "remove") {
+                const id = str(p.id, 100);
+                if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
+            } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
+            sendResponse({ data: policyView() });
+        })();
+        return true;   // async: sendResponse fires after the saved policies are read
     }
     // The program manifests stored beside the shipped ones (PROGRAM_MANIFEST.md, "Registering a program"): read them,
     // register one, remove one. EXTENSION PAGES ONLY, judged by the sender the browser reports: a stored manifest can make

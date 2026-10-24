@@ -8,6 +8,7 @@ import type { TokenKind } from "../contract/contract-render";
 import { jsonShape, jsonValue } from "../dom/dom";
 import { type StoredColumnReader, asTable, tableShape } from "../table/table-data";
 import { currentHasTool } from "./tool-exec";
+import { type ChannelMessage, offIsolated, onIsolated, toIsolated } from "../page-channel";
 
 /** Where `ml.dereference` sends a read's advisory instead of the page's console, so an exec, whose `console` is a
  *  parameter bound to its collector (tools.ts), still shows the model the advisory. The page can read this key off any
@@ -92,13 +93,13 @@ export class DerefText extends String implements DerefValue {
 export function columnsViaBackground(runId: string, key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }): Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }> {
     return new Promise((resolve, reject) => {
         const id = `cols-${Math.random().toString(16).slice(2)}`;
-        const onMsg = (e: MessageEvent) => {
+        const onMsg = (e: ChannelMessage) => {
             const d = e.data as { type?: string; id?: string; rowCount?: number; columns?: Record<string, (string | number | boolean | null)[]>; error?: string } | undefined;
             if (!d || d.type !== "PAGE_VALUE_COLUMNS_RESULT" || d.id !== id) return;
-            window.removeEventListener("message", onMsg);
+            offIsolated(onMsg);
             if (d.error) reject(new Error(d.error)); else resolve({ rowCount: d.rowCount ?? 0, columns: d.columns ?? {} });
         };
-        window.addEventListener("message", onMsg);
-        window.postMessage({ type: "PAGE_VALUE_COLUMNS", id, runId, key, names, ...opts }, "*");
+        onIsolated(onMsg);
+        toIsolated({ type: "PAGE_VALUE_COLUMNS", id, runId, key, names, ...opts });
     });
 }

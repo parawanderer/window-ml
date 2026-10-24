@@ -34,7 +34,7 @@ const MANIFEST_VERSION = await import("node:fs/promises")
     .then((fs) => fs.readFile(new URL("../../manifest.json", import.meta.url), "utf8"))
     .then((t) => JSON.parse(t).version).catch(() => undefined);
 
-import { launchExtension, configureExtension, waitForMl, watchRunEvents, setWindow, screencast, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, tapPageChannel, setWindow, screencast, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage, lanePrelude } from "./viewer.mjs";
@@ -480,7 +480,7 @@ export async function runOnce(cfg = {}) {
             ocrModel: backend?.visionModel || "",
             modelFilter: "",
             autoApprovePython: true,   // wire python_exec (auto-approve readonly) so a DataFrame/table probe can run
-            debugMode: "overlay",   // so injected emitDebug posts the event stream to the page window
+            debugMode: "overlay",   // the surface a person sees, and the one the prompt names; tapPageChannel hears the page's events
         });
         // A fresh profile holds no price snapshot, and a call waits only 15 s for its first one: the cell's first calls
         // ran unpriced while the refresh was still going. Fetched here, before the clock starts (sw-prices.ts).
@@ -510,17 +510,10 @@ export async function runOnce(cfg = {}) {
         page.on("console", (m) => { transcript.push({ kind: "console", type: m.type(), text: m.text() }); if (m.type() === "error") log(`  [page console.error] ${m.text().slice(0, 300)}`); });
         page.on("pageerror", (e) => { transcript.push({ kind: "pageerror", text: String(e) }); log(`  [pageerror] ${String(e).slice(0, 300)}`); });
 
-        // Collect the PAGE's debug event stream NODE-side, via a bridge re-attached on EVERY document
-        // (addInitScript) so it survives a cross-page navigation — a page-context array would be wiped each
-        // reload, losing every event after the first nav. Dump on EVERY event so a hung/interrupted run still
-        // leaves a readable partial transcript.
-        await page.exposeFunction("__obsEvent", record);
-        await page.addInitScript(() => {
-            // TOP frame only: addInitScript runs in EVERY frame, and the overlay's sidebar iframe ALSO receives
-            // __mlDebug messages — capturing there too would double every event (same seq twice).
-            if (window.top !== window) return;
-            window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__obsEvent(e.data.__mlDebug); });
-        });
+        // Collect the PAGE's debug event stream NODE-side, where injected.js hands it to the content scripts (it never
+        // reaches the page's window), re-tapped on EVERY document so it survives a cross-page navigation. Dump on EVERY
+        // event so a hung/interrupted run still leaves a readable partial transcript.
+        await tapPageChannel(page, record);
 
         await page.exposeFunction("__obsStep", async (step) => {
             stepCount += 1;
@@ -554,7 +547,7 @@ export async function runOnce(cfg = {}) {
             await waitForMl(page);
         }
         // The worker's events (a background-hosted run's steps) never reach the page's window, so they come from the
-        // DevTools port; the page's own still arrive through the bridge above. Overlay mode sends neither twice.
+        // DevTools port; the page's own still arrive through the tap above. Overlay mode sends neither twice.
         await watchRunEvents(ext, page, record);
 
         // Watch for + resolve approval gates the whole time the run is in flight (a gate can appear at any step).

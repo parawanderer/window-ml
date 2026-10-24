@@ -14,6 +14,7 @@ import { pageRaster } from "../raster";
 import type { MlApi } from "../contract";
 import type { VisionMemory } from "../contract/contract-render";
 import type { Geometry, GeoMark, GeoRect, TargetQuery, TargetReply, VisionHost, Shot, ShotTarget, ElementRef } from "../tools/vision-host";
+import { toIsolated } from "../page-channel";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
 // A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
@@ -289,7 +290,7 @@ export function pageGeometry(): PageGeometry {
 export async function pageCapture(): Promise<Shot> {
     await hideSidebarForShot();
     try { return { dataUrl: await makeBackgroundTaskPromise<string>("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {}) }; }
-    finally { window.postMessage({ __mlSidebarShot: "show" }, "*"); }
+    finally { toIsolated({ __mlSidebarShot: "show" }); }
 }
 
 /**

@@ -8,6 +8,7 @@ import { PY_PRELUDE_IMPORTS } from "./python-env";
 import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 import { insideDefs, INSIDE_CELL } from "./python-dialect-run";
+import { cellBoundary } from "./cell-gate";
 
 /** Pyodide's stdout handler for a STREAMED run: hands `onStdout` the exact text written, newlines included. The
  *  `batched` handler it replaces passes each line with its newline stripped, so a live cell read
@@ -44,6 +45,8 @@ export function releaseNamespace(ns: any): void {
  *   `ast`/`json`). Absent (real-CPython tests without the lockdown): the wrapper falls back to imports.
  */
 export function injectInputs(ns: any, image: string | null, tablesJson: string | null, harness?: unknown): void {
+    // Between cells: close the cell gate's window, so the next cell's revoke reaches only what that cell made.
+    cellBoundary();
     if (harness !== undefined) ns.set("_ml_harness", harness);
     ns.set("INJECTED_IMAGE_B64", image == null ? undefined : String(image));
     ns.set("INJECTED_TABLES_JSON", tablesJson == null ? undefined : String(tablesJson));
@@ -358,6 +361,9 @@ if _ml_h is not None and getattr(_ml_h, "ast_parse", None) is not None:
     _ml_asyncio = _ml_h.asyncio
 else:
     import inspect as _ml_inspect, asyncio as _ml_asyncio
+# THE CELL GATE (cell-gate.ts): what the cell hands to JavaScript is revoked in the cancel. No-ops without the lockdown.
+_ml_cell_begin = getattr(_ml_h, "cell_begin", None) or (lambda: None)
+_ml_cell_revoke = getattr(_ml_h, "cell_revoke", None) or (lambda: None)
 # The harness module is GONE from the namespace before the user's code sees it: the refs are in local
 # names now, and neither \`import _ml_harness\` (it is not in \`sys.modules\`) nor \`globals()["_ml_harness"]\`
 # (popped here) reaches it. \`injectInputs\` re-binds it before the next cell.
@@ -486,6 +492,8 @@ const FULL_CELL = /* python */ `
  * @param inside run the cell INSIDE the dialect (`INSIDE_CELL`) with the whitelist's node list, else as full Python
  */
 export const wrapUserScript = (code: string, persist: boolean | "run" = false, inside: { nodes: string[] } | null = null): string => /* python */ `
+# Open the cell gate's window before anything of the cell's runs: what crosses to JavaScript from here on is the cell's.
+_ml_cell_begin()
 result = None
 _ml_src = ${JSON.stringify(code)}${inside ? insideDefs(inside.nodes) : ""}
 _ml_persist = ${persist ? "True" : "False"}
@@ -526,34 +534,49 @@ ${inside ? INSIDE_CELL : FULL_CELL}        if _ret is not None:
     except BaseException:
         _err = _ml_fmt_exc()
         result = None
-# Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5): a task
-# left pending would run during the next cell's pump of the event loop, observing its source and injected
-# inputs. Cancel is enough — a cancelled task's coroutine throws at its await point and never continues.
-# The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the run machinery.
-# HANDLES are not tasks: call_soon/call_later/call_at make a Handle, and all_tasks() never sees one. A
-# handle left pending runs after the result returned (the P2-handle gap), and a handle on a loop the cell
-# made with new_event_loop() CRASHES the next pump with "Cannot enter into task" (see the note at the top
-# of this wrapper). WebLoop.close() is a no-op and its timers are JS setTimeouts whose only guard is
-# Handle.cancelled(), so cancelling the Handle is the one way to stop it. At this point the run machinery
-# holds no in-flight handle — this code runs synchronously inside its own task — so every Handle that
-# still exists is one the cell made. Restoring the running loop first is belt and braces: a handle that
-# somehow escapes the cancel then dies on "loop is not the running loop" instead of the crash.
-# HERE, not at the end of the wrapper: the epilogue below serialises the result, and a BaseException from
-# that serialisation (a __str__ that raises one) used to end the wrapper before the cancel, leaving every
-# task and handle the cell scheduled alive to run during the next cell (P2-escape).
-try:
-    import asyncio as _ml_aio
-    _ml_self = _ml_aio.current_task()
-    for _ml_task in _ml_aio.all_tasks():
-        if _ml_task is not _ml_self:
-            _ml_task.cancel()
-except Exception:
-    pass
+# Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5,
+# PYTHON_CANCEL_GAPS.md). The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the
+# run machinery. In three steps, in this order:
+# 1. Restore the running loop. A cell that calls asyncio.new_event_loop() REPLACES it (WebLoop.__init__ calls
+#    _set_running_loop), and a handle on the orphan then crashes the next pump with "Cannot enter into task".
+# 2. SPEND every task: cancel it and let the loop turn, so its coroutine takes the CancelledError and FINISHES. A
+#    cancelled task is still PENDING until it runs once more, its coroutine suspended inside its try, and a later
+#    cell holding the Task could drive it (\`task._coro.throw(...)\`) and run its finally after this result. Its
+#    finally or except runs HERE, in this cell's time, its output in this cell's stdout. A task that catches the
+#    cancel and awaits again is cancelled again, a bounded number of rounds; one still pending after that refuses
+#    the cell, never returns a result beside a live coroutine. A cell that scheduled no task turns no loop.
+# 3. REVOKE what the cell handed to JavaScript (cell-gate.ts): a callable given to setTimeout, queueMicrotask, a
+#    promise or scheduleCallback makes no Task and no Handle. Then cancel every uncancelled asyncio.Handle that
+#    gc.get_objects() reaches: call_soon/call_later/call_at make one, all_tasks() never sees it, and WebLoop.close()
+#    is a no-op whose timers' only guard is Handle.cancelled(). After the spend, never before it: the loop's own
+#    wakeups are once-callables the cell made, and a task's step revoked first never runs to take its cancel.
+# HERE, not at the end of the wrapper: the epilogue below serialises the result, and a BaseException from that
+# serialisation (a __str__ that raises one) used to end the wrapper before the cancel (P2-escape).
 try:
     import asyncio as _ml_aio2
     if _ml_orig_loop is not None:
         _ml_aio2._set_running_loop(_ml_orig_loop)
 except Exception:
+    pass
+_ml_SPEND_ROUNDS = 8
+_ml_unspent = []
+try:
+    import asyncio as _ml_aio
+    _ml_self = _ml_aio.current_task()
+    for _ml_round in range(_ml_SPEND_ROUNDS + 1):
+        _ml_unspent = [_ml_t for _ml_t in _ml_aio.all_tasks() if _ml_t is not _ml_self and not _ml_t.done()]
+        if not _ml_unspent or _ml_round == _ml_SPEND_ROUNDS:
+            break
+        for _ml_task in _ml_unspent:
+            _ml_task.cancel()
+        if _ml_self is None:
+            break
+        await _ml_aio.sleep(0)
+except BaseException:
+    pass
+try:
+    _ml_cell_revoke()
+except BaseException:
     pass
 try:
     import asyncio as _ml_aio3, gc as _ml_gc
@@ -562,13 +585,20 @@ try:
             _ml_obj.cancel()
 except Exception:
     pass
+if _ml_unspent:
+    try:
+        _ml_names = ", ".join(sorted({_ml_t.get_name() + " (" + str(getattr(_ml_t.get_coro(), "__qualname__", "?")) + ")" for _ml_t in _ml_unspent}))
+    except BaseException:
+        _ml_names = str(len(_ml_unspent)) + " task(s)"
+    _err = (_err or "") + "RuntimeError: this cell left a task running that would not stop: " + _ml_names + ". It was cancelled " + str(_ml_SPEND_ROUNDS) + " times and caught the cancel each time, so the cell's result is refused rather than returned beside it.\\n"
+    result = None
 _stdout = _out.getvalue()${inside ? `
 if _ml_not_in_dialect is not None:
     _stdout = ""` : ""}
 _ml_stdout_dropped = _out._ml_dropped
 try:
     _json_result = _ml_dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
-except Exception:
+except BaseException:
     _json_result = None
 # Auto-render by RETURN TYPE (no cast needed): a sympy expression becomes its LaTeX (+ a 'latex' hint the UI
 # typesets); a PIL Image becomes a data: URL (which the tool already auto-shows as an image). A model can still
@@ -585,7 +615,7 @@ try:
     # The code RETURNED a latex(...) call's string (AST-detected above) — typeset it, even a bare "5".
     elif _ml_ret_latex and isinstance(result, str):
         _json_render = 'latex'
-except Exception:
+except BaseException:
     _json_render = None
 # FIGURES (matplotlib). A returned Figure, or an Axes (its figure), draws like a returned PIL Image. A cell that returns
 # NOTHING and did not fail, but leaves figures open, draws them as a notebook would: one image, several stacked top to
@@ -693,8 +723,14 @@ try:
                 _ipc_result = _ml_sink.getvalue().to_pybytes()
             except Exception:
                 _ipc_result = None
-except Exception:
+except BaseException:
     _json_table = None
+# The epilogue ran the cell's own objects (a __str__, a figure's methods, a frame's to_json): revoke what they handed
+# to JavaScript too. Every block above catches BaseException, so this line is reached.
+try:
+    _ml_cell_revoke()
+except BaseException:
+    pass
 `;
 
 /**

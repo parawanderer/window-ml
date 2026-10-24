@@ -102,27 +102,33 @@ over the manifest's data so the profile is derived from the same source as the f
   Built in root K slice d (Settings, "Program manifests (ml.sh)"): the person writes the manifest as JSON and picks
   every workspace or one root; the host pins it, as it pins a draft, and nothing runs.
 
-### The store, as built (ruled 2026-10-23, root K slice b)
+**The store, ruled 2026-10-23** (coordinator, on the `[window-ml root-k]` session's reading before its PR; root 2(a), the
+host's `exec: program-only` and the `(program, entrypoint)` prefix, was found already on main from K1 and K3, with the
+plain-host import-closure hash unbuilt and K1's "applies only when `sandboxed: true`" standing in its place).
 
-Five rulings settle where a registered manifest lives and when it describes a call. Built in `src/sw/sw-manifests.ts`
-(the storage) and `src/shell/stored-manifests.ts` (the rules, pure); `docs/dev/shell.md` has the mechanics.
+- B1. Two keys in `chrome.storage.local`, never `sync`: `manifests.global` and `manifests.workspace` (the latter keyed by
+  the root's realpath), each declared in the state registry from the first commit. An entry is `{ id, scope, root?,
+  manifest, origin: "person" | "proposed", created }`; `manifestFor` reads shipped and stored.
+- B2. SHIPPED WINS this round. A stored entry whose key (`program`, or `program` + `entrypoint`) a shipped manifest
+  already describes is refused at store time with the shipped file named, on both placements: the same key is then
+  never read differently by placement, and the delete family cannot be made free on a person's word through the store.
+  Person-wins is a widening, Shane's later on a number. Among stored entries, workspace beats global.
+- B3. A program that resolves inside a workspace root is describable by workspace scope only, and only pinned; a global
+  entry for an in-root program is refused at store time, mirroring the shipped rule above.
+- B4. A binary is pinned by the host's `program.fingerprint` (`dev:ino:size:mtime`), plus the `version` string when the
+  program reports one; any change drops it to `unknown`. A content hash of a binary (past the 16 MiB path-argument cap;
+  `node` is about 100 MB) is a host change, on a need, not this round.
+- B5. `origin: "proposed"` (from `propose_manifest`) applies only when the call is sandboxed, until the tool's evidence
+  run marks it; `origin: "person"` applies on both placements.
+- The store's message types get the red-team pass from the red team's lane: a page cannot store, list or delete a
+  manifest, and a stored manifest never reaches a page.
 
-- **B1, where.** `chrome.storage.local`, never `sync`: a pin names a file on THIS machine. Two keys, declared in the
-  state registry: `manifests.global`, and `manifests.workspace` keyed by the root's realpath. A workspace's entries
-  describe a call only while that root is configured, and are chosen before the global ones.
-- **B2, shipped wins.** An entry for a key a shipped manifest describes (`git`, `cat`, …) is refused when it is
-  stored, naming the shipped file. A shipped manifest is never shadowed, so the order a call reads them in never has
-  to break a tie between the two.
-- **B3, in-root programs.** A program that resolves inside a workspace root is describable only by that workspace's
-  own entry, pinned; a global entry, or another workspace's, is refused when stored and misses at call time. A
-  script's manifest (`entrypoint`) is workspace scope always: it arrived with the repository.
-- **B4, the pin.** A binary is pinned by the host's `program.fingerprint` (device, inode, size, mtime) and its
-  resolved path, plus the version it reported when its manifest reads one. Ruled over hashing the binary: the host
-  fingerprints every call already, and hashing a large binary on every call does not pay. A script keeps its
-  `entrypoint.sha256`. Any change drops the call back to `unknown`, with the reason on the card.
-- **B5, a model's draft.** An entry with `origin: "proposed"` describes a call only under the OS sandbox, where its
-  claims are enforced, until `propose_manifest`'s evidence run marks it (below). The person's own (`origin: "person"`)
-  describes calls on both placements.
+As built (`src/sw/sw-manifests.ts`, the storage; `src/shell/stored-manifests.ts`, the rules, pure; mechanics in
+`docs/dev/shell.md`), on top of the ruling: a workspace's entries describe a call only while that root is configured;
+another workspace's entry for an in-root program misses at call time as well as being refused when stored; a script's
+manifest (`entrypoint`) is workspace scope always, since it arrived with the repository; B2 is checked at store, load
+and call time; a pin that no longer matches leaves the call `unknown` with the reason on the card. `MANIFESTS` is
+answered for extension pages only, and what it adds is `origin: "person"`.
 
 **`propose_manifest` (ruled 2026-10-23, root K slice c).** The model drafts a manifest for a program it read the
 `--help` or the source of; the person stores it or not on a card. Nothing executes before the person's word: the host
@@ -139,9 +145,6 @@ plain-host calls too; the first failure is stored on the entry (`evidenceFailure
 call to re-run there is no evidence, which the card says beforehand; a synthetic call is never made. Offered only to
 a run the worker built while the settings turn ml.sh on; a page's start never carries it. Built in
 `src/shell/manifest-proposal.ts` (pure) and `src/sw/sw-manifest-proposal.ts`.
-
-What a page may do with the store: nothing. `MANIFESTS` is answered for extension pages only, and what it adds is
-the person's whatever the payload says; a stored manifest never reaches a page.
 
 ### Interpreted script tools (`node scripts/<name>.mjs`, `python3 <script>.py`)
 

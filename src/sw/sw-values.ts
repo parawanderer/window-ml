@@ -83,12 +83,13 @@ export function storeText(text: string, source: string): Promise<string | undefi
  * @param key the value's key
  * @param session the run reading it
  */
-export async function readStoredText(key: string, session: string): Promise<string> {
+export async function readStoredText(key: string, session: string, charge?: (bytes: number) => void): Promise<string> {
     const s = values();
     if (!s) throw new Error("there is no value store in this context");
     const holders = await valueHolders(key);
     if (holders && !holders.includes(session)) throw new ValueMissing(key, null);
     const { blob } = await s.get(key);
+    charge?.(blob.size);
     return blob.text();
 }
 
