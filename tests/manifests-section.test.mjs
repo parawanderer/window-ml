@@ -36,12 +36,24 @@ const VIEW = { global: [PERSON, PASSED, FAILED], workspace: [{ root: "/w/proj", 
 
 // Hooks run their effects after paint (requestAnimationFrame under jsdom), so a tick is a frame.
 const tick = () => new Promise((r) => setTimeout(r, 40));
+/** Poll until `fn` returns truthy or `ms` elapses. Returns the last value of `fn`. */
+async function waitFor(fn, ms = 2000) {
+    const deadline = Date.now() + ms;
+    for (;;) {
+        const v = fn();
+        if (v) return v;
+        if (Date.now() >= deadline) return v;
+        await new Promise((r) => setTimeout(r, 25));
+    }
+}
 async function show(roots = ["/w/proj"]) {
     const host = doc.getElementById("root");
     render(null, host);
     sent.length = 0;
     render(h(M.ManifestsSectionBody, { roots }), host);
-    await tick();
+    // The component shows "Reading…" until the effect's setView lands. Under CI load one 40ms
+    // tick is not enough, so wait for the add form (always rendered once view is set).
+    await waitFor(() => host.querySelector(".man-source"));
     return host;
 }
 const row = (host, id) => host.querySelector(`[data-manifest-id="${id}"]`);
