@@ -43,9 +43,21 @@ or the evidence run's failure, and its pin; an add and a remove. What changed be
 by the host through the same precheck as a draft (`checkDraft`, origin `person`), so the page's payload never chooses a
 pin. Not measured against the real host; the add's resolve is the same code path the two runs above exercised.
 
+## (c2), tier 3 library entries
+
+`propose_manifest` with `library` proposes a pure-Python module for the read-only Python dialect, built to the four
+rulings of 2026-10-24 in READONLY_LIBRARY_MANIFEST.md, "The runtime import loop" (its as-built list says where the build
+differs). Nothing of the library runs before the person's word: the source is read by one recorded `ml.sh` call of
+`cat` and held to the host's sha256, the card's verdict is the shape rule, and the load after the yes is the enforce
+layer, stored only when it agrees. Measured on the fork core 0169c4fd (`tests/python-dialect-library.test.mjs`): every
+form the shape rule admits loads, after three disagreements found that way were fixed. The Settings page "Python
+libraries" lists and removes them; a remove restarts the Python workers that were handed one. The red-team pass (e3)
+is stacked after the PR.
+
 ## Not done in root 2
 
-- (c2) library manifests: only if time allows.
+- Tier 3 libraries: workspace scope, and the page showing that the file on disk now differs from the snapshot. The
+  owned-through-reset finding is #1102 (filed here: the fork's issues are off), for Shane's rebuild of the core.
 - The evidence run has not been measured on Linux (Landlock).
 - The lying-manifest gap above is narrowed, not closed, by the operand check (`manifests/evidence-writes`): a recorded
   undescribed call's arguments are read as paths before and after it, and a draft calling it a reader fails if it
