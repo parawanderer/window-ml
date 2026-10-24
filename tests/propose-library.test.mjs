@@ -23,7 +23,7 @@ const ADMITTED = { why: "", defs: [{ name: "total", signature: "xs, start=0" }],
 
 /**
  * A run of `steps` against a fake host whose root holds `files` (path to text) and whose `cat` prints the file (or
- * `catOut`), and a fake sandbox answering library ops with `shape` and `load`. The card is answered `decision`.
+ * `catOut`), and a fake sandbox answering library ops with `shape` (or `shape(lib)`, which also answers the name probe) and `load`. The card is answered `decision`.
  */
 async function libraryRun(steps, { decision = true, files = { [FILE]: SOURCE }, catOut, shape = ADMITTED, load = { why: "" }, pyInside } = {}) {
     const host = fakeNativeHost({
@@ -34,8 +34,11 @@ async function libraryRun(steps, { decision = true, files = { [FILE]: SOURCE }, 
     const ops = [];
     const onPyRun = (msg) => {
         if (!msg.library) return { ok: true, value: null, stdout: "" };
-        ops.push(JSON.parse(JSON.stringify({ op: msg.library.op, lib: msg.library.lib, principal: msg.principal })));
-        return { ok: true, stdout: "", library: msg.library.op === "shape" ? shape : load };
+        // The precheck's probe of the name alone (a shape op over an empty source) is logged as "name".
+        const probe = msg.library.op === "shape" && msg.library.lib.source === "";
+        ops.push(JSON.parse(JSON.stringify({ op: probe ? "name" : msg.library.op, lib: msg.library.lib, principal: msg.principal })));
+        const answer = typeof shape === "function" ? shape(msg.library.lib) : probe ? { why: "" } : shape;
+        return { ok: true, stdout: "", library: msg.library.op === "shape" ? answer : load };
     };
     const cards = [];
     const onStep = async (bg, ev) => {
@@ -62,15 +65,16 @@ test("ACCEPTANCE: the source is read by one recorded cat, judged by the shape ru
     assert.equal(starts(card.sent), 1, "only cat had started when the card was shown");
     const cat = r.host.calls.filter((c) => c.call === "spawn").map((c) => c.args.argv);
     assert.deepEqual(cat.at(-1), ["cat", FILE], "the read is cat on the one resolved file");
-    assert.deepEqual(card.ops, ["shape"], "the card's verdict asked only for the shape: nothing loaded before the yes");
+    assert.deepEqual(card.ops, ["name", "shape"], "the card's verdict asked only for the name and the shape: nothing loaded before the yes");
     assert.deepEqual([card.renderIn.type, card.renderIn.lang, card.renderIn.text], ["code", "python", SOURCE]);
     assert.match(card.renderIn.note, /`import stats_lib`.*reading total\(xs, start=0\), SCALE\./);
     assert.match(card.renderIn.note, new RegExp(`Read from ${FILE} \\(${Buffer.byteLength(SOURCE)} bytes, at most 65536; sha256 ${sha(SOURCE)}\\) by a recorded ml\\.sh call of cat\\.`));
     assert.match(card.renderIn.note, /with nothing of it run/);
     assert.match(card.renderIn.note, /a later change to the file needs a new proposal\.$/);
 
-    assert.deepEqual(r.ops.map((o) => [o.op, o.principal]), [["shape", "library"], ["load", "library"]]);
-    assert.deepEqual(r.ops[1].lib, { name: "stats_lib", source: SOURCE, sha256: sha(SOURCE), names: ["total", "SCALE"] });
+    assert.deepEqual(r.ops.map((o) => [o.op, o.principal]), [["name", "library"], ["shape", "library"], ["load", "library"]]);
+    assert.deepEqual(r.ops[0].lib, { name: "stats_lib", source: "", sha256: "", names: [] }, "the name probe carries nothing of the library");
+    assert.deepEqual(r.ops[2].lib, { name: "stats_lib", source: SOURCE, sha256: sha(SOURCE), names: ["total", "SCALE"] });
     assert.match(r.results[0], /^Stored for every workspace: a cell inside the read-only Python dialect may now `import stats_lib` and use total, SCALE\./);
     const [s] = r.stored();
     assert.deepEqual([s.module, s.path, s.root, s.sha256, s.source, s.origin], ["stats_lib", FILE, "/w/proj", sha(SOURCE), SOURCE, "proposed"]);
@@ -81,7 +85,7 @@ test("declined: nothing is loaded and nothing stored", T, async () => {
     const r = await libraryRun([proposeLib()], { decision: false });
     assert.equal(r.cards.length, 1);
     assert.match(r.results[0], /^Denied by the user\./);
-    assert.deepEqual(r.ops.map((o) => o.op), ["shape"]);
+    assert.deepEqual(r.ops.map((o) => o.op), ["name", "shape"]);
     assert.deepEqual(r.stored(), []);
 });
 
@@ -123,6 +127,15 @@ test("a draft that cannot be proposed is told to the model before any card, and 
     assert.deepEqual(r.ops, []);
 });
 
+test("a module name that already imports something (the standard library's, a whitelist module's) is refused before any card, and nothing is read", T, async () => {
+    // The precheck asks the sandbox about the NAME alone: an empty source, so nothing of the library reaches it.
+    const r = await libraryRun([proposeLib({ path: "lib/stats.py", module: "json" })], { shape: (lib) => lib.source === "" && lib.name === "json" ? { why: "that name already imports something else" } : ADMITTED });
+    assert.equal(r.cards.length, 0);
+    assert.match(r.results[0], /^Error: json cannot be a library's name: that name already imports something else\./);
+    assert.deepEqual(r.ops.map((o) => [o.op, o.lib.source]), [["name", ""]]);
+    assert.equal(starts(r.host.names()), 0, "no cat ran");
+});
+
 test("a file outside every root, or on a secret path, is refused before any card", T, async () => {
     for (const fact of [{ inRoot: false }, { secret: true }]) {
         const host = fakeNativeHost({ landlockAbi: null, facts: (args) => ({
@@ -139,14 +152,14 @@ test("a file outside every root, or on a secret path, is refused before any card
 test("a source the shape rule refuses is a card that cannot be stored, naming the line; approving it stores nothing", T, async () => {
     const r = await libraryRun([proposeLib()], { shape: { why: "line 4: an assignment that is not one name bound to an immutable literal (a scalar, str, bytes, or a tuple of such)", defs: [], constants: [] } });
     assert.match(r.cards[0].renderIn.note, /^This library cannot be stored: stats_lib is not a library the dialect can admit: line 4: an assignment/);
-    assert.deepEqual(r.ops.map((o) => o.op), ["shape"]);
+    assert.deepEqual(r.ops.map((o) => o.op), ["name", "shape"]);
     assert.deepEqual(r.stored(), []);
 });
 
 test("bytes that do not hash to the file the host resolved are refused: changed while read", T, async () => {
     const r = await libraryRun([proposeLib()], { catOut: SOURCE + "X = 1\n" });
     assert.match(r.cards[0].renderIn.note, /changed while it was read/);
-    assert.deepEqual(r.ops, []);
+    assert.deepEqual(r.ops.map((o) => o.op), ["name"], "the shape rule never saw bytes the host did not resolve");
     assert.deepEqual(r.stored(), []);
 });
 

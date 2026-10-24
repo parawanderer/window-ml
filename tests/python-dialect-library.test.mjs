@@ -196,6 +196,12 @@ test("the shape rule refuses a source outside the whitelist, a decorator, and a 
     for (const n of ["json", "numpy", "scipy", "a.b", "_private", "class", ""]) assert.notStrictEqual((await shape(n, "X = 1")).why, "", n);
 });
 
+test("over an empty source the shape rule judges the name alone: the precheck's probe refuses what imports and admits a free name", async (t) => {
+    if (skip) return t.skip(skip);
+    for (const n of ["json", "numpy", "math", "sys", "_ml_libraries"]) assert.match((await shape(n, "")).why, /already imports|not a plain module name/, n);
+    assert.deepStrictEqual(await shape("free_name_lib", ""), { why: "", defs: [], constants: [] });
+});
+
 // Every top-level form the shape rule admits, one module each: the load must admit each too, or the card promised a
 // library the approval cannot deliver (the ruling names that disagreement a same-day finding).
 const ADMITTED_SHAPES = [
