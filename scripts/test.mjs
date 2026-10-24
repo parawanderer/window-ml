@@ -104,7 +104,8 @@ const GENRES = {
     redteam: {
         about: "what a hostile page must NOT get: every tool, member and page-started message, each property a test",
         files: ["redteam.test.js", "lapsed-ask-redteam.test.mjs", "redteam-agent-level-3.test.mjs", "redteam-agent-level-2.test.mjs", "redteam-agent-level.test.mjs", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-current-client.test.mjs",
-            "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-exec-console.test.mjs",
+            "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-dialect-widenings.test.mjs",
+            "redteam-exec-console.test.mjs",
             "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs",
             "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-mermaid.test.mjs", "redteam-isolated.test.mjs", "redteam-presence.test.mjs",
             "redteam-ml-wire.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-render-values.test.mjs",
