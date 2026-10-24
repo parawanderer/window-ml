@@ -190,6 +190,10 @@ denial reporting (`done.denied`), a left item in [`ROOT_K_RESULT_2.md`](ROOT_K_R
 host repo. RULED on opening: #1089 edits three of the red team's test files, so it merges only after e3 has posted on
 the PR that each edit keeps its property (a narrowed one is reverted and e3's own version lands stacked after), and
 after the janitor's review of the rest; e3 then pins the residuals in its own file, stacked and merged after.
+#1089 MERGED 70fdd57d, both gates recorded on the PR (e3: each property kept; the janitor: no finding); green on the
+third run, the two before it the P2-gate flake in `tests/redteam-python-sandbox.test.mjs` that #1081 narrowed and the
+janitor's #1098 (test only, open) accumulates with a deadline. e3's residual pins are #1094, retargeted to main, e3's
+to merge. Root-k moves to (c2) library manifests, the last item of its exception.
 
 The coordinator role passed on 2026-10-19 to a continuation session (`7a8ce8b6`, same name in `ListAgents`, work slug
 `repl-specs`); the previous session's state is `COORDINATOR.md` plus the clone's checkpoint. What the 2026-10-16 status
