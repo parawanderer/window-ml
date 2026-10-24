@@ -470,12 +470,17 @@ export function lapsedLine(l: LapsedAsk): string {
     return `Asking because the policy "${speakable(l.label)}" ${CAUSE_TEXT[l.cause]}.`;
 }
 
-/** The facts a `fetch_url` call gives a policy: what it fetches, how, and its effects. */
-export function fetchFacts(url: string, opts: { credentials?: boolean; rendered?: boolean } = {}): Record<string, unknown> & { effects: EffectsData } {
+/** The facts a `fetch_url` call gives a policy: what it fetches, how, and its effects. A `navigate`, and a page the run's
+ *  tab arrives on, is the same read in its interactive mode (`interactive: true`, always credentialed and rendered). */
+export function fetchFacts(url: string, opts: { credentials?: boolean; rendered?: boolean; interactive?: boolean } = {}): Record<string, unknown> & { effects: EffectsData } {
     let host = "";
     try { host = new URL(url).hostname.toLowerCase(); } catch { /* no host: the effects say unknown */ }
-    return { kind: "fetch", url, host, method: "GET", credentials: !!opts.credentials, rendered: !!opts.rendered, effects: fromFetch({ url }) };
+    return { kind: "fetch", url, host, method: "GET", credentials: !!opts.credentials, rendered: !!opts.rendered, interactive: !!opts.interactive, effects: fromFetch({ url }) };
 }
+
+/** The facts of a navigation to `url`, the run's own `navigate` or a page its tab arrived on: a fetch as you, rendered,
+ *  that the run then acts in (docs/spec/POLICIES.md, "Navigate is a fetch"). */
+export const navigateFacts = (url: string): ReturnType<typeof fetchFacts> => fetchFacts(url, { credentials: true, rendered: true, interactive: true });
 
 /** The policy that allows exactly one URL a person saw on a card, as code (`JSON.stringify` makes the literal). */
 export function fetchUrlPolicySource(url: string): string {

@@ -293,7 +293,6 @@ const RISKY_CONFIG: Readonly<Record<string, string>> = {
     shellSandbox: "whether ml.sh runs inside a sandbox",
     autoApproveReadonly: "runs read-only page surveys without asking",
     autoApprovePython: "runs Python without asking",
-    autoApproveSameOriginAuth: "sends as-you requests without asking",
     autoApproveSelfSource: "reads the agent's own source without asking",
     modelFilter: "the whitelist of models a page or run may use; clearing it allows every model the server offers",
     agentStartPage: "the page a blank agent run starts on",

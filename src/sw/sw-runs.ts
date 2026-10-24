@@ -111,7 +111,7 @@ defineState({
         return p && {
             task: p.task, model: p.model, think: p.think, maxSteps: p.maxSteps, tools: p.tools.map((t) => t.name),
             images: p.images?.length ?? 0, surface: p.surface, unattended: !!p.unattended, toolTokens: !!p.toolTokens,
-            autoApprove: { readonly: p.autoApproveReadonly, python: p.autoApprovePython, sameOriginAuth: !!p.autoApproveSameOriginAuth, selfSource: !!p.autoApproveSelfSource },
+            autoApprove: { readonly: p.autoApproveReadonly, python: p.autoApprovePython, selfSource: !!p.autoApproveSelfSource },
         };
     },
 });

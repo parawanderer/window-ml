@@ -34,7 +34,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { judgeCall, fetchFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
@@ -56,7 +56,7 @@ import { withEnv } from "./sw-current-env";
 import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
-import { grantRunFetch, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
+import { grantRunFetch, grantRunOrigin, runOriginGranted, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
@@ -311,15 +311,16 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  * - Replaced by the sender's, as the browser stamped it (what the origin gate read): `pageOrigin` seeds the run's
  *   consented origins and `pageUrl` is "the page you are on", so a page naming another site would get navigations and
  *   reads there without a gate. Absent when the sender has none.
- * - Bounded: `maxSteps` goes through `stepBudget`, as on RESUME_RUN. By the worker's config: `autoApprovePython`, `autoApproveReadonly`, `autoApproveSameOriginAuth`,
- *   `autoApproveSelfSource` and `selfIntrospection` hold only when the config allows them too; and a tool named in
+ * - Bounded: `maxSteps` goes through `stepBudget`, as on RESUME_RUN. By the worker's config: `autoApprovePython`, `autoApproveReadonly`,
+ *   `autoApproveSelfSource` and `selfIntrospection` hold only when the config allows them too (the retired
+ *   `autoApproveSameOriginAuth` is dropped); and a tool named in
  *   `GATED_TOOL_NAMES`, or a server tool (`remote`), always `requiresApproval`.
  * @param payload what the page sent
  * @param sender the message's sender
  * @param cfg the worker's config, read as the worker-built path reads it
  * @returns a copy; anything that is not an object, as it came
  */
-export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
+export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
     const { builtBy: _b, display: _d, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
@@ -331,7 +332,7 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
     }
     rest.autoApprovePython = !!rest.autoApprovePython && !!cfg.autoApprovePython;
     rest.autoApproveReadonly = !!rest.autoApproveReadonly && !!cfg.autoApproveReadonly;
-    rest.autoApproveSameOriginAuth = !!rest.autoApproveSameOriginAuth && !!cfg.autoApproveSameOriginAuth;
+    delete (rest as { autoApproveSameOriginAuth?: unknown }).autoApproveSameOriginAuth;
     rest.autoApproveSelfSource = !!rest.autoApproveSelfSource && !!cfg.autoApproveSelfSource;
     // Absent is on, for the page's payload as for the config (an older stored config).
     rest.selfIntrospection = rest.selfIntrospection !== false && cfg.selfIntrospection !== false;
@@ -639,6 +640,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const turnStarted = Date.now();
         turnByRun.set(runId, () => ({ task: p.task, images: p.images?.length ?? 0, origin: p.origin ?? null, startedTs: turnStarted,
             origins: [...consentedOrigins], sheets: [...approvedSheets], payload: p }));
+        /** Where a navigate to `url` goes, resolved against the page the tab is on now; undefined when it cannot be read. */
+        const navDest = (url: string): URL | undefined => {
+            try { return new URL(url.startsWith("//") ? "https:" + url : url, tabPageUrl.get(tabId) ?? p.pageUrl ?? undefined); } catch { return undefined; }
+        };
         const navNeedsConsent = (url: string): boolean => {
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
@@ -869,7 +874,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
         };
         runBackgroundAgent(
-            { task: modelTask, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
+            { task: modelTask, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
               // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
               // worker was evicted, where nobody was waited on.
               ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },
@@ -1527,7 +1532,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
                                     // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
                                     // (repeat navs to it then skip the gate).
-                                    if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
+                                    // It is also an as-you grant for that origin, in every mode (docs/spec/POLICIES.md, "One consent,
+                                    // scoped by the origin"), held by the run in the worker, never on the tab: a script on the tab could
+                                    // spend a tab's grant. A page-built run's fetch runs in the page and keeps its per-URL approvals.
+                                    if (ok && tool === "navigate") {
+                                        const dest = navDest(String((args as { url?: unknown }).url ?? ""));
+                                        if (dest) { consentedOrigins.add(dest.origin); if (byWorker() && runsInWorker(p, "fetch_url")) grantRunOrigin(runId, dest.origin); }
+                                    }
                                     // Approving a fetch_url: a CREDENTIALED one (fetch-as-the-user — raw cookies, or a
                                     // rendered load in your session) mints a ONE-TIME grant, NEVER persisted, so it
                                     // always re-prompts. An UNCREDENTIALED one (a raw uncredentialed GET, or an
@@ -1598,6 +1609,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
+                // A navigate is the `fetch` consumer in its interactive mode: a policy over a host or a URL governs it as it
+                // governs the fetch. An `allow` covers a navigate whoever built the run: its arrival is judged again there.
+                navPolicy: (url) => {
+                    const dest = navDest(url);
+                    if (!dest) return undefined;   // unparseable → the tool will error
+                    const j = judgeCall(runId, "fetch", navigateFacts(dest.href));
+                    if (j.decision === "ask" && !j.by) return "unknown";
+                    for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "navigate" } });
+                    if (!j.decision || !j.by || j.by === "builtin") return undefined;
+                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
+                    return { decision: j.decision, label: j.by.label };
+                },
                 fetchNeedsConsent: (url) => !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)),   // a NEW url → gate; an already-approved one → auto
                 // The person's policies (sw-policies.ts), judged here in the worker over facts the worker resolved. A `deny`
                 // refuses any run's fetch; an `allow` answers only a fetch the worker itself runs, since only there does
@@ -1606,6 +1629,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 askWhy: (name, a) => {
                     // A Python cell asks because it is outside the dialect: where the inside try left it, keyed by its source.
                     if (name === "python_exec") return pythonOutsideWhy(pyOutside.get(String(a.code ?? "")));
+                    if (name === "navigate") {
+                        const dest = navDest(String(a.url ?? ""));
+                        const j = dest ? judgeCall(runId, "fetch", navigateFacts(dest.href)) : undefined;
+                        return j?.decision === "ask" ? askWhyOf(j) : undefined;
+                    }
                     if (name !== "fetch_url") return undefined;
                     const j = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered }));
                     // An `ask` policy is named for any fetch_url the loop gates; a policy that is GONE only for an uncredentialed
@@ -1634,6 +1662,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const here = tabPageUrl.get(tabId) ?? p.pageUrl;
                     return !!here && isCurrentPage(url, here);
                 },
+                fetchOnPageOrigin: (url: string): boolean => {
+                    const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+                    try { return !!here && new URL(url, here).origin === new URL(here).origin; } catch { return false; }
+                },
+                fetchOriginGranted: (url: string): boolean => byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url),
                 fetchSameOrigin: (url: string): boolean => {
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin

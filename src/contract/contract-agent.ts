@@ -289,8 +289,9 @@ export type ApprovalDecision =
  *  PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL,
  *  the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch. */
 export interface ReusedGrant {
-    /** `policy`: a policy allowed the call (sw-policies.ts), and `detail` is its label. */
-    kind: "fetch-url" | "sheet" | "policy";
+    /** `policy`: a policy allowed the call (sw-policies.ts), and `detail` is its label. `origin`: the person approved a
+     *  navigate to this origin earlier in the run, which consents a fetch of any URL under it, and `detail` is the origin. */
+    kind: "fetch-url" | "sheet" | "policy" | "origin";
     detail: string;
 }
 

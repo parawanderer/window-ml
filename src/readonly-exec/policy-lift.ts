@@ -72,7 +72,7 @@ export const PAIR: FieldType = { t: "obj", fields: { op: { t: "enum", values: OP
 /** A `fetch_url` call's facts (`fetchFacts`). */
 const FETCH: Record<string, FieldType> = {
     kind: { t: "enum", values: ["fetch"] }, url: { t: "url" }, host: { t: "host" }, method: { t: "enum", values: ["GET"] },
-    credentials: BOOL, rendered: BOOL, effects: { t: "effects" },
+    credentials: BOOL, rendered: BOOL, interactive: BOOL, effects: { t: "effects" },
 };
 /** An `ml.sh` call's facts (`ShFacts`); `repo` is read only through `repoConfigRunsCode`. */
 const SH: Record<string, FieldType> = {

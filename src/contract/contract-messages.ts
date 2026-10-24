@@ -146,9 +146,6 @@ export interface StartRunPayload {
     origin?: PromptOrigin;
     /** trusted config flag → the background may auto-approve readonly python */
     autoApprovePython: boolean;
-    /** config flag → auto-approve a same-origin as-you (credentialed) fetch (the security gate is enforced
-     *  background-side from getConfig too, so a forged value only affects the prompt, never the actual fetch) */
-    autoApproveSameOriginAuth?: boolean;
     /** config flag → auto-approve an uncredentialed read of the agent's OWN repo source (self-source.ts) */
     autoApproveSelfSource?: boolean;
     /** `selfIntrospection`: give this run's read-only surveys `ml.current`. Absent is on. */
