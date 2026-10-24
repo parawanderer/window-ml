@@ -30,14 +30,20 @@ const LIB = { id: "lib-1", module: "stats_lib", path: "/w/proj/lib/stats.py", ro
 const GEO = { ...LIB, id: "lib-2", module: "geo", names: [{ name: "km", kind: "def", signature: "m" }] };
 const VIEW = { libraries: [LIB, GEO] };
 
-// Hooks run their effects after paint (requestAnimationFrame under jsdom), so a tick is a frame.
-const tick = () => new Promise((r) => setTimeout(r, 40));
+// Hooks run their effects after paint (requestAnimationFrame under jsdom), which a loaded CI runner can delay past any
+// fixed sleep, so each step waits for what it is about to assert.
+async function until(ok, what) {
+    for (const end = Date.now() + 5000; !ok();) {
+        if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((r) => setTimeout(r, 10));
+    }
+}
 async function show() {
     const host = doc.getElementById("root");
     render(null, host);
     sent.length = 0;
     render(h(L.LibrariesSectionBody, {}), host);
-    await tick();
+    await until(() => !/Reading…/.test(host.textContent), "the first read");
     return host;
 }
 const row = (host, id) => host.querySelector(`[data-library-id="${id}"]`);
@@ -70,13 +76,13 @@ test("the remove button sends the entry's id and says how many sandboxes restart
     answer = (p) => p.op === "remove" ? { data: { libraries: [GEO], restarted: 2 } } : { data: VIEW };
     const host = await show();
     row(host, "lib-1").querySelector("button").click();
-    await tick();
+    await until(() => host.querySelector(".lib-note"), "the remove's note");
     assert.deepEqual(sent.at(-1), { type: "LIBRARIES", payload: { op: "remove", id: "lib-1" } });
     assert.equal(row(host, "lib-1"), null);
     assert.match(host.querySelector(".lib-note").textContent, /^Removed stats_lib\. 2 Python sandboxes restarted, so no cell can still import it\.$/);
     answer = (p) => p.op === "remove" ? { data: { libraries: [], restarted: 0 } } : { data: VIEW };
     row(host, "lib-2").querySelector("button").click();
-    await tick();
+    await until(() => /Removed geo/.test(host.querySelector(".lib-note").textContent), "the second remove's note");
     assert.match(host.querySelector(".lib-note").textContent, /^Removed geo\. No Python sandbox had loaded a library, so none restarted\.$/);
 });
 
@@ -84,7 +90,7 @@ test("a remove the worker refuses shows its reason", async () => {
     answer = (p) => p.op === "remove" ? { error: "no such library" } : { data: VIEW };
     const host = await show();
     row(host, "lib-1").querySelector("button").click();
-    await tick();
+    await until(() => host.querySelector(".lib-err"), "the refusal");
     assert.equal(host.querySelector(".lib-err").textContent, "no such library");
     assert.ok(row(host, "lib-1"), "the list is unchanged");
 });
