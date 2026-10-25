@@ -762,21 +762,25 @@ takes focus, so the page's own Enter cannot land on Allow.
 (`ml-access.ts`) posts `REQUEST_ACCESS_REQUEST`; the content script rebuilds the payload from the three fields it knows,
 adds `gesture` (`page-gesture.ts`, Q11: the browser's transient activation AND a trusted pointerdown or keydown on the
 page's own document, outside the hosts the shell marked with `markOwnHost`, in the last 5 s), and keeps one request in
-flight per document: later calls get its answer. `REQUEST_ACCESS` is in `HANDLE_MAP`, so the origin gate refuses it from
+flight per document: later calls get its answer. While a run drives the tab (`activeRuns` with a live controller), the
+worker reads no gesture at all: a run's own CDP clicks and keys are trusted input too. `REQUEST_ACCESS` is in `HANDLE_MAP`, so the origin gate refuses it from
 a site that may not use window.ml: only an allowed site asks, for the agent level or for self-approval.
 
 The worker (`background.ts`) takes the origin from the sender (`grantableOrigin`, a top frame on http or https), waits
 for the tab's navigation to settle, and asks `requestAccess` (`sw-access-requests.ts`), which applies the pure rules of
 `site-requests.ts` to the store in `chrome.storage.local` (`ml_site_requests`, `defineState` `site.requests`): one entry
 per (origin, kind); one pending entry per registrable domain (`tldts` with private domains, so each `*.github.io` site is
-its own) and 5 in all; a 7-day expiry with one re-ask; self-approval only from an allowed origin. A page a running agent
+its own) and 5 in all; a 7-day expiry with one re-ask; self-approval only from an allowed origin. The reason is stored
+with every invisible or bidi character made visible (`visibleControls`, as the start card shows the site's task). An
+allowed site's entry is marked `fromAllowed`: it asks for agents only, so a revoke of the site answers it, and it never
+waits as a request to use window.ml. A page a running agent
 opened (Q17) is refused and recorded on the driving run (`recordNotStarted`), never shown as a request. Every change runs
 one at a time (`serially`), and a change to the lists from anywhere settles the requests it answers (`settleByLists`).
 
 The person answers in the popup's "Waiting for you" block (`requestRow`; self-approval only through the confirmation,
 whose Allow is disabled for a second) or in DevTools Settings, both through `ACCESS_REQUESTS`, an extension-only message
-that lists the waiting requests (each with `allowed`) or applies `{ origin, decision }` as the list edits `answerRequest`
-returns. An allowed site asking for agents is offered "Let it start agents" (the level becomes Ask each time) and Deny
+that lists the waiting requests (each with `allowed`) or applies `{ origin, decision }` (checked by `isRequestDecision`) as the list edits
+`answerRequest` returns. An allowed site asking for agents is offered "Let it start agents" (the level becomes Ask each time) and Deny
 (agents Denied). Nothing opens a window or takes focus (rule 5).
 
 ## Tests

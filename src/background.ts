@@ -9,7 +9,7 @@ import { onMlCall } from "./sw/sw-ml-wire";
 import { forgetHandOverTab, handOverOnCommit, handOverOnRevoke } from "./sw/nav-handover";
 import { changesSiteAccess, grantableOrigin, originOf, type SiteEdit } from "./site-access";
 import { requestAccess, decideRequest, waitingRequests } from "./sw/sw-access-requests";
-import { ASK_REFUSED, type RequestDecision } from "./site-requests";
+import { ASK_REFUSED, isRequestDecision, type RequestDecision } from "./site-requests";
 import { arrivalHold, arrivalSettled, forgetArrivalTab, judgeArrival } from "./sw/nav-arrival";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
@@ -757,8 +757,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         (async () => {
             await navigationSettled(tabId);
             const opener = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined);
+            // While a run is driving this tab, its own clicks and keys are trusted input too: none of it is the person's
+            // gesture (Q11), so nothing a run's click lets the page ask counts.
+            const runDriving = [...(activeRuns.get(tabId) ?? [])].some((id) => runControllers.has(id));
             const answer = await requestAccess({ agents: p.agents, level: p.level, reason: p.reason },
-                { origin: g.origin, gesture: message.gesture === true, openedByAgent: opener != null, sitesMayAsk: false });
+                { origin: g.origin, gesture: message.gesture === true && !runDriving, openedByAgent: opener != null, sitesMayAsk: false });
             if (opener != null && answer.state === "refused" && answer.reason === ASK_REFUSED.openedByAgent) recordNotStarted(tabId, opener, g.origin);
             sendResponse({ data: answer });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
@@ -768,7 +771,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "ACCESS_REQUESTS") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { origin?: unknown; decision?: RequestDecision };
-        const decide = typeof p.origin === "string" && p.decision && typeof p.decision === "object";
+        if (p.decision !== undefined && !isRequestDecision(p.decision)) { sendResponse({ error: "not a decision" }); return; }
+        const decide = typeof p.origin === "string" && p.decision !== undefined;
         (decide ? decideRequest(p.origin as string, p.decision as RequestDecision) : waitingRequests())
             .then((requests) => sendResponse({ data: { requests } }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;

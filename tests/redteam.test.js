@@ -1492,7 +1492,7 @@ test("requestAccess — no page sender answers or reads a request: ACCESS_REQUES
     assert.equal((await w.levels(RA)).agents, "ask");
 });
 
-test("requestAccess — a request never becomes a different kind: one the person's revoke leaves behind does not wait as a request to use window.ml", { todo: "settleByLists (src/site-requests.ts:233) leaves an access entry pending when its origin is revoked (removed, not denied): the popup then lists the revoked site with allowed:false and offers Allow this session / Always allow (popup.ts:555), so a site that asked only for agents while allowed holds a request to USE window.ml, which in PR 4 no unallowed site may make (the origin gate refuses it, sitesMayAsk is false)" }, async () => {
+test("requestAccess — a request never becomes a different kind: one the person's revoke leaves behind does not wait as a request to use window.ml", async () => {
     const w = askWorld({ allowed: [RA] });
     assert.deepEqual(raPlain((await w.ask({ agents: true, reason: "to run checks" })).data), { state: "granted", agents: "pending" });
     assert.equal((await w.waiting()).length, 1, "positive control: the agents request waits");
@@ -1537,7 +1537,7 @@ test("requestAccess — the reason is stored as at most 200 characters of text, 
     }
 });
 
-test("requestAccess — the reason shows the person every character it holds: bidi overrides and invisible tag characters do not reach the popup or Settings raw", { todo: "the reason is stored and listed as the page wrote it (site-requests.ts:166) and rendered with textContent (popup.ts:534, requests-section.tsx:66,96): a U+202E reorders the quote and tag characters (U+E0000 block) are invisible, where the start card shows them with visibleControls (agent-start.ts). Low impact: only the person reads it, and the origin is drawn in its own element" }, async () => {
+test("requestAccess — the reason shows the person every character it holds: bidi overrides and invisible tag characters do not reach the popup or Settings raw", async () => {
     const w = askWorld();
     const tags = [..."hidden"].map((c) => String.fromCodePoint(0xE0000 + c.charCodeAt(0))).join("");
     await w.ask({ agents: true, reason: `to help you‮elbat${tags}` });
@@ -1698,7 +1698,7 @@ test("PROBED AND NOT GOTTEN: the shapes this pass tried against ml.requestAccess
         "markup in the reason (<b>, <img onerror>): already pinned, popup-whitelist.test.js 'site's words never become markup' and sidebar-settings.test.js the same, both textContent/JSX",
         "REQUEST_ACCESS from an unapproved origin: also enumerated by the HANDLE_MAP sweep above ('EVERY page-started message type is refused')",
         "ACCESS_REQUESTS from one of our own frames inside a hostile tab (the overlay sidebar): isExtensionSender is true by design; the page cannot drive that frame (closed shadow root, top layer, attack 17)",
-        "ACCESS_REQUESTS with a malformed decision (answer: 'forever', kind: 'x'): answerRequest maps it to an allow with that scope, but only an extension sender reaches it; noted to the owner as hardening, not a page gain",
+        "ACCESS_REQUESTS with a malformed decision (answer: 'forever', kind: 'x'): refused since (isRequestDecision), pinned in request-access-bg.test.mjs; only an extension sender reaches it either way",
         "two kinds from one click (agents, then self-approve within 5 s): the second is refused by the one-per-domain cap, pinned in 'no page sender answers or reads a request' setup",
         "the content script's one-in-flight coalescing answers a later call of the other kind with the first's answer: confusion of the page's own calls only, no entry, no grant",
         "the global cap of 5 can be filled by five allowed sites on five domains, refusing a sixth: by design (rule 6), and in PR 4 each must already be allowed",

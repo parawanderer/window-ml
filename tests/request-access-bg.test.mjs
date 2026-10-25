@@ -19,12 +19,14 @@ const page = (tab, origin, o = {}) => ({ tab: { id: tab, url: `${origin}/p` }, u
 const EXT = { url: "chrome-extension://test/popup.html" };
 
 /** A worker where site A (tab 7) may use window.ml but not start agents, and site C (tab 9) may not use it. */
-function world() {
+function world({ onFetch = () => jsonResponse({}) } = {}) {
     const bg = loadBackground({
         config, siteGate: true, siteAgents: null,
         openTabs: [{ id: 7, url: `${A}/p`, title: "A" }, { id: 9, url: `${C}/p`, title: "C" }],
         local: { ml_site_schema: 2, ml_site_always: [A] },
-        onFetch: () => jsonResponse({}),
+        onFetch,
+        // The page's side of a run the person starts: it adopts the run.
+        onTabMessage: async (_tab, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "You are on the page" } : undefined),
     });
     const ask = (payload, sender = page(7, A), gesture = true) => bg.send({ type: "REQUEST_ACCESS", payload, gesture }, sender);
     const waiting = async () => plain((await bg.send({ type: "ACCESS_REQUESTS", payload: {} }, EXT)).data.requests);
@@ -65,6 +67,26 @@ test("a gesture fact the page puts in its payload counts for nothing: only the c
     const w = world();
     const r = await w.ask({ agents: true, gesture: true }, page(7, A), false);
     assert.deepEqual(plain(r.data), { state: "refused", reason: "needs a user gesture" });
+});
+
+test("RED TEAM: while a run drives the tab, its own trusted clicks are no gesture: a request then is refused, and one after the run is not", T, async () => {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    let modelCalls = 0;
+    const w = world({ onFetch: async (call) => {
+        if (!call.url.includes("/chat/completions")) return jsonResponse({});
+        modelCalls++;
+        await held;
+        return jsonResponse({ choices: [{ message: { content: "done" } }] });
+    } });
+    await w.bg.context.__mlStartUserRunForTest(7, { task: "work on the site", surface: "hud" });
+    for (let i = 0; i < 200 && !modelCalls; i++) await new Promise((r) => setTimeout(r, 2));
+    assert.equal(modelCalls, 1, "the run is driving the tab");
+    assert.deepEqual(plain((await w.ask({ agents: true })).data), { state: "refused", reason: "needs a user gesture" });
+    assert.deepEqual(await w.waiting(), []);
+    release();
+    for (let i = 0; i < 200; i++) await new Promise((r) => setTimeout(r, 2));
+    assert.deepEqual(plain((await w.ask({ agents: true })).data), { state: "granted", agents: "pending" }, "with no run on the tab, the gesture counts");
 });
 
 // --- ACCESS_REQUESTS: the popup's read and the person's answer ---
@@ -109,4 +131,17 @@ test("ACCESS_REQUESTS is no page's to send: a page can neither read what is wait
     }
     assert.equal((await w.levels(A)).agents, "off");
     assert.equal((await w.waiting()).length, 1);
+});
+
+test("ACCESS_REQUESTS applies only a decision the popup or Settings can send: anything else edits nothing", T, async () => {
+    const w = world();
+    await w.ask({ agents: true });
+    for (const decision of [{ kind: "access", answer: "forever" }, { kind: "access", answer: "always", agents: "yes" }, { kind: "selfApprove", answer: "agents" }, { kind: "admin" }, "always", null, 1]) {
+        const r = await w.bg.send({ type: "ACCESS_REQUESTS", payload: { origin: A, decision } }, EXT);
+        assert.equal(r.data, undefined, JSON.stringify(decision));
+    }
+    const l = await w.levels(A);
+    assert.equal(l.agents, "off");
+    assert.equal(l.use, "always");
+    assert.equal((await w.waiting()).length, 1, "the request still waits");
 });

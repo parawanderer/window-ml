@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { bindingOf, widening, toolTexts, cardToolLines, visibleControls, pageTurnText, hostOf, START_REFUSED } = await import("../src/agent-start.ts");
+const { bindingOf, widening, toolTexts, cardToolLines, pageTurnText, hostOf, START_REFUSED } = await import("../src/agent-start.ts");
+const { visibleControls } = await import("../src/agent/security.ts");
 const { siteInstructions, textDigest } = await import("../src/agent/site-instructions.ts");
 const { composeSystemPrompt, withPageContext } = await import("../src/agent/run-assembly.ts");
 const { builtinTools, GATED_BUILTINS } = await import("../src/tools/tool-registry.ts");

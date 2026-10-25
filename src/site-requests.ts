@@ -6,6 +6,7 @@
 
 import type { AccessAnswer } from "./contract/contract-config";
 import { levelsFor, type SiteLists, type SiteEdit } from "./site-access";
+import { visibleControls } from "./agent/security";
 
 /** What an entry asks for: to use window.ml (perhaps with agents), or to approve its own actions. */
 export type RequestKind = "access" | "selfApprove";
@@ -19,8 +20,12 @@ export interface AccessRequest {
     kind: RequestKind;
     /** For an `access` entry: whether it also asked to start agents. */
     agents: boolean;
-    /** The site's own words, cut to `REASON_MAX`; never shown as anything but a quote. */
+    /** The site's own words, every invisible or bidi character made visible, cut to `REASON_MAX`; never shown as
+     *  anything but a quote. */
     reason?: string;
+    /** An `access` entry asked by a site that could already use window.ml: it asks for agents only, so a revoke answers
+     *  it, and it never waits as a request to use window.ml. */
+    fromAllowed?: boolean;
     at: number;
     state: "pending" | "answered" | "expired";
     /** How many times the origin has asked for this kind: 2 after the one re-ask an expiry allows. */
@@ -163,14 +168,29 @@ export function askAccess(store: RequestStore, lists: Partial<SiteLists>, input:
     if (!facts.gesture) return same({ state: "refused", reason: ASK_REFUSED.gesture });
     const pending = pendingRequests(store, now).filter((e) => !(e.origin === origin && e.kind === kind));
     if (pending.length >= MAX_PENDING || pending.some((e) => e.domain === facts.domain)) return same({ state: "refused", reason: ASK_REFUSED.full });
-    const reason = typeof input.reason === "string" && input.reason.trim() ? input.reason.trim().slice(0, REASON_MAX) : undefined;
+    const reason = typeof input.reason === "string" && input.reason.trim() ? visibleControls(input.reason.trim()).slice(0, REASON_MAX) : undefined;
     const created: AccessRequest = {
         origin, domain: facts.domain, kind, agents: wantsAgents, ...(reason ? { reason } : {}),
+        ...(kind === "access" && levels.use !== "unknown" ? { fromAllowed: true } : {}),
         at: now, state: "pending", asks: (live?.asks ?? 0) + 1,
     };
     const entries = [...store.entries.filter((e) => !(e.origin === origin && e.kind === kind)), created];
     const answer: AccessAnswer = kind === "access" && levels.use !== "unknown" ? { state: "granted", agents: "pending" } : { state: "pending" };
     return { answer, store: { v: REQUESTS_SCHEMA, entries }, created };
+}
+
+/**
+ * Whether a value is a decision the person can make, as the popup and Settings send one; anything else is no decision.
+ * @param d the value
+ * @returns true for a `RequestDecision`
+ */
+export function isRequestDecision(d: unknown): d is RequestDecision {
+    const x = d as { kind?: unknown; answer?: unknown; agents?: unknown } | null;
+    if (!x || typeof x !== "object") return false;
+    if (x.kind === "selfApprove") return x.answer === "allow" || x.answer === "deny";
+    if (x.kind !== "access") return false;
+    if (x.answer === "session" || x.answer === "always") return x.agents === undefined || typeof x.agents === "boolean";
+    return x.answer === "agents" || x.answer === "deny";
 }
 
 /** How the person answers an entry, from the popup or Settings. `agents` is the "Let it start agents too" box. */
@@ -231,6 +251,7 @@ export function settleByLists(store: RequestStore, lists: Partial<SiteLists>): {
         const allowed = l.use === "always" || l.use === "session";
         const settled = l.use === "denied"
             || (e.kind === "access" && allowed && (!e.agents || l.agents !== "off"))
+            || (e.kind === "access" && e.fromAllowed === true && !allowed)
             || (e.kind === "selfApprove" && (l.selfApprove || !allowed));
         if (!settled) return e;
         changed = true;
